@@ -62,6 +62,19 @@ module Cmd =
                 |> Async.StartImmediate)
         )
 
+    let ofTask (task: Threading.Tasks.Task<'T>) (ofSuccess: 'T -> 'Msg) (ofError: exn -> 'Msg) : Cmd<'Msg> =
+        Single(
+            Effect<'Msg>(fun dispatch ->
+                async {
+                    try
+                        let! result = task |> Async.AwaitTask
+                        dispatch (ofSuccess result)
+                    with ex ->
+                        dispatch (ofError ex)
+                }
+                |> Async.StartImmediate)
+        )
+
 
 type SubId = string list
 type Dispatch<'Msg> = 'Msg -> unit
@@ -164,6 +177,17 @@ type IEngineService =
 type IRenderer<'Model> =
     abstract member Draw: 'Model -> GameTime -> unit
 
+/// Mutable handle for a MonoGame component instance created during game initialization.
+///
+/// This is intended to be allocated in the composition root (per game instance) and then
+/// threaded into Elmish `update`/`subscribe` functions, avoiding global/module-level mutable state.
+type ComponentRef<'T when 'T :> IGameComponent>() =
+    let mutable value: 'T voption = ValueNone
+
+    member _.TryGet() : 'T voption = value
+    member _.Set(v: 'T) = value <- ValueSome v
+    member _.Clear() = value <- ValueNone
+
 type RenderBuffer<'Cmd>() =
     let items = ResizeArray<struct (int<RenderLayer> * 'Cmd)>(1024)
 
@@ -190,6 +214,10 @@ type Program<'Model, 'Msg> =
       Subscribe: 'Model -> Sub<'Msg>
       Services: (Game -> IEngineService) list
       Renderers: (Game -> IRenderer<'Model>) list
+      // NOTE: Program can host both Elmish-style services/renderers and native MonoGame components.
+      // `Components` are attached to `Game.Components` during initialization to enable drop-in
+      // compatibility with third-party GameComponent/DrawableGameComponent libraries.
+      Components: (Game -> IGameComponent) list
       Load: (GraphicsDevice -> unit) list
       Tick: (GameTime -> 'Msg) voption }
 
@@ -200,6 +228,7 @@ module Program =
           Subscribe = (fun _ -> Sub.none)
           Services = []
           Renderers = []
+          Components = []
           Load = []
           Tick = ValueNone }
 
@@ -213,6 +242,31 @@ module Program =
     let withRenderer (factory: Game -> IRenderer<'Model>) (program: Program<'Model, 'Msg>) =
         { program with
             Renderers = factory :: program.Renderers }
+
+    /// Attach a MonoGame component to the game.
+    ///
+    /// Components are created and added to `Game.Components` during `ElmishGame.Initialize()`.
+    /// Use this to integrate third-party MonoGame libraries that expose `GameComponent`/
+    /// `DrawableGameComponent` implementations without writing adapters.
+    let withComponent (factory: Game -> IGameComponent) (program: Program<'Model, 'Msg>) =
+        { program with
+            Components = factory :: program.Components }
+
+    /// Attach a MonoGame component to the game and capture its instance in a `ComponentRef`.
+    ///
+    /// This keeps third-party components "native" (they live in `Game.Components`) while still
+    /// allowing Elmish code to interact with them without global/module-level mutable bindings.
+    let withComponentRef<'Model, 'Msg, 'T when 'T :> IGameComponent>
+        (componentRef: ComponentRef<'T>)
+        (factory: Game -> 'T)
+        (program: Program<'Model, 'Msg>)
+        =
+        withComponent
+            (fun game ->
+                let c = factory game
+                componentRef.Set c
+                c :> IGameComponent)
+            program
 
     let withTick (map: GameTime -> 'Msg) (program: Program<'Model, 'Msg>) = { program with Tick = ValueSome map }
 
@@ -277,6 +331,14 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
         graphics.PreferredBackBufferHeight <- 600
 
     override _.Initialize() =
+        // Add MonoGame components *before* base.Initialize() so they receive Initialize/LoadContent
+        // lifecycle callbacks according to MonoGame's normal component pipeline.
+        for f in program.Components do
+            try
+                this.Components.Add(f this) |> ignore
+            with ex ->
+                Console.WriteLine($"Error adding component: {ex}")
+
         for f in program.Services do
             services.Add(f this)
 

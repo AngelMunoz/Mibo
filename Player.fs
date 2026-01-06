@@ -106,13 +106,12 @@ module Resources =
     let getTexture () = _pixel
 
 let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
-    match Resources.getTexture () with
-    | ValueSome tex ->
+    Resources.getTexture ()
+    |> ValueOption.iter (fun tex ->
         let p = model.Player
         let rect = Rectangle(int p.Position.X, int p.Position.Y, int p.Size.X, int p.Size.Y)
 
         Draw2D.sprite tex rect
         |> Draw2D.withColor p.Color
         |> Draw2D.atLayer 10<RenderLayer>
-        |> Draw2D.submit buffer
-    | ValueNone -> ()
+        |> Draw2D.submit buffer)

@@ -11,6 +11,7 @@
     <Compile Include="Elmish.fs" />
     <Compile Include="Graphics2D.fs" />
     <Compile Include="Input.fs" />
+    <Compile Include="DemoComponents.fs" />
     <Compile Include="Particles.fs" />
     <Compile Include="Player.fs" />
     <Compile Include="Program.fs" />

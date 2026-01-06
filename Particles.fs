@@ -133,14 +133,12 @@ module Resources =
     let getTexture () = _pixel
 
 let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
-
-    match Resources.getTexture () with
-    | ValueSome tex ->
+    Resources.getTexture ()
+    |> ValueOption.iter (fun tex ->
         for p in model.Particles do
             let rect = Rectangle(int p.Position.X, int p.Position.Y, 2, 2)
 
             Draw2D.sprite tex rect
             |> Draw2D.withColor p.Color
             |> Draw2D.atLayer 5<RenderLayer>
-            |> Draw2D.submit buffer
-    | ValueNone -> ()
+            |> Draw2D.submit buffer)

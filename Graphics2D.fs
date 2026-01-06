@@ -5,8 +5,6 @@ open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open FSharp.UMX
 
-// --- 2D Rendering Implementation ---
-
 [<Struct>]
 type RenderCmd2D =
     | DrawTexture of
@@ -19,8 +17,44 @@ type RenderCmd2D =
         effects: SpriteEffects *
         depth: float32
 
+/// Configuration for `Batch2DRenderer`.
+///
+/// These settings configure the *rendering pass* (Clear + SpriteBatch.Begin parameters),
+/// not individual sprites (those are controlled by `RenderCmd2D` / `Draw2DBuilder`).
+[<Struct>]
+type Batch2DConfig =
+    {
+        ClearColor: Color voption
+        /// Whether to sort the command buffer by `RenderLayer` before issuing draws.
+        /// Keep this enabled if you rely on `RenderLayer` for deterministic ordering.
+        SortCommands: bool
+        SortMode: SpriteSortMode
+        BlendState: BlendState
+        SamplerState: SamplerState
+        DepthStencilState: DepthStencilState
+        RasterizerState: RasterizerState
+        Effect: Effect
+        TransformMatrix: Matrix voption
+    }
+
+module Batch2DConfig =
+
+    /// Sensible defaults for a typical 2D game.
+    /// Matches the current historical behavior of this renderer (clears CornflowerBlue).
+    let defaults: Batch2DConfig =
+        { ClearColor = ValueSome Color.CornflowerBlue
+          SortCommands = true
+          SortMode = SpriteSortMode.Deferred
+          BlendState = BlendState.AlphaBlend
+          SamplerState = SamplerState.LinearClamp
+          DepthStencilState = DepthStencilState.None
+          RasterizerState = RasterizerState.CullCounterClockwise
+          Effect = null
+          TransformMatrix = ValueNone }
+
 /// Standard 2D Renderer using SpriteBatch
-type Batch2DRenderer<'Model>(game: Game, [<InlineIfLambda>] view: 'Model -> RenderBuffer<RenderCmd2D> -> unit) =
+type Batch2DRenderer<'Model>
+    (game: Game, config: Batch2DConfig, [<InlineIfLambda>] view: 'Model -> RenderBuffer<RenderCmd2D> -> unit) =
     let mutable spriteBatch: SpriteBatch = null
     let buffer = RenderBuffer<RenderCmd2D>()
 
@@ -29,11 +63,28 @@ type Batch2DRenderer<'Model>(game: Game, [<InlineIfLambda>] view: 'Model -> Rend
             if isNull spriteBatch then
                 spriteBatch <- new SpriteBatch(game.GraphicsDevice)
 
-            game.GraphicsDevice.Clear Color.CornflowerBlue
+            config.ClearColor |> ValueOption.iter (fun c -> game.GraphicsDevice.Clear c)
+
             buffer.Clear()
             view model buffer
-            buffer.Sort()
-            spriteBatch.Begin()
+
+            if config.SortCommands then
+                buffer.Sort()
+
+            let transform =
+                match config.TransformMatrix with
+                | ValueSome m -> Nullable m
+                | ValueNone -> Nullable()
+
+            spriteBatch.Begin(
+                config.SortMode,
+                config.BlendState,
+                config.SamplerState,
+                config.DepthStencilState,
+                config.RasterizerState,
+                config.Effect,
+                transform
+            )
 
             for i = 0 to buffer.Count - 1 do
                 let struct (_, cmd) = buffer.Item(i)
@@ -50,9 +101,15 @@ type Batch2DRenderer<'Model>(game: Game, [<InlineIfLambda>] view: 'Model -> Rend
 module Batch2DRenderer =
 
     let inline create<'Model> ([<InlineIfLambda>] view: 'Model -> RenderBuffer<RenderCmd2D> -> unit) (game: Game) =
-        Batch2DRenderer<'Model>(game, view) :> IRenderer<'Model>
+        Batch2DRenderer<'Model>(game, Batch2DConfig.defaults, view) :> IRenderer<'Model>
 
-// --- Fluent Builder API ---
+    let inline createWithConfig<'Model>
+        (config: Batch2DConfig)
+        ([<InlineIfLambda>] view: 'Model -> RenderBuffer<RenderCmd2D> -> unit)
+        (game: Game)
+        =
+        Batch2DRenderer<'Model>(game, config, view) :> IRenderer<'Model>
+
 
 [<Struct>]
 type Draw2DBuilder =
