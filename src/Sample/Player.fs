@@ -32,6 +32,9 @@ type Msg =
   | KeyDown of down: Keys
   | KeyUp of up: Keys
   | Tick of tick: float32
+  /// Internal event raised when the player is firing.
+  /// The parent can react to this without peeking into Player.Model.
+  | Fired of position: Vector2
 
 let init (startPos: Vector2) (color: Color) =
   struct ({
@@ -56,6 +59,10 @@ let subscribe(model: Model) : Sub<Msg> =
 
 let update (msg: Msg) (model: Model) =
   match msg with
+  | Fired _ ->
+    // Raised by this module as an event; no state changes are required here.
+    struct (model, Cmd.none)
+
   | KeyDown k ->
     match k with
     | Keys.Left -> struct ({ model with MovingLeft = true }, Cmd.none)
@@ -89,17 +96,30 @@ let update (msg: Msg) (model: Model) =
     if model.MovingDown then
       dir <- dir + Vector2.UnitY
 
-    if dir = Vector2.Zero then
-      struct (model, Cmd.none)
-    else
-      let velocity = dir * model.Speed * dt
-      let newPos = model.Player.Position + velocity
+    let newModel =
+      if dir = Vector2.Zero then
+        model
+      else
+        let velocity = dir * model.Speed * dt
+        let newPos = model.Player.Position + velocity
 
-      struct ({
-                model with
-                    Player = { model.Player with Position = newPos }
-              },
-              Cmd.none)
+        {
+          model with
+              Player = { model.Player with Position = newPos }
+        }
+
+    // If firing, emit an event each tick so the parent can orchestrate effects
+    // (particles/sound/etc.) without checking Player state directly.
+    let cmd =
+      if newModel.IsFiring then
+        Cmd.ofEffect(
+          Mibo.Elmish.Effect<Msg>(fun dispatch ->
+            dispatch(Fired newModel.Player.Position))
+        )
+      else
+        Cmd.none
+
+    struct (newModel, cmd)
 
 module Resources =
   let mutable private _pixel: Texture2D voption = ValueNone

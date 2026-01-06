@@ -18,6 +18,31 @@ module Cmd =
   let none: Cmd<'Msg> = Empty
   let inline ofEffect(eff: Effect<'Msg>) = Single eff
 
+  /// Map a command producing messages of type 'A into a command producing messages of type 'Msg.
+  ///
+  /// This is the command equivalent of `Sub.map` and is required for parent-child composition.
+  let map (f: 'A -> 'Msg) (cmd: Cmd<'A>) : Cmd<'Msg> =
+    match cmd with
+    | Empty -> Empty
+    | Single eff ->
+      Single(
+        Effect<'Msg>(fun dispatch ->
+          let innerDispatch(a: 'A) = dispatch(f a)
+          eff.Invoke(innerDispatch))
+      )
+    | Batch effs ->
+      let mapped = Array.zeroCreate<Effect<'Msg>> effs.Length
+
+      for i = 0 to effs.Length - 1 do
+        let eff = effs[i]
+
+        mapped[i] <-
+          Effect<'Msg>(fun dispatch ->
+            let innerDispatch(a: 'A) = dispatch(f a)
+            eff.Invoke(innerDispatch))
+
+      Batch mapped
+
   let batch(cmds: seq<Cmd<'Msg>>) : Cmd<'Msg> =
     let mutable count = 0
 

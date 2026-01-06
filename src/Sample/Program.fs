@@ -15,12 +15,28 @@ type Model = {
 [<Struct>]
 type Msg =
   | Tick of gt: GameTime
-  | PlayerMsg of pm: Player.Msg
+  | PlayerMsg of playerMsg: Player.Msg
+  | ParticlesMsg of particlesMsg: Particles.Msg
   | DemoBoxBounced of count: int
 
+let private updateInteractiveBoxOverlay
+  (boxRef: ComponentRef<InteractiveBoxOverlay>)
+  (isFiring: bool)
+  : Cmd<Msg> =
+  Cmd.ofEffect(
+    Effect(fun _dispatch ->
+      boxRef.TryGet()
+      |> ValueOption.iter(fun box ->
+        box.SpeedScale <- if isFiring then 2.5f else 1.0f
+
+        box.Tint <- if isFiring then Color.HotPink else Color.DeepSkyBlue
+
+        box.SetVisible(true)))
+  )
+
 let init() =
-  let struct (pModel, _) = Player.init (Vector2(100.f, 100.f)) Color.Red
-  let struct (partModel, _) = Particles.init()
+  let struct (pModel, pCmd) = Player.init (Vector2(100.f, 100.f)) Color.Red
+  let struct (partModel, partCmd) = Particles.init()
 
   let initialModel = {
     Player = pModel
@@ -28,7 +44,8 @@ let init() =
     BoxBounces = 0
   }
 
-  struct (initialModel, Cmd.none)
+  struct (initialModel,
+          Cmd.batch [ Cmd.map PlayerMsg pCmd; Cmd.map ParticlesMsg partCmd ])
 
 let update
   (boxRef: ComponentRef<InteractiveBoxOverlay>)
@@ -39,54 +56,61 @@ let update
   | Tick gt ->
     let dt = float32 gt.ElapsedGameTime.TotalSeconds
 
-    // 1. Update Player (Time Tick)
-    let struct (newPlayer, _) = Player.update (Player.Tick dt) model.Player
+    // Route time to children.
+    let struct (newPlayer, playerCmd) =
+      Player.update (Player.Tick dt) model.Player
 
-    // 2. Update Particles (Time Tick)
-    let struct (newParticles, _) =
+    let struct (newParticles, particlesCmd) =
       Particles.update (Particles.Update dt) model.Particles
 
-    // 3. Orchestration: Check if Player is "Firing"
-    let struct (finalParticles, _) =
-      if newPlayer.IsFiring then
-        let spawnPos = newPlayer.Player.Position
-        Particles.update (Particles.Emit(spawnPos, 5)) newParticles
-      else
-        struct (newParticles, Cmd.none)
+    // Elmish -> MonoGame component interop.
+    let interopCmd = updateInteractiveBoxOverlay boxRef newPlayer.IsFiring
 
-    // Elmish -> MonoGame component interop:
-    // Use the player's "IsFiring" state to control the component.
     let cmd =
-      Cmd.ofEffect(
-        Effect(fun _dispatch ->
-          boxRef.TryGet()
-          |> ValueOption.iter(fun box ->
-            box.SpeedScale <- if newPlayer.IsFiring then 2.5f else 1.0f
-
-            box.Tint <-
-              if newPlayer.IsFiring then
-                Color.HotPink
-              else
-                Color.DeepSkyBlue
-
-            box.SetVisible(true)))
-      )
+      Cmd.batch [
+        Cmd.map PlayerMsg playerCmd
+        Cmd.map ParticlesMsg particlesCmd
+        interopCmd
+      ]
 
     struct ({
               model with
                   Player = newPlayer
-                  Particles = finalParticles
+                  Particles = newParticles
             },
             cmd)
 
   | PlayerMsg pMsg ->
-    let struct (newPlayer, _) = Player.update pMsg model.Player
-    struct ({ model with Player = newPlayer }, Cmd.none)
+    let struct (newPlayer, playerCmd) = Player.update pMsg model.Player
+
+    // Orchestrate cross-module interactions by reacting to child events.
+    let struct (newParticles, particlesCmd) =
+      match pMsg with
+      | Player.Fired pos ->
+        Particles.update (Particles.Emit(pos, 5)) model.Particles
+      | _ -> struct (model.Particles, Cmd.none)
+
+    struct ({
+              model with
+                  Player = newPlayer
+                  Particles = newParticles
+            },
+            Cmd.batch [
+              Cmd.map PlayerMsg playerCmd
+              Cmd.map ParticlesMsg particlesCmd
+            ])
+
+  | ParticlesMsg pMsg ->
+    let struct (newParticles, particlesCmd) =
+      Particles.update pMsg model.Particles
+
+    struct ({ model with Particles = newParticles },
+            Cmd.map ParticlesMsg particlesCmd)
 
   | DemoBoxBounced count ->
     // Component -> Elmish interop:
     // When the component bounces, we update the model and emit some particles.
-    let struct (newParticles, _) =
+    let struct (newParticles, particlesCmd) =
       Particles.update
         (Particles.Emit(model.Player.Player.Position, 20))
         model.Particles
@@ -96,7 +120,7 @@ let update
                   BoxBounces = count
                   Particles = newParticles
             },
-            Cmd.none)
+            Cmd.map ParticlesMsg particlesCmd)
 
 // --- Subscriptions ---
 
