@@ -15,8 +15,6 @@ module ResizeArray =
 
     ra
 
-  let inline ofSeq(s: seq<'T>) = ResizeArray<_>(s)
-
   let inline chooseV (f: 'T -> 'U voption) (ra: ResizeArray<'T>) =
     let result = ResizeArray<_>()
 
@@ -27,30 +25,11 @@ module ResizeArray =
 
     result
 
-  let inline choose (f: 'T -> 'U option) (ra: ResizeArray<'T>) =
-    let result = ResizeArray<_>()
-
-    for item in ra do
-      match f item with
-      | Some v -> result.Add(v)
-      | None -> ()
-
-    result
-
-  let inline map (f: 'T -> 'U) (ra: ResizeArray<'T>) =
-    let result = ResizeArray<_>(ra.Count)
-
-    for item in ra do
-      result.Add(f item)
-
-    result
-
   let inline addFrom (from: ResizeArray<'T>) (into: ResizeArray<'T>) =
     into.AddRange from
     into
 
 
-// --- Domain ---
 [<Struct>]
 type Particle = {
   Position: Vector2
@@ -70,7 +49,6 @@ type Msg =
   | Emit of position: Vector2 * count: int
   | Update of dt: float32
 
-// --- Internal Logic ---
 
 let private createParticle (pos: Vector2) (rng: Random) =
   let angle = rng.NextDouble() * Math.PI * 2.0
@@ -89,23 +67,21 @@ let private createParticle (pos: Vector2) (rng: Random) =
 
 let private rng = System.Random.Shared
 
-// --- Elmish Interface ---
+let init() : struct (Model * Cmd<Msg>) =
+  {
+    Particles = ResizeArray()
+    Texture = ValueNone
+  },
+  Cmd.none
 
-let init() =
-  struct ({
-            Particles = ResizeArray()
-            Texture = ValueNone
-          },
-          Cmd.none)
-
-let update (msg: Msg) (model: Model) =
+let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   match msg with
   | Emit(pos, count) ->
     let newParticles =
       ResizeArray.init count (fun _ -> createParticle pos rng)
       |> ResizeArray.addFrom model.Particles
 
-    struct ({ model with Particles = newParticles }, Cmd.none)
+    { model with Particles = newParticles }, Cmd.none
 
   | Update dt ->
     let updatedParticles =
@@ -128,13 +104,11 @@ let update (msg: Msg) (model: Model) =
                   )
           })
 
-    struct ({
-              model with
-                  Particles = updatedParticles
-            },
-            Cmd.none)
-
-// --- Rendering ---
+    {
+      model with
+          Particles = updatedParticles
+    },
+    Cmd.none
 
 module Resources =
   let mutable private _pixel: Texture2D voption = ValueNone

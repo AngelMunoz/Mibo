@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <Compile Include="DemoComponents.fs" />
-    <Compile Include="Input.fs" />
     <Compile Include="Particles.fs" />
     <Compile Include="Player.fs" />
     <Compile Include="Program.fs" />
