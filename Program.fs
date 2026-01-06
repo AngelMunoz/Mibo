@@ -59,9 +59,9 @@ let subscribe (model: Model) =
 
 // --- Composition Root ---
 
-let view (model: Model) (buffer: RenderBuffer) =
-    Player.view model.Player buffer
-    Particles.view model.Particles buffer
+let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
+    Gamino.Player.view model.Player buffer
+    Gamino.Particles.view model.Particles buffer
 
 [<EntryPoint>]
 let main argv =
@@ -72,7 +72,7 @@ let main argv =
         |> Program.withLoadContent Player.Resources.loadContent
         |> Program.withLoadContent Particles.Resources.loadContent
         |> Program.withRenderer (Batch2DRenderer.create view)
-        |> Program.withService (fun _ -> Input.InputService())
+        |> Program.withService (fun _ -> Input.InputService() :> IEngineService)
 
     use game = new ElmishGame<Model, Msg>(program)
     game.Run()

@@ -5,8 +5,52 @@ open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Gamino.Elmish
 
-// --- Domain ---
+module ResizeArray =
+    let inline init (count: int) f =
+        let ra = ResizeArray<_>(count)
 
+        for i in 0 .. count - 1 do
+            ra.Add(f i)
+
+        ra
+
+    let inline ofSeq (s: seq<'T>) = ResizeArray<_>(s)
+
+    let inline chooseV (f: 'T -> 'U voption) (ra: ResizeArray<'T>) =
+        let result = ResizeArray<_>()
+
+        for item in ra do
+            match f item with
+            | ValueSome v -> result.Add(v)
+            | ValueNone -> ()
+
+        result
+
+    let inline choose (f: 'T -> 'U option) (ra: ResizeArray<'T>) =
+        let result = ResizeArray<_>()
+
+        for item in ra do
+            match f item with
+            | Some v -> result.Add(v)
+            | None -> ()
+
+        result
+
+    let inline map (f: 'T -> 'U) (ra: ResizeArray<'T>) =
+        let result = ResizeArray<_>(ra.Count)
+
+        for item in ra do
+            result.Add(f item)
+
+        result
+
+    let inline addFrom (from: ResizeArray<'T>) (into: ResizeArray<'T>) =
+        into.AddRange from
+        into
+
+
+// --- Domain ---
+[<Struct>]
 type Particle =
     { Position: Vector2
       Velocity: Vector2
@@ -14,9 +58,10 @@ type Particle =
       MaxLife: float32
       Color: Color }
 
+[<Struct>]
 type Model =
-    { Particles: Particle list // Using list for immutability, could be array for perf
-      Texture: Texture2D option }
+    { Particles: Particle ResizeArray
+      Texture: Texture2D voption }
 
 type Msg =
     | Emit of position: Vector2 * count: int
@@ -42,27 +87,29 @@ let private rng = System.Random.Shared
 // --- Elmish Interface ---
 
 let init () =
-    struct ({ Particles = []; Texture = None }, Cmd.none)
+    struct ({ Particles = ResizeArray()
+              Texture = ValueNone },
+            Cmd.none)
 
 let update (msg: Msg) (model: Model) =
     match msg with
     | Emit(pos, count) ->
-        let newParticles = List.init count (fun _ -> createParticle pos rng)
+        let newParticles =
+            ResizeArray.init count (fun _ -> createParticle pos rng)
+            |> ResizeArray.addFrom model.Particles
 
-        struct ({ model with
-                    Particles = newParticles @ model.Particles },
-                Cmd.none)
+        struct ({ model with Particles = newParticles }, Cmd.none)
 
     | Update dt ->
         let updatedParticles =
             model.Particles
-            |> List.choose (fun p ->
+            |> ResizeArray.chooseV (fun p ->
                 let newLife = p.Life - dt
 
                 if newLife <= 0.0f then
-                    None
+                    ValueNone
                 else
-                    Some
+                    ValueSome
                         { p with
                             Position = p.Position + p.Velocity * dt
                             Life = newLife
@@ -75,20 +122,25 @@ let update (msg: Msg) (model: Model) =
 // --- Rendering ---
 
 module Resources =
-    let mutable private _pixel: Texture2D option = None
+    let mutable private _pixel: Texture2D voption = ValueNone
 
     let loadContent (gd: GraphicsDevice) =
         if _pixel.IsNone then
             let tex = new Texture2D(gd, 2, 2)
             tex.SetData([| Color.White; Color.White; Color.White; Color.White |])
-            _pixel <- Some tex
+            _pixel <- ValueSome tex
 
     let getTexture () = _pixel
 
-let view (model: Model) (buffer: RenderBuffer) =
+let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
+
     match Resources.getTexture () with
-    | Some tex ->
+    | ValueSome tex ->
         for p in model.Particles do
             let rect = Rectangle(int p.Position.X, int p.Position.Y, 2, 2)
-            Render.draw tex rect p.Color RenderLayer.Particles buffer |> ignore
-    | None -> ()
+
+            Draw2D.sprite tex rect
+            |> Draw2D.withColor p.Color
+            |> Draw2D.atLayer 5<RenderLayer>
+            |> Draw2D.submit buffer
+    | ValueNone -> ()

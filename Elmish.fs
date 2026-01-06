@@ -4,17 +4,14 @@ open System
 open System.Collections.Generic
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
-open Microsoft.Xna.Framework.Input
+open FSharp.UMX
 
-// --- Performance Core ---
 
-/// A side-effect task.
-/// Defined as a delegate to avoid F# function closure overhead when possible,
-/// though often mapped from F# funcs.
+[<Measure>]
+type RenderLayer
+
 type Effect<'Msg> = delegate of ('Msg -> unit) -> unit
 
-/// A container for effects.
-/// Struct-based to avoid allocation when passing it around.
 [<Struct>]
 type Cmd<'Msg> =
     | Empty
@@ -23,11 +20,9 @@ type Cmd<'Msg> =
 
 module Cmd =
     let none: Cmd<'Msg> = Empty
-
     let inline ofEffect (eff: Effect<'Msg>) = Single eff
 
     let batch (cmds: seq<Cmd<'Msg>>) : Cmd<'Msg> =
-        // Flattens the sequence into a single array
         let mutable count = 0
 
         for c in cmds do
@@ -67,7 +62,6 @@ module Cmd =
                 |> Async.StartImmediate)
         )
 
-// --- Subscriptions ---
 
 type SubId = string list
 type Dispatch<'Msg> = 'Msg -> unit
@@ -83,7 +77,6 @@ module Sub =
     let none = NoSub
 
     let batch (subs: seq<Sub<'Msg>>) =
-        // Flatten
         let arr = ResizeArray<Sub<'Msg>>()
 
         for s in subs do
@@ -94,70 +87,117 @@ module Sub =
 
         if arr.Count = 0 then NoSub else BatchSub(arr.ToArray())
 
-    // Internal helper to flatten a tree of subs into a list of (Id, Subscribe)
-    let internal toList (sub: Sub<'Msg>) =
-        let results = ResizeArray<SubId * Subscribe<'Msg>>()
+    [<TailCall>]
+    let rec internal flatten (stack: ResizeArray<Sub<'Msg>>) (results: ResizeArray<SubId * Subscribe<'Msg>>) =
+        if stack.Count = 0 then
+            ()
+        else
+            let last = stack.Count - 1
+            let s = stack.[last]
+            stack.RemoveAt(last)
 
-        let rec traverse s =
             match s with
             | NoSub -> ()
             | Active(id, func) -> results.Add(id, func)
             | BatchSub subs ->
-                for item in subs do
-                    traverse item
+                for i = subs.Length - 1 downto 0 do
+                    stack.Add(subs.[i])
 
-        traverse sub
-        results
+            flatten stack results
 
-    /// Maps a subscription to a new message type
-    let rec map (idPrefix: string) (f: 'A -> 'Msg) (sub: Sub<'A>) : Sub<'Msg> =
-        match sub with
-        | NoSub -> NoSub
-        | Active(subId, subscribe) ->
-            let newId = idPrefix :: subId
+    [<Struct>]
+    type private MapWork<'A> =
+        | Visit of sub: Sub<'A>
+        | BuildBatch of len: int
 
-            let newSubscribe (dispatch: Dispatch<'Msg>) =
-                // Map the dispatch function
-                let innerDispatch msgA = dispatch (f msgA)
-                subscribe innerDispatch
+    let map (idPrefix: string) (f: 'A -> 'Msg) (sub: Sub<'A>) : Sub<'Msg> =
+        let work = ResizeArray<MapWork<'A>>(64)
+        let results = ResizeArray<Sub<'Msg>>(64)
 
-            Active(newId, newSubscribe)
-        | BatchSub subs ->
-            let mapped = Array.zeroCreate subs.Length
+        work.Add(Visit sub)
 
-            for i = 0 to subs.Length - 1 do
-                mapped[i] <- map idPrefix f subs[i]
+        while work.Count <> 0 do
+            let last = work.Count - 1
+            let item = work.[last]
+            work.RemoveAt(last)
 
-            BatchSub mapped
+            match item with
+            | Visit s ->
+                match s with
+                | NoSub -> results.Add(NoSub)
+                | Active(subId, subscribe) ->
+                    let newId = idPrefix :: subId
 
-// --- Pluggability ---
+                    let newSub (dispatch: Dispatch<'Msg>) =
+                        let innerDispatch msgA = dispatch (f msgA)
+                        subscribe innerDispatch
 
-/// Interface for external systems that need to hook into the main Game Loop
+                    results.Add(Active(newId, newSub))
+                | BatchSub subs ->
+                    let len = subs.Length
+                    work.Add(BuildBatch len)
+
+                    for i = len - 1 downto 0 do
+                        work.Add(Visit subs.[i])
+
+            | BuildBatch len ->
+                if len = 0 then
+                    results.Add(BatchSub [||])
+                else
+                    let start = results.Count - len
+                    let mapped = Array.zeroCreate<Sub<'Msg>> len
+
+                    for i = 0 to len - 1 do
+                        mapped.[i] <- results.[start + i]
+
+                    results.RemoveRange(start, len)
+                    results.Add(BatchSub mapped)
+
+        if results.Count = 0 then
+            NoSub
+        else
+            results.[results.Count - 1]
+
 type IEngineService =
     abstract member Update: GameTime -> unit
 
 type IRenderer<'Model> =
     abstract member Draw: 'Model -> GameTime -> unit
 
-// --- Core ---
+type RenderBuffer<'Cmd>() =
+    let items = ResizeArray<struct (int<RenderLayer> * 'Cmd)>(1024)
+
+    static let comparer =
+        { new IComparer<struct (int<RenderLayer> * 'Cmd)> with
+            member _.Compare(x, y) =
+                let struct (lx, _) = x
+                let struct (ly, _) = y
+
+                if lx < ly then -1
+                elif lx > ly then 1
+                else 0 }
+
+    member _.Clear() = items.Clear()
+    member _.Add(layer: int<RenderLayer>, cmd: 'Cmd) = items.Add(struct (layer, cmd))
+    member _.Sort() = items.Sort(comparer)
+    member _.Count = items.Count
+    member _.Item(i) = items.[i]
+
 
 type Program<'Model, 'Msg> =
     { Init: unit -> struct ('Model * Cmd<'Msg>)
       Update: 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
       Subscribe: 'Model -> Sub<'Msg>
-      // Pluggable Factories
       Services: (Game -> IEngineService) list
       Renderers: (Game -> IRenderer<'Model>) list
-      // Resource Loading
       Load: (GraphicsDevice -> unit) list
-      // System Events
       Tick: (GameTime -> 'Msg) voption }
 
 module Program =
     let mkProgram init update =
         { Init = init
           Update = update
-          Subscribe = fun _ -> Sub.none
+          Subscribe = (fun _ -> Sub.none)
           Services = []
           Renderers = []
           Load = []
@@ -180,43 +220,44 @@ module Program =
         { program with
             Load = load :: program.Load }
 
-// --- The Generic Game Runner ---
 
 type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     inherit Game()
 
     let graphics = new GraphicsDeviceManager(this)
-
     let mutable state: 'Model = Unchecked.defaultof<'Model>
     let pendingMsgs = System.Collections.Concurrent.ConcurrentQueue<'Msg>()
     let activeSubs = Dictionary<SubId, IDisposable>()
-
     let services = ResizeArray<IEngineService>()
     let renderers = ResizeArray<IRenderer<'Model>>()
+    let subBuffer = ResizeArray<SubId * Subscribe<'Msg>>()
+    let subStack = ResizeArray<Sub<'Msg>>()
 
     let dispatch (msg: 'Msg) = pendingMsgs.Enqueue(msg)
 
     let execCmd (cmd: Cmd<'Msg>) =
         match cmd with
         | Empty -> ()
-        | Single eff -> eff.Invoke dispatch
+        | Single eff -> eff.Invoke(dispatch)
         | Batch effs ->
             for i = 0 to effs.Length - 1 do
-                effs[i].Invoke dispatch
-
+                effs[i].Invoke(dispatch)
 
     let updateSubs () =
-        let newSubsList = Sub.toList (program.Subscribe state)
+        subBuffer.Clear()
+        subStack.Clear()
+        subStack.Add(program.Subscribe state)
+        Sub.flatten subStack subBuffer
+
         let currentKeys = activeSubs.Keys |> Seq.toArray
         let newKeysSet = HashSet<SubId>()
 
-        for id, subscribeFn in newSubsList do
+        for (id, subscribeFn) in subBuffer do
             newKeysSet.Add(id) |> ignore
 
             if not (activeSubs.ContainsKey(id)) then
                 try
-                    let disposable = subscribeFn dispatch
-                    activeSubs.Add(id, disposable)
+                    activeSubs.Add(id, subscribeFn dispatch)
                 with ex ->
                     Console.WriteLine($"Error starting sub {id}: {ex}")
 
@@ -235,13 +276,12 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
         graphics.PreferredBackBufferWidth <- 800
         graphics.PreferredBackBufferHeight <- 600
 
-    override this.Initialize() =
-        // Bootstrap factories
-        for factory in program.Services do
-            services.Add(factory this)
+    override _.Initialize() =
+        for f in program.Services do
+            services.Add(f this)
 
-        for factory in program.Renderers do
-            renderers.Add(factory this)
+        for f in program.Renderers do
+            renderers.Add(f this)
 
         base.Initialize()
         let struct (initialState, initialCmds) = program.Init()
@@ -249,21 +289,20 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
         execCmd initialCmds
         updateSubs ()
 
-    override this.LoadContent() =
+    override _.LoadContent() =
         for load in program.Load do
             load this.GraphicsDevice
 
         base.LoadContent()
 
-    override this.Update gameTime =
-        // System Tick
-        match program.Tick with
-        | ValueSome map -> dispatch (map gameTime)
-        | ValueNone -> ()
+    override _.Update(gameTime) =
+        program.Tick
+        |> ValueOption.iter (fun map ->
+            let msg = map gameTime
+            dispatch msg)
 
         for i = 0 to services.Count - 1 do
-            services[i].Update gameTime
-
+            services[i].Update(gameTime)
 
         let mutable stateChanged = false
         let mutable msg = Unchecked.defaultof<'Msg>
@@ -277,10 +316,10 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
         if stateChanged then
             updateSubs ()
 
-        base.Update gameTime
+        base.Update(gameTime)
 
-    override _.Draw gameTime =
+    override _.Draw(gameTime) =
         for i = 0 to renderers.Count - 1 do
             renderers[i].Draw state gameTime
 
-        base.Draw gameTime
+        base.Draw(gameTime)

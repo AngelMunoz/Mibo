@@ -3,20 +3,12 @@ namespace Gamino.Elmish
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
-open Gamino.Elmish
+open FSharp.UMX
 
-// --- Render Optimization (Standard 2D Implementation) ---
+// --- 2D Rendering Implementation ---
 
-/// Defines the drawing order. Lower numbers draw first.
-type RenderLayer =
-    | Background = 0
-    | World = 1
-    | Particles = 2
-    | UI = 3
-
-/// A data-only command for rendering.
 [<Struct>]
-type RenderCmd =
+type RenderCmd2D =
     | DrawTexture of
         texture: Texture2D *
         dest: Rectangle *
@@ -27,69 +19,68 @@ type RenderCmd =
         effects: SpriteEffects *
         depth: float32
 
-/// A flat command buffer.
-type RenderBuffer() =
-    static let LayerCount = 4
-    let buckets = Array.init LayerCount (fun _ -> ResizeArray<RenderCmd>(1024))
+/// Standard 2D Renderer using SpriteBatch
+type Batch2DRenderer<'Model>(game: Game, [<InlineIfLambda>] view: 'Model -> RenderBuffer<RenderCmd2D> -> unit) =
+    let mutable spriteBatch: SpriteBatch = null
+    let buffer = RenderBuffer<RenderCmd2D>()
 
-    member _.Clear() =
-        for b in buckets do
-            b.Clear()
+    interface IRenderer<'Model> with
+        member _.Draw (model: 'Model) (gameTime: GameTime) =
+            if isNull spriteBatch then
+                spriteBatch <- new SpriteBatch(game.GraphicsDevice)
 
-    member _.Add(layer: RenderLayer, cmd: RenderCmd) = buckets[int layer].Add(cmd)
+            game.GraphicsDevice.Clear Color.CornflowerBlue
+            buffer.Clear()
+            view model buffer
+            buffer.Sort()
+            spriteBatch.Begin()
 
-    member _.Execute(sb: SpriteBatch) =
-        for b in buckets do
-            let count = b.Count
-
-            for i = 0 to count - 1 do
-                let cmd = b[i]
+            for i = 0 to buffer.Count - 1 do
+                let struct (_, cmd) = buffer.Item(i)
 
                 match cmd with
                 | DrawTexture(tex, dest, src, color, rot, origin, fx, depth) ->
                     if src.HasValue then
-                        sb.Draw(tex, dest, src.Value, color, rot, origin, fx, depth)
+                        spriteBatch.Draw(tex, dest, src.Value, color, rot, origin, fx, depth)
                     else
-                        sb.Draw(tex, dest, color)
+                        spriteBatch.Draw(tex, dest, color)
 
-/// Builder API for Ergonomics
-module Render =
-    let draw (texture: Texture2D) (dest: Rectangle) (color: Color) (layer: RenderLayer) (buffer: RenderBuffer) =
-        buffer.Add(layer, DrawTexture(texture, dest, Nullable(), color, 0.0f, Vector2.Zero, SpriteEffects.None, 0.0f))
-        buffer
-
-    let drawEx
-        (texture: Texture2D)
-        (dest: Rectangle)
-        (src: Nullable<Rectangle>)
-        (color: Color)
-        (rot: float32)
-        (origin: Vector2)
-        (layer: RenderLayer)
-        (buffer: RenderBuffer)
-        =
-        buffer.Add(layer, DrawTexture(texture, dest, src, color, rot, origin, SpriteEffects.None, 0.0f))
-        buffer
-
-/// The standard 2D Renderer implementation
-type Batch2DRenderer<'Model>(game: Game, [<InlineIfLambda>] view: 'Model -> RenderBuffer -> unit) =
-    let mutable spriteBatch: SpriteBatch = null
-    let renderBuffer = RenderBuffer()
-
-    interface IRenderer<'Model> with
-        member _.Draw (model: 'Model) (gameTime: GameTime) =
-            game.GraphicsDevice.Clear Color.CornflowerBlue
-
-            if isNull spriteBatch then
-                spriteBatch <- new SpriteBatch(game.GraphicsDevice)
-
-            renderBuffer.Clear()
-            view model renderBuffer
-
-            spriteBatch.Begin()
-            renderBuffer.Execute spriteBatch
             spriteBatch.End()
 
 module Batch2DRenderer =
-    let inline create<'Model> ([<InlineIfLambda>] view: 'Model -> RenderBuffer -> unit) (game: Game) =
+
+    let inline create<'Model> ([<InlineIfLambda>] view: 'Model -> RenderBuffer<RenderCmd2D> -> unit) (game: Game) =
         Batch2DRenderer<'Model>(game, view) :> IRenderer<'Model>
+
+// --- Fluent Builder API ---
+
+[<Struct>]
+type Draw2DBuilder =
+    { Texture: Texture2D
+      Dest: Rectangle
+      Source: Nullable<Rectangle>
+      Color: Color
+      Rotation: float32
+      Origin: Vector2
+      Effects: SpriteEffects
+      Depth: float32
+      Layer: int<RenderLayer> }
+
+module Draw2D =
+    let sprite tex dest =
+        { Texture = tex
+          Dest = dest
+          Source = Nullable()
+          Color = Color.White
+          Rotation = 0.0f
+          Origin = Vector2.Zero
+          Effects = SpriteEffects.None
+          Depth = 0.0f
+          Layer = 0<RenderLayer> }
+
+    let withSource src (b: Draw2DBuilder) = { b with Source = Nullable src }
+    let withColor col (b: Draw2DBuilder) = { b with Color = col }
+    let atLayer layer (b: Draw2DBuilder) = { b with Layer = layer }
+
+    let submit (buffer: RenderBuffer<RenderCmd2D>) (b: Draw2DBuilder) =
+        buffer.Add(b.Layer, DrawTexture(b.Texture, b.Dest, b.Source, b.Color, b.Rotation, b.Origin, b.Effects, b.Depth))
