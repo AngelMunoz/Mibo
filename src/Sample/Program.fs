@@ -29,13 +29,11 @@ let private updateInteractiveBoxOverlay
       boxRef.TryGet()
       |> ValueOption.iter(fun box ->
         box.SpeedScale <- if isFiring then 2.5f else 1.0f
-
         box.Tint <- if isFiring then Color.HotPink else Color.DeepSkyBlue
-
         box.SetVisible(true)))
   )
 
-let init() : struct (Model * Cmd<Msg>) =
+let init(_ctx: GameContext) : struct (Model * Cmd<Msg>) =
   let struct (pModel, pCmd) = Player.init (Vector2(100.f, 100.f)) Color.Red
   let struct (partModel, partCmd) = Particles.init()
 
@@ -61,7 +59,6 @@ let update
     let struct (newParticles, particlesCmd) =
       Particles.update (Particles.Update dt) model.Particles
 
-    // Elmish -> MonoGame component interop.
     let interopCmd = updateInteractiveBoxOverlay boxRef newPlayer.IsFiring
 
     {
@@ -97,8 +94,6 @@ let update
     { model with Particles = newParticles }, Cmd.map ParticlesMsg particlesCmd
 
   | DemoBoxBounced count ->
-    // Component -> Elmish interop:
-    // When the component bounces, we update the model and emit some particles.
     let struct (newParticles, particlesCmd) =
       Particles.update
         (Particles.Emit(model.Player.Player.Position, 20))
@@ -123,18 +118,15 @@ let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
 
 [<EntryPoint>]
 let main argv =
-  // Create component references for MonoGame interop
   let interactiveBoxRef = ComponentRef<InteractiveBoxOverlay>()
 
   let program =
     Program.mkProgram init (update interactiveBoxRef)
+    |> Program.withAssets
     |> Program.withRenderer(Batch2DRenderer.create view)
     |> Program.withInput
     |> Program.withTick Tick
     |> Program.withSubscription(subscribe interactiveBoxRef)
-    |> Program.withLoadContent(fun gd ->
-      Player.Resources.loadContent gd
-      Particles.Resources.loadContent gd)
     |> Program.withComponent BouncingBoxOverlay.create
     |> Program.withComponentRef
       interactiveBoxRef

@@ -1,6 +1,5 @@
 module MiboSample.Player
 
-open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Microsoft.Xna.Framework.Input
@@ -31,8 +30,6 @@ type Msg =
   | KeyDown of down: Keys
   | KeyUp of up: Keys
   | Tick of tick: float32
-  /// Internal event raised when the player is firing.
-  /// The parent can react to this without peeking into Player.Model.
   | Fired of position: Vector2
 
 let init (startPos: Vector2) (color: Color) : struct (Model * Cmd<Msg>) =
@@ -51,16 +48,11 @@ let init (startPos: Vector2) (color: Color) : struct (Model * Cmd<Msg>) =
   },
   Cmd.none
 
-let subscribe(model: Model) : Sub<Msg> =
-  // Subscribe to keyboard events from the core input plugin.
-  // Key filtering happens in the update function.
-  Keyboard.listen KeyDown KeyUp
+let subscribe(model: Model) : Sub<Msg> = Keyboard.listen KeyDown KeyUp
 
 let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   match msg with
-  | Fired _ ->
-    // Raised by this module as an event; no state changes are required here.
-    model, Cmd.none
+  | Fired _ -> model, Cmd.none
   | KeyDown k ->
     match k with
     | Keys.Left -> { model with MovingLeft = true }, Cmd.none
@@ -104,8 +96,6 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
               Player = { model.Player with Position = newPos }
         }
 
-    // If firing, emit an event each tick so the parent can orchestrate effects
-    // (particles/sound/etc.) without checking Player state directly.
     let cmd =
       if newModel.IsFiring then
         Cmd.ofEffect(
@@ -116,27 +106,19 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     newModel, cmd
 
-module Resources =
-  let mutable private _pixel: Texture2D voption = ValueNone
-
-  // Called by Main Game during LoadContent
-  let loadContent(gd: GraphicsDevice) =
-    if _pixel.IsNone then
-      let tex = new Texture2D(gd, 1, 1)
-      tex.SetData([| Color.White |])
-      _pixel <- ValueSome tex
-
-  let getTexture() = _pixel
-
 let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
-  Resources.getTexture()
-  |> ValueOption.iter(fun tex ->
-    let p = model.Player
+  let tex =
+    Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
+      let t = new Texture2D(gd, 1, 1)
+      t.SetData([| Color.White |])
+      t)
 
-    let rect =
-      Rectangle(int p.Position.X, int p.Position.Y, int p.Size.X, int p.Size.Y)
+  let p = model.Player
 
-    Draw2D.sprite tex rect
-    |> Draw2D.withColor p.Color
-    |> Draw2D.atLayer 10<RenderLayer>
-    |> Draw2D.submit buffer)
+  let rect =
+    Rectangle(int p.Position.X, int p.Position.Y, int p.Size.X, int p.Size.Y)
+
+  Draw2D.sprite tex rect
+  |> Draw2D.withColor p.Color
+  |> Draw2D.atLayer 10<RenderLayer>
+  |> Draw2D.submit buffer

@@ -37,15 +37,15 @@ type TouchPoint = {
 [<Struct>]
 type TouchDelta = { Touches: TouchPoint[] }
 
-module internal InputServiceInternal =
+module InputServiceInternal =
 
   let private keyboardDelta = Event<KeyboardDelta>()
   let private mouseDelta = Event<MouseDelta>()
   let private touchDelta = Event<TouchDelta>()
 
-  let KeyboardDelta = keyboardDelta.Publish
-  let MouseDelta = mouseDelta.Publish
-  let TouchDelta = touchDelta.Publish
+  let internal KeyboardDelta = keyboardDelta.Publish
+  let internal MouseDelta = mouseDelta.Publish
+  let internal TouchDelta = touchDelta.Publish
 
   let create() : IEngineService =
     let mutable prevKeyboard = KeyboardState()
@@ -250,7 +250,3 @@ module Touch =
         dispatch(handler delta.Touches))
 
     Sub.Active(subId, subscribe)
-
-module Program =
-  let inline withInput(program: Program<'Model, 'Msg>) : Program<'Model, 'Msg> =
-    Program.withService (fun _ -> InputServiceInternal.create()) program

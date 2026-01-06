@@ -242,100 +242,23 @@ type RenderBuffer<'Key, 'Cmd>(?capacity: int, ?keyComparer: IComparer<'Key>) =
   member _.Count = items.Count
   member _.Item(i) = items.[i]
 
+/// Context passed to init, providing access to game resources.
+type GameContext = {
+  GraphicsDevice: GraphicsDevice
+  Content: Content.ContentManager
+  Game: Game
+}
+
 
 type Program<'Model, 'Msg> = {
-  Init: unit -> struct ('Model * Cmd<'Msg>)
+  Init: GameContext -> struct ('Model * Cmd<'Msg>)
   Update: 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
   Subscribe: 'Model -> Sub<'Msg>
   Services: (Game -> IEngineService) list
   Renderers: (Game -> IRenderer<'Model>) list
-  // NOTE: Program can host both Elmish-style services/renderers and native MonoGame components.
-  // `Components` are attached to `Game.Components` during initialization to enable drop-in
-  // compatibility with third-party GameComponent/DrawableGameComponent libraries.
   Components: (Game -> IGameComponent) list
-  Load: (GraphicsDevice -> unit) list
   Tick: (GameTime -> 'Msg) voption
 }
-
-module Program =
-  let mkProgram init update = {
-    Init = init
-    Update = update
-    Subscribe = (fun _ -> Sub.none)
-    Services = []
-    Renderers = []
-    Components = []
-    Load = []
-    Tick = ValueNone
-  }
-
-  let withSubscription
-    (subscribe: 'Model -> Sub<'Msg>)
-    (program: Program<'Model, 'Msg>)
-    =
-    { program with Subscribe = subscribe }
-
-  let withService
-    (factory: Game -> IEngineService)
-    (program: Program<'Model, 'Msg>)
-    =
-    {
-      program with
-          Services = factory :: program.Services
-    }
-
-  let withRenderer
-    (factory: Game -> IRenderer<'Model>)
-    (program: Program<'Model, 'Msg>)
-    =
-    {
-      program with
-          Renderers = factory :: program.Renderers
-    }
-
-  /// Attach a MonoGame component to the game.
-  ///
-  /// Components are created and added to `Game.Components` during `ElmishGame.Initialize()`.
-  /// Use this to integrate third-party MonoGame libraries that expose `GameComponent`/
-  /// `DrawableGameComponent` implementations without writing adapters.
-  let withComponent
-    (factory: Game -> IGameComponent)
-    (program: Program<'Model, 'Msg>)
-    =
-    {
-      program with
-          Components = factory :: program.Components
-    }
-
-  /// Attach a MonoGame component to the game and capture its instance in a `ComponentRef`.
-  ///
-  /// This keeps third-party components "native" (they live in `Game.Components`) while still
-  /// allowing Elmish code to interact with them without global/module-level mutable bindings.
-  let withComponentRef<'Model, 'Msg, 'T when 'T :> IGameComponent>
-    (componentRef: ComponentRef<'T>)
-    (factory: Game -> 'T)
-    (program: Program<'Model, 'Msg>)
-    =
-    withComponent
-      (fun game ->
-        let c = factory game
-        componentRef.Set c
-        c :> IGameComponent)
-      program
-
-  let withTick (map: GameTime -> 'Msg) (program: Program<'Model, 'Msg>) = {
-    program with
-        Tick = ValueSome map
-  }
-
-  let withLoadContent
-    (load: GraphicsDevice -> unit)
-    (program: Program<'Model, 'Msg>)
-    =
-    {
-      program with
-          Load = load :: program.Load
-    }
 
 
 type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
@@ -369,7 +292,7 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     let currentKeys = activeSubs.Keys |> Seq.toArray
     let newKeysSet = HashSet<SubId>()
 
-    for (id, subscribeFn) in subBuffer do
+    for id, subscribeFn in subBuffer do
       newKeysSet.Add(id) |> ignore
 
       if not(activeSubs.ContainsKey(id)) then
@@ -409,16 +332,20 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
       renderers.Add(f this)
 
     base.Initialize()
-    let struct (initialState, initialCmds) = program.Init()
+
+  override _.LoadContent() =
+    base.LoadContent()
+    // Create context and call init after content is ready
+    let ctx = {
+      GraphicsDevice = this.GraphicsDevice
+      Content = this.Content
+      Game = this
+    }
+
+    let struct (initialState, initialCmds) = program.Init ctx
     state <- initialState
     execCmd initialCmds
     updateSubs()
-
-  override _.LoadContent() =
-    for load in program.Load do
-      load this.GraphicsDevice
-
-    base.LoadContent()
 
   override _.Update gameTime =
     program.Tick

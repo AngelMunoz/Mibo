@@ -29,7 +29,6 @@ module ResizeArray =
     into.AddRange from
     into
 
-
 [<Struct>]
 type Particle = {
   Position: Vector2
@@ -40,15 +39,11 @@ type Particle = {
 }
 
 [<Struct>]
-type Model = {
-  Particles: Particle ResizeArray
-  Texture: Texture2D voption
-}
+type Model = { Particles: Particle ResizeArray }
 
 type Msg =
   | Emit of position: Vector2 * count: int
   | Update of dt: float32
-
 
 let private createParticle (pos: Vector2) (rng: Random) =
   let angle = rng.NextDouble() * Math.PI * 2.0
@@ -67,12 +62,7 @@ let private createParticle (pos: Vector2) (rng: Random) =
 
 let private rng = System.Random.Shared
 
-let init() : struct (Model * Cmd<Msg>) =
-  {
-    Particles = ResizeArray()
-    Texture = ValueNone
-  },
-  Cmd.none
+let init() : struct (Model * Cmd<Msg>) = { Particles = ResizeArray() }, Cmd.none
 
 let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   match msg with
@@ -110,24 +100,17 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     },
     Cmd.none
 
-module Resources =
-  let mutable private _pixel: Texture2D voption = ValueNone
-
-  let loadContent(gd: GraphicsDevice) =
-    if _pixel.IsNone then
-      let tex = new Texture2D(gd, 2, 2)
-      tex.SetData([| Color.White; Color.White; Color.White; Color.White |])
-      _pixel <- ValueSome tex
-
-  let getTexture() = _pixel
-
 let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
-  Resources.getTexture()
-  |> ValueOption.iter(fun tex ->
-    for p in model.Particles do
-      let rect = Rectangle(int p.Position.X, int p.Position.Y, 2, 2)
+  let tex =
+    Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
+      let t = new Texture2D(gd, 1, 1)
+      t.SetData([| Color.White |])
+      t)
 
-      Draw2D.sprite tex rect
-      |> Draw2D.withColor p.Color
-      |> Draw2D.atLayer 5<RenderLayer>
-      |> Draw2D.submit buffer)
+  for p in model.Particles do
+    let rect = Rectangle(int p.Position.X, int p.Position.Y, 2, 2)
+
+    Draw2D.sprite tex rect
+    |> Draw2D.withColor p.Color
+    |> Draw2D.atLayer 5<RenderLayer>
+    |> Draw2D.submit buffer

@@ -7,8 +7,10 @@
 
   <ItemGroup>
     <Compile Include="Elmish.fs" />
+    <Compile Include="Assets.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="Graphics2D.fs" />
+    <Compile Include="Program.fs" />
   </ItemGroup>
 
   <ItemGroup>
