@@ -147,11 +147,9 @@ type subId
 type SubId = string<subId>
 
 module SubId =
-  let inline ofString (value: string) : SubId =
-    UMX.tag<subId> value
+  let inline ofString(value: string) : SubId = UMX.tag<subId> value
 
-  let inline value (id: SubId) : string =
-    UMX.untag id
+  let inline value(id: SubId) : string = UMX.untag id
 
   let inline prefix (prefix: string) (id: SubId) : SubId =
     if String.IsNullOrEmpty(prefix) then
@@ -162,7 +160,7 @@ module SubId =
       if String.IsNullOrEmpty(idStr) then
         ofString prefix
       else
-        ofString (prefix + "/" + idStr)
+        ofString(prefix + "/" + idStr)
 
 type Dispatch<'Msg> = 'Msg -> unit
 type Subscribe<'Msg> = Dispatch<'Msg> -> IDisposable
@@ -176,19 +174,57 @@ type Sub<'Msg> =
 module Sub =
   let none = NoSub
 
-  let batch(subs: seq<Sub<'Msg>>) =
-    let arr = ResizeArray<Sub<'Msg>>()
+  let batch(subs: seq<Sub<'Msg>>) : Sub<'Msg> =
+    // Keep this allocation-friendly: avoid intermediate ResizeArray and
+    // avoid wrapping a single sub into a BatchSub array.
+    let inline isNoSub s =
+      match s with
+      | NoSub -> true
+      | _ -> false
+
+    let mutable count = 0
 
     for s in subs do
       match s with
       | NoSub -> ()
-      | Active _ -> arr.Add(s)
-      | BatchSub b -> arr.AddRange(b)
+      | Active _ -> count <- count + 1
+      | BatchSub b -> count <- count + b.Length
 
-    if arr.Count = 0 then NoSub else BatchSub(arr.ToArray())
+    if count = 0 then
+      NoSub
+    elif count = 1 then
+      // Return the single sub directly to avoid allocating an array.
+      let mutable found = NoSub
+
+      for s in subs do
+        match s with
+        | NoSub -> ()
+        | Active _ ->
+          if isNoSub found then
+            found <- s
+        | BatchSub b ->
+          if b.Length = 1 && isNoSub found then
+            found <- b[0]
+
+      found
+    else
+      let arr = Array.zeroCreate<Sub<'Msg>> count
+      let mutable i = 0
+
+      for s in subs do
+        match s with
+        | NoSub -> ()
+        | Active _ ->
+          arr[i] <- s
+          i <- i + 1
+        | BatchSub b ->
+          Array.Copy(b, 0, arr, i, b.Length)
+          i <- i + b.Length
+
+      BatchSub arr
 
   /// Allocation-friendly subscription batching for 2 subs.
-  let batch2(a: Sub<'Msg>, b: Sub<'Msg>) : Sub<'Msg> =
+  let inline batch2(a: Sub<'Msg>, b: Sub<'Msg>) : Sub<'Msg> =
     match a, b with
     | NoSub, x
     | x, NoSub -> x
@@ -210,11 +246,11 @@ module Sub =
     | x, y -> BatchSub [| x; y |]
 
   /// Allocation-friendly subscription batching for 3 subs.
-  let batch3(a: Sub<'Msg>, b: Sub<'Msg>, c: Sub<'Msg>) : Sub<'Msg> =
+  let inline batch3(a: Sub<'Msg>, b: Sub<'Msg>, c: Sub<'Msg>) : Sub<'Msg> =
     batch2(batch2(a, b), c)
 
   /// Allocation-friendly subscription batching for 4 subs.
-  let batch4
+  let inline batch4
     (a: Sub<'Msg>, b: Sub<'Msg>, c: Sub<'Msg>, d: Sub<'Msg>)
     : Sub<'Msg> =
     batch2(batch3(a, b, c), d)
@@ -233,7 +269,7 @@ module Sub =
 
       match s with
       | NoSub -> ()
-      | Active(id, func) -> results.Add(id, func)
+      | Active(id, func) -> results.Add(struct (id, func))
       | BatchSub subs ->
         for i = subs.Length - 1 downto 0 do
           stack.Add(subs.[i])

@@ -17,6 +17,7 @@ type RenderBuffer<'Cmd> = RenderBuffer<int<RenderLayer>, 'Cmd>
 
 [<Struct>]
 type RenderCmd2D =
+  | SetCamera of camera: Camera
   | DrawTexture of
     texture: Texture2D *
     dest: Rectangle *
@@ -43,6 +44,8 @@ type Batch2DConfig = {
   DepthStencilState: DepthStencilState
   RasterizerState: RasterizerState
   Effect: Effect
+  /// Global transform matrix for the batch. 
+  /// Note: If using `SetCamera` commands, this initial matrix might be overridden during the pass.
   TransformMatrix: Matrix voption
 }
 
@@ -86,11 +89,12 @@ type Batch2DRenderer<'Model>
       if config.SortCommands then
         buffer.Sort()
 
-      let transform =
+      let mutable currentTransform =
         match config.TransformMatrix with
         | ValueSome m -> Nullable m
         | ValueNone -> Nullable()
 
+      // Begin the initial batch
       spriteBatch.Begin(
         config.SortMode,
         config.BlendState,
@@ -98,14 +102,47 @@ type Batch2DRenderer<'Model>
         config.DepthStencilState,
         config.RasterizerState,
         config.Effect,
-        transform
+        currentTransform
       )
+
+      let mutable isBatching = true
 
       for i = 0 to buffer.Count - 1 do
         let struct (_, cmd) = buffer.Item(i)
 
         match cmd with
+        | SetCamera cam ->
+            if isBatching then
+                spriteBatch.End()
+                isBatching <- false
+            
+            currentTransform <- Nullable cam.View
+            // Restart batch with new transform
+            spriteBatch.Begin(
+                config.SortMode,
+                config.BlendState,
+                config.SamplerState,
+                config.DepthStencilState,
+                config.RasterizerState,
+                config.Effect,
+                currentTransform
+            )
+            isBatching <- true
+
         | DrawTexture(tex, dest, src, color, rot, origin, fx, depth) ->
+          if not isBatching then
+             // Should not happen if logic above is correct, but safe guard
+             spriteBatch.Begin(
+                config.SortMode,
+                config.BlendState,
+                config.SamplerState,
+                config.DepthStencilState,
+                config.RasterizerState,
+                config.Effect,
+                currentTransform
+             )
+             isBatching <- true
+
           if src.HasValue then
             spriteBatch.Draw(
               tex,
@@ -120,7 +157,8 @@ type Batch2DRenderer<'Model>
           else
             spriteBatch.Draw(tex, dest, color)
 
-      spriteBatch.End()
+      if isBatching then
+        spriteBatch.End()
 
 module Batch2DRenderer =
 
@@ -194,3 +232,6 @@ module Draw2D =
         b.Depth
       )
     )
+
+  let camera (cam: Camera) (layer: int<RenderLayer>) (buffer: RenderBuffer<RenderCmd2D>) =
+    buffer.Add(layer, SetCamera cam)

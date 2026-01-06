@@ -50,30 +50,39 @@ type InputService() =
   let mouseDelta = Event<MouseDelta>()
   let touchDelta = Event<TouchDelta>()
 
+  // Avoid per-frame allocations from KeyboardState.GetPressedKeys().
+  // We scan a cached list of all Keys and reuse buffers; we only allocate arrays
+  // when there is an actual delta to publish.
+  let allKeys: Keys[] = Enum.GetValues(typeof<Keys>) :?> Keys[]
+  let pressedBuf = ResizeArray<Keys>(8)
+  let releasedBuf = ResizeArray<Keys>(8)
+
   let mutable prevKeyboard = KeyboardState()
   let mutable prevMouse = MouseState()
 
   let updateKeyboard() =
     let curr = Keyboard.GetState()
-    let pKeys = prevKeyboard.GetPressedKeys()
-    let cKeys = curr.GetPressedKeys()
 
-    let pressed = ResizeArray<Keys>()
-    let released = ResizeArray<Keys>()
+    pressedBuf.Clear()
+    releasedBuf.Clear()
 
-    for k in pKeys do
-      if not(curr.IsKeyDown(k)) then
-        released.Add(k)
+    for i = 0 to allKeys.Length - 1 do
+      let k = allKeys[i]
 
-    for k in cKeys do
-      if not(prevKeyboard.IsKeyDown(k)) then
-        pressed.Add(k)
+      if k <> Keys.None then
+        let wasDown = prevKeyboard.IsKeyDown(k)
+        let isDown = curr.IsKeyDown(k)
 
-    if pressed.Count > 0 || released.Count > 0 then
+        if wasDown && not isDown then
+          releasedBuf.Add(k)
+        elif isDown && not wasDown then
+          pressedBuf.Add(k)
+
+    if pressedBuf.Count > 0 || releasedBuf.Count > 0 then
       keyboardDelta.Trigger(
         {
-          Pressed = pressed.ToArray()
-          Released = released.ToArray()
+          Pressed = pressedBuf.ToArray()
+          Released = releasedBuf.ToArray()
         }
       )
 

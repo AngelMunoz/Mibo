@@ -117,6 +117,14 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
 
   let p = model.Player
 
+  // Create a camera centered on the player
+  let vp = ctx.GraphicsDevice.Viewport
+  let cam = Camera2D.create p.Position 1.0f (Point(vp.Width, vp.Height))
+
+  // Set camera for the World layer.
+  // We use Layer 0 to ensure it applies to all World entities (Particles are Layer 5, Player is Layer 10).
+  Draw2D.camera cam 0<RenderLayer> buffer
+
   let rect =
     Rectangle(int p.Position.X, int p.Position.Y, int p.Size.X, int p.Size.Y)
 
