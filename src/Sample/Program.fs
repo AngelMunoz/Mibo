@@ -106,15 +106,19 @@ let update
     },
     Cmd.map ParticlesMsg particlesCmd
 
-let subscribe (boxRef: ComponentRef<InteractiveBoxOverlay>) (model: Model) =
+let subscribe
+  (boxRef: ComponentRef<InteractiveBoxOverlay>)
+  (ctx: GameContext)
+  (model: Model)
+  =
   Sub.batch [
-    Player.subscribe model.Player |> Sub.map "Player" PlayerMsg
+    Player.subscribe ctx model.Player |> Sub.map "Player" PlayerMsg
     InteractiveBoxOverlayBridge.subscribeBounced boxRef DemoBoxBounced
   ]
 
-let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
-  Player.view model.Player buffer
-  Particles.view model.Particles buffer
+let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
+  Player.view ctx model.Player buffer
+  Particles.view ctx model.Particles buffer
 
 [<EntryPoint>]
 let main argv =

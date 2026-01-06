@@ -7,7 +7,7 @@ open Mibo.Input
 let mkProgram (init: GameContext -> struct ('Model * Cmd<'Msg>)) update = {
   Init = init
   Update = update
-  Subscribe = (fun _ -> Sub.none)
+  Subscribe = (fun _ctx _model -> Sub.none)
   Services = []
   Renderers = []
   Components = []
@@ -15,7 +15,7 @@ let mkProgram (init: GameContext -> struct ('Model * Cmd<'Msg>)) update = {
 }
 
 let withSubscription
-  (subscribe: 'Model -> Sub<'Msg>)
+  (subscribe: GameContext -> 'Model -> Sub<'Msg>)
   (program: Program<'Model, 'Msg>)
   =
   { program with Subscribe = subscribe }
@@ -68,10 +68,38 @@ let withAssets(program: Program<'Model, 'Msg>) : Program<'Model, 'Msg> =
   let originalInit = program.Init
 
   let wrappedInit ctx =
-    AssetsInternal.initialize ctx.Content ctx.GraphicsDevice
+    let assets = AssetsService.createFromContext ctx
+
+    // Replace any existing registration (defensive).
+    try
+      ctx.Game.Services.RemoveService typeof<IAssets>
+    with _ ->
+      ()
+
+    ctx.Game.Services.AddService(typeof<IAssets>, assets)
+
+    // Best-effort cleanup when the game is exiting.
+    ctx.Game.Exiting.Add(fun _ ->
+      try
+        assets.Dispose()
+      with _ ->
+        ())
+
     originalInit ctx
 
   { program with Init = wrappedInit }
 
 let inline withInput(program: Program<'Model, 'Msg>) : Program<'Model, 'Msg> =
-  withService (fun _ -> InputServiceInternal.create()) program
+  withService
+    (fun _game ->
+      let input = InputService()
+
+      // Replace any existing registration (defensive).
+      try
+        _game.Services.RemoveService typeof<IInput>
+      with _ ->
+        ()
+
+      _game.Services.AddService(typeof<IInput>, input :> IInput)
+      input :> IEngineService)
+    program

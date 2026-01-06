@@ -48,7 +48,8 @@ let init (startPos: Vector2) (color: Color) : struct (Model * Cmd<Msg>) =
   },
   Cmd.none
 
-let subscribe(model: Model) : Sub<Msg> = Keyboard.listen KeyDown KeyUp
+let subscribe (ctx: GameContext) (model: Model) : Sub<Msg> =
+  Keyboard.listen KeyDown KeyUp ctx
 
 let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   match msg with
@@ -106,9 +107,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     newModel, cmd
 
-let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
+let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
   let tex =
-    Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
+    ctx
+    |> Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
       let t = new Texture2D(gd, 1, 1)
       t.SetData([| Color.White |])
       t)

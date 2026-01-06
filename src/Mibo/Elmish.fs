@@ -203,11 +203,18 @@ module Sub =
     else
       results.[results.Count - 1]
 
+/// Context passed to init, providing access to game resources.
+type GameContext = {
+  GraphicsDevice: GraphicsDevice
+  Content: Content.ContentManager
+  Game: Game
+}
+
 type IEngineService =
-  abstract member Update: GameTime -> unit
+  abstract member Update: GameContext * GameTime -> unit
 
 type IRenderer<'Model> =
-  abstract member Draw: 'Model -> GameTime -> unit
+  abstract member Draw: GameContext * 'Model * GameTime -> unit
 
 /// Mutable handle for a MonoGame component instance created during game initialization.
 ///
@@ -242,18 +249,10 @@ type RenderBuffer<'Key, 'Cmd>(?capacity: int, ?keyComparer: IComparer<'Key>) =
   member _.Count = items.Count
   member _.Item(i) = items.[i]
 
-/// Context passed to init, providing access to game resources.
-type GameContext = {
-  GraphicsDevice: GraphicsDevice
-  Content: Content.ContentManager
-  Game: Game
-}
-
-
 type Program<'Model, 'Msg> = {
   Init: GameContext -> struct ('Model * Cmd<'Msg>)
   Update: 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
-  Subscribe: 'Model -> Sub<'Msg>
+  Subscribe: GameContext -> 'Model -> Sub<'Msg>
   Services: (Game -> IEngineService) list
   Renderers: (Game -> IRenderer<'Model>) list
   Components: (Game -> IGameComponent) list
@@ -266,6 +265,7 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
 
   let graphics = new GraphicsDeviceManager(this)
   let mutable state: 'Model = Unchecked.defaultof<'Model>
+  let mutable ctxOpt: GameContext voption = ValueNone
   let pendingMsgs = System.Collections.Concurrent.ConcurrentQueue<'Msg>()
   let activeSubs = Dictionary<SubId, IDisposable>()
   let services = ResizeArray<IEngineService>()
@@ -283,10 +283,10 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
       for i = 0 to effs.Length - 1 do
         effs[i].Invoke(dispatch)
 
-  let updateSubs() =
+  let updateSubs(ctx: GameContext) =
     subBuffer.Clear()
     subStack.Clear()
-    subStack.Add(program.Subscribe state)
+    subStack.Add(program.Subscribe ctx state)
     Sub.flatten subStack subBuffer
 
     let currentKeys = activeSubs.Keys |> Seq.toArray
@@ -342,19 +342,27 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
       Game = this
     }
 
+    // Persist the context for the lifetime of this game instance.
+    ctxOpt <- ValueSome ctx
+
     let struct (initialState, initialCmds) = program.Init ctx
     state <- initialState
     execCmd initialCmds
-    updateSubs()
+    updateSubs ctx
 
   override _.Update gameTime =
+    // MonoGame calls LoadContent before the first Update, but be defensive.
+    match ctxOpt with
+    | ValueNone -> base.Update gameTime
+    | ValueSome ctx ->
+
     program.Tick
     |> ValueOption.iter(fun map ->
       let msg = map gameTime
       dispatch msg)
 
     for i = 0 to services.Count - 1 do
-      services[i].Update(gameTime)
+      services[i].Update(ctx, gameTime)
 
     let mutable stateChanged = false
     let mutable msg = Unchecked.defaultof<'Msg>
@@ -366,12 +374,15 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
       stateChanged <- true
 
     if stateChanged then
-      updateSubs()
+      updateSubs ctx
 
     base.Update gameTime
 
   override _.Draw gameTime =
-    for i = 0 to renderers.Count - 1 do
-      renderers[i].Draw state gameTime
+    match ctxOpt with
+    | ValueNone -> base.Draw gameTime
+    | ValueSome ctx ->
+      for i = 0 to renderers.Count - 1 do
+        renderers[i].Draw(ctx, state, gameTime)
 
-    base.Draw gameTime
+      base.Draw gameTime

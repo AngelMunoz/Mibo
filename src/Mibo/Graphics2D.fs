@@ -67,21 +67,21 @@ type Batch2DRenderer<'Model>
   (
     game: Game,
     config: Batch2DConfig,
-    [<InlineIfLambda>] view: 'Model -> RenderBuffer<RenderCmd2D> -> unit
+    [<InlineIfLambda>] view:
+      GameContext * 'Model * RenderBuffer<RenderCmd2D> -> unit
   ) =
   let mutable spriteBatch: SpriteBatch = null
   let buffer = RenderBuffer<RenderCmd2D>()
 
   interface IRenderer<'Model> with
-    member _.Draw (model: 'Model) (gameTime: GameTime) =
+    member _.Draw(ctx: GameContext, model: 'Model, gameTime: GameTime) =
       if isNull spriteBatch then
-        spriteBatch <- new SpriteBatch(game.GraphicsDevice)
+        spriteBatch <- new SpriteBatch(ctx.GraphicsDevice)
 
-      config.ClearColor
-      |> ValueOption.iter(fun c -> game.GraphicsDevice.Clear c)
+      config.ClearColor |> ValueOption.iter(fun c -> ctx.GraphicsDevice.Clear c)
 
       buffer.Clear()
-      view model buffer
+      view(ctx, model, buffer)
 
       if config.SortCommands then
         buffer.Sort()
@@ -125,18 +125,29 @@ type Batch2DRenderer<'Model>
 module Batch2DRenderer =
 
   let inline create<'Model>
-    ([<InlineIfLambda>] view: 'Model -> RenderBuffer<RenderCmd2D> -> unit)
+    ([<InlineIfLambda>] view:
+      GameContext -> 'Model -> RenderBuffer<RenderCmd2D> -> unit)
     (game: Game)
     =
-    Batch2DRenderer<'Model>(game, Batch2DConfig.defaults, view)
+    Batch2DRenderer<'Model>(
+      game,
+      Batch2DConfig.defaults,
+      fun (ctx, model, buffer) -> view ctx model buffer
+    )
     :> IRenderer<'Model>
 
   let inline createWithConfig<'Model>
     (config: Batch2DConfig)
-    ([<InlineIfLambda>] view: 'Model -> RenderBuffer<RenderCmd2D> -> unit)
+    ([<InlineIfLambda>] view:
+      GameContext -> 'Model -> RenderBuffer<RenderCmd2D> -> unit)
     (game: Game)
     =
-    Batch2DRenderer<'Model>(game, config, view) :> IRenderer<'Model>
+    Batch2DRenderer<'Model>(
+      game,
+      config,
+      fun (ctx, model, buffer) -> view ctx model buffer
+    )
+    :> IRenderer<'Model>
 
 
 [<Struct>]

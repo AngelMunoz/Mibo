@@ -100,9 +100,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     },
     Cmd.none
 
-let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
+let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
   let tex =
-    Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
+    ctx
+    |> Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
       let t = new Texture2D(gd, 1, 1)
       t.SetData([| Color.White |])
       t)
