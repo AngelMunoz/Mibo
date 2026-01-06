@@ -1,10 +1,10 @@
-module Gamino.Player
+module MiboSample.Player
 
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Microsoft.Xna.Framework.Input
-open Gamino.Elmish
+open Mibo.Elmish
 
 // --- Domain ---
 
@@ -46,7 +46,7 @@ let init (startPos: Vector2) (color: Color) =
 let subscribe (model: Model) : Sub<Msg> =
     // We listen to all keys and filter in Update, OR we map specific keys here.
     // For simplicity, we just forward all Key events.
-    Gamino.Input.Keyboard.listen KeyDown KeyUp
+    MiboSample.Input.Keyboard.listen KeyDown KeyUp
 
 let update (msg: Msg) (model: Model) =
     match msg with

@@ -1,9 +1,10 @@
-namespace Gamino.Elmish
+namespace Mibo.Elmish
 
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open FSharp.UMX
+open Mibo.Elmish
 
 [<Struct>]
 type RenderCmd2D =

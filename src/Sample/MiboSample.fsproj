@@ -8,23 +8,23 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Elmish.fs" />
-    <Compile Include="Graphics2D.fs" />
-    <Compile Include="Input.fs" />
     <Compile Include="DemoComponents.fs" />
+    <Compile Include="Input.fs" />
     <Compile Include="Particles.fs" />
     <Compile Include="Player.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FSharp.UMX" Version="1.1.0" />
+    <ProjectReference Include="../Mibo/Mibo.fsproj" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.*" />
     <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.*" />
   </ItemGroup>
 
   <ItemGroup>
-    <MonoGameContentReference Include="Content\Mibo.mgcb" />
+    <MonoGameContentReference Include="Content/Mibo.mgcb" />
   </ItemGroup>
   <Target Name="RestoreDotnetTools" BeforeTargets="CollectPackageReferences">
     <Message Text="Restoring dotnet tools (this might take a while depending on your internet speed and should only happen upon building your project for the first time, or after upgrading MonoGame, or clearing your nuget cache)" Importance="High" />

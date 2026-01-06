@@ -1,8 +1,8 @@
-module Gamino.Core
-
 open Microsoft.Xna.Framework
-open Gamino.Elmish
-open Gamino.DemoComponents
+
+open Mibo.Elmish
+open MiboSample
+open MiboSample.DemoComponents
 
 [<Struct>]
 type Model =
@@ -71,7 +71,7 @@ let update (boxRef: ComponentRef<InteractiveBoxOverlay>) (msg: Msg) (model: Mode
                 cmd)
 
     | PlayerMsg pMsg ->
-        let struct (newPlayer, _) = Gamino.Player.update pMsg model.Player
+        let struct (newPlayer, _) = Player.update pMsg model.Player
         struct ({ model with Player = newPlayer }, Cmd.none)
 
     | DemoBoxBounced count ->
@@ -96,8 +96,8 @@ let subscribe (boxRef: ComponentRef<InteractiveBoxOverlay>) (model: Model) =
 // --- Composition Root ---
 
 let view (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
-    Gamino.Player.view model.Player buffer
-    Gamino.Particles.view model.Particles buffer
+    Player.view model.Player buffer
+    Particles.view model.Particles buffer
 
 [<EntryPoint>]
 let main argv =
@@ -109,7 +109,7 @@ let main argv =
         |> Program.withTick Tick
         |> Program.withLoadContent Player.Resources.loadContent
         |> Program.withLoadContent Particles.Resources.loadContent
-        |> Program.withRenderer (Batch2DRenderer.create view)
+        |> Program.withRenderer (Mibo.Elmish.Batch2DRenderer.create view)
         |> Program.withService (fun _ -> Input.InputService() :> IEngineService)
         |> Program.withComponent BouncingBoxOverlay.create
         |> Program.withComponentRef interactiveBoxRef InteractiveBoxOverlayBridge.create

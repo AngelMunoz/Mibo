@@ -1,4 +1,4 @@
-namespace Gamino.Elmish
+namespace Mibo.Elmish
 
 open System
 open System.Collections.Generic

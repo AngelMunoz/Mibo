@@ -1,4 +1,4 @@
-module Gamino.DemoComponents
+module MiboSample.DemoComponents
 
 open System
 open Microsoft.Xna.Framework
@@ -195,7 +195,7 @@ type InteractiveBoxOverlay(game: Game) =
 
 module InteractiveBoxOverlayBridge =
 
-    open Gamino.Elmish
+    open Mibo.Elmish
 
     /// Factory for `Program.withComponentRef`.
     let create (game: Game) = new InteractiveBoxOverlay(game)

@@ -1,9 +1,9 @@
-module Gamino.Particles
+module MiboSample.Particles
 
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
-open Gamino.Elmish
+open Mibo.Elmish
 
 module ResizeArray =
     let inline init (count: int) f =
