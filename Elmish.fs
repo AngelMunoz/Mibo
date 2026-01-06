@@ -1,4 +1,4 @@
-module Gamino.Elmish
+namespace Gamino.Elmish
 
 open System
 open System.Collections.Generic
@@ -130,114 +130,55 @@ module Sub =
 
             BatchSub mapped
 
-// --- Render Optimization ---
-
-/// Defines the drawing order. Lower numbers draw first.
-type RenderLayer =
-    | Background = 0
-    | World = 1
-    | Particles = 2
-    | UI = 3
-
-/// A data-only command for rendering.
-[<Struct>]
-type RenderCmd =
-    | DrawTexture of
-        texture: Texture2D *
-        dest: Rectangle *
-        source: Nullable<Rectangle> *
-        color: Color *
-        rotation: float32 *
-        origin: Vector2 *
-        effects: SpriteEffects *
-        depth: float32
-
-/// A flat command buffer.
-type RenderBuffer() =
-    // One bucket per layer.
-    // Optimization: We assume RenderLayer values are dense 0..N
-    // We initialize 4 buckets corresponding to Background(0)..UI(3) (actually UI is 3000, wait!)
-    // The previous RenderLayer enum used large gaps (1000, 2000, 3000).
-    // We should normalize them or use a Dictionary/Map if sparse?
-    // No, for performance, we want array indexing.
-    //
-    // Let's redefine RenderLayer to be 0, 1, 2, 3 for this optimization.
-    // Or map them. Redefining is cleanest.
-
-    // We need to access RenderLayer values here or assume max count.
-    // Let's assume a fixed count for the engine core.
-    static let LayerCount = 4
-    let buckets = Array.init LayerCount (fun _ -> ResizeArray<RenderCmd>(1024))
-
-    member _.Clear() =
-        for b in buckets do
-            b.Clear()
-
-    member _.Add(layer: RenderLayer, cmd: RenderCmd) =
-        // We trust the enum value is a valid index.
-        // If we keep the 1000 gaps, this crashes.
-        // We MUST re-define RenderLayer values to 0, 1, 2, 3 in the type definition above first!
-        // See replacement note.
-        buckets[int layer].Add(cmd)
-
-    member _.Execute(sb: SpriteBatch) =
-        // No sorting needed! Just iterate buckets in order.
-        for b in buckets do
-            let count = b.Count
-
-            for i = 0 to count - 1 do
-                let cmd = b[i]
-
-                match cmd with
-                | DrawTexture(tex, dest, src, color, rot, origin, fx, depth) ->
-                    if src.HasValue then
-                        sb.Draw(tex, dest, src.Value, color, rot, origin, fx, depth)
-                    else
-                        sb.Draw(tex, dest, color)
-
-/// Builder API for Ergonomics
-module Render =
-    let inline draw (texture: Texture2D) (dest: Rectangle) (color: Color) (layer: RenderLayer) (buffer: RenderBuffer) =
-        buffer.Add(layer, DrawTexture(texture, dest, Nullable(), color, 0.0f, Vector2.Zero, SpriteEffects.None, 0.0f))
-        buffer
-
-    let inline drawEx
-        (texture: Texture2D)
-        (dest: Rectangle)
-        (src: Nullable<Rectangle>)
-        (color: Color)
-        (rot: float32)
-        (origin: Vector2)
-        (layer: RenderLayer)
-        (buffer: RenderBuffer)
-        =
-        buffer.Add(layer, DrawTexture(texture, dest, src, color, rot, origin, SpriteEffects.None, 0.0f))
-        buffer
-
-/// The pure definition of the Game.
-/// Uses Struct Tuples to avoid heap allocation on return.
-type Program<'Model, 'Msg> =
-    { Init: unit -> struct ('Model * Cmd<'Msg>)
-      Update: 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
-      // View takes buffer and returns unit (populates it)
-      View: 'Model -> RenderBuffer -> unit
-      Subscribe: 'Model -> Sub<'Msg> }
-
-module Program =
-    let mkProgram init update view =
-        { Init = init
-          Update = update
-          View = view
-          Subscribe = fun _ -> Sub.none }
-
-    let withSubscription (subscribe: 'Model -> Sub<'Msg>) (program: Program<'Model, 'Msg>) =
-        { program with Subscribe = subscribe }
-
 // --- Pluggability ---
 
 /// Interface for external systems that need to hook into the main Game Loop
 type IEngineService =
     abstract member Update: GameTime -> unit
+
+type IRenderer<'Model> =
+    abstract member Draw: 'Model -> GameTime -> unit
+
+// --- Core ---
+
+type Program<'Model, 'Msg> =
+    { Init: unit -> struct ('Model * Cmd<'Msg>)
+      Update: 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
+      Subscribe: 'Model -> Sub<'Msg>
+      // Pluggable Factories
+      Services: (Game -> IEngineService) list
+      Renderers: (Game -> IRenderer<'Model>) list
+      // Resource Loading
+      Load: (GraphicsDevice -> unit) list
+      // System Events
+      Tick: (GameTime -> 'Msg) voption }
+
+module Program =
+    let mkProgram init update =
+        { Init = init
+          Update = update
+          Subscribe = fun _ -> Sub.none
+          Services = []
+          Renderers = []
+          Load = []
+          Tick = ValueNone }
+
+    let withSubscription (subscribe: 'Model -> Sub<'Msg>) (program: Program<'Model, 'Msg>) =
+        { program with Subscribe = subscribe }
+
+    let withService (factory: Game -> IEngineService) (program: Program<'Model, 'Msg>) =
+        { program with
+            Services = factory :: program.Services }
+
+    let withRenderer (factory: Game -> IRenderer<'Model>) (program: Program<'Model, 'Msg>) =
+        { program with
+            Renderers = factory :: program.Renderers }
+
+    let withTick (map: GameTime -> 'Msg) (program: Program<'Model, 'Msg>) = { program with Tick = ValueSome map }
+
+    let withLoadContent (load: GraphicsDevice -> unit) (program: Program<'Model, 'Msg>) =
+        { program with
+            Load = load :: program.Load }
 
 // --- The Generic Game Runner ---
 
@@ -245,63 +186,40 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     inherit Game()
 
     let graphics = new GraphicsDeviceManager(this)
-    let mutable spriteBatch: SpriteBatch = null
 
-    // The current state
     let mutable state: 'Model = Unchecked.defaultof<'Model>
-
-    // Concurrent queue for thread-safety (Input/Tasks -> Update Thread)
     let pendingMsgs = System.Collections.Concurrent.ConcurrentQueue<'Msg>()
-
-    // Reusable RenderBuffer (Zero per-frame allocation)
-    let renderBuffer = RenderBuffer()
-
-    // Active Subscriptions
     let activeSubs = Dictionary<SubId, IDisposable>()
 
-    // Pluggable Services
     let services = ResizeArray<IEngineService>()
+    let renderers = ResizeArray<IRenderer<'Model>>()
 
-    do
-        this.Content.RootDirectory <- "Content"
-        this.IsMouseVisible <- true
-        this.Window.AllowUserResizing <- true
-        graphics.PreferredBackBufferWidth <- 800
-        graphics.PreferredBackBufferHeight <- 600
+    let dispatch (msg: 'Msg) = pendingMsgs.Enqueue(msg)
 
-    member this.Dispatch(msg: 'Msg) = pendingMsgs.Enqueue(msg)
+    let execCmd (cmd: Cmd<'Msg>) =
+        match cmd with
+        | Empty -> ()
+        | Single eff -> eff.Invoke dispatch
+        | Batch effs ->
+            for i = 0 to effs.Length - 1 do
+                effs[i].Invoke dispatch
 
-    /// Registers a service to be updated every frame
-    member this.RegisterService(service: IEngineService) = services.Add(service)
 
-    // Diff and update subscriptions
-    member private this.UpdateSubs() =
+    let updateSubs () =
         let newSubsList = Sub.toList (program.Subscribe state)
-
-        // 1. Identify subs to keep, start, and stop
-        // Naive efficient approach:
-        // - Mark all current as "potentially dead"
-        // - Iterate new: if exists, mark "alive". If not, start and add.
-        // - Stop all remaining "dead".
-
-        // But SubId is string list (reference comparison is tricky if re-allocated).
-        // We assume SubId structure is stable.
-
-        let currentKeys = activeSubs.Keys |> Seq.toArray // Copy keys to iterate safely
+        let currentKeys = activeSubs.Keys |> Seq.toArray
         let newKeysSet = HashSet<SubId>()
 
-        for (id, subscribeFn) in newSubsList do
+        for id, subscribeFn in newSubsList do
             newKeysSet.Add(id) |> ignore
 
             if not (activeSubs.ContainsKey(id)) then
-                // Start new sub
                 try
-                    let disposable = subscribeFn this.Dispatch
+                    let disposable = subscribeFn dispatch
                     activeSubs.Add(id, disposable)
                 with ex ->
                     Console.WriteLine($"Error starting sub {id}: {ex}")
 
-        // Stop dead subs
         for key in currentKeys do
             if not (newKeysSet.Contains(key)) then
                 match activeSubs.TryGetValue(key) with
@@ -310,63 +228,59 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
                     activeSubs.Remove(key) |> ignore
                 | _ -> ()
 
-    override this.Initialize() =
-        base.Initialize()
+    do
+        this.Content.RootDirectory <- "Content"
+        this.IsMouseVisible <- true
+        this.Window.AllowUserResizing <- true
+        graphics.PreferredBackBufferWidth <- 800
+        graphics.PreferredBackBufferHeight <- 600
 
+    override this.Initialize() =
+        // Bootstrap factories
+        for factory in program.Services do
+            services.Add(factory this)
+
+        for factory in program.Renderers do
+            renderers.Add(factory this)
+
+        base.Initialize()
         let struct (initialState, initialCmds) = program.Init()
         state <- initialState
-
-        this.ExecCmd initialCmds
-        this.UpdateSubs() // Initial subs
-
-    // Helper to execute Cmd struct
-    member private this.ExecCmd(cmd: Cmd<'Msg>) =
-        match cmd with
-        | Empty -> ()
-        | Single eff -> eff.Invoke(this.Dispatch)
-        | Batch effs ->
-            for i = 0 to effs.Length - 1 do
-                effs[i].Invoke(this.Dispatch)
+        execCmd initialCmds
+        updateSubs ()
 
     override this.LoadContent() =
-        spriteBatch <- new SpriteBatch(this.GraphicsDevice)
+        for load in program.Load do
+            load this.GraphicsDevice
 
-    override this.Update(gameTime) =
-        // 1. Update Services
+        base.LoadContent()
+
+    override this.Update gameTime =
+        // System Tick
+        match program.Tick with
+        | ValueSome map -> dispatch (map gameTime)
+        | ValueNone -> ()
+
         for i = 0 to services.Count - 1 do
-            services[i].Update(gameTime)
+            services[i].Update gameTime
 
-        // 2. Process Message Queue
-        let mutable loop = true
+
         let mutable stateChanged = false
+        let mutable msg = Unchecked.defaultof<'Msg>
 
-        while loop do
-            match pendingMsgs.TryDequeue() with
-            | true, msg ->
-                let struct (newState, cmds) = program.Update msg state
-                state <- newState
-                this.ExecCmd cmds
-                stateChanged <- true
-            | _ -> loop <- false
+        while pendingMsgs.TryDequeue(&msg) do
+            let struct (newState, cmds) = program.Update msg state
+            state <- newState
+            execCmd cmds
+            stateChanged <- true
 
-        // Only update subs if state changed (optimization)
         if stateChanged then
-            this.UpdateSubs()
+            updateSubs ()
 
-        base.Update(gameTime)
+        base.Update gameTime
 
-    override this.Draw(gameTime) =
-        this.GraphicsDevice.Clear Color.CornflowerBlue
+    override _.Draw gameTime =
+        for i = 0 to renderers.Count - 1 do
+            renderers[i].Draw state gameTime
 
-        // 1. Reset Buffer
-        renderBuffer.Clear()
-
-        // 2. Populate Buffer (Pure View Logic)
-        program.View state renderBuffer
-
-        // 3. Execute Buffer
-        spriteBatch.Begin()
-        renderBuffer.Execute(spriteBatch)
-        spriteBatch.End()
-
-        base.Draw(gameTime)
+        base.Draw gameTime
