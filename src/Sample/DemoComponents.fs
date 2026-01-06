@@ -207,7 +207,7 @@ module InteractiveBoxOverlayBridge =
     (componentRef: ComponentRef<InteractiveBoxOverlay>)
     (ofBounce: int -> 'Msg)
     : Sub<'Msg> =
-    let subId = [ "DemoComponents"; "InteractiveBoxOverlay"; "Bounced" ]
+    let subId = SubId.ofString "DemoComponents/InteractiveBoxOverlay/Bounced"
 
     let subscribe(dispatch: Dispatch<'Msg>) =
       match componentRef.TryGet() with

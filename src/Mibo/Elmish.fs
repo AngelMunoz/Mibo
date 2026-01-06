@@ -70,6 +70,38 @@ module Cmd =
 
       Batch arr
 
+  /// Allocation-friendly command batching for 2 commands.
+  let batch2(a: Cmd<'Msg>, b: Cmd<'Msg>) : Cmd<'Msg> =
+    match a, b with
+    | Empty, x
+    | x, Empty -> x
+    | Single ea, Single eb -> Batch [| ea; eb |]
+    | Batch ba, Single eb ->
+      let arr = Array.zeroCreate<Effect<'Msg>>(ba.Length + 1)
+      Array.Copy(ba, 0, arr, 0, ba.Length)
+      arr[arr.Length - 1] <- eb
+      Batch arr
+    | Single ea, Batch bb ->
+      let arr = Array.zeroCreate<Effect<'Msg>>(1 + bb.Length)
+      arr[0] <- ea
+      Array.Copy(bb, 0, arr, 1, bb.Length)
+      Batch arr
+    | Batch ba, Batch bb ->
+      let arr = Array.zeroCreate<Effect<'Msg>>(ba.Length + bb.Length)
+      Array.Copy(ba, 0, arr, 0, ba.Length)
+      Array.Copy(bb, 0, arr, ba.Length, bb.Length)
+      Batch arr
+
+  /// Allocation-friendly command batching for 3 commands.
+  let batch3(a: Cmd<'Msg>, b: Cmd<'Msg>, c: Cmd<'Msg>) : Cmd<'Msg> =
+    batch2(batch2(a, b), c)
+
+  /// Allocation-friendly command batching for 4 commands.
+  let batch4
+    (a: Cmd<'Msg>, b: Cmd<'Msg>, c: Cmd<'Msg>, d: Cmd<'Msg>)
+    : Cmd<'Msg> =
+    batch2(batch3(a, b, c), d)
+
   let ofAsync
     (task: Async<'T>)
     (ofSuccess: 'T -> 'Msg)
@@ -105,7 +137,33 @@ module Cmd =
     )
 
 
-type SubId = string list
+/// Subscription identifier.
+///
+/// This is used as the key for subscription diffing.
+/// Keep this allocation-free in hot paths (avoid list-based IDs).
+[<Measure>]
+type subId
+
+type SubId = string<subId>
+
+module SubId =
+  let inline ofString (value: string) : SubId =
+    UMX.tag<subId> value
+
+  let inline value (id: SubId) : string =
+    UMX.untag id
+
+  let inline prefix (prefix: string) (id: SubId) : SubId =
+    if String.IsNullOrEmpty(prefix) then
+      id
+    else
+      let idStr = value id
+
+      if String.IsNullOrEmpty(idStr) then
+        ofString prefix
+      else
+        ofString (prefix + "/" + idStr)
+
 type Dispatch<'Msg> = 'Msg -> unit
 type Subscribe<'Msg> = Dispatch<'Msg> -> IDisposable
 
@@ -128,6 +186,38 @@ module Sub =
       | BatchSub b -> arr.AddRange(b)
 
     if arr.Count = 0 then NoSub else BatchSub(arr.ToArray())
+
+  /// Allocation-friendly subscription batching for 2 subs.
+  let batch2(a: Sub<'Msg>, b: Sub<'Msg>) : Sub<'Msg> =
+    match a, b with
+    | NoSub, x
+    | x, NoSub -> x
+    | BatchSub aa, BatchSub bb ->
+      let merged = Array.zeroCreate<Sub<'Msg>>(aa.Length + bb.Length)
+      Array.Copy(aa, 0, merged, 0, aa.Length)
+      Array.Copy(bb, 0, merged, aa.Length, bb.Length)
+      BatchSub merged
+    | BatchSub aa, x ->
+      let merged = Array.zeroCreate<Sub<'Msg>>(aa.Length + 1)
+      Array.Copy(aa, 0, merged, 0, aa.Length)
+      merged[merged.Length - 1] <- x
+      BatchSub merged
+    | x, BatchSub bb ->
+      let merged = Array.zeroCreate<Sub<'Msg>>(1 + bb.Length)
+      merged[0] <- x
+      Array.Copy(bb, 0, merged, 1, bb.Length)
+      BatchSub merged
+    | x, y -> BatchSub [| x; y |]
+
+  /// Allocation-friendly subscription batching for 3 subs.
+  let batch3(a: Sub<'Msg>, b: Sub<'Msg>, c: Sub<'Msg>) : Sub<'Msg> =
+    batch2(batch2(a, b), c)
+
+  /// Allocation-friendly subscription batching for 4 subs.
+  let batch4
+    (a: Sub<'Msg>, b: Sub<'Msg>, c: Sub<'Msg>, d: Sub<'Msg>)
+    : Sub<'Msg> =
+    batch2(batch3(a, b, c), d)
 
   [<TailCall>]
   let rec internal flatten
@@ -171,7 +261,7 @@ module Sub =
         match s with
         | NoSub -> results.Add(NoSub)
         | Active(subId, subscribe) ->
-          let newId = idPrefix :: subId
+          let newId = SubId.prefix idPrefix subId
 
           let newSub(dispatch: Dispatch<'Msg>) =
             let innerDispatch msgA = dispatch(f msgA)
@@ -268,6 +358,8 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
   let mutable ctxOpt: GameContext voption = ValueNone
   let pendingMsgs = System.Collections.Concurrent.ConcurrentQueue<'Msg>()
   let activeSubs = Dictionary<SubId, IDisposable>()
+  let subIdsInUse = HashSet<SubId>()
+  let subIdsToRemove = ResizeArray<SubId>(32)
   let services = ResizeArray<IEngineService>()
   let renderers = ResizeArray<IRenderer<'Model>>()
   let subBuffer = ResizeArray<struct (SubId * Subscribe<'Msg>)>()
@@ -289,25 +381,32 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     subStack.Add(program.Subscribe ctx state)
     Sub.flatten subStack subBuffer
 
-    let currentKeys = activeSubs.Keys |> Seq.toArray
-    let newKeysSet = HashSet<SubId>()
+    subIdsInUse.Clear()
+    subIdsToRemove.Clear()
 
     for id, subscribeFn in subBuffer do
-      newKeysSet.Add(id) |> ignore
+      subIdsInUse.Add(id) |> ignore
 
       if not(activeSubs.ContainsKey(id)) then
         try
           activeSubs.Add(id, subscribeFn dispatch)
         with ex ->
-          Console.WriteLine($"Error starting sub {id}: {ex}")
+          Console.WriteLine($"Error starting sub {SubId.value id}: {ex}")
 
-    for key in currentKeys do
-      if not(newKeysSet.Contains(key)) then
-        match activeSubs.TryGetValue(key) with
-        | true, disp ->
-          disp.Dispose()
-          activeSubs.Remove(key) |> ignore
-        | _ -> ()
+    // Remove any subscriptions that are no longer present.
+    // Avoid allocating an array of keys; gather to a reusable buffer first.
+    for KeyValue(key, _disp) in activeSubs do
+      if not(subIdsInUse.Contains(key)) then
+        subIdsToRemove.Add(key)
+
+    for i = 0 to subIdsToRemove.Count - 1 do
+      let key = subIdsToRemove[i]
+
+      match activeSubs.TryGetValue(key) with
+      | true, disp ->
+        disp.Dispose()
+        activeSubs.Remove(key) |> ignore
+      | _ -> ()
 
   do
     this.Content.RootDirectory <- "Content"

@@ -185,7 +185,7 @@ module Keyboard =
     (onReleased: Keys -> 'Msg)
     (ctx: GameContext)
     : Sub<'Msg> =
-    let subId = [ "Mibo"; "Input"; "Keyboard"; "listen" ]
+    let subId = SubId.ofString "Mibo/Input/Keyboard/listen"
 
     let subscribe(dispatch: Dispatch<'Msg>) =
       (Input.getService ctx)
@@ -199,7 +199,7 @@ module Keyboard =
     Sub.Active(subId, subscribe)
 
   let onPressed (handler: Keys -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = [ "Mibo"; "Input"; "Keyboard"; "onPressed" ]
+    let subId = SubId.ofString "Mibo/Input/Keyboard/onPressed"
 
     let subscribe(dispatch: Dispatch<'Msg>) =
       (Input.getService ctx)
@@ -210,7 +210,7 @@ module Keyboard =
     Sub.Active(subId, subscribe)
 
   let onReleased (handler: Keys -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = [ "Mibo"; "Input"; "Keyboard"; "onReleased" ]
+    let subId = SubId.ofString "Mibo/Input/Keyboard/onReleased"
 
     let subscribe(dispatch: Dispatch<'Msg>) =
       (Input.getService ctx)
@@ -223,7 +223,7 @@ module Keyboard =
 module Mouse =
 
   let listen (handler: MouseDelta -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = [ "Mibo"; "Input"; "Mouse"; "listen" ]
+    let subId = SubId.ofString "Mibo/Input/Mouse/listen"
 
     let subscribe(dispatch: Dispatch<'Msg>) =
       (Input.getService ctx)
@@ -232,7 +232,7 @@ module Mouse =
     Sub.Active(subId, subscribe)
 
   let onMove (handler: Point -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = [ "Mibo"; "Input"; "Mouse"; "onMove" ]
+    let subId = SubId.ofString "Mibo/Input/Mouse/onMove"
 
     let subscribe(dispatch: Dispatch<'Msg>) =
       (Input.getService ctx)
@@ -243,7 +243,7 @@ module Mouse =
     Sub.Active(subId, subscribe)
 
   let onLeftClick (handler: Point -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = [ "Mibo"; "Input"; "Mouse"; "onLeftClick" ]
+    let subId = SubId.ofString "Mibo/Input/Mouse/onLeftClick"
 
     let subscribe(dispatch: Dispatch<'Msg>) =
       (Input.getService ctx)
@@ -254,7 +254,7 @@ module Mouse =
     Sub.Active(subId, subscribe)
 
   let onRightClick (handler: Point -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = [ "Mibo"; "Input"; "Mouse"; "onRightClick" ]
+    let subId = SubId.ofString "Mibo/Input/Mouse/onRightClick"
 
     let subscribe(dispatch: Dispatch<'Msg>) =
       (Input.getService ctx)
@@ -265,7 +265,7 @@ module Mouse =
     Sub.Active(subId, subscribe)
 
   let onScroll (handler: int -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = [ "Mibo"; "Input"; "Mouse"; "onScroll" ]
+    let subId = SubId.ofString "Mibo/Input/Mouse/onScroll"
 
     let subscribe(dispatch: Dispatch<'Msg>) =
       (Input.getService ctx)
@@ -277,7 +277,7 @@ module Mouse =
 
 module Touch =
   let listen (handler: TouchPoint[] -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = [ "Mibo"; "Input"; "Touch"; "listen" ]
+    let subId = SubId.ofString "Mibo/Input/Touch/listen"
 
     let subscribe(dispatch: Dispatch<'Msg>) =
       (Input.getService ctx)
