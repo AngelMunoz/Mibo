@@ -1,113 +1,110 @@
 module MiboSample.Player
 
+open System
+open System.Collections.Generic
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Microsoft.Xna.Framework.Input
+open FSharp.UMX
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
-open Mibo.Input
+open MiboSample.Domain
 
+/// Event produced when player fires - dispatched to parent as a message
 [<Struct>]
-type Player = {
-  Position: Vector2
-  Color: Color
-  Size: Vector2
+type FireEvent = Fired of id: Guid<EntityId> * position: Vector2
+
+/// Result of a player tick - new position and optional fire event
+[<Struct>]
+type TickResult = {
+  NewPosition: Vector2
+  FireEvent: FireEvent voption
 }
 
-[<Struct>]
-type Model = {
-  Player: Player
-  Speed: float32
-  MovingLeft: bool
-  MovingRight: bool
-  MovingUp: bool
-  MovingDown: bool
-  IsFiring: bool
-}
+// ─────────────────────────────────────────────────────────────
+// World Module: Pure computations that produce values
+//
+// These functions compute new values but do NOT mutate. The calling
+// site (parent update) decides when and how to apply the mutation.
+// This keeps logic testable and gives the parent full control.
+// ─────────────────────────────────────────────────────────────
 
-[<Struct>]
-type Msg =
-  | KeyDown of down: Keys
-  | KeyUp of up: Keys
-  | Tick of tick: float32
-  | Fired of position: Vector2
+module World =
 
-let init (startPos: Vector2) (color: Color) : struct (Model * Cmd<Msg>) =
-  {
-    Player = {
-      Position = startPos
-      Color = color
-      Size = Vector2(32.f, 32.f)
-    }
-    Speed = 200.f
-    MovingLeft = false
-    MovingRight = false
-    MovingUp = false
-    MovingDown = false
-    IsFiring = false
-  },
-  Cmd.none
+  /// Compute new input state after key press
+  let keyDown (key: Keys) (input: InputState) : InputState =
+    match key with
+    | Keys.Left -> { input with MovingLeft = true }
+    | Keys.Right -> { input with MovingRight = true }
+    | Keys.Up -> { input with MovingUp = true }
+    | Keys.Down -> { input with MovingDown = true }
+    | Keys.Space -> { input with IsFiring = true }
+    | _ -> input
 
-let subscribe (ctx: GameContext) (model: Model) : Sub<Msg> =
-  Keyboard.listen KeyDown KeyUp ctx
+  /// Compute new input state after key release
+  let keyUp (key: Keys) (input: InputState) : InputState =
+    match key with
+    | Keys.Left -> { input with MovingLeft = false }
+    | Keys.Right -> { input with MovingRight = false }
+    | Keys.Up -> { input with MovingUp = false }
+    | Keys.Down -> { input with MovingDown = false }
+    | Keys.Space -> { input with IsFiring = false }
+    | _ -> input
 
-let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
-  match msg with
-  | Fired _ -> model, Cmd.none
-  | KeyDown k ->
-    match k with
-    | Keys.Left -> { model with MovingLeft = true }, Cmd.none
-    | Keys.Right -> { model with MovingRight = true }, Cmd.none
-    | Keys.Up -> { model with MovingUp = true }, Cmd.none
-    | Keys.Down -> { model with MovingDown = true }, Cmd.none
-    | Keys.Space -> { model with IsFiring = true }, Cmd.none
-    | _ -> model, Cmd.none
-  | KeyUp k ->
-    match k with
-    | Keys.Left -> { model with MovingLeft = false }, Cmd.none
-    | Keys.Right -> { model with MovingRight = false }, Cmd.none
-    | Keys.Up -> { model with MovingUp = false }, Cmd.none
-    | Keys.Down -> { model with MovingDown = false }, Cmd.none
-    | Keys.Space -> { model with IsFiring = false }, Cmd.none
-    | _ -> model, Cmd.none
-  | Tick dt ->
+  /// Compute player tick: reads current state, returns new position and events.
+  ///
+  /// This is a pure function - it computes results but does not mutate.
+  /// The parent orchestrator applies the position update to the dictionary.
+  let tick
+    (dt: float32)
+    (entityId: Guid<EntityId>)
+    (position: Vector2)
+    (speed: float32)
+    (input: InputState)
+    : TickResult =
+
+    // Accumulate movement direction from input state
     let mutable dir = Vector2.Zero
 
-    if model.MovingLeft then
+    if input.MovingLeft then
       dir <- dir - Vector2.UnitX
 
-    if model.MovingRight then
+    if input.MovingRight then
       dir <- dir + Vector2.UnitX
 
-    if model.MovingUp then
+    if input.MovingUp then
       dir <- dir - Vector2.UnitY
 
-    if model.MovingDown then
+    if input.MovingDown then
       dir <- dir + Vector2.UnitY
 
-    let newModel =
+    // Apply velocity only if moving
+    let newPos =
       if dir = Vector2.Zero then
-        model
+        position
       else
-        let velocity = dir * model.Speed * dt
-        let newPos = model.Player.Position + velocity
+        position + dir * speed * dt
 
-        {
-          model with
-              Player = { model.Player with Position = newPos }
-        }
-
-    let cmd =
-      if newModel.IsFiring then
-        Cmd.ofEffect(
-          Effect<Msg>(fun dispatch -> dispatch(Fired newModel.Player.Position))
-        )
+    // Fire events are rare control-plane messages
+    let fireEvent =
+      if input.IsFiring then
+        ValueSome(Fired(entityId, newPos))
       else
-        Cmd.none
+        ValueNone
 
-    newModel, cmd
+    {
+      NewPosition = newPos
+      FireEvent = fireEvent
+    }
 
-let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
+/// Render a player entity. Takes component data directly, not the whole model.
+let view
+  (ctx: GameContext)
+  (position: Vector2)
+  (color: Color)
+  (size: Vector2)
+  (buffer: RenderBuffer<RenderCmd2D>)
+  =
   let tex =
     ctx
     |> Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
@@ -115,20 +112,14 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
       t.SetData([| Color.White |])
       t)
 
-  let p = model.Player
-
-  // Create a camera centered on the player
+  // Camera follows player - this is a 2D world-space camera
   let vp = ctx.GraphicsDevice.Viewport
-  let cam = Camera2D.create p.Position 1.0f (Point(vp.Width, vp.Height))
-
-  // Set camera for the World layer.
-  // We use Layer 0 to ensure it applies to all World entities (Particles are Layer 5, Player is Layer 10).
+  let cam = Camera2D.create position 1.0f (Point(vp.Width, vp.Height))
   Draw2D.camera cam 0<RenderLayer> buffer
 
-  let rect =
-    Rectangle(int p.Position.X, int p.Position.Y, int p.Size.X, int p.Size.Y)
+  let rect = Rectangle(int position.X, int position.Y, int size.X, int size.Y)
 
   Draw2D.sprite tex rect
-  |> Draw2D.withColor p.Color
+  |> Draw2D.withColor color
   |> Draw2D.atLayer 10<RenderLayer>
   |> Draw2D.submit buffer

@@ -6,29 +6,8 @@ open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 
-module ResizeArray =
-  let inline init (count: int) f =
-    let ra = ResizeArray<_>(count)
-
-    for i in 0 .. count - 1 do
-      ra.Add(f i)
-
-    ra
-
-  let inline chooseV (f: 'T -> 'U voption) (ra: ResizeArray<'T>) =
-    let result = ResizeArray<_>()
-
-    for item in ra do
-      match f item with
-      | ValueSome v -> result.Add(v)
-      | ValueNone -> ()
-
-    result
-
-  let inline addFrom (from: ResizeArray<'T>) (into: ResizeArray<'T>) =
-    into.AddRange from
-    into
-
+/// Particles are ephemeral visual effects, not game entities.
+/// They don't need IDs - just a flat list that gets updated each frame.
 [<Struct>]
 type Particle = {
   Position: Vector2
@@ -38,69 +17,68 @@ type Particle = {
   Color: Color
 }
 
-[<Struct>]
-type Model = { Particles: Particle ResizeArray }
+let private rng = Random.Shared
 
-type Msg =
-  | Emit of position: Vector2 * count: int
-  | Update of dt: float32
+// ─────────────────────────────────────────────────────────────
+// World Module: Direct operations on particle storage
+//
+// Particles are stored in a ResizeArray for efficient iteration
+// and removal. No entity IDs needed - they're just visual effects
+// that live for a short time and disappear.
+// ─────────────────────────────────────────────────────────────
 
-let private createParticle (pos: Vector2) (rng: Random) =
-  let angle = rng.NextDouble() * Math.PI * 2.0
-  let speed = rng.NextDouble() * 100.0 + 50.0
+module World =
 
-  let velocity =
-    Vector2(float32(Math.Cos angle), float32(Math.Sin angle)) * float32 speed
+  let private createParticle(pos: Vector2) =
+    let angle = rng.NextDouble() * Math.PI * 2.0
+    let speed = rng.NextDouble() * 100.0 + 50.0
 
-  {
-    Position = pos
-    Velocity = velocity
-    Life = 1.0f
-    MaxLife = 1.0f
-    Color = Color.Yellow
-  }
-
-let private rng = System.Random.Shared
-
-let init() : struct (Model * Cmd<Msg>) = { Particles = ResizeArray() }, Cmd.none
-
-let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
-  match msg with
-  | Emit(pos, count) ->
-    let newParticles =
-      ResizeArray.init count (fun _ -> createParticle pos rng)
-      |> ResizeArray.addFrom model.Particles
-
-    { model with Particles = newParticles }, Cmd.none
-
-  | Update dt ->
-    let updatedParticles =
-      model.Particles
-      |> ResizeArray.chooseV(fun p ->
-        let newLife = p.Life - dt
-
-        if newLife <= 0.0f then
-          ValueNone
-        else
-          ValueSome {
-            p with
-                Position = p.Position + p.Velocity * dt
-                Life = newLife
-                Color =
-                  Color.Lerp(
-                    Color.Transparent,
-                    Color.Yellow,
-                    newLife / p.MaxLife
-                  )
-          })
+    let velocity =
+      Vector2(float32(Math.Cos angle), float32(Math.Sin angle)) * float32 speed
 
     {
-      model with
-          Particles = updatedParticles
-    },
-    Cmd.none
+      Position = pos
+      Velocity = velocity
+      Life = 1.0f
+      MaxLife = 1.0f
+      Color = Color.Yellow
+    }
 
-let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
+  /// Spawn particles directly into the list.
+  let emit (pos: Vector2) (count: int) (particles: ResizeArray<Particle>) =
+    for _ = 0 to count - 1 do
+      particles.Add(createParticle pos)
+
+  /// Update all particles: move, age, remove expired.
+  /// Iterates backwards to safely remove during iteration.
+  let tick (dt: float32) (particles: ResizeArray<Particle>) =
+    let mutable i = particles.Count - 1
+
+    while i >= 0 do
+      let p = particles[i]
+      let newLife = p.Life - dt
+
+      if newLife <= 0.0f then
+        // Remove expired: swap with last, then remove last (O(1))
+        particles.RemoveAt(i)
+      else
+        // Update in-place
+        particles[i] <- {
+          p with
+              Position = p.Position + p.Velocity * dt
+              Life = newLife
+              Color =
+                Color.Lerp(Color.Transparent, Color.Yellow, newLife / p.MaxLife)
+        }
+
+      i <- i - 1
+
+/// Render all particles.
+let view
+  (ctx: GameContext)
+  (particles: ResizeArray<Particle>)
+  (buffer: RenderBuffer<RenderCmd2D>)
+  =
   let tex =
     ctx
     |> Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
@@ -108,7 +86,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
       t.SetData([| Color.White |])
       t)
 
-  for p in model.Particles do
+  for p in particles do
     let rect = Rectangle(int p.Position.X, int p.Position.Y, 2, 2)
 
     Draw2D.sprite tex rect

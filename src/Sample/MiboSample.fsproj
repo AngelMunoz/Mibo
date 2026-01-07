@@ -8,9 +8,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Domain.fs" />
     <Compile Include="DemoComponents.fs" />
     <Compile Include="Particles.fs" />
     <Compile Include="Player.fs" />
+    <Compile Include="HueColor.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
