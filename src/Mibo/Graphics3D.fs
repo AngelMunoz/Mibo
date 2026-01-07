@@ -19,6 +19,10 @@ type RenderPass =
 
 [<Struct>]
 type RenderCmd3D =
+  /// Set viewport for multi-camera rendering (split-screen, minimaps, etc).
+  | SetViewport of viewport: Viewport
+  /// Clear the render target. Use between cameras in multi-camera setups.
+  | ClearTarget of clearColor: Color voption * clearDepth: bool
   | SetCamera of camera: Camera
   | DrawMesh of
     pass: RenderPass *
@@ -233,6 +237,21 @@ type Batch3DRenderer<'Model>
         let struct (_, cmd) = buffer.Item(i)
 
         match cmd with
+        | SetViewport vp ->
+          // Multi-camera support: allow user to change viewport mid-frame
+          gd.Viewport <- vp
+
+        | ClearTarget(colorOpt, clearDepth) ->
+          // Multi-camera support: clear between camera renders
+          match colorOpt, clearDepth with
+          | ValueSome c, true ->
+            gd.Clear(ClearOptions.Target ||| ClearOptions.DepthBuffer, c, 1.0f, 0)
+          | ValueSome c, false ->
+            gd.Clear(ClearOptions.Target, c, 1.0f, 0)
+          | ValueNone, true ->
+            gd.Clear(ClearOptions.DepthBuffer, Color.Black, 1.0f, 0)
+          | ValueNone, false -> ()
+
         | SetCamera cam ->
           viewMatrix <- cam.View
           projectionMatrix <- cam.Projection
@@ -424,6 +443,14 @@ module Draw3D =
 
   let camera (cam: Camera) (buffer: RenderBuffer<RenderCmd3D>) =
     buffer.Add((), SetCamera cam)
+
+  /// Set viewport for multi-camera rendering (split-screen, minimaps, etc).
+  let viewport (vp: Viewport) (buffer: RenderBuffer<RenderCmd3D>) =
+    buffer.Add((), SetViewport vp)
+
+  /// Clear color and/or depth buffer. Use between cameras in multi-camera setups.
+  let clear (color: Color voption) (clearDepth: bool) (buffer: RenderBuffer<RenderCmd3D>) =
+    buffer.Add((), ClearTarget(color, clearDepth))
 
   let custom
     (draw: GameContext * Matrix * Matrix -> unit)

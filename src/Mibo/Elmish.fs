@@ -336,8 +336,7 @@ type GameContext = {
   Game: Game
 }
 
-type IEngineService =
-  abstract member Update: GameContext * GameTime -> unit
+// IEngineService has been removed. Use GameComponent or implement IUpdateable directly.
 
 type IRenderer<'Model> =
   abstract member Draw: GameContext * 'Model * GameTime -> unit
@@ -379,7 +378,9 @@ type Program<'Model, 'Msg> = {
   Init: GameContext -> struct ('Model * Cmd<'Msg>)
   Update: 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
   Subscribe: GameContext -> 'Model -> Sub<'Msg>
-  Services: (Game -> IEngineService) list
+  /// Configuration callback invoked in the game constructor.
+  /// Use this to set resolution, vsync, window settings, etc.
+  Config: (Game * GraphicsDeviceManager -> unit) voption
   Renderers: (Game -> IRenderer<'Model>) list
   Components: (Game -> IGameComponent) list
   Tick: (GameTime -> 'Msg) voption
@@ -392,11 +393,10 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
   let graphics = new GraphicsDeviceManager(this)
   let mutable state: 'Model = Unchecked.defaultof<'Model>
   let mutable ctxOpt: GameContext voption = ValueNone
-  let pendingMsgs = System.Collections.Concurrent.ConcurrentQueue<'Msg>()
-  let activeSubs = Dictionary<SubId, IDisposable>()
-  let subIdsInUse = HashSet<SubId>()
+  let pendingMsgs = Collections.Concurrent.ConcurrentQueue<'Msg>()
+  let activeSubs = Collections.Generic.Dictionary<SubId, IDisposable>()
+  let subIdsInUse = Collections.Generic.HashSet<SubId>()
   let subIdsToRemove = ResizeArray<SubId>(32)
-  let services = ResizeArray<IEngineService>()
   let renderers = ResizeArray<IRenderer<'Model>>()
   let subBuffer = ResizeArray<struct (SubId * Subscribe<'Msg>)>()
   let subStack = ResizeArray<Sub<'Msg>>()
@@ -445,11 +445,17 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
       | _ -> ()
 
   do
-    this.Content.RootDirectory <- "Content"
-    this.IsMouseVisible <- true
-    this.Window.AllowUserResizing <- true
-    graphics.PreferredBackBufferWidth <- 800
-    graphics.PreferredBackBufferHeight <- 600
+    // Apply user configuration or use sensible defaults
+    match program.Config with
+    | ValueSome configure ->
+      configure(this, graphics)
+    | ValueNone ->
+      // Default settings (can be overridden via Program.withConfig)
+      this.Content.RootDirectory <- "Content"
+      this.IsMouseVisible <- true
+      this.Window.AllowUserResizing <- true
+      graphics.PreferredBackBufferWidth <- 800
+      graphics.PreferredBackBufferHeight <- 600
 
   override _.Initialize() =
     // Add MonoGame components *before* base.Initialize() so they receive Initialize/LoadContent
@@ -459,9 +465,6 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
         this.Components.Add(f this) |> ignore
       with ex ->
         Console.WriteLine($"Error adding component: {ex}")
-
-    for f in program.Services do
-      services.Add(f this)
 
     for f in program.Renderers do
       renderers.Add(f this)
@@ -496,8 +499,7 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
       let msg = map gameTime
       dispatch msg)
 
-    for i = 0 to services.Count - 1 do
-      services[i].Update(ctx, gameTime)
+    // Systems run via MonoGame's GameComponent.Update (ordered by UpdateOrder)
 
     let mutable stateChanged = false
     let mutable msg = Unchecked.defaultof<'Msg>

@@ -6,6 +6,7 @@ open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Microsoft.Xna.Framework.Audio
 open Microsoft.Xna.Framework.Content
+open System.IO
 
 /// Per-game asset loader/cache service.
 ///
@@ -161,3 +162,47 @@ module Assets =
     (ctx: GameContext)
     : 'T =
     (getService ctx).GetOrCreate<'T> key factory
+
+  /// Load a JSON file and decode it using the provided JDeck decoder.
+  /// Reads from the Content directory (uses TitleContainer.OpenStream).
+  let fromJson<'T> (path: string) (decoder: JDeck.Decoder<'T>) =
+    try
+      let json = File.ReadAllText path
+
+      match JDeck.Decoding.fromString(json, decoder) with
+      | Ok value -> value
+      | Error e -> failwith e.message
+    with ex ->
+      failwithf "Failed to load %s: %s" path ex.Message
+
+  /// Load a JSON file with caching (game-lifetime).
+  /// On first call, decodes and caches; subsequent calls return cached value.
+  let fromJsonCache<'T>
+    (path: string)
+    (decoder: JDeck.Decoder<'T>)
+    (ctx: GameContext)
+    =
+    let assets = getService ctx
+
+    match assets.Get path with
+    | ValueSome cached -> cached
+    | ValueNone ->
+      let value = fromJson path decoder
+      assets.Create path (fun _ -> value)
+
+  /// Load an asset using a custom loader function.
+  /// The loader receives the file path and should return the loaded asset.
+  let fromCustom<'T>
+    (path: string)
+    (loader: string -> 'T)
+    (_ctx: GameContext)
+    : 'T =
+    loader path
+
+  /// Load an asset using a custom loader with caching (game-lifetime).
+  let fromCustomCache<'T>
+    (path: string)
+    (loader: string -> 'T)
+    (ctx: GameContext)
+    : 'T =
+    (getService ctx).GetOrCreate<'T> path (fun _ -> loader path)

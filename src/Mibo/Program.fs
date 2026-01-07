@@ -1,5 +1,6 @@
 module Mibo.Elmish.Program
 
+open System
 open Microsoft.Xna.Framework
 open Mibo.Elmish
 open Mibo.Input
@@ -8,7 +9,7 @@ let mkProgram (init: GameContext -> struct ('Model * Cmd<'Msg>)) update = {
   Init = init
   Update = update
   Subscribe = (fun _ctx _model -> Sub.none)
-  Services = []
+  Config = ValueNone
   Renderers = []
   Components = []
   Tick = ValueNone
@@ -20,13 +21,15 @@ let withSubscription
   =
   { program with Subscribe = subscribe }
 
-let withService
-  (factory: Game -> IEngineService)
+/// Configure MonoGame game settings (resolution, vsync, window, etc).
+/// The callback receives the Game instance and GraphicsDeviceManager.
+let withConfig
+  (configure: Game * GraphicsDeviceManager -> unit)
   (program: Program<'Model, 'Msg>)
   =
   {
     program with
-        Services = factory :: program.Services
+        Config = ValueSome configure
   }
 
 let withRenderer
@@ -89,17 +92,18 @@ let withAssets(program: Program<'Model, 'Msg>) : Program<'Model, 'Msg> =
 
   { program with Init = wrappedInit }
 
-let inline withInput(program: Program<'Model, 'Msg>) : Program<'Model, 'Msg> =
-  withService
-    (fun _game ->
-      let input = InputService()
+/// Register the input component (polls hardware each frame, publishes deltas via IInput).
+let withInput(program: Program<'Model, 'Msg>) : Program<'Model, 'Msg> =
+  withComponent
+    (fun game ->
+      let input = Input.create game
 
-      // Replace any existing registration (defensive).
+      // Register as service so subscriptions can find it
       try
-        _game.Services.RemoveService typeof<IInput>
+        game.Services.RemoveService typeof<IInput>
       with _ ->
         ()
 
-      _game.Services.AddService(typeof<IInput>, input :> IInput)
-      input :> IEngineService)
+      game.Services.AddService(typeof<IInput>, input)
+      input :> IGameComponent)
     program

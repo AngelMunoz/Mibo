@@ -23,35 +23,7 @@ type Msg =
   | PlayerFired of id: Guid<EntityId> * position: Vector2
   | DemoBoxBounced of count: int
 
-// ─────────────────────────────────────────────────────────────
-// System Pipeline (Generic Delegates - Framework-Ready Design)
-//
-// These types and combinators are generic and could live in
-// Mibo.Elmish. The type system enforces the snapshot boundary
-// through the 'Model/'Snapshot type difference.
-// ─────────────────────────────────────────────────────────────
-
-module System =
-  /// Start pipeline with mutable model
-  let inline start (model: 'Model) : 'Model * Cmd<'Msg> list = (model, [])
-
-  /// Pipe a mutable system (pre-snapshot)
-  let inline pipeMutable (system: 'Model -> struct ('Model * Cmd<'Msg> list)) (model: 'Model, cmds: Cmd<'Msg> list) : 'Model * Cmd<'Msg> list =
-    let struct (newModel, newCmds) = system model
-    (newModel, cmds @ newCmds)
-
-  /// SNAPSHOT: Transition from mutable Model to readonly Snapshot
-  let inline snapshot (toSnapshot: 'Model -> 'Snapshot) (model: 'Model, cmds: Cmd<'Msg> list) : 'Snapshot * Cmd<'Msg> list =
-    (toSnapshot model, cmds)
-
-  /// Pipe a readonly system (post-snapshot)
-  let inline pipe (system: 'Snapshot -> struct ('Snapshot * Cmd<'Msg> list)) (snap: 'Snapshot, cmds: Cmd<'Msg> list) : 'Snapshot * Cmd<'Msg> list =
-    let struct (newSnap, newCmds) = system snap
-    (newSnap, cmds @ newCmds)
-
-  /// Finish pipeline: convert snapshot back to model, batch commands
-  let inline finish (fromSnapshot: 'Snapshot -> 'Model) (snap: 'Snapshot, cmds: Cmd<'Msg> list) : struct ('Model * Cmd<'Msg>) =
-    struct (fromSnapshot snap, Cmd.batch cmds)
+// System pipeline is now provided by Mibo.Elmish.System
 
 // ─────────────────────────────────────────────────────────────
 // Init

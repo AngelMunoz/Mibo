@@ -12,11 +12,13 @@
     <Compile Include="Input.fs" />
     <Compile Include="Graphics2D.fs" />
     <Compile Include="Graphics3D.fs" />
+    <Compile Include="System.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="FSharp.UMX" Version="1.1.0" />
+    <PackageReference Include="JDeck" Version="1.0.0" />
     <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.*" PrivateAssets="all" />
   </ItemGroup>
 

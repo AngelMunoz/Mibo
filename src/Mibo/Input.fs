@@ -38,29 +38,27 @@ type TouchPoint = {
 type TouchDelta = { Touches: TouchPoint[] }
 
 /// Per-game input service.
-///
 /// This service is intended to be registered into `Game.Services` by `Program.withInput`.
 type IInput =
   abstract KeyboardDelta: IObservable<KeyboardDelta>
   abstract MouseDelta: IObservable<MouseDelta>
   abstract TouchDelta: IObservable<TouchDelta>
 
-type InputService() =
-  let keyboardDelta = Event<KeyboardDelta>()
-  let mouseDelta = Event<MouseDelta>()
-  let touchDelta = Event<TouchDelta>()
+// ─────────────────────────────────────────────────────────────────────────────
+// Input Polling Functions (module-level, composable)
+// ─────────────────────────────────────────────────────────────────────────────
 
-  // Avoid per-frame allocations from KeyboardState.GetPressedKeys().
-  // We scan a cached list of all Keys and reuse buffers; we only allocate arrays
-  // when there is an actual delta to publish.
-  let allKeys: Keys[] = Enum.GetValues(typeof<Keys>) :?> Keys[]
-  let pressedBuf = ResizeArray<Keys>(8)
-  let releasedBuf = ResizeArray<Keys>(8)
+module InputPolling =
 
-  let mutable prevKeyboard = KeyboardState()
-  let mutable prevMouse = MouseState()
+  // Cached list of all Keys to avoid per-frame allocations from GetPressedKeys()
+  let private allKeys: Keys[] = Enum.GetValues(typeof<Keys>) :?> Keys[]
 
-  let updateKeyboard() =
+  let pollKeyboard
+    (prevKeyboard: byref<KeyboardState>)
+    (pressedBuf: ResizeArray<Keys>)
+    (releasedBuf: ResizeArray<Keys>)
+    (trigger: KeyboardDelta -> unit)
+    =
     let curr = Keyboard.GetState()
 
     pressedBuf.Clear()
@@ -79,16 +77,14 @@ type InputService() =
           pressedBuf.Add(k)
 
     if pressedBuf.Count > 0 || releasedBuf.Count > 0 then
-      keyboardDelta.Trigger(
-        {
-          Pressed = pressedBuf.ToArray()
-          Released = releasedBuf.ToArray()
-        }
-      )
+      trigger {
+        Pressed = pressedBuf.ToArray()
+        Released = releasedBuf.ToArray()
+      }
 
     prevKeyboard <- curr
 
-  let updateMouse() =
+  let pollMouse (prevMouse: byref<MouseState>) (trigger: MouseDelta -> unit) =
     let curr = Mouse.GetState()
 
     let posChanged = curr.X <> prevMouse.X || curr.Y <> prevMouse.Y
@@ -127,7 +123,7 @@ type InputService() =
       || middleReleased
 
     if posChanged || scrollChanged || hasButtonChange then
-      mouseDelta.Trigger {
+      trigger {
         Position = Point(curr.X, curr.Y)
         PositionDelta = Point(curr.X - prevMouse.X, curr.Y - prevMouse.Y)
         Buttons = {
@@ -143,7 +139,7 @@ type InputService() =
 
     prevMouse <- curr
 
-  let updateTouch() =
+  let pollTouch(trigger: TouchDelta -> unit) =
     let touches = TouchPanel.GetState()
 
     if touches.Count > 0 then
@@ -158,20 +154,46 @@ type InputService() =
           State = t.State
         }
 
-      touchDelta.Trigger({ Touches = points })
+      trigger { Touches = points }
 
-  interface IInput with
-    member _.KeyboardDelta = keyboardDelta.Publish
-    member _.MouseDelta = mouseDelta.Publish
-    member _.TouchDelta = touchDelta.Publish
-
-  interface IEngineService with
-    member _.Update(_ctx, _gameTime) =
-      updateKeyboard()
-      updateMouse()
-      updateTouch()
+// ─────────────────────────────────────────────────────────────────────────────
+// Input Component Factory
+// ─────────────────────────────────────────────────────────────────────────────
 
 module Input =
+
+  /// Create an input component that polls hardware each frame and publishes deltas via IInput.
+  let create(game: Game) =
+    // Mutable state captured in closure
+    let keyboardDelta = Event<KeyboardDelta>()
+    let mouseDelta = Event<MouseDelta>()
+    let touchDelta = Event<TouchDelta>()
+
+    let pressedBuf = ResizeArray<Keys>(8)
+    let releasedBuf = ResizeArray<Keys>(8)
+
+    let mutable prevKeyboard = KeyboardState()
+    let mutable prevMouse = MouseState()
+
+    let input =
+      { new GameComponent(game) with
+          override _.Update(gameTime) =
+            InputPolling.pollKeyboard
+              &prevKeyboard
+              pressedBuf
+              releasedBuf
+              keyboardDelta.Trigger
+
+            InputPolling.pollMouse &prevMouse mouseDelta.Trigger
+            InputPolling.pollTouch touchDelta.Trigger
+            base.Update(gameTime)
+        interface IInput with
+          member _.KeyboardDelta = keyboardDelta.Publish
+          member _.MouseDelta = mouseDelta.Publish
+          member _.TouchDelta = touchDelta.Publish
+      }
+
+    input
 
   let tryGetService(ctx: GameContext) : IInput voption =
     let svc = ctx.Game.Services.GetService(typeof<IInput>)

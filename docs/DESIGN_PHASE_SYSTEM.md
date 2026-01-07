@@ -5,16 +5,18 @@
 
 ## Implementation Status
 
-| Component                                                          | Status          | Location                  |
-| ------------------------------------------------------------------ | --------------- | ------------------------- |
-| System pipeline (`start`/`pipeMutable`/`snapshot`/`pipe`/`finish`) | **Implemented** | `Sample/Program.fs:34-54` |
-| Model/Snapshot pattern                                             | **Implemented** | `Sample/Domain.fs:47-100` |
-| Phase-aware component registration                                 | Not started     |                           |
-| `IEngineService` -> `IUpdateable` migration                        | Not started     |                           |
-| `Program.withConfig` callback                                      | Not started     |                           |
-| `Program.withSystem(phase, factory)`                               | Not started     |                           |
+| Component                                                          | Status       | Location                 |
+| ------------------------------------------------------------------ | ------------ | ------------------------ |
+| System pipeline (`start`/`pipeMutable`/`snapshot`/`pipe`/`finish`) | **Complete** | `src/Mibo/System.fs`     |
+| Model/Snapshot pattern                                             | **Complete** | `Sample/Domain.fs`       |
+| `Program.withConfig` callback                                      | **Complete** | `src/Mibo/Program.fs`    |
+| `Input.create` object expression factory                           | **Complete** | `src/Mibo/Input.fs`      |
+| `InputPolling` module-level functions                              | **Complete** | `src/Mibo/Input.fs`      |
+| `SetViewport`/`ClearTarget` commands                               | **Complete** | `src/Mibo/Graphics3D.fs` |
+| `Assets.fromJson`/`fromJsonCache`                                  | **Complete** | `src/Mibo/Assets.fs`     |
+| `Assets.fromCustom`/`fromCustomCache`                              | **Complete** | `src/Mibo/Assets.fs`     |
 
-**Next step:** Extract `System` module from Sample to core Mibo library.
+**Note:** Phase enum and `Program.withSystem(phase, factory)` were intentionally not implemented - ordering is user-controlled via System pipeline in update.
 
 ## 1. Problem Statement
 
