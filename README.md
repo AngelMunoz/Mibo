@@ -20,7 +20,6 @@ Out of the box we provide a few ones already
 
 Ideally using the Elmish architecture one is able to start writing games quite easy, this is demonstrated by [Xelmish](https://github.com/ChrisPritchard/Xelmish), I would like to extend it to 3D and larger games like I am doing with Kipo but in a more F# way.
 
-
 The [Sample](./Sample) directory contains a project of how one can structure a game using Mibo.
 
 while it has some of the elmish traits, you will notice that it diverges in the way it handles the world model.
@@ -30,7 +29,6 @@ In Kipo I learned that going for Domain modeled entities ends up causing perform
 This is not the final shape, but it certainly is a step in the vision of what I would like Mibo to be.
 
 I would like some feedback specially if you are interested in using F# for more than just 2D games and would like to juice out MonoGame performance while staying in the F# ecosystem.
-
 
 Current thoughts and Ideas follow after.
 
@@ -47,12 +45,12 @@ type Model = { Player: Player; Enemies: Enemy list }
 
 This works great for UIs and simple games, but **doesn't scale** for games with many entities:
 
-| Problem | Why It Hurts |
-|---------|--------------|
-| **Nested updates** | `{ model with Player = { model.Player with Position = ... } }` - each level is an allocation |
-| **Cross-entity operations** | "Find all entities near X" requires iterating multiple collections |
-| **System reuse** | Movement logic duplicated for Player, Enemy, Projectile, etc. |
-| **Growing complexity** | Adding a component to all entities means changing every type |
+| Problem                     | Why It Hurts                                                                                 |
+| --------------------------- | -------------------------------------------------------------------------------------------- |
+| **Nested updates**          | `{ model with Player = { model.Player with Position = ... } }` - each level is an allocation |
+| **Cross-entity operations** | "Find all entities near X" requires iterating multiple collections                           |
+| **System reuse**            | Movement logic duplicated for Player, Enemy, Projectile, etc.                                |
+| **Growing complexity**      | Adding a component to all entities means changing every type                                 |
 
 **Component-based world** solves these:
 
@@ -66,12 +64,12 @@ type Model = {
 }
 ```
 
-| Benefit | Why It Helps |
-|---------|--------------|
-| **Flat updates** | `positions[entityId] <- newPos` - O(1), no nesting |
-| **Cross-entity queries** | Spatial queries just iterate the Positions dictionary |
-| **System reuse** | One movement system for all entities with Position+Velocity |
-| **Composition** | Add Health to any entity by inserting into the dictionary |
+| Benefit                  | Why It Helps                                                |
+| ------------------------ | ----------------------------------------------------------- |
+| **Flat updates**         | `positions[entityId] <- newPos` - O(1), no nesting          |
+| **Cross-entity queries** | Spatial queries just iterate the Positions dictionary       |
+| **System reuse**         | One movement system for all entities with Position+Velocity |
+| **Composition**          | Add Health to any entity by inserting into the dictionary   |
 
 ### When TO Use Domain-Shaped Models
 
@@ -88,13 +86,14 @@ The key insight: **Use components for "many of the same thing", models for "one 
 
 Choose the right collection based on update frequency and lifetime:
 
-| Collection | When to Use |
-|------------|-------------|
-| **Immutable Map** | Static data set once at spawn (speed, color). Safe default; switch to Dictionary when it becomes slow. |
-| **Mutable Dictionary** | Stable entity components that don't change every frame. Switch here when Map churn hurts. |
-| **Mutable ResizeArray** | Burst, short-lived objects (particles, projectiles). Avoids allocation churn of Map updates. |
+| Collection              | When to Use                                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Immutable Map**       | Static data set once at spawn (speed, color). Safe default; switch to Dictionary when it becomes slow. |
+| **Mutable Dictionary**  | Stable entity components that don't change every frame. Switch here when Map churn hurts.              |
+| **Mutable ResizeArray** | Burst, short-lived objects (particles, projectiles). Avoids allocation churn of Map updates.           |
 
 In this sample:
+
 - `Positions`, `Inputs` → Dictionary (entity components, updated frequently)
 - `Particles` → ResizeArray (short-lived effects, not entities)
 - `Speeds`, `Colors`, `Sizes` → Map (static config, set once)
@@ -102,11 +101,13 @@ In this sample:
 ## Two-Plane Architecture
 
 **Control Plane (Elmish):**
+
 - Mode changes, events, async work
 - Messages like `KeyDown`, `PlayerFired`, `DemoBoxBounced`
 - Flows through the Elmish message queue
 
 **Data Plane (Direct Mutation):**
+
 - Per-frame position updates, particle aging
 - Systems return computed values, parent applies mutations
 - Bypasses message queue entirely
@@ -124,16 +125,21 @@ dotnet run
 
 ## File Structure
 
-| File | Purpose |
-|------|---------|
-| `Domain.fs` | Shared types: `EntityId`, `InputState` |
-| `Player.fs` | Player system: `World.tick`, `World.keyDown` (pure functions) |
-| `Particles.fs` | Particle system: `World.emit`, `World.tick` |
-| `Program.fs` | World model, orchestration, Elmish wiring |
+| File           | Purpose                                                       |
+| -------------- | ------------------------------------------------------------- |
+| `Domain.fs`    | Shared types: `EntityId`, `InputState`                        |
+| `Player.fs`    | Player system: `World.tick`, `World.keyDown` (pure functions) |
+| `Particles.fs` | Particle system: `World.emit`, `World.tick`                   |
+| `Program.fs`   | World model, orchestration, Elmish wiring                     |
 
 ## What's Next
 
-See [ROADMAP.md](../../ROADMAP.md) for upcoming features:
+See [ROADMAP.md](./ROADMAP.md) for upcoming features:
+
 - Frame pipeline and system scheduling (Phase 1)
 - Write boundaries and end-of-frame flush (Phase 2)
 - Event bus for high-frequency messaging (Phase 3)
+
+In general I want to keep Mibo simple and flexible, if you just want a super simple platformer with squares jumping around, or a 3D ARPG with thousands of entities, I want Mibo to be a good fit for both.
+
+So the roadmap somewhat aims to provide the necessary building blocks towards that.
