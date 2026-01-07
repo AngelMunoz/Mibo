@@ -1,0 +1,160 @@
+namespace Mibo.Elmish.Graphics3D
+
+open System
+open Microsoft.Xna.Framework
+open Microsoft.Xna.Framework.Graphics
+
+/// A batcher for drawing camera-facing billboards (particles, sprites in 3D space).
+/// Billboards always face the camera using camera right/up vectors.
+module BillboardBatch =
+
+  [<Struct>]
+  type State = {
+    mutable Vertices: VertexPositionColorTexture[]
+    mutable Indices: int16[]
+    mutable VertexBuffer: DynamicVertexBuffer
+    mutable IndexBuffer: IndexBuffer
+    mutable SpriteCount: int
+    GraphicsDevice: GraphicsDevice
+  }
+
+  let private ensureBuffers(state: byref<State>) =
+    if isNull state.VertexBuffer then
+      state.VertexBuffer <-
+        new DynamicVertexBuffer(
+          state.GraphicsDevice,
+          typeof<VertexPositionColorTexture>,
+          state.Vertices.Length,
+          BufferUsage.WriteOnly
+        )
+
+      // Pre-calculate indices
+      for i = 0 to (state.Vertices.Length / 4) - 1 do
+        state.Indices.[i * 6 + 0] <- int16(i * 4 + 0)
+        state.Indices.[i * 6 + 1] <- int16(i * 4 + 1)
+        state.Indices.[i * 6 + 2] <- int16(i * 4 + 2)
+        state.Indices.[i * 6 + 3] <- int16(i * 4 + 0)
+        state.Indices.[i * 6 + 4] <- int16(i * 4 + 2)
+        state.Indices.[i * 6 + 5] <- int16(i * 4 + 3)
+
+      state.IndexBuffer <-
+        new IndexBuffer(
+          state.GraphicsDevice,
+          typeof<int16>,
+          state.Indices.Length,
+          BufferUsage.WriteOnly
+        )
+
+      state.IndexBuffer.SetData(state.Indices)
+
+  let private ensureCapacity (numSprites: int) (state: byref<State>) =
+    let requiredVerts = (state.SpriteCount + numSprites) * 4
+
+    if requiredVerts > state.Vertices.Length then
+      let newSize = Math.Max(state.Vertices.Length * 2, requiredVerts)
+      Array.Resize(&state.Vertices, newSize)
+
+      let newIndicesSize = (newSize / 4) * 6
+      Array.Resize(&state.Indices, newIndicesSize)
+
+      // Re-fill indices
+      for i = 0 to (state.Vertices.Length / 4) - 1 do
+        state.Indices.[i * 6 + 0] <- int16(i * 4 + 0)
+        state.Indices.[i * 6 + 1] <- int16(i * 4 + 1)
+        state.Indices.[i * 6 + 2] <- int16(i * 4 + 2)
+        state.Indices.[i * 6 + 3] <- int16(i * 4 + 0)
+        state.Indices.[i * 6 + 4] <- int16(i * 4 + 2)
+        state.Indices.[i * 6 + 5] <- int16(i * 4 + 3)
+
+      state.VertexBuffer <-
+        new DynamicVertexBuffer(
+          state.GraphicsDevice,
+          typeof<VertexPositionColorTexture>,
+          state.Vertices.Length,
+          BufferUsage.WriteOnly
+        )
+
+      state.IndexBuffer <-
+        new IndexBuffer(
+          state.GraphicsDevice,
+          typeof<int16>,
+          state.Indices.Length,
+          BufferUsage.WriteOnly
+        )
+
+      state.IndexBuffer.SetData(state.Indices)
+
+  let create(graphicsDevice: GraphicsDevice) = {
+    Vertices = Array.zeroCreate 2048
+    Indices = Array.zeroCreate 3072
+    VertexBuffer = null
+    IndexBuffer = null
+    SpriteCount = 0
+    GraphicsDevice = graphicsDevice
+  }
+
+  /// Begin a batch. Caller is responsible for configuring their effect before calling.
+  /// The effect's first pass will be applied.
+  let inline begin' (effect: Effect) (state: byref<State>) =
+    state.SpriteCount <- 0
+    effect.CurrentTechnique.Passes.[0].Apply()
+
+  let draw
+    (position: Vector3)
+    (size: float32)
+    (rotation: float32)
+    (color: Color)
+    (camRight: Vector3)
+    (camUp: Vector3)
+    (state: byref<State>)
+    =
+    ensureCapacity 1 &state
+
+    let halfSize = size * 0.5f
+
+    // Apply rotation
+    let cos = MathF.Cos(rotation)
+    let sin = MathF.Sin(rotation)
+
+    // Rotated basis vectors
+    let rotRight = (camRight * cos) + (camUp * sin)
+    let rotUp = (camUp * cos) - (camRight * sin)
+
+    let w = rotRight * halfSize
+    let h = rotUp * halfSize
+
+    // Quad vertices relative to center position
+    let v0 = position - w + h // TopLeft
+    let v1 = position + w + h // TopRight
+    let v2 = position + w - h // BottomRight
+    let v3 = position - w - h // BottomLeft
+
+    let idx = state.SpriteCount * 4
+
+    state.Vertices.[idx + 0] <-
+      VertexPositionColorTexture(v0, color, Vector2(0.0f, 0.0f))
+
+    state.Vertices.[idx + 1] <-
+      VertexPositionColorTexture(v1, color, Vector2(1.0f, 0.0f))
+
+    state.Vertices.[idx + 2] <-
+      VertexPositionColorTexture(v2, color, Vector2(1.0f, 1.0f))
+
+    state.Vertices.[idx + 3] <-
+      VertexPositionColorTexture(v3, color, Vector2(0.0f, 1.0f))
+
+    state.SpriteCount <- state.SpriteCount + 1
+
+  let end'(state: byref<State>) =
+    if state.SpriteCount > 0 then
+      ensureBuffers &state
+      state.VertexBuffer.SetData(state.Vertices, 0, state.SpriteCount * 4)
+      state.GraphicsDevice.SetVertexBuffer(state.VertexBuffer)
+      state.GraphicsDevice.Indices <- state.IndexBuffer
+
+      state.GraphicsDevice.DrawIndexedPrimitives(
+        PrimitiveType.TriangleList,
+        0,
+        0,
+        state.SpriteCount * 2
+      )

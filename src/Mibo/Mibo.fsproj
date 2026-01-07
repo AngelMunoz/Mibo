@@ -8,9 +8,12 @@
   <ItemGroup>
     <Compile Include="Elmish.fs" />
     <Compile Include="Camera.fs" />
+    <Compile Include="Culling.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="Graphics2D.fs" />
+    <Compile Include="QuadBatch.fs" />
+    <Compile Include="BillboardBatch.fs" />
     <Compile Include="Graphics3D.fs" />
     <Compile Include="System.fs" />
     <Compile Include="Program.fs" />

@@ -49,6 +49,19 @@ type RenderCmd3D =
     diffuseColor: Color voption *
     texture: Texture2D voption
 
+  /// Draw an axis-aligned textured quad in 3D space.
+  /// Caller is responsible for setting up the effect (View, Projection, Texture, etc).
+  | DrawQuad of effect: Effect * position: Vector3 * dQSize: Vector2
+
+  /// Draw a camera-facing billboard (particles, sprites in 3D).
+  /// Caller is responsible for setting up the effect.
+  | DrawBillboard of
+    effect: Effect *
+    position: Vector3 *
+    dBSize: float32 *
+    rotation: float32 *
+    color: Color
+
 /// Convenience alias for a render buffer for 3D commands.
 ///
 /// 3D rendering typically does not rely on a 2D-style render-layer ordering.
@@ -172,6 +185,10 @@ type Batch3DRenderer<'Model>
     opaque.Clear()
     transparent.Clear()
 
+  // Batchers for quads and billboards
+  let mutable quadBatch = QuadBatch.create(game.GraphicsDevice)
+  let mutable billboardBatch = BillboardBatch.create(game.GraphicsDevice)
+
   interface IRenderer<'Model> with
     member _.Draw(ctx: GameContext, model: 'Model, gameTime: GameTime) =
       // Note: We don't clear here by default if mixing 2D/3D,
@@ -233,21 +250,29 @@ type Batch3DRenderer<'Model>
       clearLists()
       let mutable camPos = getCameraWorldPosition viewMatrix
 
+      // Track camera basis vectors for billboards
+      let mutable camRight = Vector3.Right
+      let mutable camUp = Vector3.Up
+
+      let mutable currentQuadEffect = null
+      let mutable currentBillboardEffect = null
+
       for i = 0 to buffer.Count - 1 do
         let struct (_, cmd) = buffer.Item(i)
 
         match cmd with
-        | SetViewport vp ->
-          // Multi-camera support: allow user to change viewport mid-frame
-          gd.Viewport <- vp
+        | SetViewport vp -> gd.Viewport <- vp
 
         | ClearTarget(colorOpt, clearDepth) ->
-          // Multi-camera support: clear between camera renders
           match colorOpt, clearDepth with
           | ValueSome c, true ->
-            gd.Clear(ClearOptions.Target ||| ClearOptions.DepthBuffer, c, 1.0f, 0)
-          | ValueSome c, false ->
-            gd.Clear(ClearOptions.Target, c, 1.0f, 0)
+            gd.Clear(
+              ClearOptions.Target ||| ClearOptions.DepthBuffer,
+              c,
+              1.0f,
+              0
+            )
+          | ValueSome c, false -> gd.Clear(ClearOptions.Target, c, 1.0f, 0)
           | ValueNone, true ->
             gd.Clear(ClearOptions.DepthBuffer, Color.Black, 1.0f, 0)
           | ValueNone, false -> ()
@@ -257,9 +282,12 @@ type Batch3DRenderer<'Model>
           projectionMatrix <- cam.Projection
           camPos <- getCameraWorldPosition viewMatrix
 
-        | DrawCustom draw ->
-          // Execute immediately to preserve submission ordering.
-          draw(ctx, viewMatrix, projectionMatrix)
+          // Extract camera basis from view matrix for billboards
+          let invView = Matrix.Invert(viewMatrix)
+          camRight <- Vector3(invView.M11, invView.M21, invView.M31)
+          camUp <- Vector3(invView.M12, invView.M22, invView.M32)
+
+        | DrawCustom draw -> draw(ctx, viewMatrix, projectionMatrix)
 
         | DrawMesh(pass, m, transform, _colorOpt, _texOpt) ->
           let pos = transform.Translation
@@ -277,13 +305,38 @@ type Batch3DRenderer<'Model>
           | Opaque -> opaque.Add(struct (distSq, cmd))
           | Transparent -> transparent.Add(struct (distSq, cmd))
 
+        | DrawQuad(effect, position, size) ->
+          if effect <> currentQuadEffect then
+            QuadBatch.flush &quadBatch
+            QuadBatch.begin' effect &quadBatch
+            currentQuadEffect <- effect
+
+          QuadBatch.draw position size &quadBatch
+
+        | DrawBillboard(effect, position, size, rotation, color) ->
+          if effect <> currentBillboardEffect then
+            BillboardBatch.end' &billboardBatch // flush previous
+            BillboardBatch.begin' effect &billboardBatch
+            currentBillboardEffect <- effect
+
+          BillboardBatch.draw
+            position
+            size
+            rotation
+            color
+            camRight
+            camUp
+            &billboardBatch
+
+      // Flush remaining batches
+      QuadBatch.end' &quadBatch
+      BillboardBatch.end' &billboardBatch
+
       // Optional opaque sorting (front-to-back).
       if config.SortOpaqueFrontToBack then
         opaque.Sort
           { new Collections.Generic.IComparer<struct (float32 * RenderCmd3D)> with
-              member _.Compare(struct (da, _), struct (db, _)) =
-                // Ascending: near -> far
-                compare da db
+              member _.Compare(struct (da, _), struct (db, _)) = compare da db
           }
 
       // Transparent must be back-to-front.
@@ -449,7 +502,11 @@ module Draw3D =
     buffer.Add((), SetViewport vp)
 
   /// Clear color and/or depth buffer. Use between cameras in multi-camera setups.
-  let clear (color: Color voption) (clearDepth: bool) (buffer: RenderBuffer<RenderCmd3D>) =
+  let clear
+    (color: Color voption)
+    (clearDepth: bool)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
     buffer.Add((), ClearTarget(color, clearDepth))
 
   let custom
@@ -482,3 +539,23 @@ module Draw3D =
       (),
       DrawSkinned(pass, model, transform, bones, ValueSome color, ValueNone)
     )
+
+  /// Draw an axis-aligned textured quad. Caller must configure effect.
+  let quad
+    (effect: Effect)
+    (position: Vector3)
+    (size: Vector2)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add((), DrawQuad(effect, position, size))
+
+  /// Draw a camera-facing billboard. Caller must configure effect.
+  let billboard
+    (effect: Effect)
+    (position: Vector3)
+    (size: float32)
+    (rotation: float32)
+    (color: Color)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add((), DrawBillboard(effect, position, size, rotation, color))

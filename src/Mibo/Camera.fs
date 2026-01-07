@@ -11,6 +11,25 @@ type Camera = { View: Matrix; Projection: Matrix }
 /// Helper functions for 2D Cameras (Orthographic).
 module Camera2D =
 
+  /// Calculates the visible world bounds for the camera.
+  /// Useful for 2D culling (QuadTree queries, etc).
+  let viewportBounds (camera: Camera) (viewport: Viewport) : Rectangle =
+    let inverseView = Matrix.Invert(camera.View)
+    let tl = Vector2.Transform(Vector2.Zero, inverseView)
+    let br =
+      Vector2.Transform(
+        Vector2(float32 viewport.Width, float32 viewport.Height),
+        inverseView
+      )
+
+    // Handle rotation/scale making tl/br not min/max
+    let minX = min tl.X br.X
+    let maxX = max tl.X br.X
+    let minY = min tl.Y br.Y
+    let maxY = max tl.Y br.Y
+
+    Rectangle(int minX, int minY, int(maxX - minX), int(maxY - minY))
+
   /// Creates a standard 2D Camera centered on the position.
   /// - position: Center of the camera in World Units.
   /// - zoom: Scale factor (1.0 = pixel perfect).
@@ -118,3 +137,8 @@ module Camera3D =
     direction.Normalize()
 
     Ray(nearSource, direction)
+
+  /// Calculates the BoundingFrustum for the camera.
+  /// Useful for 3D culling (Octree queries, sphere checks).
+  let boundingFrustum(camera: Camera) : BoundingFrustum =
+    BoundingFrustum(camera.View * camera.Projection)
