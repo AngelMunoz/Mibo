@@ -12,51 +12,7 @@ open MiboSample.Domain
 open MiboSample.DemoComponents
 
 // ─────────────────────────────────────────────────────────────
-// Model: The World
-//
-// This is an Elmish model structured as a "world" holding entity
-// components. The pattern uses different storage strategies:
-//
-// • Mutable Dictionary: For unstable entity components that change
-//   every frame.
-//
-// • Mutable ResizeArray/Array: For burst, short-lived objects
-//   (particles, projectiles) to avoid perf penalties from Map churn.
-//
-// • Immutable Map: For stable data that doesn't change every frame
-//   or does so rarely.
-//   Safe by default; Dictionary should be preferred when there's
-//   high frequency updates and GC pressure is a concern.
-//
-// ─────────────────────────────────────────────────────────────
-
-type Model = {
-  // Entity components: keyed by EntityId, mutated every frame
-  Positions: Dictionary<Guid<EntityId>, Vector2>
-  Inputs: Dictionary<Guid<EntityId>, InputState>
-
-  // Non-entity collections: particles are visual effects, not entities
-  Particles: ResizeArray<Particles.Particle>
-
-  // Stable data: changes infrequently via immutable updates
-  Speeds: Map<Guid<EntityId>, float32>
-  Hues: Map<Guid<EntityId>, float32> // Current hue (lerps toward target)
-  TargetHues: Map<Guid<EntityId>, float32> // Target hue (set on fire)
-  Sizes: Map<Guid<EntityId>, Vector2>
-
-  // Well-known entity IDs
-  PlayerId: Guid<EntityId>
-
-  // Control-plane state
-  BoxBounces: int
-}
-
-// ─────────────────────────────────────────────────────────────
-// Messages: Control Plane Only
-//
-// Messages are for events and control flow, NOT for per-entity
-// position updates. Hot data changes happen via direct mutation
-// in system tick functions, bypassing the message queue entirely.
+// Messages
 // ─────────────────────────────────────────────────────────────
 
 [<Struct>]
@@ -68,179 +24,142 @@ type Msg =
   | DemoBoxBounced of count: int
 
 // ─────────────────────────────────────────────────────────────
-// Update.tick: The Frame Loop
+// System Pipeline (Generic Delegates - Framework-Ready Design)
 //
-// This is where systems run. The parent orchestrates order:
-// 1. Player system computes new position based on input
-// 2. Particle system ages and moves particles
-// 3. Any events (like firing) are dispatched as Elmish messages
-//
-// Systems return computed values; the parent applies mutations.
-// This keeps system logic pure and testable.
+// These types and combinators are generic and could live in
+// Mibo.Elmish. The type system enforces the snapshot boundary
+// through the 'Model/'Snapshot type difference.
 // ─────────────────────────────────────────────────────────────
 
-module Update =
+module System =
+  /// Start pipeline with mutable model
+  let inline start (model: 'Model) : 'Model * Cmd<'Msg> list = (model, [])
 
-  let tick
-    (boxRef: ComponentRef<InteractiveBoxOverlay>)
-    (gt: GameTime)
-    (model: Model)
-    : struct (Model * Cmd<Msg>) =
-    let dt = float32 gt.ElapsedGameTime.TotalSeconds
-    let playerId = model.PlayerId
+  /// Pipe a mutable system (pre-snapshot)
+  let inline pipeMutable (system: 'Model -> struct ('Model * Cmd<'Msg> list)) (model: 'Model, cmds: Cmd<'Msg> list) : 'Model * Cmd<'Msg> list =
+    let struct (newModel, newCmds) = system model
+    (newModel, cmds @ newCmds)
 
-    // Read current state
-    let position = model.Positions[playerId]
-    let speed = Map.find playerId model.Speeds
-    let input = model.Inputs[playerId]
+  /// SNAPSHOT: Transition from mutable Model to readonly Snapshot
+  let inline snapshot (toSnapshot: 'Model -> 'Snapshot) (model: 'Model, cmds: Cmd<'Msg> list) : 'Snapshot * Cmd<'Msg> list =
+    (toSnapshot model, cmds)
 
-    // Run player system (pure - returns new values)
-    let result = Player.World.tick dt playerId position speed input
+  /// Pipe a readonly system (post-snapshot)
+  let inline pipe (system: 'Snapshot -> struct ('Snapshot * Cmd<'Msg> list)) (snap: 'Snapshot, cmds: Cmd<'Msg> list) : 'Snapshot * Cmd<'Msg> list =
+    let struct (newSnap, newCmds) = system snap
+    (newSnap, cmds @ newCmds)
 
-    // Apply position mutation at the call site
-    model.Positions[playerId] <- result.NewPosition
-
-    // Run particle system
-    Particles.World.tick dt model.Particles
-
-    // Run hue color system (lerps toward target)
-    let hueResult =
-      HueColor.World.tick dt playerId model.Hues model.TargetHues 5.f
-
-    let newModel =
-      if hueResult.Changed then
-        {
-          model with
-              Hues = Map.add playerId hueResult.NewHue model.Hues
-        }
-      else
-        model
-
-    // Fire events are dispatched as messages (rare, control-plane)
-    let fireCmd =
-      result.FireEvent
-      |> ValueOption.map (function
-        | Player.Fired(id, pos) ->
-          Cmd.ofEffect(Effect(fun dispatch -> dispatch(PlayerFired(id, pos)))))
-      |> ValueOption.defaultValue Cmd.none
-
-    // Interop with MonoGame components
-    let interopCmd =
-      Cmd.ofEffect(
-        Effect(fun _ ->
-          boxRef.TryGet()
-          |> ValueOption.iter(fun box ->
-            box.SpeedScale <- if input.IsFiring then 2.5f else 1.0f
-
-            box.Tint <-
-              if input.IsFiring then Color.HotPink else Color.DeepSkyBlue
-
-            box.SetVisible(true)))
-      )
-
-    newModel, Cmd.batch2(fireCmd, interopCmd)
+  /// Finish pipeline: convert snapshot back to model, batch commands
+  let inline finish (fromSnapshot: 'Snapshot -> 'Model) (snap: 'Snapshot, cmds: Cmd<'Msg> list) : struct ('Model * Cmd<'Msg>) =
+    struct (fromSnapshot snap, Cmd.batch cmds)
 
 // ─────────────────────────────────────────────────────────────
-// Init: Create the World
+// Init
 // ─────────────────────────────────────────────────────────────
 
-let init(_ctx: GameContext) : struct (Model * Cmd<Msg>) =
+let init (_ctx: GameContext) : struct (Model * Cmd<Msg>) =
   let playerId = Guid.NewGuid() |> UMX.tag<EntityId>
 
-  // Initialize mutable containers for hot data
   let positions = Dictionary<Guid<EntityId>, Vector2>()
   positions[playerId] <- Vector2(100.f, 100.f)
 
   let inputs = Dictionary<Guid<EntityId>, InputState>()
   inputs[playerId] <- InputState.empty
 
-  // Initialize immutable maps for stable data
-  let speeds = Map.ofList [ playerId, 200.f ]
-  let hues = Map.ofList [ playerId, 0.f ]
-  let targetHues = Map.ofList [ playerId, 0.f ]
-  let sizes = Map.ofList [ playerId, Vector2(32.f, 32.f) ]
-
-  {
+  struct ({
     Positions = positions
     Inputs = inputs
     Particles = ResizeArray()
-    Speeds = speeds
-    Hues = hues
-    TargetHues = targetHues
-    Sizes = sizes
+    Speeds = Map.ofList [ playerId, 200.f ]
+    Hues = Map.ofList [ playerId, 0.f ]
+    TargetHues = Map.ofList [ playerId, 0.f ]
+    Sizes = Map.ofList [ playerId, Vector2(32.f, 32.f) ]
     PlayerId = playerId
     BoxBounces = 0
-  },
-  Cmd.none
+  }, Cmd.none)
 
 // ─────────────────────────────────────────────────────────────
-// Update: Message Dispatcher
-//
-// Systems return computed values; the parent applies mutations.
-// Only BoxBounced actually modifies the model (control-plane state).
+// Update: Composable Pipeline
 // ─────────────────────────────────────────────────────────────
 
-let update
-  (boxRef: ComponentRef<InteractiveBoxOverlay>)
-  (msg: Msg)
-  (model: Model)
-  : struct (Model * Cmd<Msg>) =
+let update (boxRef: ComponentRef<InteractiveBoxOverlay>) (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   match msg with
-  | Tick gt -> Update.tick boxRef gt model
+  | Tick gt ->
+    let dt = float32 gt.ElapsedGameTime.TotalSeconds
+
+    // Type-enforced pipeline with snapshot boundary
+    let struct (finalModel, allCmds) =
+      System.start model
+      // Phase 1: Mutable systems (can mutate positions, particles)
+      |> System.pipeMutable (Physics.update dt)
+      |> System.pipeMutable (Particles.update dt)
+      // SNAPSHOT: transition to readonly
+      |> System.snapshot Model.toSnapshot
+      // Phase 2: Readonly systems (work with immutable snapshot)
+      |> System.pipe (HueColor.update dt 5.f)
+      |> System.pipe (Player.processActions (fun id pos -> PlayerFired(id, pos)))
+      // Finish: convert back to Model
+      |> System.finish Model.fromSnapshot
+
+    // MonoGame interop (reads from model)
+    let interopCmd =
+      Cmd.ofEffect(Effect<Msg>(fun _ ->
+        match finalModel.Inputs.TryGetValue(finalModel.PlayerId) with
+        | true, input ->
+          boxRef.TryGet()
+          |> ValueOption.iter(fun box ->
+            box.SpeedScale <- if input.IsFiring then 2.5f else 1.0f
+            box.Tint <- if input.IsFiring then Color.HotPink else Color.DeepSkyBlue
+            box.SetVisible(true))
+        | _ -> ()))
+
+    struct (finalModel, Cmd.batch2(allCmds, interopCmd))
 
   | KeyDown key ->
-    // Pure: compute new input, then apply mutation
     let currentInput = model.Inputs[model.PlayerId]
-    model.Inputs[model.PlayerId] <- Player.World.keyDown key currentInput
-    model, Cmd.none
+    model.Inputs[model.PlayerId] <- Player.updateInput (Player.KeyPressed key) currentInput
+    struct (model, Cmd.none)
 
   | KeyUp key ->
     let currentInput = model.Inputs[model.PlayerId]
-    model.Inputs[model.PlayerId] <- Player.World.keyUp key currentInput
-    model, Cmd.none
+    model.Inputs[model.PlayerId] <- Player.updateInput (Player.KeyReleased key) currentInput
+    struct (model, Cmd.none)
 
   | PlayerFired(id, pos) ->
-    // Emit particles at fired position
-    Particles.World.emit pos 100 model.Particles
-
-    // Shift hue target for smooth color transition
-    let newTargets = HueColor.World.shiftTarget id 15.f model.TargetHues
-    { model with TargetHues = newTargets }, Cmd.none
+    Particles.emit pos 100 model
+    let newModel = HueColor.shiftTarget id 15.f model
+    struct (newModel, Cmd.none)
 
   | DemoBoxBounced count ->
-    let position = model.Positions[model.PlayerId]
-    Particles.World.emit position 20 model.Particles
-    { model with BoxBounces = count }, Cmd.none
+    Particles.emit model.Positions[model.PlayerId] 20 model
+    struct ({ model with BoxBounces = count }, Cmd.none)
+
+// ─────────────────────────────────────────────────────────────
+// View
+// ─────────────────────────────────────────────────────────────
 
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
   let playerId = model.PlayerId
-
-  // Pull component data for player
   let pos = model.Positions[playerId]
-  let hue = Map.find playerId model.Hues
+  let hue = model.Hues |> Map.tryFind playerId |> Option.defaultValue 0f
   let color = HueColor.hueToColor hue
-  let size = Map.find playerId model.Sizes
-  Player.view ctx pos color size buffer
+  let size = model.Sizes |> Map.tryFind playerId |> Option.defaultValue (Vector2(32f, 32f))
 
-  // Particles render directly from their list
+  Player.view ctx pos color size buffer
   Particles.view ctx model.Particles buffer
 
 // ─────────────────────────────────────────────────────────────
-// Subscribe: Reactive Input Bindings
+// Subscribe
 // ─────────────────────────────────────────────────────────────
 
-let subscribe
-  (boxRef: ComponentRef<InteractiveBoxOverlay>)
-  (ctx: GameContext)
-  (_model: Model)
-  =
+let subscribe (boxRef: ComponentRef<InteractiveBoxOverlay>) (ctx: GameContext) (_model: Model) =
   Sub.batch [
     Keyboard.listen KeyDown KeyUp ctx
     InteractiveBoxOverlayBridge.subscribeBounced boxRef DemoBoxBounced
   ]
 
 // ─────────────────────────────────────────────────────────────
-// Entry Point: Wire Up the Elmish Program
+// Entry Point
 // ─────────────────────────────────────────────────────────────
 
 [<EntryPoint>]
@@ -255,9 +174,7 @@ let main argv =
     |> Program.withTick Tick
     |> Program.withSubscription(subscribe interactiveBoxRef)
     |> Program.withComponent BouncingBoxOverlay.create
-    |> Program.withComponentRef
-      interactiveBoxRef
-      InteractiveBoxOverlayBridge.create
+    |> Program.withComponentRef interactiveBoxRef InteractiveBoxOverlayBridge.create
 
   use game = new ElmishGame<Model, Msg>(program)
   game.Run()

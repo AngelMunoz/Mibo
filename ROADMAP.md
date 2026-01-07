@@ -323,6 +323,8 @@ Mibo should support shared state across many systems without forcing a specific 
 
 The key requirement is: systems can share state safely and efficiently, while the _public API remains Elmish_.
 
+> **Important clarification:** "Systems" in Mibo are **not** decoupled runtime entities that communicate via an EventBus. Instead, they are composable **functions** that run within the Elmish `update` handler. **The Msg type IS the event bus** — inter-system communication happens through message dispatch and pattern matching in `update`.
+
 ### Deliverables
 
 #### 2.1 State roots and state containers
@@ -347,73 +349,38 @@ Implementation choices can include:
 
 The key is a stable boundary for “what systems read” and “what gets flushed.”
 
-#### 2.2 Write boundaries and end-of-frame flushing
+#### 2.2 System pipeline pattern (frame-continuous updates)
 
-Provide an optional state-write service pattern:
+For frame-continuous updates (physics, particles, animation), provide a composable pipeline with type-enforced snapshot boundary:
 
-- systems enqueue write commands during `Update`
-- a `Flush` phase applies them
-- the flush point is a single place to ensure determinism
+```fsharp
+| Tick gt ->
+    System.start model
+    |> System.pipeMutable (Physics.update dt)   // Can mutate Model
+    |> System.snapshot Model.toSnapshot          // Lock → readonly
+    |> System.pipeReadonly (HueColor.update dt)  // Works with ModelSnapshot
+    |> System.finish Model.fromSnapshot
+```
 
-This should be supported even if the state root is fully immutable (flush applies a batch of transforms) or fully mutable (flush performs mutations).
+The type difference between `Model` and `ModelSnapshot` enforces the boundary at compile time.
 
-#### 2.3 Pooled command buffers
+**Message categories:**
 
-Provide reusable command buffers for high-frequency writes:
+- **Frame messages (Tick):** Use the system pipeline for continuous updates
+- **Input messages (KeyDown, MouseClick):** Direct state mutation, no pipeline needed
+- **Event messages (PlayerFired, ItemPickedUp):** Dispatch via Cmd, handle in `update`
 
-- ArrayPool-backed resizable buffers
-- optional auto-shrink after sustained low usage
-- support for struct commands and value options
+See `docs/DESIGN_PHASE_SYSTEM.md` for detailed comparison between EventBus and Elmish Msgs.
 
 ### Success criteria
 
 - A game can process thousands of entities without turning every per-entity change into an Elmish message.
 - State mutation timing is predictable and easy to test.
+- Inter-system communication is visible in the centralized `update` function.
 
 ---
 
-## Phase 3 — Event bus for high-frequency messaging (scale enabler #3)
-
-Elmish messages are great for orchestration; large simulations also need a cheaper intra-frame signaling mechanism.
-
-This should be exposed as a service/pattern that Elmish modules can use, not as a replacement for Elmish.
-
-### Deliverables
-
-#### 3.1 EventBus primitive
-
-Add an optional event bus with:
-
-- very cheap `Publish`
-- deterministic `Flush`
-- subscription support
-- clear guidance on when to use Elmish messages vs bus events
-
-Implementation options:
-
-- ring buffer with pooled storage
-- or double-buffered event lists per frame
-
-#### 3.2 Patterns
-
-Provide recommended patterns:
-
-- use Elmish for UI/control-plane
-- use EventBus for simulation-plane and cross-system signals
-
-Also include conventions and minimal observability to avoid “event spaghetti”:
-
-- when to prefer direct calls vs events
-- event taxonomy (few, well-defined categories)
-- tracing hooks to inspect per-frame event counts and hot publishers
-
-### Success criteria
-
-- High-frequency events (combat hits, collision contacts, AI perceptions, etc.) do not create message storms.
-
----
-
-## Phase 4 — Scene lifecycle + resource scoping (scale enabler #4)
+## Phase 3 — Scene lifecycle + resource scoping (scale enabler #3)
 
 Large games need scene/level transitions, scoped services, and correct disposal.
 
@@ -439,13 +406,13 @@ The scene mechanism should integrate into Elmish cleanly (scene transitions can 
 
 ---
 
-## Phase 5 — Data-driven content + stores (scale enabler #5)
+## Phase 4 — Data-driven content + stores (scale enabler #4)
 
 To support large games, Mibo should make “content as data” straightforward without dictating formats.
 
 ### Deliverables
 
-#### 5.1 Store abstraction
+#### 4.1 Store abstraction
 
 Introduce a small “store” interface pattern:
 
@@ -453,7 +420,7 @@ Introduce a small “store” interface pattern:
 - `all`
 - optional hot-reload hooks
 
-#### 5.2 Load pipeline helpers
+#### 4.2 Load pipeline helpers
 
 Provide helpers for:
 
@@ -461,7 +428,7 @@ Provide helpers for:
 - validation and error reporting
 - dependency mapping (IDs referencing assets)
 
-#### 5.3 Main-thread load queue
+#### 4.3 Main-thread load queue
 
 MonoGame content loading is typically main-thread sensitive. Provide a shared primitive:
 
@@ -474,7 +441,7 @@ MonoGame content loading is typically main-thread sensitive. Provide a shared pr
 
 ---
 
-## Phase 6 — Rendering orchestration (scale enabler #6)
+## Phase 5 — Rendering orchestration (scale enabler #5)
 
 Mibo’s batch renderers are good building blocks. Large games need a higher-level orchestration layer.
 
@@ -494,17 +461,19 @@ Keep `RenderBuffer<'Key,'Cmd>` as the fundamental “command list” abstraction
 
 ---
 
-## Phase 7 — Diagnostics, profiling, testing (scale enabler #7)
+## Phase 6 — Diagnostics, profiling, testing (scale enabler #6)
 
 Large games need fast feedback and confidence.
 
 ### Deliverables
 
 - Built-in diagnostics hooks:
+
   - frame timing (update/draw breakdown)
   - command buffer sizes and resizes
-  - event bus counts
+
   - asset cache stats
+
 - Testing support:
   - deterministic time provider
   - headless update loop for unit tests
