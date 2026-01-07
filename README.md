@@ -136,9 +136,10 @@ dotnet run
 
 See [ROADMAP.md](./ROADMAP.md) for upcoming features:
 
-- Frame pipeline and system scheduling (Phase 1)
-- Write boundaries and end-of-frame flush (Phase 2)
-- Event bus for high-frequency messaging (Phase 3)
+- Game configuration and system scheduling (Phase 1)
+- State pipeline with mutable/readonly boundaries (Phase 2)
+- Asset loading helpers with JSON/custom loaders (Phase 3)
+- Rendering infrastructure: viewport commands, billboard/quad renderers (Phase 4)
 
 In general I want to keep Mibo simple and flexible, if you just want a super simple platformer with squares jumping around, or a 3D ARPG with thousands of entities, I want Mibo to be a good fit for both.
 

@@ -3,6 +3,19 @@
 **Status:** Accepted
 **Phase:** 1 (Frame pipeline + system scheduling)
 
+## Implementation Status
+
+| Component                                                          | Status          | Location                  |
+| ------------------------------------------------------------------ | --------------- | ------------------------- |
+| System pipeline (`start`/`pipeMutable`/`snapshot`/`pipe`/`finish`) | **Implemented** | `Sample/Program.fs:34-54` |
+| Model/Snapshot pattern                                             | **Implemented** | `Sample/Domain.fs:47-100` |
+| Phase-aware component registration                                 | Not started     |                           |
+| `IEngineService` -> `IUpdateable` migration                        | Not started     |                           |
+| `Program.withConfig` callback                                      | Not started     |                           |
+| `Program.withSystem(phase, factory)`                               | Not started     |                           |
+
+**Next step:** Extract `System` module from Sample to core Mibo library.
+
 ## 1. Problem Statement
 
 Mibo currently relies on an implicit execution order where `Tick` logic runs one frame behind input logic. To scale to larger games, we need explicit, deterministic frame phases (e.g., Input always runs before Simulation). However, we must avoid creating a "second scheduler" that competes with the underlying MonoGame engine.

@@ -1,10 +1,10 @@
 # Mibo Roadmap (Small → Large Games)
 
-This roadmap describes what Mibo needs to grow from a lightweight “Elmish game loop + helpers” library into a robust foundation for **large games** (RPG, platformer, FPS, etc.) while keeping **small-game ergonomics** excellent.
+This roadmap describes what Mibo needs to grow from a lightweight "Elmish game loop + helpers" library into a robust foundation for **large games** (RPG, platformer, FPS, etc.) while keeping **small-game ergonomics** excellent.
 
 The core constraint: **MonoGame remains the underlying engine**, but Mibo should not require any single gameplay architecture. Mibo should provide primitives that enable multiple architectures (Elmish-style, data-oriented ECS-like, event-driven, etc.) and allow projects to scale without rewriting the framework.
 
-This is a **pre-1.0** roadmap. We’re building from the ground up and are free to move fast, including making breaking changes while the design settles.
+This is a **pre-1.0** roadmap. We're building from the ground up and are free to move fast, including making breaking changes while the design settles.
 
 Most importantly: **Elmish is the primary public API**.
 
@@ -23,11 +23,11 @@ A prototype should be able to ship and gradually evolve into a large codebase by
 
 Large games need predictable ordering: input → simulation → flush → render → UI, etc. Mibo should make this explicit, configurable, and testable.
 
-When Mibo introduces phase concepts or ordering, they should be designed to **align with MonoGame’s existing component model** (Update/Draw + UpdateOrder/DrawOrder), not compete with it.
+When Mibo introduces phase concepts or ordering, they should be designed to **align with MonoGame's existing component model** (Update/Draw + UpdateOrder/DrawOrder), not compete with it.
 
 ### 3) Performance-friendly by default, but not hostile
 
-Provide building blocks that make low-allocation patterns straightforward (pooled buffers, struct commands, diffing), while keeping the “hello world” API small.
+Provide building blocks that make low-allocation patterns straightforward (pooled buffers, struct commands, diffing), while keeping the "hello world" API small.
 
 ### 4) Library-first API surface
 
@@ -39,7 +39,7 @@ Input, assets, scenes, time-step, diagnostics, eventing, and simulation state sh
 
 ### 6) Elmish-first ergonomics at every scale
 
-Mibo should not force a “two-tier API” where Elmish is only for prototypes.
+Mibo should not force a "two-tier API" where Elmish is only for prototypes.
 
 Instead, Mibo should keep a single guiding workflow (Elmish) and let advanced runtime features sit behind it:
 
@@ -51,7 +51,7 @@ Instead, Mibo should keep a single guiding workflow (Elmish) and let advanced ru
 
 ## Elmish internals: making an Elmish API fast enough for games
 
-An Elmish-style API is attractive because it makes gameplay logic easy to structure and compose. The risk is that a naive “everything is a message” approach can become allocation-heavy and difficult to optimize.
+An Elmish-style API is attractive because it makes gameplay logic easy to structure and compose. The risk is that a naive "everything is a message" approach can become allocation-heavy and difficult to optimize.
 
 The goal is to keep the **public authoring experience** Elmish (`init/update/subscribe/view`) while ensuring the **runtime implementation** supports high throughput.
 
@@ -66,7 +66,7 @@ Elmish works best as the **control plane**:
 
 ### What Elmish should not be forced to do
 
-Elmish should not be the mechanism for per-entity, per-frame hot loops. If the only way to move 10,000 entities is “dispatch 10,000 messages”, the architecture will fight performance.
+Elmish should not be the mechanism for per-entity, per-frame hot loops. If the only way to move 10,000 entities is "dispatch 10,000 messages", the architecture will fight performance.
 
 So the framework should make it natural to keep hot loops out of the message queue.
 
@@ -94,7 +94,7 @@ Elmish `update` remains the coordinator; the hot work lives in services.
 
 2. **Buffered writes instead of message storms**
 
-Provide a standard “write buffer” pattern (pooled, end-of-frame flush). Systems enqueue write commands; a dedicated flush phase applies them.
+Provide a standard "write buffer" pattern (pooled, end-of-frame flush). Systems enqueue write commands; a dedicated flush phase applies them.
 
 Elmish modules can still _initiate_ work (e.g., enable a system, change a mode), but state churn is handled as bulk writes.
 
@@ -109,7 +109,7 @@ This keeps `update` readable while bounding message overhead.
 
 4. **Allocation discipline in the runtime**
 
-Mibo’s internals should make the common path allocation-light:
+Mibo's internals should make the common path allocation-light:
 
 - prefer struct DUs for internal command/event representations
 - pool frequently resized buffers (ArrayPool-backed)
@@ -125,23 +125,23 @@ The runtime should support safeguards:
 
 This is about preventing spirals where a single hitch creates a backlog that never recovers.
 
-### The unclear part: “Elmish but fast” requires message semantics
+### The unclear part: "Elmish but fast" requires message semantics
 
 To make Elmish scale, Mibo needs a strong stance on what a message _means_.
 
-If a message is allowed to mean “a single entity moved 1cm,” then high entity counts imply high message rates, and the runtime will drown.
+If a message is allowed to mean "a single entity moved 1cm," then high entity counts imply high message rates, and the runtime will drown.
 
 Instead, treat messages as:
 
-- **intent / decisions / mode transitions** (e.g., “player started firing”, “entered targeting mode”, “load scene X”)
-- **frame-level aggregates** (e.g., “these 120 hits occurred this frame”, “input snapshot for this frame”)
+- **intent / decisions / mode transitions** (e.g., "player started firing", "entered targeting mode", "load scene X")
+- **frame-level aggregates** (e.g., "these 120 hits occurred this frame", "input snapshot for this frame")
 
 And explicitly avoid using messages for:
 
 - per-entity deltas in the hot path
 - direct mirrors of low-level input polling
 
-This is not about restricting users; it’s about making the ergonomic path also the fast path.
+This is not about restricting users; it's about making the ergonomic path also the fast path.
 
 ### Concrete internal mechanisms to enforce the semantics
 
@@ -149,7 +149,7 @@ Mibo should add runtime facilities that make the above semantics natural:
 
 1. **Coalescing / latest-value channels**
 
-Some information is “latest wins” (mouse position, camera target, analog stick). The runtime should support channels that keep only the latest value per frame and emit at most one message.
+Some information is "latest wins" (mouse position, camera target, analog stick). The runtime should support channels that keep only the latest value per frame and emit at most one message.
 
 2. **Frame event aggregation**
 
@@ -176,12 +176,12 @@ The public model stays Elmish; this is purely an implementation detail for perfo
 
 ### Debuggability implications
 
-If Mibo adds buffering, coalescing, and backpressure, it must add minimal visibility so debugging doesn’t become guesswork:
+If Mibo adds buffering, coalescing, and backpressure, it must add minimal visibility so debugging doesn't become guesswork:
 
 - per-frame counters (messages dequeued, messages dropped/coalesced)
 - event bus counts (published, flushed, dropped)
 - buffer sizes (write buffers, render buffers)
-- optional tracing of “top talkers” (which source produced the most)
+- optional tracing of "top talkers" (which source produced the most)
 
 This belongs in the runtime, not only in user code.
 
@@ -199,7 +199,7 @@ All of the above should be reachable through the Elmish surface:
 - `Program.with…` combinators configure phases, services, and flush points.
 - `GameContext` exposes the relevant services (input, assets, event stream, write buffers, diagnostics).
 
-Users should not have to “switch paradigms” to stay performant; they should mostly decide _where work runs_ (service vs update) and _how it is buffered_.
+Users should not have to "switch paradigms" to stay performant; they should mostly decide _where work runs_ (service vs update) and _how it is buffered_.
 
 ### Roadmap implications
 
@@ -223,7 +223,7 @@ These are strengths to preserve while adding scalability features:
 - Command-buffer style rendering (2D/3D batch renderers) and a generic `RenderBuffer<'Key,'Cmd>`.
 - Asset caching service (`IAssets`) and delta-style input service.
 
-The roadmap below extends these while keeping “small game” workflows ergonomic.
+The roadmap below extends these while keeping "small game" workflows ergonomic.
 
 ---
 
@@ -242,7 +242,7 @@ Each layer should be optional and additive, and should be reachable through the 
 
 ---
 
-## Phase 0 — Clarify contracts (groundwork)
+## Phase 0 - Clarify contracts (groundwork)
 
 ### Deliverables
 
@@ -256,13 +256,20 @@ Each layer should be optional and additive, and should be reachable through the 
   - current MonoGame baseline
   - threading model (what may be parallelized, what must remain on main thread)
 
+### Current status
+
+Documentation exists in `docs/`:
+
+- `EXECUTION_MODEL.md` - frame lifecycle, execution thread, input latency, build constraints
+- `DESIGN_PHASE_SYSTEM.md` - phase scheduling design, system pipeline pattern
+
 ### Success criteria
 
-- A developer can answer: “where does my work run and in what order?” without reading the runtime code.
+- A developer can answer: "where does my work run and in what order?" without reading the runtime code.
 
 ---
 
-## Phase 1 — Frame pipeline + system scheduling (scale enabler #1)
+## Phase 1 - Frame pipeline + system scheduling (scale enabler #1)
 
 Large games need explicit phases and ordering; small games need no ceremony.
 
@@ -271,55 +278,57 @@ In Mibo terms, this should still look like one Elmish program. The pipeline is a
 Important: phases should not be a second scheduler. The intent is:
 
 - phases are a clear semantic description of order
-- the implementation maps them onto MonoGame ordering (components/services) so there’s one source of truth at runtime
+- the implementation maps them onto MonoGame ordering (`UpdateOrder`/`DrawOrder`) so there's one source of truth at runtime
 
 ### Deliverables
 
-#### 1.1 Frame phases
+#### 1.1 Game configuration callback
 
-Introduce a small set of explicit phases, e.g.
+Allow users to configure MonoGame settings without prescribing a specific config type:
 
-- `PollInput`
-- `PreUpdate`
-- `Update`
-- `PostUpdate`
-- `Flush`
-- `PreDraw`
-- `Draw`
-- `PostDraw`
+```fsharp
+Program.withConfig (fun game graphics ->
+    game.IsMouseVisible <- true
+    game.Window.AllowUserResizing <- true
+    graphics.PreferredBackBufferWidth <- 1280
+    graphics.PreferredBackBufferHeight <- 720
+    graphics.IsFullScreen <- false
+    game.IsFixedTimeStep <- true
+    game.TargetElapsedTime <- TimeSpan.FromSeconds(1.0 / 60.0))
+```
 
-This can be implemented as an ordered list of “pipeline steps” with minimal overhead.
+This callback runs in the `ElmishGame` constructor after `GraphicsDeviceManager` is created.
 
-#### 1.2 Ordered systems
+#### 1.2 Migrate to MonoGame interfaces
 
-Provide a system abstraction that can be used with or without Elmish:
+Deprecate custom `IEngineService` in favor of MonoGame's `IUpdateable`/`GameComponent`. Per `docs/DESIGN_PHASE_SYSTEM.md`:
 
-- Update-only systems
-- Draw-only systems
-- Systems with both
-- `Order` within a phase
-- `Enabled` toggles
+- Everything becomes a `GameComponent` or `DrawableGameComponent`
+- The Elmish loop itself becomes an internal component with `UpdateOrder = 0`
+- Semantic phases map to `UpdateOrder` ranges (Input = -1000, PreUpdate = -100, etc.)
 
-Keep the implementation compatible with MonoGame (`GameComponent` / `DrawableGameComponent`) but don’t require inheritance.
+#### 1.3 Phase-aware registration
 
-#### 1.3 Time-step options
+```fsharp
+Program.withSystem Phase.Input (fun game -> InputPollingComponent(game))
+Program.withSystem Phase.PostUpdate (fun game -> FlushComponent(game))
+```
 
-Add configurable time-step strategies:
+#### 1.4 Time-step options
 
-- variable step (default)
-- fixed step simulation with accumulator
-- hybrid (fixed simulation, variable render)
+Exposed via `withConfig` callback - user sets `game.IsFixedTimeStep` and `game.TargetElapsedTime` directly.
 
 ### Success criteria
 
 - A project can add 30+ systems and still reason about ordering.
 - A simple Mibo sample remains simple (no forced pipeline setup).
+- Users can configure any MonoGame game setting via `withConfig`.
 
 ---
 
 ## Phase 2 — State roots + write boundaries (scale enabler #2)
 
-Mibo should support shared state across many systems without forcing a specific “ECS” implementation.
+Mibo should support shared state across many systems without forcing a specific "ECS" implementation.
 
 The key requirement is: systems can share state safely and efficiently, while the _public API remains Elmish_.
 
@@ -329,7 +338,7 @@ The key requirement is: systems can share state safely and efficiently, while th
 
 #### 2.1 State roots and state containers
 
-Avoid baking a single “World” concept into the framework. Games may have:
+Avoid baking a single "World" concept into the framework. Games may have:
 
 - one simulation state root
 - multiple state roots (split-screen, server/client, multiple boards/levels)
@@ -347,7 +356,7 @@ Implementation choices can include:
 - mutable dictionaries/arrays
 - adaptive state (optional package)
 
-The key is a stable boundary for “what systems read” and “what gets flushed.”
+The key is a stable boundary for "what systems read" and "what gets flushed."
 
 #### 2.2 System pipeline pattern (frame-continuous updates)
 
@@ -380,115 +389,101 @@ See `docs/DESIGN_PHASE_SYSTEM.md` for detailed comparison between EventBus and E
 
 ---
 
-## Phase 3 — Scene lifecycle + resource scoping (scale enabler #3)
+## Phase 3 — Asset loading helpers (scale enabler #3)
 
-Large games need scene/level transitions, scoped services, and correct disposal.
-
-The scene mechanism should integrate into Elmish cleanly (scene transitions can be initiated from `update` via `Cmd` effects or via services that ultimately dispatch Elmish messages).
+Mibo provides ergonomic asset loading helpers. Store patterns (composition roots, DI containers) are userland concerns — we just help users fill their stores.
 
 ### Deliverables
 
-- A scene manager abstraction:
-  - load/unload scenes
-  - scoped services per scene
-  - deterministic disposal
-  - transition requests (queue, immediate, fade, etc.)
-- Clear conventions for what is global vs scene-scoped:
-  - content stores
-  - simulation state
-  - UI roots
-  - audio
+#### 3.1 JSON loading with JDeck decoders
+
+```fsharp
+Assets.fromJson "Content/skills.json" SkillConfig.decoder ctx
+Assets.fromJsonCache "Content/skills.json" SkillConfig.decoder ctx  // cached for game lifetime
+```
+
+#### 3.2 Custom asset loaders
+
+```fsharp
+Assets.fromCustom "Content/levels.bin" LevelLoader.load ctx
+Assets.fromCustomCache "Content/levels.bin" LevelLoader.load ctx  // cached
+```
 
 ### Success criteria
 
-- Scenes can be added/removed without leaks.
-- Multiplayer/splitscreen or multiple state roots becomes feasible.
+- Users can load JSON and custom formats with minimal boilerplate.
+- Framework does not prescribe store patterns or DI approaches.
 
 ---
 
-## Phase 4 — Data-driven content + stores (scale enabler #4)
+## Phase 4 — Rendering orchestration (scale enabler #4)
 
-To support large games, Mibo should make “content as data” straightforward without dictating formats.
+Mibo's batch renderers (`Batch2DRenderer`, `Batch3DRenderer`) handle the common cases well. This phase adds infrastructure for more advanced rendering scenarios.
+
+### Clarification: what orchestration means in Mibo
+
+**User decides what to render and when.** Mibo provides the building blocks.
+
+Multi-camera rendering is a user concern - you decide how many cameras exist, what each renders, and in what order. The framework gap is **viewport and clear commands**, not "framework iterates cameras for you."
 
 ### Deliverables
 
-#### 4.1 Store abstraction
+#### 4.1 Viewport and clear commands (multi-camera support)
 
-Introduce a small “store” interface pattern:
+Add commands so users can control viewport and per-camera clears:
 
-- `tryFind` / `find`
-- `all`
-- optional hot-reload hooks
+```fsharp
+type RenderCmd3D =
+    | SetViewport of viewport: Viewport
+    | ClearTarget of color: Color voption * clearDepth: bool
+    | SetCamera of camera: Camera
+    // ... existing commands
+```
 
-#### 4.2 Load pipeline helpers
+User code then looks like:
 
-Provide helpers for:
+```fsharp
+for camera in myCameras do
+    buffer |> Draw3D.viewport camera.Viewport
+    buffer |> Draw3D.clear (ValueSome Color.Black) true
+    buffer |> Draw3D.camera camera
+    // ... draw calls for this camera
+```
 
-- JSON (or other) deserialization
-- validation and error reporting
-- dependency mapping (IDs referencing assets)
+This keeps users in control while enabling split-screen, minimaps, and editor viewports.
 
-#### 4.3 Main-thread load queue
+#### 4.2 Billboard renderer (3D particle infrastructure)
 
-MonoGame content loading is typically main-thread sensitive. Provide a shared primitive:
+For particle effects, floating text, and health bars in 3D space - quads that always face the camera.
 
-- enqueue “load work” from background tasks
-- drain on main thread during an explicit phase
+```fsharp
+type BillboardCmd =
+    | SetCamera of camera: Camera
+    | DrawBillboard of texture: Texture2D * position: Vector3 * size: float32 * color: Color
+```
 
-### Success criteria
+This is common enough to warrant a dedicated renderer with batching for performance.
 
-- A project can scale to hundreds/thousands of content definitions with predictable loading behavior.
+#### 4.3 Quad renderer (terrain/decal infrastructure)
 
----
+For textured quads in 3D space - terrain tiles, decals, water surfaces.
 
-## Phase 5 — Rendering orchestration (scale enabler #5)
+```fsharp
+type QuadCmd =
+    | SetCamera of camera: Camera
+    | DrawQuad of texture: Texture2D * position: Vector3 * size: Vector2 * rotation: Quaternion * color: Color
+```
 
-Mibo’s batch renderers are good building blocks. Large games need a higher-level orchestration layer.
-
-### Deliverables
-
-- A render orchestrator concept:
-  - multi-pass ordering (opaque, transparent, UI, post effects)
-  - multi-camera / multi-viewport rendering
-  - centralized caches for models/textures/effects
-  - consistent handling of device states
-
-Keep `RenderBuffer<'Key,'Cmd>` as the fundamental “command list” abstraction.
-
-### Success criteria
-
-- A game can render a complex scene with multiple layers and cameras without duplicating orchestration code in every project.
-
----
-
-## Phase 6 — Diagnostics, profiling, testing (scale enabler #6)
-
-Large games need fast feedback and confidence.
-
-### Deliverables
-
-- Built-in diagnostics hooks:
-
-  - frame timing (update/draw breakdown)
-  - command buffer sizes and resizes
-
-  - asset cache stats
-
-- Testing support:
-  - deterministic time provider
-  - headless update loop for unit tests
-  - ability to run systems without a `Game` window
+These are **optional additions** - games that don't need 3D particles or decals don't pay for them.
 
 ### Success criteria
 
-- Core gameplay logic can be tested without rendering.
-- Performance regressions are detectable via metrics.
-
----
+- Users can implement multi-camera rendering (split-screen, minimaps) without workarounds.
+- 3D particle systems and terrain rendering have ergonomic, performant primitives.
 
 ## Elmish is the API: scaling without a second paradigm
 
-The goal is not “small mode vs large mode”. The goal is **one Elmish API** that can opt into stronger runtime capabilities.
+The goal is not "small mode vs large mode". The goal is **one Elmish API** that can opt into stronger runtime capabilities.
 
 ### The stable shape
 
@@ -525,7 +520,7 @@ Mibo should provide a staged migration story:
 5. Add scenes and content stores.
 6. Add render orchestration.
 
-This migration should mostly be “opt into runtime services” rather than “rewrite gameplay modules.”
+This migration should mostly be "opt into runtime services" rather than "rewrite gameplay modules."
 
 ---
 
@@ -538,9 +533,9 @@ This migration should mostly be “opt into runtime services” rather than “r
 
 ---
 
-## Definition of “Mibo can host a large game”
+## Definition of "Mibo can host a large game"
 
-Mibo is “large-game ready” when a project can:
+Mibo is "large-game ready" when a project can:
 
 - manage many systems with deterministic order
 - process large shared state with controlled mutation points
@@ -550,4 +545,4 @@ Mibo is “large-game ready” when a project can:
 - test simulation logic headlessly
 - diagnose performance and memory behavior
 
-without requiring a rewrite of the application’s architecture.
+without requiring a rewrite of the application's architecture.
