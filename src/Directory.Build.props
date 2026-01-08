@@ -1,0 +1,8 @@
+<Project>
+    <PropertyGroup>
+        <RepositoryUrl>https://github.com/AngelMunoz/Mibo</RepositoryUrl>
+        <FsDocsLicenseLink>https://github.com/AngelMunoz/Mibo/blob/main/LICENSE</FsDocsLicenseLink>
+        <FsDocsReleaseNotesLink>https://github.com/AngelMunoz/Mibo/blob/main/RELEASE_NOTES.md</FsDocsReleaseNotesLink>
+        <PackageProjectUrl>https://AngelMunoz.github.io/Mibo</PackageProjectUrl>
+    </PropertyGroup>
+</Project>
