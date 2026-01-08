@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="Domain.fs" />
     <Compile Include="DemoComponents.fs" />
+    <Compile Include="Crates.fs" />
     <Compile Include="Particles.fs" />
     <Compile Include="Physics.fs" />
     <Compile Include="Player.fs" />

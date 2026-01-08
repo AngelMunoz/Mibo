@@ -21,6 +21,7 @@ type GameAction =
   | MoveUp
   | MoveDown
   | Fire
+
 [<Struct>]
 type Particle = {
   Position: Vector2
@@ -29,6 +30,27 @@ type Particle = {
   MaxLife: float32
   Color: Color
 }
+
+[<Struct>]
+type ParticleSpawn = { Position: Vector2; Count: int }
+
+module ParticleFactory =
+  let private rng = Random.Shared
+
+  let createAt(pos: Vector2) : Particle =
+    let angle = rng.NextDouble() * Math.PI * 2.0
+    let speed = rng.NextDouble() * 100.0 + 50.0
+
+    let velocity =
+      Vector2(float32(Math.Cos angle), float32(Math.Sin angle)) * float32 speed
+
+    {
+      Position = pos
+      Velocity = velocity
+      Life = 1.0f
+      MaxLife = 1.0f
+      Color = Color.Yellow
+    }
 
 
 // ─────────────────────────────────────────────────────────────
@@ -41,12 +63,14 @@ type Model = {
   Actions: ActionState<GameAction>
   InputMap: InputMap<GameAction>
   Particles: ResizeArray<Particle>
+  Crates: ResizeArray<Guid<EntityId>>
   Speeds: Map<Guid<EntityId>, float32>
   Hues: Map<Guid<EntityId>, float32>
   TargetHues: Map<Guid<EntityId>, float32>
   Sizes: Map<Guid<EntityId>, Vector2>
   PlayerId: Guid<EntityId>
   BoxBounces: int
+  CrateHits: int
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -59,38 +83,44 @@ type ModelSnapshot = {
   Actions: ActionState<GameAction>
   InputMap: InputMap<GameAction>
   Particles: IReadOnlyList<Particle>
+  Crates: IReadOnlyList<Guid<EntityId>>
   Speeds: Map<Guid<EntityId>, float32>
   Hues: Map<Guid<EntityId>, float32>
   TargetHues: Map<Guid<EntityId>, float32>
   Sizes: Map<Guid<EntityId>, Vector2>
   PlayerId: Guid<EntityId>
   BoxBounces: int
+  CrateHits: int
 }
 
 module Model =
   /// Create readonly snapshot after physics mutations
-  let toSnapshot (model: Model) : ModelSnapshot = {
+  let toSnapshot(model: Model) : ModelSnapshot = {
     Positions = model.Positions :> IReadOnlyDictionary<_, _>
     Actions = model.Actions
     InputMap = model.InputMap
     Particles = model.Particles :> IReadOnlyList<_>
+    Crates = model.Crates :> IReadOnlyList<_>
     Speeds = model.Speeds
     Hues = model.Hues
     TargetHues = model.TargetHues
     Sizes = model.Sizes
     PlayerId = model.PlayerId
     BoxBounces = model.BoxBounces
+    CrateHits = model.CrateHits
   }
 
-  let fromSnapshot (snapshot: ModelSnapshot) : Model = {
+  let fromSnapshot(snapshot: ModelSnapshot) : Model = {
     Positions = snapshot.Positions :?> Dictionary<_, _>
     Actions = snapshot.Actions
     InputMap = snapshot.InputMap
     Particles = snapshot.Particles :?> ResizeArray<_>
+    Crates = snapshot.Crates :?> ResizeArray<_>
     Speeds = snapshot.Speeds
     Hues = snapshot.Hues
     TargetHues = snapshot.TargetHues
     Sizes = snapshot.Sizes
     PlayerId = snapshot.PlayerId
     BoxBounces = snapshot.BoxBounces
+    CrateHits = snapshot.CrateHits
   }

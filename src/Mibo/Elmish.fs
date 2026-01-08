@@ -13,10 +13,41 @@ type Cmd<'Msg> =
   | Empty
   | Single of single: Effect<'Msg>
   | Batch of batch: Effect<'Msg>[]
+  | DeferNextFrame of batch: Effect<'Msg>[]
+  | NowAndDeferNextFrame of now: Effect<'Msg>[] * next: Effect<'Msg>[]
 
 module Cmd =
   let none: Cmd<'Msg> = Empty
   let inline ofEffect(eff: Effect<'Msg>) = Single eff
+
+  let inline ofMsg(msg: 'Msg) : Cmd<'Msg> =
+    Single(Effect<'Msg>(fun dispatch -> dispatch msg))
+
+  /// Defer command execution until the next frame.
+  ///
+  /// In the runtime, deferred commands are executed at the start of the next frame,
+  /// before `Tick` is enqueued.
+  let inline deferNextFrame(cmd: Cmd<'Msg>) : Cmd<'Msg> =
+    match cmd with
+    | Empty -> Empty
+    | Single eff -> DeferNextFrame [| eff |]
+    | Batch effs -> DeferNextFrame effs
+    | DeferNextFrame effs -> DeferNextFrame effs
+    | NowAndDeferNextFrame(now, next) ->
+      let combined = Array.zeroCreate<Effect<'Msg>>(now.Length + next.Length)
+      Array.Copy(now, 0, combined, 0, now.Length)
+      Array.Copy(next, 0, combined, now.Length, next.Length)
+      DeferNextFrame combined
+
+  let inline private split
+    (cmd: Cmd<'Msg>)
+    : struct (Effect<'Msg>[] * Effect<'Msg>[]) =
+    match cmd with
+    | Empty -> struct ([||], [||])
+    | Single eff -> struct ([| eff |], [||])
+    | Batch effs -> struct (effs, [||])
+    | DeferNextFrame effs -> struct ([||], effs)
+    | NowAndDeferNextFrame(now, next) -> struct (now, next)
 
   /// Map a command producing messages of type 'A into a command producing messages of type 'Msg.
   ///
@@ -43,54 +74,103 @@ module Cmd =
 
       Batch mapped
 
+    | DeferNextFrame effs ->
+      let mapped = Array.zeroCreate<Effect<'Msg>> effs.Length
+
+      for i = 0 to effs.Length - 1 do
+        let eff = effs[i]
+
+        mapped[i] <-
+          Effect<'Msg>(fun dispatch ->
+            let innerDispatch(a: 'A) = dispatch(f a)
+            eff.Invoke(innerDispatch))
+
+      DeferNextFrame mapped
+
+    | NowAndDeferNextFrame(now, next) ->
+      let mapBatch(effs: Effect<'A>[]) : Effect<'Msg>[] =
+        let mapped = Array.zeroCreate<Effect<'Msg>> effs.Length
+
+        for i = 0 to effs.Length - 1 do
+          let eff = effs[i]
+
+          mapped[i] <-
+            Effect<'Msg>(fun dispatch ->
+              let innerDispatch(a: 'A) = dispatch(f a)
+              eff.Invoke(innerDispatch))
+
+        mapped
+
+      NowAndDeferNextFrame(mapBatch now, mapBatch next)
+
   let batch(cmds: seq<Cmd<'Msg>>) : Cmd<'Msg> =
-    let mutable count = 0
+    let mutable nowCount = 0
+    let mutable nextCount = 0
 
     for c in cmds do
-      match c with
-      | Empty -> ()
-      | Single _ -> count <- count + 1
-      | Batch b -> count <- count + b.Length
+      let struct (now, next) = split c
+      nowCount <- nowCount + now.Length
+      nextCount <- nextCount + next.Length
 
-    if count = 0 then
+    if nowCount = 0 && nextCount = 0 then
       Empty
-    else
-      let arr = Array.zeroCreate<Effect<'Msg>> count
+    elif nextCount = 0 then
+      if nowCount = 1 then
+        // Avoid allocation when possible
+        let mutable eff = Unchecked.defaultof<Effect<'Msg>>
+
+        for c in cmds do
+          match c with
+          | Single e -> eff <- e
+          | Batch b when b.Length = 1 -> eff <- b[0]
+          | _ -> ()
+
+        Single eff
+      else
+        let arr = Array.zeroCreate<Effect<'Msg>> nowCount
+        let mutable i = 0
+
+        for c in cmds do
+          let struct (now, _) = split c
+
+          if now.Length <> 0 then
+            Array.Copy(now, 0, arr, i, now.Length)
+            i <- i + now.Length
+
+        Batch arr
+    elif nowCount = 0 then
+      let arr = Array.zeroCreate<Effect<'Msg>> nextCount
       let mutable i = 0
 
       for c in cmds do
-        match c with
-        | Empty -> ()
-        | Single eff ->
-          arr[i] <- eff
-          i <- i + 1
-        | Batch b ->
-          Array.Copy(b, 0, arr, i, b.Length)
-          i <- i + b.Length
+        let struct (_, next) = split c
 
-      Batch arr
+        if next.Length <> 0 then
+          Array.Copy(next, 0, arr, i, next.Length)
+          i <- i + next.Length
+
+      DeferNextFrame arr
+    else
+      let nowArr = Array.zeroCreate<Effect<'Msg>> nowCount
+      let nextArr = Array.zeroCreate<Effect<'Msg>> nextCount
+      let mutable ni = 0
+      let mutable xi = 0
+
+      for c in cmds do
+        let struct (now, next) = split c
+
+        if now.Length <> 0 then
+          Array.Copy(now, 0, nowArr, ni, now.Length)
+          ni <- ni + now.Length
+
+        if next.Length <> 0 then
+          Array.Copy(next, 0, nextArr, xi, next.Length)
+          xi <- xi + next.Length
+
+      NowAndDeferNextFrame(nowArr, nextArr)
 
   /// Allocation-friendly command batching for 2 commands.
-  let batch2(a: Cmd<'Msg>, b: Cmd<'Msg>) : Cmd<'Msg> =
-    match a, b with
-    | Empty, x
-    | x, Empty -> x
-    | Single ea, Single eb -> Batch [| ea; eb |]
-    | Batch ba, Single eb ->
-      let arr = Array.zeroCreate<Effect<'Msg>>(ba.Length + 1)
-      Array.Copy(ba, 0, arr, 0, ba.Length)
-      arr[arr.Length - 1] <- eb
-      Batch arr
-    | Single ea, Batch bb ->
-      let arr = Array.zeroCreate<Effect<'Msg>>(1 + bb.Length)
-      arr[0] <- ea
-      Array.Copy(bb, 0, arr, 1, bb.Length)
-      Batch arr
-    | Batch ba, Batch bb ->
-      let arr = Array.zeroCreate<Effect<'Msg>>(ba.Length + bb.Length)
-      Array.Copy(ba, 0, arr, 0, ba.Length)
-      Array.Copy(bb, 0, arr, ba.Length, bb.Length)
-      Batch arr
+  let batch2(a: Cmd<'Msg>, b: Cmd<'Msg>) : Cmd<'Msg> = batch [ a; b ]
 
   /// Allocation-friendly command batching for 3 commands.
   let batch3(a: Cmd<'Msg>, b: Cmd<'Msg>, c: Cmd<'Msg>) : Cmd<'Msg> =
@@ -352,6 +432,25 @@ type ComponentRef<'T when 'T :> IGameComponent>() =
   member _.Set(v: 'T) = value <- ValueSome v
   member _.Clear() = value <- ValueNone
 
+/// A small per-frame buffer for batching high-frequency writes/events.
+///
+/// Typical usage:
+/// - enqueue items during `update` (hot path)
+/// - drain once at a frame boundary (e.g. via `Cmd.deferNextFrame` messages)
+type FrameBuffer<'T>(?capacity: int) =
+  let items = ResizeArray<'T>(defaultArg capacity 64)
+
+  member _.Enqueue(item: 'T) = items.Add item
+
+  member _.DrainTo(apply: 'T -> unit) =
+    for i = 0 to items.Count - 1 do
+      apply items[i]
+
+    items.Clear()
+
+  member _.Clear() = items.Clear()
+  member _.Count = items.Count
+
 /// A small, allocation-friendly buffer that stores commands tagged with a sort key.
 ///
 /// This is intentionally rendering-agnostic. Graphics plugins can define their own key type
@@ -400,6 +499,8 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
   let renderers = ResizeArray<IRenderer<'Model>>()
   let subBuffer = ResizeArray<struct (SubId * Subscribe<'Msg>)>()
   let subStack = ResizeArray<Sub<'Msg>>()
+  let deferredEffs = ResizeArray<Effect<'Msg>>(64)
+  let deferredEffsRun = ResizeArray<Effect<'Msg>>(64)
 
   let dispatch(msg: 'Msg) = pendingMsgs.Enqueue(msg)
 
@@ -410,6 +511,12 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     | Batch effs ->
       for i = 0 to effs.Length - 1 do
         effs[i].Invoke(dispatch)
+    | DeferNextFrame effs -> deferredEffs.AddRange(effs)
+    | NowAndDeferNextFrame(now, next) ->
+      for i = 0 to now.Length - 1 do
+        now[i].Invoke(dispatch)
+
+      deferredEffs.AddRange(next)
 
   let updateSubs(ctx: GameContext) =
     subBuffer.Clear()
@@ -447,8 +554,7 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
   do
     // Apply user configuration or use sensible defaults
     match program.Config with
-    | ValueSome configure ->
-      configure(this, graphics)
+    | ValueSome configure -> configure(this, graphics)
     | ValueNone ->
       // Default settings (can be overridden via Program.withConfig)
       this.Content.RootDirectory <- "Content"
@@ -485,6 +591,7 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
 
     let struct (initialState, initialCmds) = program.Init ctx
     state <- initialState
+
     execCmd initialCmds
     updateSubs ctx
 
@@ -493,13 +600,22 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     match ctxOpt with
     | ValueNone -> base.Update gameTime
     | ValueSome ctx ->
+    // Run MonoGame components first (e.g. input polling) so any messages
+    // dispatched via subscriptions can be processed in this same frame.
+    base.Update gameTime
 
-    program.Tick
-    |> ValueOption.iter(fun map ->
-      let msg = map gameTime
-      dispatch msg)
+    // Execute commands deferred from the previous frame before we enqueue Tick.
+    // This provides a deterministic "next-frame" boundary without changing the Elmish
+    // `update : Msg -> Model -> Model * Cmd` contract.
+    if deferredEffs.Count <> 0 then
+      deferredEffsRun.Clear()
+      deferredEffsRun.AddRange(deferredEffs)
+      deferredEffs.Clear()
 
-    // Systems run via MonoGame's GameComponent.Update (ordered by UpdateOrder)
+      for i = 0 to deferredEffsRun.Count - 1 do
+        deferredEffsRun[i].Invoke(dispatch)
+
+    program.Tick |> ValueOption.iter(fun map -> dispatch(map gameTime))
 
     let mutable stateChanged = false
     let mutable msg = Unchecked.defaultof<'Msg>
@@ -512,8 +628,6 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
 
     if stateChanged then
       updateSubs ctx
-
-    base.Update gameTime
 
   override _.Draw gameTime =
     match ctxOpt with

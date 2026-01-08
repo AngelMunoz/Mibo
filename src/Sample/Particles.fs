@@ -8,27 +8,7 @@ open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open MiboSample.Domain
 
-// ─────────────────────────────────────────────────────────────
 // Particles System: MutableSystem<Model, 'Msg>
-//
-// Pre-snapshot system that mutates particle list in-place.
-// Returns a MutableSystem delegate for pipeline composition.
-// ─────────────────────────────────────────────────────────────
-
-let private rng = Random.Shared
-
-/// Create particle at position
-let private createParticle (pos: Vector2) : Particle =
-  let angle = rng.NextDouble() * Math.PI * 2.0
-  let speed = rng.NextDouble() * 100.0 + 50.0
-  let velocity = Vector2(float32(Math.Cos angle), float32(Math.Sin angle)) * float32 speed
-  {
-    Position = pos
-    Velocity = velocity
-    Life = 1.0f
-    MaxLife = 1.0f
-    Color = Color.Yellow
-  }
 
 /// Age particle and return updated or None if expired
 let private ageParticle (dt: float32) (p: Particle) : Particle voption =
@@ -44,7 +24,7 @@ let private ageParticle (dt: float32) (p: Particle) : Particle voption =
 /// Emit particles at position (imperative for performance)
 let emit (pos: Vector2) (count: int) (model: Model) : unit =
   for _ = 0 to count - 1 do
-    model.Particles.Add(createParticle pos)
+    model.Particles.Add(ParticleFactory.createAt pos)
 
 /// MutableSystem: ages particles, removes expired
 let update<'Msg> (dt: float32) (model: Model) : struct(Model * Cmd<'Msg> list) =
