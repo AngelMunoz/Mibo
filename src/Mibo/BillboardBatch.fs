@@ -1,6 +1,7 @@
 namespace Mibo.Elmish.Graphics3D
 
 open System
+open System.Buffers
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 
@@ -29,13 +30,13 @@ module BillboardBatch =
         )
 
       // Pre-calculate indices
-      for i = 0 to (state.Vertices.Length / 4) - 1 do
-        state.Indices.[i * 6 + 0] <- int16(i * 4 + 0)
-        state.Indices.[i * 6 + 1] <- int16(i * 4 + 1)
-        state.Indices.[i * 6 + 2] <- int16(i * 4 + 2)
-        state.Indices.[i * 6 + 3] <- int16(i * 4 + 0)
-        state.Indices.[i * 6 + 4] <- int16(i * 4 + 2)
-        state.Indices.[i * 6 + 5] <- int16(i * 4 + 3)
+      for i = 0 to state.Vertices.Length / 4 - 1 do
+        state.Indices[i * 6 + 0] <- int16(i * 4 + 0)
+        state.Indices[i * 6 + 1] <- int16(i * 4 + 1)
+        state.Indices[i * 6 + 2] <- int16(i * 4 + 2)
+        state.Indices[i * 6 + 3] <- int16(i * 4 + 0)
+        state.Indices[i * 6 + 4] <- int16(i * 4 + 2)
+        state.Indices[i * 6 + 5] <- int16(i * 4 + 3)
 
       state.IndexBuffer <-
         new IndexBuffer(
@@ -52,19 +53,25 @@ module BillboardBatch =
 
     if requiredVerts > state.Vertices.Length then
       let newSize = Math.Max(state.Vertices.Length * 2, requiredVerts)
-      Array.Resize(&state.Vertices, newSize)
+      let newVerts = ArrayPool.Shared.Rent(newSize)
+      state.Vertices.AsSpan().CopyTo(newVerts.AsSpan())
+      ArrayPool.Shared.Return(state.Vertices)
+      state.Vertices <- newVerts
 
       let newIndicesSize = (newSize / 4) * 6
-      Array.Resize(&state.Indices, newIndicesSize)
+      let newIndices = ArrayPool.Shared.Rent(newIndicesSize)
+      state.Indices.AsSpan().CopyTo(newIndices.AsSpan())
+      ArrayPool.Shared.Return state.Indices
+      state.Indices <- newIndices
 
       // Re-fill indices
-      for i = 0 to (state.Vertices.Length / 4) - 1 do
-        state.Indices.[i * 6 + 0] <- int16(i * 4 + 0)
-        state.Indices.[i * 6 + 1] <- int16(i * 4 + 1)
-        state.Indices.[i * 6 + 2] <- int16(i * 4 + 2)
-        state.Indices.[i * 6 + 3] <- int16(i * 4 + 0)
-        state.Indices.[i * 6 + 4] <- int16(i * 4 + 2)
-        state.Indices.[i * 6 + 5] <- int16(i * 4 + 3)
+      for i = 0 to state.Vertices.Length / 4 - 1 do
+        state.Indices[i * 6 + 0] <- int16(i * 4 + 0)
+        state.Indices[i * 6 + 1] <- int16(i * 4 + 1)
+        state.Indices[i * 6 + 2] <- int16(i * 4 + 2)
+        state.Indices[i * 6 + 3] <- int16(i * 4 + 0)
+        state.Indices[i * 6 + 4] <- int16(i * 4 + 2)
+        state.Indices[i * 6 + 5] <- int16(i * 4 + 3)
 
       state.VertexBuffer <-
         new DynamicVertexBuffer(
@@ -84,14 +91,31 @@ module BillboardBatch =
 
       state.IndexBuffer.SetData(state.Indices)
 
+  // 512 billboards × 4 vertices = 2048, 512 billboards × 6 indices = 3072
+  [<Literal>]
+  let private DefaultVertexCapacity = 2048
+
+  [<Literal>]
+  let private DefaultIndexCapacity = 3072
+
   let create(graphicsDevice: GraphicsDevice) = {
-    Vertices = Array.zeroCreate 2048
-    Indices = Array.zeroCreate 3072
+    Vertices = ArrayPool.Shared.Rent DefaultVertexCapacity
+    Indices = ArrayPool.Shared.Rent DefaultIndexCapacity
     VertexBuffer = null
     IndexBuffer = null
     SpriteCount = 0
     GraphicsDevice = graphicsDevice
   }
+
+  /// Return pooled arrays. Call when the batch is no longer needed.
+  let dispose(state: byref<State>) =
+    if not(isNull state.Vertices) then
+      ArrayPool.Shared.Return state.Vertices
+      state.Vertices <- null
+
+    if not(isNull state.Indices) then
+      ArrayPool.Shared.Return state.Indices
+      state.Indices <- null
 
   /// Begin a batch. Caller is responsible for configuring their effect before calling.
   /// The effect's first pass will be applied.
@@ -101,7 +125,7 @@ module BillboardBatch =
 
   let draw
     (position: Vector3)
-    (size: float32)
+    (size: Vector2)
     (rotation: float32)
     (color: Color)
     (camRight: Vector3)
@@ -113,15 +137,15 @@ module BillboardBatch =
     let halfSize = size * 0.5f
 
     // Apply rotation
-    let cos = MathF.Cos(rotation)
-    let sin = MathF.Sin(rotation)
+    let cos = MathF.Cos rotation
+    let sin = MathF.Sin rotation
 
     // Rotated basis vectors
-    let rotRight = (camRight * cos) + (camUp * sin)
-    let rotUp = (camUp * cos) - (camRight * sin)
+    let rotRight = camRight * cos + camUp * sin
+    let rotUp = camUp * cos - camRight * sin
 
-    let w = rotRight * halfSize
-    let h = rotUp * halfSize
+    let w = rotRight * halfSize.X
+    let h = rotUp * halfSize.Y
 
     // Quad vertices relative to center position
     let v0 = position - w + h // TopLeft
@@ -131,16 +155,16 @@ module BillboardBatch =
 
     let idx = state.SpriteCount * 4
 
-    state.Vertices.[idx + 0] <-
+    state.Vertices[idx + 0] <-
       VertexPositionColorTexture(v0, color, Vector2(0.0f, 0.0f))
 
-    state.Vertices.[idx + 1] <-
+    state.Vertices[idx + 1] <-
       VertexPositionColorTexture(v1, color, Vector2(1.0f, 0.0f))
 
-    state.Vertices.[idx + 2] <-
+    state.Vertices[idx + 2] <-
       VertexPositionColorTexture(v2, color, Vector2(1.0f, 1.0f))
 
-    state.Vertices.[idx + 3] <-
+    state.Vertices[idx + 3] <-
       VertexPositionColorTexture(v3, color, Vector2(0.0f, 1.0f))
 
     state.SpriteCount <- state.SpriteCount + 1
@@ -149,7 +173,7 @@ module BillboardBatch =
     if state.SpriteCount > 0 then
       ensureBuffers &state
       state.VertexBuffer.SetData(state.Vertices, 0, state.SpriteCount * 4)
-      state.GraphicsDevice.SetVertexBuffer(state.VertexBuffer)
+      state.GraphicsDevice.SetVertexBuffer state.VertexBuffer
       state.GraphicsDevice.Indices <- state.IndexBuffer
 
       state.GraphicsDevice.DrawIndexedPrimitives(

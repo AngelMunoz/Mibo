@@ -432,31 +432,17 @@ type ComponentRef<'T when 'T :> IGameComponent>() =
   member _.Set(v: 'T) = value <- ValueSome v
   member _.Clear() = value <- ValueNone
 
-/// A small per-frame buffer for batching high-frequency writes/events.
-///
-/// Typical usage:
-/// - enqueue items during `update` (hot path)
-/// - drain once at a frame boundary (e.g. via `Cmd.deferNextFrame` messages)
-type FrameBuffer<'T>(?capacity: int) =
-  let items = ResizeArray<'T>(defaultArg capacity 64)
-
-  member _.Enqueue(item: 'T) = items.Add item
-
-  member _.DrainTo(apply: 'T -> unit) =
-    for i = 0 to items.Count - 1 do
-      apply items[i]
-
-    items.Clear()
-
-  member _.Clear() = items.Clear()
-  member _.Count = items.Count
-
 /// A small, allocation-friendly buffer that stores commands tagged with a sort key.
 ///
 /// This is intentionally rendering-agnostic. Graphics plugins can define their own key type
 /// (e.g. `int<RenderLayer>`) and either rely on the default comparer or provide one.
 type RenderBuffer<'Key, 'Cmd>(?capacity: int, ?keyComparer: IComparer<'Key>) =
-  let items = ResizeArray<struct ('Key * 'Cmd)>(defaultArg capacity 1024)
+  let initialCapacity = defaultArg capacity 1024
+
+  let mutable items =
+    Buffers.ArrayPool<struct ('Key * 'Cmd)>.Shared.Rent initialCapacity
+
+  let mutable count = 0
   let keyComparer = defaultArg keyComparer Comparer<'Key>.Default
 
   let comparer =
@@ -467,11 +453,28 @@ type RenderBuffer<'Key, 'Cmd>(?capacity: int, ?keyComparer: IComparer<'Key>) =
           keyComparer.Compare(kx, ky)
     }
 
-  member _.Clear() = items.Clear()
-  member _.Add(key: 'Key, cmd: 'Cmd) = items.Add(struct (key, cmd))
-  member _.Sort() = items.Sort(comparer)
-  member _.Count = items.Count
-  member _.Item(i) = items.[i]
+  let ensureCapacity(needed: int) =
+    if count + needed > items.Length then
+      let newSize = max (items.Length * 2) (count + needed)
+      let newArr = Buffers.ArrayPool<struct ('Key * 'Cmd)>.Shared.Rent(newSize)
+      items.AsSpan(0, count).CopyTo(newArr.AsSpan())
+      Buffers.ArrayPool<struct ('Key * 'Cmd)>.Shared.Return(items)
+      items <- newArr
+
+  member _.Clear() = count <- 0
+
+  member _.Add(key: 'Key, cmd: 'Cmd) =
+    ensureCapacity 1
+    items[count] <- struct (key, cmd)
+    count <- count + 1
+
+  member _.Sort() =
+    // Sort only the used portion via Span
+    let span = items.AsSpan(0, count)
+    span.Sort comparer
+
+  member _.Count = count
+  member _.Item(i) = items[i]
 
 type Program<'Model, 'Msg> = {
   Init: GameContext -> struct ('Model * Cmd<'Msg>)

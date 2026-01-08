@@ -1,6 +1,7 @@
 namespace Mibo.Elmish.Graphics3D
 
 open System
+open System.Buffers
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 
@@ -17,9 +18,16 @@ module QuadBatch =
     GraphicsDevice: GraphicsDevice
   }
 
+  // 512 quads × 4 vertices = 2048, 512 quads × 6 indices = 3072
+  [<Literal>]
+  let private DefaultVertexCapacity = 2048
+
+  [<Literal>]
+  let private DefaultIndexCapacity = 3072
+
   let create(graphicsDevice: GraphicsDevice) =
-    let vertices = Array.zeroCreate<VertexPositionTexture> 2048
-    let indices = Array.zeroCreate<int16> 3072 // 6 indices per quad
+    let vertices = ArrayPool.Shared.Rent DefaultVertexCapacity
+    let indices = ArrayPool.Shared.Rent DefaultIndexCapacity
 
     // Pre-fill indices for max capacity
     for i in 0..511 do
@@ -40,6 +48,16 @@ module QuadBatch =
       GraphicsDevice = graphicsDevice
     }
 
+  /// Return pooled arrays. Call when the batch is no longer needed.
+  let dispose(state: byref<State>) =
+    if not(isNull state.Vertices) then
+      ArrayPool.Shared.Return state.Vertices
+      state.Vertices <- null
+
+    if not(isNull state.Indices) then
+      ArrayPool.Shared.Return state.Indices
+      state.Indices <- null
+
   /// Begin a batch. Caller is responsible for configuring the effect before calling.
   let inline begin' (effect: Effect) (state: byref<State>) =
     state.QuadCount <- 0
@@ -50,7 +68,7 @@ module QuadBatch =
       let gd = state.GraphicsDevice
       gd.BlendState <- BlendState.AlphaBlend
       gd.DepthStencilState <- DepthStencilState.Default
-      gd.SamplerStates.[0] <- SamplerState.PointClamp
+      gd.SamplerStates[0] <- SamplerState.PointClamp
       gd.RasterizerState <- RasterizerState.CullNone
 
       for pass in state.CurrentEffect.CurrentTechnique.Passes do
@@ -81,16 +99,16 @@ module QuadBatch =
     let idx = state.QuadCount * 4
 
     // TL
-    state.Vertices.[idx + 0] <-
+    state.Vertices[idx + 0] <-
       VertexPositionTexture(Vector3(x, y, z), Vector2(0.0f, 0.0f))
     // TR
-    state.Vertices.[idx + 1] <-
+    state.Vertices[idx + 1] <-
       VertexPositionTexture(Vector3(x + w, y, z), Vector2(1.0f, 0.0f))
     // BR
-    state.Vertices.[idx + 2] <-
+    state.Vertices[idx + 2] <-
       VertexPositionTexture(Vector3(x + w, y, z + h), Vector2(1.0f, 1.0f))
     // BL
-    state.Vertices.[idx + 3] <-
+    state.Vertices[idx + 3] <-
       VertexPositionTexture(Vector3(x, y, z + h), Vector2(0.0f, 1.0f))
 
     state.QuadCount <- state.QuadCount + 1

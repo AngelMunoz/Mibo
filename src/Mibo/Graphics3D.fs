@@ -18,6 +18,15 @@ type RenderPass =
   | Transparent
 
 [<Struct>]
+type EffectContext = {
+  World: Matrix
+  View: Matrix
+  Projection: Matrix
+}
+
+type EffectSetup = Effect -> EffectContext -> unit
+
+[<Struct>]
 type RenderCmd3D =
   /// Set viewport for multi-camera rendering (split-screen, minimaps, etc).
   | SetViewport of viewport: Viewport
@@ -29,7 +38,8 @@ type RenderCmd3D =
     model: Model *
     transform: Matrix *
     diffuseColor: Color voption *
-    texture: Texture2D voption
+    texture: Texture2D voption *
+    setup: EffectSetup voption
 
   /// Escape hatch: run an arbitrary draw function.
   ///
@@ -47,7 +57,8 @@ type RenderCmd3D =
     transform: Matrix *
     bones: Matrix[] *
     diffuseColor: Color voption *
-    texture: Texture2D voption
+    texture: Texture2D voption *
+    setup: EffectSetup voption
 
   /// Draw an axis-aligned textured quad in 3D space.
   /// Caller is responsible for setting up the effect (View, Projection, Texture, etc).
@@ -58,7 +69,7 @@ type RenderCmd3D =
   | DrawBillboard of
     effect: Effect *
     position: Vector3 *
-    dBSize: float32 *
+    size: Vector2 *
     rotation: float32 *
     color: Color
 
@@ -99,10 +110,6 @@ type Batch3DConfig = {
   ///
   /// If you want to animate lights every frame, disable caching and set `LightingSetup`.
   CacheBasicEffectLighting: bool
-
-  /// Optional lighting setup hook for BasicEffect.
-  /// If not provided, a simple default lighting setup is used.
-  LightingSetup: (BasicEffect -> unit) voption
 }
 
 module Batch3DConfig =
@@ -123,8 +130,16 @@ module Batch3DConfig =
 
     SortOpaqueFrontToBack = false
     CacheBasicEffectLighting = true
-    LightingSetup = ValueNone
   }
+
+module StandardEffects =
+  let defaultLighting(effect: BasicEffect) =
+    effect.LightingEnabled <- true
+    effect.AmbientLightColor <- Vector3(0.2f, 0.2f, 0.2f)
+    effect.DirectionalLight0.Enabled <- true
+    effect.DirectionalLight0.DiffuseColor <- Vector3(0.8f, 0.8f, 0.8f)
+    effect.DirectionalLight0.Direction <- Vector3(-1.0f, -1.0f, -1.0f)
+    effect.DirectionalLight0.SpecularColor <- Vector3.Zero
 
 /// Standard 3D Renderer using BasicEffect
 type Batch3DRenderer<'Model>
@@ -146,31 +161,17 @@ type Batch3DRenderer<'Model>
   // Use a ConditionalWeakTable so we don't keep effects alive.
   let configuredBasicEffects = ConditionalWeakTable<BasicEffect, obj>()
 
-  // Default lighting setup (kept intentionally simple).
-  let defaultLighting(effect: BasicEffect) =
-    effect.LightingEnabled <- true
-    effect.AmbientLightColor <- Vector3(0.2f, 0.2f, 0.2f)
-    effect.DirectionalLight0.Enabled <- true
-    effect.DirectionalLight0.DiffuseColor <- Vector3(0.8f, 0.8f, 0.8f)
-    effect.DirectionalLight0.Direction <- Vector3(-1.0f, -1.0f, -1.0f)
-    effect.DirectionalLight0.SpecularColor <- Vector3.Zero
-
   let applyBasicEffectLighting(effect: BasicEffect) =
-    let setup =
-      match config.LightingSetup with
-      | ValueSome f -> f
-      | ValueNone -> defaultLighting
-
     if config.CacheBasicEffectLighting then
       // Apply at most once per BasicEffect instance.
       match configuredBasicEffects.TryGetValue(effect) with
       | true, _ -> ()
       | false, _ ->
-        setup effect
+        StandardEffects.defaultLighting effect
         configuredBasicEffects.Add(effect, box())
     else
       // Dynamic lights: apply every time.
-      setup effect
+      StandardEffects.defaultLighting effect
 
   let getCameraWorldPosition(view: Matrix) : Vector3 =
     // Camera position is translation of inverse view.
@@ -188,6 +189,11 @@ type Batch3DRenderer<'Model>
   // Batchers for quads and billboards
   let mutable quadBatch = QuadBatch.create(game.GraphicsDevice)
   let mutable billboardBatch = BillboardBatch.create(game.GraphicsDevice)
+
+  interface IDisposable with
+    member _.Dispose() =
+      QuadBatch.dispose &quadBatch
+      BillboardBatch.dispose &billboardBatch
 
   interface IRenderer<'Model> with
     member _.Draw(ctx: GameContext, model: 'Model, gameTime: GameTime) =
@@ -289,21 +295,21 @@ type Batch3DRenderer<'Model>
 
         | DrawCustom draw -> draw(ctx, viewMatrix, projectionMatrix)
 
-        | DrawMesh(pass, m, transform, _colorOpt, _texOpt) ->
+        | DrawMesh(pass, m, transform, _colorOpt, _texOpt, _setupOpt) ->
           let pos = transform.Translation
           let distSq = Vector3.DistanceSquared(camPos, pos)
 
           match pass with
-          | Opaque -> opaque.Add(struct (distSq, cmd))
-          | Transparent -> transparent.Add(struct (distSq, cmd))
+          | Opaque -> opaque.Add struct (distSq, cmd)
+          | Transparent -> transparent.Add struct (distSq, cmd)
 
-        | DrawSkinned(pass, m, transform, _bones, _colorOpt, _texOpt) ->
+        | DrawSkinned(pass, m, transform, _bones, _colorOpt, _texOpt, _setupOpt) ->
           let pos = transform.Translation
           let distSq = Vector3.DistanceSquared(camPos, pos)
 
           match pass with
-          | Opaque -> opaque.Add(struct (distSq, cmd))
-          | Transparent -> transparent.Add(struct (distSq, cmd))
+          | Opaque -> opaque.Add struct (distSq, cmd)
+          | Transparent -> transparent.Add struct (distSq, cmd)
 
         | DrawQuad(effect, position, size) ->
           if effect <> currentQuadEffect then
@@ -354,6 +360,7 @@ type Batch3DRenderer<'Model>
         (colorOpt: Color voption)
         (texOpt: Texture2D voption)
         (bonesOpt: Matrix[] voption)
+        (setupOpt: EffectSetup voption)
         =
         // Set pass-specific device state.
         match pass with
@@ -365,68 +372,93 @@ type Batch3DRenderer<'Model>
           gd.BlendState <- config.TransparentBlendState
 
         for mesh in m.Meshes do
-          for effect in mesh.Effects do
+          for part in mesh.MeshParts do
+            let effect = part.Effect
+
+            match setupOpt with
+            | ValueSome setup ->
+              setup effect {
+                World = transform
+                View = viewMatrix
+                Projection = projectionMatrix
+              }
+            | ValueNone -> ()
+
+            let inline setWvp(e: ^T) =
+              if ValueOption.isNone setupOpt then
+                (^T: (member set_World: Matrix -> unit) (e, transform))
+                (^T: (member set_View: Matrix -> unit) (e, viewMatrix))
+
+                (^T: (member set_Projection: Matrix -> unit) (e,
+                                                              projectionMatrix))
+
             match effect with
-            | :? SkinnedEffect as se ->
-              se.World <- transform
-              se.View <- viewMatrix
-              se.Projection <- projectionMatrix
-
-              bonesOpt
-              |> ValueOption.iter(fun bones ->
-                try
-                  se.SetBoneTransforms(bones)
-                with _ ->
-                  ())
-
-              match colorOpt with
-              | ValueSome c -> se.DiffuseColor <- c.ToVector3()
-              | ValueNone -> ()
-
-              match texOpt with
-              | ValueSome t -> se.Texture <- t
-              | ValueNone -> ()
-
             | :? BasicEffect as be ->
-              be.World <- transform
-              be.View <- viewMatrix
-              be.Projection <- projectionMatrix
+              setWvp be
 
-              applyBasicEffectLighting be
+              if config.CacheBasicEffectLighting then
+                match configuredBasicEffects.TryGetValue(be) with
+                | true, _ -> ()
+                | false, _ ->
+                  StandardEffects.defaultLighting be
+                  configuredBasicEffects.Add(be, box())
+              else
+                StandardEffects.defaultLighting be
 
-              match colorOpt with
-              | ValueSome c -> be.DiffuseColor <- c.ToVector3()
-              | ValueNone -> ()
+              colorOpt
+              |> ValueOption.iter(fun c -> be.DiffuseColor <- c.ToVector3())
 
-              match texOpt with
-              | ValueSome t ->
+              texOpt
+              |> ValueOption.iter(fun t ->
                 be.TextureEnabled <- true
-                be.Texture <- t
-              | ValueNone -> ()
+                be.Texture <- t)
+
+            | :? SkinnedEffect as se ->
+              setWvp se
+              bonesOpt |> ValueOption.iter se.SetBoneTransforms
+
+              colorOpt
+              |> ValueOption.iter(fun c -> se.DiffuseColor <- c.ToVector3())
+
+              texOpt |> ValueOption.iter(fun t -> se.Texture <- t)
 
             | _ -> ()
 
-          mesh.Draw()
+            mesh.Draw()
 
       // Execute passes
       for i = 0 to opaque.Count - 1 do
         let struct (_, cmd) = opaque[i]
 
         match cmd with
-        | DrawMesh(pass, m, transform, colorOpt, texOpt) ->
-          drawModelMeshes pass m transform colorOpt texOpt ValueNone
-        | DrawSkinned(pass, m, transform, bones, colorOpt, texOpt) ->
-          drawModelMeshes pass m transform colorOpt texOpt (ValueSome bones)
+        | DrawMesh(pass, m, transform, colorOpt, texOpt, setupOpt) ->
+          drawModelMeshes pass m transform colorOpt texOpt ValueNone setupOpt
+        | DrawSkinned(pass, m, transform, bones, colorOpt, texOpt, setupOpt) ->
+          drawModelMeshes
+            pass
+            m
+            transform
+            colorOpt
+            texOpt
+            (ValueSome bones)
+            setupOpt
         | _ -> ()
 
       for i = 0 to transparent.Count - 1 do
         let struct (_, cmd) = transparent[i]
 
         match cmd with
-        | DrawMesh(pass, m, transform, colorOpt, texOpt) ->
-          drawModelMeshes pass m transform colorOpt texOpt ValueNone
-        | DrawSkinned(pass, m, transform, bones, colorOpt, texOpt) ->
-          drawModelMeshes pass m transform colorOpt texOpt (ValueSome bones)
+        | DrawMesh(pass, m, transform, colorOpt, texOpt, setupOpt) ->
+          drawModelMeshes pass m transform colorOpt texOpt ValueNone setupOpt
+        | DrawSkinned(pass, m, transform, bones, colorOpt, texOpt, setupOpt) ->
+          drawModelMeshes
+            pass
+            m
+            transform
+            colorOpt
+            texOpt
+            (ValueSome bones)
+            setupOpt
         | _ -> ()
 
       if config.RestoreDeviceStates then
@@ -440,7 +472,7 @@ module Batch3DRenderer =
       GameContext -> 'Model -> RenderBuffer<RenderCmd3D> -> unit)
     (game: Game)
     =
-    Batch3DRenderer<'Model>(
+    new Batch3DRenderer<'Model>(
       game,
       Batch3DConfig.defaults,
       fun (ctx, model, buffer) -> view ctx model buffer
@@ -453,7 +485,7 @@ module Batch3DRenderer =
       GameContext -> 'Model -> RenderBuffer<RenderCmd3D> -> unit)
     (game: Game)
     =
-    Batch3DRenderer<'Model>(
+    new Batch3DRenderer<'Model>(
       game,
       config,
       fun (ctx, model, buffer) -> view ctx model buffer
@@ -470,6 +502,7 @@ type Draw3DBuilder = {
   Color: Color voption
   Texture: Texture2D voption
   Pass: RenderPass
+  Setup: EffectSetup voption
 }
 
 module Draw3D =
@@ -479,6 +512,7 @@ module Draw3D =
     Color = ValueNone
     Texture = ValueNone
     Pass = Opaque
+    Setup = ValueNone
   }
 
   let meshTransparent model transform = {
@@ -491,8 +525,30 @@ module Draw3D =
   let withColor col (b: Draw3DBuilder) = { b with Color = ValueSome col }
   let withTexture tex (b: Draw3DBuilder) = { b with Texture = ValueSome tex }
 
+  /// Configure the effect for this draw command.
+  let withEffect (setup: EffectSetup) (b: Draw3DBuilder) = {
+    b with
+        Setup = ValueSome setup
+  }
+
+  /// Helper: configure a standard BasicEffect with typical parameters (World/View/Proj).
+  /// This restores the default behavior of previous versions.
+  let withBasicEffect(b: Draw3DBuilder) =
+    b
+    |> withEffect(fun effect ctx ->
+      match effect with
+      | :? BasicEffect as be ->
+        be.World <- ctx.World
+        be.View <- ctx.View
+        be.Projection <- ctx.Projection
+        StandardEffects.defaultLighting be
+      | _ -> ())
+
   let submit (buffer: RenderBuffer<RenderCmd3D>) (b: Draw3DBuilder) =
-    buffer.Add((), DrawMesh(b.Pass, b.Model, b.Transform, b.Color, b.Texture))
+    buffer.Add(
+      (),
+      DrawMesh(b.Pass, b.Model, b.Transform, b.Color, b.Texture, b.Setup)
+    )
 
   let camera (cam: Camera) (buffer: RenderBuffer<RenderCmd3D>) =
     buffer.Add((), SetCamera cam)
@@ -524,7 +580,15 @@ module Draw3D =
     =
     buffer.Add(
       (),
-      DrawSkinned(pass, model, transform, bones, ValueNone, ValueNone)
+      DrawSkinned(
+        pass,
+        model,
+        transform,
+        bones,
+        ValueNone,
+        ValueNone,
+        ValueNone
+      )
     )
 
   let skinnedWithColor
@@ -537,7 +601,15 @@ module Draw3D =
     =
     buffer.Add(
       (),
-      DrawSkinned(pass, model, transform, bones, ValueSome color, ValueNone)
+      DrawSkinned(
+        pass,
+        model,
+        transform,
+        bones,
+        ValueSome color,
+        ValueNone,
+        ValueNone
+      )
     )
 
   /// Draw an axis-aligned textured quad. Caller must configure effect.
@@ -558,4 +630,7 @@ module Draw3D =
     (color: Color)
     (buffer: RenderBuffer<RenderCmd3D>)
     =
-    buffer.Add((), DrawBillboard(effect, position, size, rotation, color))
+    buffer.Add(
+      (),
+      DrawBillboard(effect, position, Vector2(size), rotation, color)
+    )
