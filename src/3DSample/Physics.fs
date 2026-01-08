@@ -35,10 +35,10 @@ let private resolveCollision
   match Platform.checkCollision playerRadius prevPos newPos platforms with
   | Some top when velocity.Y <= 0f ->
     // Land on platform: place ball on top, zero vertical velocity
-    struct (Vector3(newPos.X, top + playerRadius, newPos.Z),
-            Vector3(velocity.X, 0f, velocity.Z),
-            true)
-  | _ -> struct (newPos, velocity, false)
+    Vector3(newPos.X, top + playerRadius, newPos.Z),
+    Vector3(velocity.X, 0f, velocity.Z),
+    true
+  | _ -> newPos, velocity, false
 
 /// Physics system update: gravity, jump, position, collision
 let update<'Msg>

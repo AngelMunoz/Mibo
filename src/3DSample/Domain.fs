@@ -10,6 +10,7 @@ open Mibo.Input
 // ─────────────────────────────────────────────────────────────
 
 /// Semantic game actions
+[<Struct>]
 type GameAction =
   | MoveLeft
   | MoveRight

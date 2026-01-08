@@ -29,9 +29,9 @@ let view
   (state: State)
   (buffer: RenderBuffer<RenderCmd3D>)
   : unit =
-  let rotationMatrix = Matrix.CreateFromQuaternion(state.Rotation)
+  let rotationMatrix = Matrix.CreateFromQuaternion state.Rotation
 
   let playerMatrix =
-    rotationMatrix * Matrix.CreateTranslation(state.PlayerPosition)
+    rotationMatrix * Matrix.CreateTranslation state.PlayerPosition
 
   Draw3D.mesh state.Assets.PlayerModel playerMatrix |> Draw3D.submit buffer
