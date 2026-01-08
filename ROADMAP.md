@@ -165,12 +165,12 @@ Provide optional policies when the system is overloaded:
 
 These policies should be explicit and observable.
 
-4. **Two-plane execution model (without a second paradigm)**
+4. **Internal Runtime Separation**
 
-Internally, treat the runtime as two coupled planes:
+Internally, separate specific concerns for performance:
 
-- Control plane: Elmish `update` and subscriptions
-- Data plane: services/systems that iterate bulk data and buffer writes/events
+- **Logic**: Elmish `update` and subscriptions handle decisions and coordination.
+- **Throughput**: Services/systems iterate bulk data and buffer writes/events for high-frequency operations.
 
 The public model stays Elmish; this is purely an implementation detail for performance reasoning.
 

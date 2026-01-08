@@ -98,20 +98,6 @@ In this sample:
 - `Particles` → ResizeArray (short-lived effects, not entities)
 - `Speeds`, `Colors`, `Sizes` → Map (static config, set once)
 
-## Two-Plane Architecture
-
-**Control Plane (Elmish):**
-
-- Mode changes, events, async work
-- Messages like `KeyDown`, `PlayerFired`, `DemoBoxBounced`
-- Flows through the Elmish message queue
-
-**Data Plane (Direct Mutation):**
-
-- Per-frame position updates, particle aging
-- Systems return computed values, parent applies mutations
-- Bypasses message queue entirely
-
 ## Running the Sample
 
 ```powershell
@@ -134,12 +120,15 @@ dotnet run
 
 ## What's Next
 
-See [ROADMAP.md](./ROADMAP.md) for upcoming features:
+See [ROADMAP.md](./ROADMAP.md) for the detailed feature plan and status.
+
+We have recently completed:
 
 - Game configuration and system scheduling (Phase 1)
 - State pipeline with mutable/readonly boundaries (Phase 2)
 - Asset loading helpers with JSON/custom loaders (Phase 3)
 - Rendering infrastructure: viewport commands, billboard/quad renderers (Phase 4)
+- Culling helpers and Camera extensions (Phase 5)
 
 In general I want to keep Mibo simple and flexible, if you just want a super simple platformer with squares jumping around, or a 3D ARPG with thousands of entities, I want Mibo to be a good fit for both.
 

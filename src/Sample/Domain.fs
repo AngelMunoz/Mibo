@@ -4,6 +4,7 @@ open System
 open System.Collections.Generic
 open Microsoft.Xna.Framework
 open FSharp.UMX
+open Mibo.Input
 
 // ─────────────────────────────────────────────────────────────
 // Core Types
@@ -13,15 +14,13 @@ open FSharp.UMX
 [<Measure>]
 type EntityId
 
-/// Input state for controllable entities
-[<Struct>]
-type InputState = {
-  MovingLeft: bool
-  MovingRight: bool
-  MovingUp: bool
-  MovingDown: bool
-  IsFiring: bool
-}
+/// Semantic Actions
+type GameAction =
+  | MoveLeft
+  | MoveRight
+  | MoveUp
+  | MoveDown
+  | Fire
 [<Struct>]
 type Particle = {
   Position: Vector2
@@ -31,14 +30,6 @@ type Particle = {
   Color: Color
 }
 
-module InputState =
-  let empty = {
-    MovingLeft = false
-    MovingRight = false
-    MovingUp = false
-    MovingDown = false
-    IsFiring = false
-  }
 
 // ─────────────────────────────────────────────────────────────
 // Model: The World State (mutable containers for hot data)
@@ -46,7 +37,9 @@ module InputState =
 
 type Model = {
   Positions: Dictionary<Guid<EntityId>, Vector2>
-  Inputs: Dictionary<Guid<EntityId>, InputState>
+  // Replaced manual input state with generic ActionState
+  Actions: ActionState<GameAction>
+  InputMap: InputMap<GameAction>
   Particles: ResizeArray<Particle>
   Speeds: Map<Guid<EntityId>, float32>
   Hues: Map<Guid<EntityId>, float32>
@@ -63,7 +56,8 @@ type Model = {
 [<Struct>]
 type ModelSnapshot = {
   Positions: IReadOnlyDictionary<Guid<EntityId>, Vector2>
-  Inputs: IReadOnlyDictionary<Guid<EntityId>, InputState>
+  Actions: ActionState<GameAction>
+  InputMap: InputMap<GameAction>
   Particles: IReadOnlyList<Particle>
   Speeds: Map<Guid<EntityId>, float32>
   Hues: Map<Guid<EntityId>, float32>
@@ -77,7 +71,8 @@ module Model =
   /// Create readonly snapshot after physics mutations
   let toSnapshot (model: Model) : ModelSnapshot = {
     Positions = model.Positions :> IReadOnlyDictionary<_, _>
-    Inputs = model.Inputs :> IReadOnlyDictionary<_, _>
+    Actions = model.Actions
+    InputMap = model.InputMap
     Particles = model.Particles :> IReadOnlyList<_>
     Speeds = model.Speeds
     Hues = model.Hues
@@ -89,7 +84,8 @@ module Model =
 
   let fromSnapshot (snapshot: ModelSnapshot) : Model = {
     Positions = snapshot.Positions :?> Dictionary<_, _>
-    Inputs = snapshot.Inputs :?> Dictionary<_, _>
+    Actions = snapshot.Actions
+    InputMap = snapshot.InputMap
     Particles = snapshot.Particles :?> ResizeArray<_>
     Speeds = snapshot.Speeds
     Hues = snapshot.Hues

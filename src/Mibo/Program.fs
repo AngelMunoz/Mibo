@@ -96,14 +96,82 @@ let withAssets(program: Program<'Model, 'Msg>) : Program<'Model, 'Msg> =
 let withInput(program: Program<'Model, 'Msg>) : Program<'Model, 'Msg> =
   withComponent
     (fun game ->
-      let input = Input.create game
+      // Idempotent behavior: if input is already registered, do nothing.
+      // This avoids accidentally creating multiple polling components when a user
+      // composes `withInput`/`withInputMapper`/`withInputMapping` together.
+      let existing = game.Services.GetService(typeof<IInput>)
 
-      // Register as service so subscriptions can find it
+      if not(isNull existing) then
+        new GameComponent(game) :> IGameComponent
+      else
+        let input = Input.create game
+
+        // Register as service so subscriptions can find it
+        game.Services.AddService(typeof<IInput>, input)
+        input :> IGameComponent)
+    program
+
+
+/// Configures the game to register an `IInputMapper<'Action>` service.
+///
+/// This helper lives in `Mibo.Elmish.Program` alongside other `Program.withX` helpers.
+///
+/// Notes:
+/// - This registers `IInput` automatically (equivalent to `withInput`).
+/// - The mapper is ticked via a MonoGame `GameComponent`.
+/// - If you want to stay fully "Elmish" (no service access), consider using
+///   `Mibo.Input.InputMapper.subscribe` instead and handle a single message.
+let withInputMapper<'Model, 'Msg, 'Action when 'Action: comparison>
+  (initialMap: InputMap<'Action>)
+  (program: Program<'Model, 'Msg>)
+  : Program<'Model, 'Msg> =
+
+  // Ensure core input exists.
+  let program = program |> withInput
+
+  let originalInit = program.Init
+
+  let wrappedInit ctx =
+    let coreInput = Input.getService ctx
+
+    // Replace any existing mapper registration (defensive).
+    let existing = ctx.Game.Services.GetService(typeof<IInputMapper<'Action>>)
+
+    match existing with
+    | null -> ()
+    | :? IDisposable as d ->
       try
-        game.Services.RemoveService typeof<IInput>
+        d.Dispose()
       with _ ->
         ()
 
-      game.Services.AddService(typeof<IInput>, input)
-      input :> IGameComponent)
-    program
+      try
+        ctx.Game.Services.RemoveService typeof<IInputMapper<'Action>>
+      with _ ->
+        ()
+    | _ ->
+      try
+        ctx.Game.Services.RemoveService typeof<IInputMapper<'Action>>
+      with _ ->
+        ()
+
+    let mapper = new InputMapperService<'Action>(coreInput, initialMap)
+    ctx.Game.Services.AddService(typeof<IInputMapper<'Action>>, mapper)
+
+    // Best-effort cleanup when the game is exiting.
+    ctx.Game.Exiting.Add(fun _ ->
+      try
+        (mapper :> IDisposable).Dispose()
+      with _ ->
+        ())
+
+    // Tick mapper via GameComponent.
+    ctx.Game.Components.Add
+      { new GameComponent(ctx.Game) with
+          override _.Update _gameTime =
+            (mapper :> IInputMapper<'Action>).Update()
+      }
+
+    originalInit ctx
+
+  { program with Init = wrappedInit }
