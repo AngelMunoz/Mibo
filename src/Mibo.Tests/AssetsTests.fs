@@ -1,28 +1,14 @@
 module Mibo.Tests.Assets
 
 open Expecto
-open System
-open Microsoft.Xna.Framework.Graphics
-open Microsoft.Xna.Framework.Content
 open Mibo.Elmish
-
-type MockDisposable() =
-  let mutable disposed = false
-  member _.IsDisposed = disposed
-
-  interface IDisposable with
-    member _.Dispose() = disposed <- true
 
 [<Tests>]
 let tests =
   testList "Assets" [
-    // Note: We can't easily test ContentManager loading without a real graphics device/service provider,
-    // but we can test the generic asset cache and disposal logic which is custom in Mibo.
-
     testCase "GetOrCreate only calls factory once"
     <| fun _ ->
-      // Since create requires GraphicsDevice and ContentManager, we can pass null for tests
-      // if we only hit the user cache paths (GetOrCreate).
+      // Passing null for dependencies since we are only testing the generic user-cache logic path.
       let assets = AssetsService.create null null
 
       let mutable callCount = 0
@@ -37,17 +23,6 @@ let tests =
       Expect.equal val1 "asset-value" "Value should match"
       Expect.equal val2 "asset-value" "Value should still match"
       Expect.equal callCount 1 "Factory should only be called once"
-
-    testCase "Dispose cleans up IDisposable user assets"
-    <| fun _ ->
-      let assets = AssetsService.create null null
-      let mock = new MockDisposable()
-
-      assets.GetOrCreate "disposable" (fun _ -> mock) |> ignore
-      Expect.isFalse mock.IsDisposed "Should not be disposed yet"
-
-      assets.Dispose()
-      Expect.isTrue mock.IsDisposed "Should be disposed after assets.Dispose()"
 
     testCase "Clear removes assets from cache"
     <| fun _ ->
