@@ -4,6 +4,8 @@ category: Documentation
 index: 0
 ---
 
+# WIP THIS IS WORK IN PROGRESS DO NOT BELIVE ANYTHING YOU READ HERE UNLESS YOU DONT SEE THIS WARNING
+
 # Mibo: A Functional Game Framework for F#
 
 Mibo is a lightweight, Elmish-based game framework built on top of MonoGame. It brings the power of the **Model-View-Update (MVU)** architecture to game development, encouraging pure game logic and predictable state management.
