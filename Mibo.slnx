@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/3DSample/3DSample.fsproj" />
     <Project Path="src/Mibo/Mibo.fsproj" />
   </Folder>
   <Folder Name="/src/Sample/">

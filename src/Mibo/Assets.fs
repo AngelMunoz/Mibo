@@ -20,6 +20,7 @@ type IAssets =
   abstract Texture: path: string -> Texture2D
   abstract Font: path: string -> SpriteFont
   abstract Sound: path: string -> SoundEffect
+  abstract Model: path: string -> Model
 
   abstract Get<'T> : key: string -> 'T voption
   abstract Create<'T> : key: string -> factory: (GraphicsDevice -> 'T) -> 'T
@@ -41,15 +42,23 @@ module AssetsService =
     let textureCache = Dictionary<string, Texture2D>()
     let fontCache = Dictionary<string, SpriteFont>()
     let soundCache = Dictionary<string, SoundEffect>()
+    let modelCache = Dictionary<string, Model>()
 
     // Generic cache for user-created assets
     let assetCache = Dictionary<string, obj>()
+
+    let nonMonoGamePath(path: string) : string =
+      if Path.IsPathRooted path then
+        path
+      else
+        Path.Combine(AppContext.BaseDirectory, "Content", path)
 
     let loadWithCache
       (cache: Dictionary<string, 'T>)
       (path: string)
       (loader: string -> 'T)
       : 'T =
+
       match cache.TryGetValue(path) with
       | true, v -> v
       | false, _ ->
@@ -85,6 +94,9 @@ module AssetsService =
 
         member _.Sound(path: string) : SoundEffect =
           loadWithCache soundCache path (fun p -> content.Load<SoundEffect>(p))
+
+        member _.Model(path: string) : Model =
+          loadWithCache modelCache path (fun p -> content.Load<Model>(p))
 
         member _.Get<'T>(key: string) : 'T voption =
           match assetCache.TryGetValue(key) with
@@ -139,6 +151,9 @@ module Assets =
 
   let texture (path: string) (ctx: GameContext) : Texture2D =
     (getService ctx).Texture path
+
+  let model (path: string) (ctx: GameContext) : Model =
+    (getService ctx).Model path
 
   let font (path: string) (ctx: GameContext) : SpriteFont =
     (getService ctx).Font path
