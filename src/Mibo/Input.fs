@@ -37,12 +37,45 @@ type TouchPoint = {
 [<Struct>]
 type TouchDelta = { Touches: TouchPoint[] }
 
+/// Gamepad button state changes
+[<Struct>]
+type GamepadButtons = {
+  Pressed: Buttons[]
+  Released: Buttons[]
+}
+
+/// Gamepad analog input values (normalized)
+[<Struct>]
+type GamepadAnalog = {
+  LeftThumbstick: Vector2
+  RightThumbstick: Vector2
+  LeftTrigger: float32
+  RightTrigger: float32
+}
+
+/// Per-player gamepad delta (only emitted for connected controllers)
+[<Struct>]
+type GamepadDelta = {
+  PlayerIndex: PlayerIndex
+  Buttons: GamepadButtons
+  Analog: GamepadAnalog
+}
+
+/// Gamepad connection state change
+[<Struct>]
+type GamepadConnection = {
+  PlayerIndex: PlayerIndex
+  IsConnected: bool
+}
+
 /// Per-game input service.
 /// This service is intended to be registered into `Game.Services` by `Program.withInput`.
 type IInput =
   abstract KeyboardDelta: IObservable<KeyboardDelta>
   abstract MouseDelta: IObservable<MouseDelta>
   abstract TouchDelta: IObservable<TouchDelta>
+  abstract GamepadDelta: IObservable<GamepadDelta>
+  abstract GamepadConnection: IObservable<GamepadConnection>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Polling Functions (module-level, composable)
@@ -156,6 +189,69 @@ module InputPolling =
 
       trigger { Touches = points }
 
+  // Cached list of all Buttons to check
+  let private allButtons: Buttons[] =
+    Enum.GetValues(typeof<Buttons>) :?> Buttons[]
+
+  let pollGamepad
+    (prevStates: GamePadState[])
+    (pressedBuf: ResizeArray<Buttons>)
+    (releasedBuf: ResizeArray<Buttons>)
+    (triggerDelta: GamepadDelta -> unit)
+    (triggerConnection: GamepadConnection -> unit)
+    =
+    for i = 0 to 3 do
+      let playerIndex = enum<PlayerIndex>(i)
+      let curr = GamePad.GetState(playerIndex)
+      let prev = prevStates.[i]
+
+      // Connection state change detection
+      if prev.IsConnected <> curr.IsConnected then
+        triggerConnection {
+          PlayerIndex = playerIndex
+          IsConnected = curr.IsConnected
+        }
+
+      // Only poll input if connected
+      if curr.IsConnected then
+        pressedBuf.Clear()
+        releasedBuf.Clear()
+
+        for btn in allButtons do
+          let wasDown = prev.IsButtonDown(btn)
+          let isDown = curr.IsButtonDown(btn)
+
+          if isDown && not wasDown then
+            pressedBuf.Add(btn)
+          elif wasDown && not isDown then
+            releasedBuf.Add(btn)
+
+        // Emit delta if there's any change
+        let hasButtonChange = pressedBuf.Count > 0 || releasedBuf.Count > 0
+
+        let hasAnalogChange =
+          curr.ThumbSticks.Left <> prev.ThumbSticks.Left
+          || curr.ThumbSticks.Right <> prev.ThumbSticks.Right
+          || curr.Triggers.Left <> prev.Triggers.Left
+          || curr.Triggers.Right <> prev.Triggers.Right
+
+        if hasButtonChange || hasAnalogChange then
+          triggerDelta {
+            PlayerIndex = playerIndex
+            Buttons = {
+              Pressed = pressedBuf.ToArray()
+              Released = releasedBuf.ToArray()
+            }
+            Analog = {
+              LeftThumbstick = curr.ThumbSticks.Left
+              RightThumbstick = curr.ThumbSticks.Right
+              LeftTrigger = curr.Triggers.Left
+              RightTrigger = curr.Triggers.Right
+            }
+          }
+
+      prevStates.[i] <- curr
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Component Factory
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,29 +264,44 @@ module Input =
     let keyboardDelta = Event<KeyboardDelta>()
     let mouseDelta = Event<MouseDelta>()
     let touchDelta = Event<TouchDelta>()
+    let gamepadDelta = Event<GamepadDelta>()
+    let gamepadConnection = Event<GamepadConnection>()
 
-    let pressedBuf = ResizeArray<Keys>(8)
-    let releasedBuf = ResizeArray<Keys>(8)
+    let pressedKeysBuf = ResizeArray<Keys>(8)
+    let releasedKeysBuf = ResizeArray<Keys>(8)
+    let pressedButtonsBuf = ResizeArray<Buttons>(8)
+    let releasedButtonsBuf = ResizeArray<Buttons>(8)
 
     let mutable prevKeyboard = KeyboardState()
     let mutable prevMouse = MouseState()
+    let prevGamepads = Array.zeroCreate<GamePadState>(4)
 
     let input =
       { new GameComponent(game) with
           override _.Update(gameTime) =
             InputPolling.pollKeyboard
               &prevKeyboard
-              pressedBuf
-              releasedBuf
+              pressedKeysBuf
+              releasedKeysBuf
               keyboardDelta.Trigger
 
             InputPolling.pollMouse &prevMouse mouseDelta.Trigger
             InputPolling.pollTouch touchDelta.Trigger
+
+            InputPolling.pollGamepad
+              prevGamepads
+              pressedButtonsBuf
+              releasedButtonsBuf
+              gamepadDelta.Trigger
+              gamepadConnection.Trigger
+
             base.Update(gameTime)
         interface IInput with
           member _.KeyboardDelta = keyboardDelta.Publish
           member _.MouseDelta = mouseDelta.Publish
           member _.TouchDelta = touchDelta.Publish
+          member _.GamepadDelta = gamepadDelta.Publish
+          member _.GamepadConnection = gamepadConnection.Publish
       }
 
     input
@@ -313,5 +424,76 @@ module Touch =
     let subscribe(dispatch: Dispatch<'Msg>) =
       (Input.getService ctx)
         .TouchDelta.Subscribe(fun delta -> dispatch(handler delta.Touches))
+
+    Sub.Active(subId, subscribe)
+
+module Gamepad =
+
+  /// Listen to all gamepad input changes (buttons and analog)
+  let listen (handler: GamepadDelta -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
+    let subId = SubId.ofString "Mibo/Input/Gamepad/listen"
+
+    let subscribe(dispatch: Dispatch<'Msg>) =
+      (Input.getService ctx)
+        .GamepadDelta.Subscribe(fun delta -> dispatch(handler delta))
+
+    Sub.Active(subId, subscribe)
+
+  /// Listen to gamepad input for a specific player
+  let listenPlayer
+    (player: PlayerIndex)
+    (handler: GamepadDelta -> 'Msg)
+    (ctx: GameContext)
+    : Sub<'Msg> =
+    let subId = SubId.ofString $"Mibo/Input/Gamepad/listenPlayer/{int player}"
+
+    let subscribe(dispatch: Dispatch<'Msg>) =
+      (Input.getService ctx)
+        .GamepadDelta.Subscribe(fun delta ->
+          if delta.PlayerIndex = player then
+            dispatch(handler delta))
+
+    Sub.Active(subId, subscribe)
+
+  /// Called when a gamepad connects
+  let onConnected
+    (handler: PlayerIndex -> 'Msg)
+    (ctx: GameContext)
+    : Sub<'Msg> =
+    let subId = SubId.ofString "Mibo/Input/Gamepad/onConnected"
+
+    let subscribe(dispatch: Dispatch<'Msg>) =
+      (Input.getService ctx)
+        .GamepadConnection.Subscribe(fun conn ->
+          if conn.IsConnected then
+            dispatch(handler conn.PlayerIndex))
+
+    Sub.Active(subId, subscribe)
+
+  /// Called when a gamepad disconnects
+  let onDisconnected
+    (handler: PlayerIndex -> 'Msg)
+    (ctx: GameContext)
+    : Sub<'Msg> =
+    let subId = SubId.ofString "Mibo/Input/Gamepad/onDisconnected"
+
+    let subscribe(dispatch: Dispatch<'Msg>) =
+      (Input.getService ctx)
+        .GamepadConnection.Subscribe(fun conn ->
+          if not conn.IsConnected then
+            dispatch(handler conn.PlayerIndex))
+
+    Sub.Active(subId, subscribe)
+
+  /// Listen to all connection/disconnection events
+  let onConnectionChange
+    (handler: GamepadConnection -> 'Msg)
+    (ctx: GameContext)
+    : Sub<'Msg> =
+    let subId = SubId.ofString "Mibo/Input/Gamepad/onConnectionChange"
+
+    let subscribe(dispatch: Dispatch<'Msg>) =
+      (Input.getService ctx)
+        .GamepadConnection.Subscribe(fun conn -> dispatch(handler conn))
 
     Sub.Active(subId, subscribe)

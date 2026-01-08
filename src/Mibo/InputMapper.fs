@@ -9,7 +9,7 @@ open Mibo.Elmish
 type Trigger =
   | Key of Keys
   | MouseBut of int // 0=Left, 1=Right, 2=Middle
-  | GamepadBut of Buttons
+  | GamepadBut of PlayerIndex * Buttons
 
 /// Configuration: Mappings from Actions to Triggers.
 type InputMap<'Action when 'Action: comparison> = {
@@ -42,6 +42,14 @@ module InputMap =
 
   let mouse (action: 'Action) (btn: int) (map: InputMap<'Action>) =
     bind action (MouseBut btn) map
+
+  let gamepadButton
+    (action: 'Action)
+    (player: PlayerIndex)
+    (btn: Buttons)
+    (map: InputMap<'Action>)
+    =
+    bind action (GamepadBut(player, btn)) map
 
 /// Runtime State
 type ActionState<'Action when 'Action: comparison> = {
@@ -176,10 +184,23 @@ module InputMapper =
 
           dispatch(toMsg state))
 
+      let subGamepad =
+        input.GamepadDelta.Subscribe(fun d ->
+          state <- ActionState.nextFrame state
+
+          for btn in d.Buttons.Pressed do
+            apply(true, GamepadBut(d.PlayerIndex, btn))
+
+          for btn in d.Buttons.Released do
+            apply(false, GamepadBut(d.PlayerIndex, btn))
+
+          dispatch(toMsg state))
+
       { new IDisposable with
           member _.Dispose() =
             subKey.Dispose()
             subMouse.Dispose()
+            subGamepad.Dispose()
       }
 
     Sub.Active(subId, subscribeFn)
@@ -216,7 +237,6 @@ type InputMapperService<'Action when 'Action: comparison>
 
   let subMouse =
     input.MouseDelta.Subscribe(fun d ->
-      // Simplified mapping for buttons
       if d.Buttons.LeftPressed then
         pendingEvents.Add(true, MouseBut 0)
 
@@ -229,10 +249,19 @@ type InputMapperService<'Action when 'Action: comparison>
       if d.Buttons.RightReleased then
         pendingEvents.Add(false, MouseBut 1))
 
+  let subGamepad =
+    input.GamepadDelta.Subscribe(fun d ->
+      for btn in d.Buttons.Pressed do
+        pendingEvents.Add(true, GamepadBut(d.PlayerIndex, btn))
+
+      for btn in d.Buttons.Released do
+        pendingEvents.Add(false, GamepadBut(d.PlayerIndex, btn)))
+
   interface IDisposable with
     member _.Dispose() =
       subKey.Dispose()
       subMouse.Dispose()
+      subGamepad.Dispose()
 
   interface IInputMapper<'Action> with
     member _.CurrentState = state

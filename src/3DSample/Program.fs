@@ -28,6 +28,7 @@ module Program =
   let init(ctx: GameContext) : struct (State * Cmd<Msg>) =
     let inputMap =
       InputMap.empty
+      // Keyboard controls
       |> InputMap.key MoveLeft Keys.A
       |> InputMap.key MoveLeft Keys.Left
       |> InputMap.key MoveRight Keys.D
@@ -37,6 +38,28 @@ module Program =
       |> InputMap.key MoveBackward Keys.S
       |> InputMap.key MoveBackward Keys.Down
       |> InputMap.key Jump Keys.Space
+      // Player 1 gamepad controls
+      |> InputMap.gamepadButton MoveLeft PlayerIndex.One Buttons.DPadLeft
+      |> InputMap.gamepadButton MoveRight PlayerIndex.One Buttons.DPadRight
+      |> InputMap.gamepadButton MoveForward PlayerIndex.One Buttons.DPadUp
+      |> InputMap.gamepadButton MoveBackward PlayerIndex.One Buttons.DPadDown
+      |> InputMap.gamepadButton
+        MoveLeft
+        PlayerIndex.One
+        Buttons.LeftThumbstickLeft
+      |> InputMap.gamepadButton
+        MoveRight
+        PlayerIndex.One
+        Buttons.LeftThumbstickRight
+      |> InputMap.gamepadButton
+        MoveForward
+        PlayerIndex.One
+        Buttons.LeftThumbstickUp
+      |> InputMap.gamepadButton
+        MoveBackward
+        PlayerIndex.One
+        Buttons.LeftThumbstickDown
+      |> InputMap.gamepadButton Jump PlayerIndex.One Buttons.A
 
     inputMapRef.Value <- inputMap
 
