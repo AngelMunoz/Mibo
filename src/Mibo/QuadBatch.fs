@@ -5,8 +5,12 @@ open System.Buffers
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 
+/// <summary>
 /// A simple batcher for drawing 3D textured quads.
-/// Quads are axis-aligned (not camera-facing like billboards).
+/// </summary>
+/// <remarks>
+/// Quads are axis-aligned (not camera-facing like <see cref="T:Mibo.Elmish.Graphics3D.BillboardBatch"/>).
+/// </remarks>
 module QuadBatch =
 
   [<Struct>]
@@ -25,6 +29,7 @@ module QuadBatch =
   [<Literal>]
   let private DefaultIndexCapacity = 3072
 
+  /// <summary>Creates a new quad batcher.</summary>
   let create(graphicsDevice: GraphicsDevice) =
     let vertices = ArrayPool.Shared.Rent DefaultVertexCapacity
     let indices = ArrayPool.Shared.Rent DefaultIndexCapacity
@@ -48,7 +53,7 @@ module QuadBatch =
       GraphicsDevice = graphicsDevice
     }
 
-  /// Return pooled arrays. Call when the batch is no longer needed.
+  /// <summary>Return pooled arrays. Call when the batch is no longer needed.</summary>
   let dispose(state: byref<State>) =
     if not(isNull state.Vertices) then
       ArrayPool.Shared.Return state.Vertices
@@ -58,11 +63,13 @@ module QuadBatch =
       ArrayPool.Shared.Return state.Indices
       state.Indices <- null
 
-  /// Begin a batch. Caller is responsible for configuring the effect before calling.
+  /// <summary>Begin a batch.</summary>
+  /// <remarks>Caller is responsible for configuring the effect before calling.</remarks>
   let inline begin' (effect: Effect) (state: byref<State>) =
     state.QuadCount <- 0
     state.CurrentEffect <- effect
 
+  /// <summary>Flushes the current batch to the GPU.</summary>
   let flush(state: byref<State>) =
     if state.QuadCount > 0 && not(isNull state.CurrentEffect) then
       let gd = state.GraphicsDevice
@@ -84,6 +91,7 @@ module QuadBatch =
           state.QuadCount * 2
         )
 
+  /// <summary>Adds a quad to the batch.</summary>
   let draw (position: Vector3) (size: Vector2) (state: byref<State>) =
     // Auto-flush if buffer full
     if state.QuadCount >= 512 then
@@ -113,4 +121,5 @@ module QuadBatch =
 
     state.QuadCount <- state.QuadCount + 1
 
+  /// <summary>Ends the batch and flushes all draw commands to the GPU.</summary>
   let inline end'(state: byref<State>) = flush &state

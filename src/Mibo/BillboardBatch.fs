@@ -5,8 +5,12 @@ open System.Buffers
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 
+/// <summary>
 /// A batcher for drawing camera-facing billboards (particles, sprites in 3D space).
+/// </summary>
+/// <remarks>
 /// Billboards always face the camera using camera right/up vectors.
+/// </remarks>
 module BillboardBatch =
 
   [<Struct>]
@@ -98,6 +102,7 @@ module BillboardBatch =
   [<Literal>]
   let private DefaultIndexCapacity = 3072
 
+  /// <summary>Creates a new billboard batcher.</summary>
   let create(graphicsDevice: GraphicsDevice) = {
     Vertices = ArrayPool.Shared.Rent DefaultVertexCapacity
     Indices = ArrayPool.Shared.Rent DefaultIndexCapacity
@@ -107,7 +112,7 @@ module BillboardBatch =
     GraphicsDevice = graphicsDevice
   }
 
-  /// Return pooled arrays. Call when the batch is no longer needed.
+  /// <summary>Return pooled arrays. Call when the batch is no longer needed.</summary>
   let dispose(state: byref<State>) =
     if not(isNull state.Vertices) then
       ArrayPool.Shared.Return state.Vertices
@@ -117,12 +122,13 @@ module BillboardBatch =
       ArrayPool.Shared.Return state.Indices
       state.Indices <- null
 
-  /// Begin a batch. Caller is responsible for configuring their effect before calling.
-  /// The effect's first pass will be applied.
+  /// <summary>Begin a batch.</summary>
+  /// <remarks>Caller is responsible for configuring their effect before calling. The effect's first pass will be applied.</remarks>
   let inline begin' (effect: Effect) (state: byref<State>) =
     state.SpriteCount <- 0
     effect.CurrentTechnique.Passes.[0].Apply()
 
+  /// <summary>Adds a billboard to the batch.</summary>
   let draw
     (position: Vector3)
     (size: Vector2)
@@ -169,6 +175,7 @@ module BillboardBatch =
 
     state.SpriteCount <- state.SpriteCount + 1
 
+  /// <summary>Ends the batch and flushes all draw commands to the GPU.</summary>
   let end'(state: byref<State>) =
     if state.SpriteCount > 0 then
       ensureBuffers &state

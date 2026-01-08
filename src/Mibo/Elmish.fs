@@ -6,27 +6,75 @@ open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open FSharp.UMX
 
+/// <summary>
+/// Represents a side effect that can dispatch messages to the Elmish runtime.
+/// </summary>
+/// <remarks>
+/// Effects are the building blocks of commands. They are executed asynchronously
+/// by the runtime and can dispatch one or more messages back to the update loop.
+/// </remarks>
+/// <example>
+/// <code>
+/// let myEffect = Effect&lt;MyMsg&gt;(fun dispatch -&gt;
+///     // Do some side effect work
+///     dispatch (DataLoaded result)
+/// )
+/// </code>
+/// </example>
 type Effect<'Msg> = delegate of ('Msg -> unit) -> unit
 
+/// <summary>
+/// Represents a command that produces side effects in the Elmish runtime.
+/// </summary>
+/// <remarks>
+/// Commands are returned from <c>init</c> and <c>update</c> functions to schedule
+/// side effects that run outside the pure update cycle. They can dispatch
+/// messages back into the runtime, either immediately or deferred.
+/// </remarks>
 [<Struct>]
 type Cmd<'Msg> =
+  /// No-op command (use <see cref="M:Mibo.Elmish.Cmd.none"/>)
   | Empty
+  /// Single effect to execute
   | Single of single: Effect<'Msg>
+  /// Multiple effects to execute in this frame
   | Batch of batch: Effect<'Msg>[]
+  /// Effects deferred until the next frame begins
   | DeferNextFrame of batch: Effect<'Msg>[]
+  /// Combination of immediate and deferred effects
   | NowAndDeferNextFrame of now: Effect<'Msg>[] * next: Effect<'Msg>[]
 
+/// <summary>
+/// Functions for creating and composing Elmish commands.
+/// </summary>
+/// <remarks>
+/// Commands encapsulate side effects and allow message dispatch back to the update loop.
+/// Use commands for async operations, timer callbacks, or any impure work.
+/// </remarks>
 module Cmd =
+  /// <summary>An empty command that does nothing. Use when no side effects are needed.</summary>
   let none: Cmd<'Msg> = Empty
+
+  /// <summary>Wraps a raw effect delegate into a command.</summary>
   let inline ofEffect(eff: Effect<'Msg>) = Single eff
 
+  /// <summary>
+  /// Creates a command that immediately dispatches the given message.
+  /// </summary>
+  /// <remarks>
+  /// Useful for triggering follow-up messages from within the update cycle.
+  /// </remarks>
   let inline ofMsg(msg: 'Msg) : Cmd<'Msg> =
     Single(Effect<'Msg>(fun dispatch -> dispatch msg))
 
+  /// <summary>
   /// Defer command execution until the next frame.
-  ///
+  /// </summary>
+  /// <remarks>
   /// In the runtime, deferred commands are executed at the start of the next frame,
-  /// before `Tick` is enqueued.
+  /// before <c>Tick</c> is enqueued. This is useful for avoiding infinite update loops
+  /// or for scheduling work that should happen after the current frame completes.
+  /// </remarks>
   let inline deferNextFrame(cmd: Cmd<'Msg>) : Cmd<'Msg> =
     match cmd with
     | Empty -> Empty
@@ -49,9 +97,13 @@ module Cmd =
     | DeferNextFrame effs -> struct ([||], effs)
     | NowAndDeferNextFrame(now, next) -> struct (now, next)
 
+  /// <summary>
   /// Map a command producing messages of type 'A into a command producing messages of type 'Msg.
-  ///
-  /// This is the command equivalent of `Sub.map` and is required for parent-child composition.
+  /// </summary>
+  /// <remarks>
+  /// This is the command equivalent of <see cref="M:Mibo.Elmish.Sub.map"/> and is required for parent-child composition
+  /// in nested Elmish architectures where child modules have their own message types.
+  /// </remarks>
   let map (f: 'A -> 'Msg) (cmd: Cmd<'A>) : Cmd<'Msg> =
     match cmd with
     | Empty -> Empty
@@ -103,6 +155,14 @@ module Cmd =
 
       NowAndDeferNextFrame(mapBatch now, mapBatch next)
 
+  /// <summary>
+  /// Combines multiple commands into a single command.
+  /// </summary>
+  /// <remarks>
+  /// Commands are merged efficiently, preserving the distinction between
+  /// immediate and deferred effects. Use this when returning multiple commands
+  /// from a single update branch.
+  /// </remarks>
   let batch(cmds: seq<Cmd<'Msg>>) : Cmd<'Msg> =
     let mutable nowCount = 0
     let mutable nextCount = 0
@@ -169,19 +229,28 @@ module Cmd =
 
       NowAndDeferNextFrame(nowArr, nextArr)
 
-  /// Allocation-friendly command batching for 2 commands.
+  /// Combines exactly 2 commands with minimal allocation overhead.
   let batch2(a: Cmd<'Msg>, b: Cmd<'Msg>) : Cmd<'Msg> = batch [ a; b ]
 
-  /// Allocation-friendly command batching for 3 commands.
+  /// Combines exactly 3 commands with minimal allocation overhead.
   let batch3(a: Cmd<'Msg>, b: Cmd<'Msg>, c: Cmd<'Msg>) : Cmd<'Msg> =
     batch2(batch2(a, b), c)
 
-  /// Allocation-friendly command batching for 4 commands.
+  /// Combines exactly 4 commands with minimal allocation overhead.
   let batch4
     (a: Cmd<'Msg>, b: Cmd<'Msg>, c: Cmd<'Msg>, d: Cmd<'Msg>)
     : Cmd<'Msg> =
     batch2(batch3(a, b, c), d)
 
+  /// Creates a command from an F# async workflow.
+  ///
+  /// The async is started immediately and the result is mapped to a message.
+  /// If the async throws, the error handler is invoked instead.
+  ///
+  /// ## Example
+  /// ```fsharp
+  /// Cmd.ofAsync (loadDataAsync url) DataLoaded LoadError
+  /// ```
   let ofAsync
     (task: Async<'T>)
     (ofSuccess: 'T -> 'Msg)
@@ -199,6 +268,18 @@ module Cmd =
         |> Async.StartImmediate)
     )
 
+  /// <summary>
+  /// Creates a command from a .NET Task.
+  /// </summary>
+  /// <remarks>
+  /// The task result is awaited and mapped to a message.
+  /// If the task throws, the error handler is invoked instead.
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// Cmd.ofTask (httpClient.GetAsync url) ResponseReceived RequestFailed
+  /// </code>
+  /// </example>
   let ofTask
     (task: Threading.Tasks.Task<'T>)
     (ofSuccess: 'T -> 'Msg)
@@ -217,20 +298,37 @@ module Cmd =
     )
 
 
-/// Subscription identifier.
-///
-/// This is used as the key for subscription diffing.
+/// <summary>
+/// Subscription identifier used as the key for subscription diffing.
+/// </summary>
+/// <remarks>
+/// The Elmish runtime uses SubIds to determine which subscriptions to start,
+/// stop, or keep running across frames. Use stable, unique IDs for each subscription.
 /// Keep this allocation-free in hot paths (avoid list-based IDs).
+/// </remarks>
 [<Measure>]
 type subId
 
+/// A typed string wrapper for subscription identifiers.
 type SubId = string<subId>
 
+/// Functions for creating and manipulating subscription identifiers.
 module SubId =
+  /// <summary>Wraps a raw string into a <see cref="T:Mibo.Elmish.SubId"/>.</summary>
   let inline ofString(value: string) : SubId = UMX.tag<subId> value
 
+  /// <summary>Extracts the raw string value from a <see cref="T:Mibo.Elmish.SubId"/>.</summary>
   let inline value(id: SubId) : string = UMX.untag id
 
+  /// <summary>
+  /// Prefixes a SubId with a namespace for parent-child subscription composition.
+  /// </summary>
+  /// <example>
+  /// <code>
+  /// // Creates "Player/moveInput"
+  /// SubId.prefix "Player" (SubId.ofString "moveInput")
+  /// </code>
+  /// </example>
   let inline prefix (prefix: string) (id: SubId) : SubId =
     if String.IsNullOrEmpty(prefix) then
       id
@@ -242,18 +340,53 @@ module SubId =
       else
         ofString(prefix + "/" + idStr)
 
+/// <summary>A function that dispatches messages to the Elmish update loop.</summary>
 type Dispatch<'Msg> = 'Msg -> unit
+
+/// <summary>
+/// A function that sets up a subscription and returns a disposable for cleanup.
+/// </summary>
+/// <remarks>
+/// When the runtime calls this, it passes the dispatch function. The returned
+/// <see cref="T:System.IDisposable"/> will be called when the subscription is no longer needed.
+/// </remarks>
 type Subscribe<'Msg> = Dispatch<'Msg> -> IDisposable
 
+/// <summary>
+/// Represents a subscription that listens for external events and dispatches messages.
+/// </summary>
+/// <remarks>
+/// Subscriptions are the Elmish way to handle external event sources (input devices,
+/// timers, network events). The runtime diffs subscriptions by SubId to determine
+/// which to start/stop across frames.
+/// </remarks>
 [<Struct>]
 type Sub<'Msg> =
+  /// No subscription (use <see cref="M:Mibo.Elmish.Sub.none"/>)
   | NoSub
+  /// An active subscription with a unique ID
   | Active of SubId * Subscribe<'Msg>
+  /// Multiple subscriptions combined
   | BatchSub of Sub<'Msg>[]
 
+/// <summary>
+/// Functions for creating and composing Elmish subscriptions.
+/// </summary>
+/// <remarks>
+/// Subscriptions connect external event sources to the Elmish update loop.
+/// The runtime automatically manages subscription lifecycle based on SubId diffing.
+/// </remarks>
 module Sub =
+  /// <summary>An empty subscription that does nothing. Use when no subscriptions are needed.</summary>
   let none = NoSub
 
+  /// <summary>
+  /// Combines multiple subscriptions into a single subscription.
+  /// </summary>
+  /// <remarks>
+  /// Subscriptions are merged efficiently and duplicates are not filtered.
+  /// Use unique SubIds to ensure proper subscription diffing.
+  /// </remarks>
   let batch(subs: seq<Sub<'Msg>>) : Sub<'Msg> =
     // Keep this allocation-friendly: avoid intermediate ResizeArray and
     // avoid wrapping a single sub into a BatchSub array.
@@ -303,7 +436,7 @@ module Sub =
 
       BatchSub arr
 
-  /// Allocation-friendly subscription batching for 2 subs.
+  /// Combines exactly 2 subscriptions with minimal allocation overhead.
   let inline batch2(a: Sub<'Msg>, b: Sub<'Msg>) : Sub<'Msg> =
     match a, b with
     | NoSub, x
@@ -325,11 +458,11 @@ module Sub =
       BatchSub merged
     | x, y -> BatchSub [| x; y |]
 
-  /// Allocation-friendly subscription batching for 3 subs.
+  /// Combines exactly 3 subscriptions with minimal allocation overhead.
   let inline batch3(a: Sub<'Msg>, b: Sub<'Msg>, c: Sub<'Msg>) : Sub<'Msg> =
     batch2(batch2(a, b), c)
 
-  /// Allocation-friendly subscription batching for 4 subs.
+  /// Combines exactly 4 subscriptions with minimal allocation overhead.
   let inline batch4
     (a: Sub<'Msg>, b: Sub<'Msg>, c: Sub<'Msg>, d: Sub<'Msg>)
     : Sub<'Msg> =
@@ -361,6 +494,20 @@ module Sub =
     | Visit of sub: Sub<'A>
     | BuildBatch of len: int
 
+  /// <summary>
+  /// Maps a subscription producing messages of type 'A to produce messages of type 'Msg.
+  /// </summary>
+  /// <remarks>
+  /// This is essential for parent-child composition where child modules have
+  /// their own message types. The idPrefix is prepended to all subscription IDs
+  /// to namespace them properly.
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// // In parent module:
+  /// let childSub = Child.subscribe ctx |> Sub.map "child" ChildMsg
+  /// </code>
+  /// </example>
   let map (idPrefix: string) (f: 'A -> 'Msg) (sub: Sub<'A>) : Sub<'Msg> =
     let work = ResizeArray<MapWork<'A>>(64)
     let results = ResizeArray<Sub<'Msg>>(64)
@@ -409,33 +556,103 @@ module Sub =
     else
       results.[results.Count - 1]
 
-/// Context passed to init, providing access to game resources.
+/// <summary>
+/// Context passed to <c>init</c> and <c>subscribe</c> functions, providing access to MonoGame resources.
+/// </summary>
+/// <remarks>
+/// This is the primary way to access game services and content from within
+/// the Elmish architecture. Use it to load assets, access input services,
+/// or interact with registered components.
+/// </remarks>
+/// <example>
+/// <code>
+/// let init ctx =
+///     let texture = Assets.texture "player" ctx
+///     struct ({ Texture = texture }, Cmd.none)
+/// </code>
+/// </example>
 type GameContext = {
+  /// The MonoGame graphics device for rendering operations.
   GraphicsDevice: GraphicsDevice
+  /// The content manager for loading compiled game assets.
   Content: Content.ContentManager
+  /// The Game instance for accessing services and components.
   Game: Game
 }
 
-// IEngineService has been removed. Use GameComponent or implement IUpdateable directly.
-
+/// <summary>
+/// Interface for renderers that draw the model state each frame.
+/// </summary>
+/// <remarks>
+/// Implement this to create custom rendering systems. The Draw method
+/// is called once per frame with the current model state.
+/// </remarks>
+/// <example>
+/// <code>
+/// type MyRenderer() =
+///     interface IRenderer&lt;Model&gt; with
+///         member _.Draw(ctx, model, gameTime) =
+///             // Render model to screen
+///             ()
+/// </code>
+/// </example>
 type IRenderer<'Model> =
   abstract member Draw: GameContext * 'Model * GameTime -> unit
 
+/// <summary>
 /// Mutable handle for a MonoGame component instance created during game initialization.
-///
+/// </summary>
+/// <remarks>
 /// This is intended to be allocated in the composition root (per game instance) and then
-/// threaded into Elmish `update`/`subscribe` functions, avoiding global/module-level mutable state.
+/// threaded into Elmish <c>update</c>/<c>subscribe</c> functions, avoiding global/module-level mutable state.
+/// ComponentRef provides a type-safe way to access components from within Elmish code.
+/// </remarks>
+/// <example>
+/// <code>
+/// // In composition root:
+/// let audioRef = ComponentRef&lt;AudioComponent&gt;()
+///
+/// // Wire up in program:
+/// Program.withComponentRef audioRef AudioComponent program
+///
+/// // Use in update:
+/// match audioRef.TryGet() with
+/// | ValueSome audio -&gt; audio.Play("explosion")
+/// | ValueNone -&gt; ()
+/// </code>
+/// </example>
 type ComponentRef<'T when 'T :> IGameComponent>() =
   let mutable value: 'T voption = ValueNone
 
+  /// Attempts to get the component, returning ValueNone if not yet initialized.
   member _.TryGet() : 'T voption = value
+
+  /// Sets the component reference. Called automatically by Program.withComponentRef.
   member _.Set(v: 'T) = value <- ValueSome v
+
+  /// Clears the component reference.
   member _.Clear() = value <- ValueNone
 
-/// A small, allocation-friendly buffer that stores commands tagged with a sort key.
-///
-/// This is intentionally rendering-agnostic. Graphics plugins can define their own key type
-/// (e.g. `int<RenderLayer>`) and either rely on the default comparer or provide one.
+/// <summary>
+/// A small, allocation-friendly buffer that stores render commands tagged with a sort key.
+/// </summary>
+/// <remarks>
+/// This is the core data structure for deferred rendering. Commands are accumulated
+/// during the view phase and then sorted/executed by the renderer. The buffer uses
+/// <see cref="T:System.Buffers.ArrayPool`1"/> for zero-allocation resizing.
+/// </remarks>
+/// <typeparam name="Key">The sort key type (e.g., <c>int&lt;RenderLayer&gt;</c> for 2D, <c>unit</c> for 3D)</typeparam>
+/// <typeparam name="Cmd">The render command type</typeparam>
+/// <example>
+/// <code>
+/// let buffer = RenderBuffer&lt;int&lt;RenderLayer&gt;, RenderCmd2D&gt;()
+/// buffer.Add(0&lt;RenderLayer&gt;, DrawTexture(...))
+/// buffer.Sort()  // Sorts by layer
+/// for i = 0 to buffer.Count - 1 do
+///     let struct (_, cmd) = buffer.Item(i)
+///     // Execute command
+/// </code>
+/// </example>
 type RenderBuffer<'Key, 'Cmd>(?capacity: int, ?keyComparer: IComparer<'Key>) =
   let initialCapacity = defaultArg capacity 1024
 
@@ -461,30 +678,61 @@ type RenderBuffer<'Key, 'Cmd>(?capacity: int, ?keyComparer: IComparer<'Key>) =
       Buffers.ArrayPool<struct ('Key * 'Cmd)>.Shared.Return(items)
       items <- newArr
 
+  /// Clears all commands from the buffer without deallocating.
   member _.Clear() = count <- 0
 
+  /// Adds a command with its sort key to the buffer.
   member _.Add(key: 'Key, cmd: 'Cmd) =
     ensureCapacity 1
     items[count] <- struct (key, cmd)
     count <- count + 1
 
+  /// Sorts the buffer by key. Call this before iterating if order matters.
   member _.Sort() =
     // Sort only the used portion via Span
     let span = items.AsSpan(0, count)
     span.Sort comparer
 
+  /// The number of commands currently in the buffer.
   member _.Count = count
+
+  /// Gets the command at the specified index as a (key, command) struct tuple.
   member _.Item(i) = items[i]
 
+/// <summary>
+/// The Elmish program record that defines the complete game architecture.
+/// </summary>
+/// <remarks>
+/// A program ties together initialization, update logic, subscriptions, and rendering.
+/// Use the <see cref="T:Mibo.Elmish.Program"/> module functions to construct and configure programs.
+/// </remarks>
+/// <example>
+/// <code>
+/// Program.mkProgram init update
+/// |&gt; Program.withSubscription subscribe
+/// |&gt; Program.withRenderer (Batch2DRenderer.create view)
+/// |&gt; Program.withTick Tick
+/// |&gt; Program.withAssets
+/// |&gt; Program.withInput
+/// </code>
+/// </example>
 type Program<'Model, 'Msg> = {
+  /// <summary>Creates initial model and commands when the game starts.</summary>
   Init: GameContext -> struct ('Model * Cmd<'Msg>)
+  /// <summary>Handles messages and returns updated model and commands.</summary>
   Update: 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
+  /// <summary>Returns subscriptions based on current model state.</summary>
   Subscribe: GameContext -> 'Model -> Sub<'Msg>
+  /// <summary>
   /// Configuration callback invoked in the game constructor.
   /// Use this to set resolution, vsync, window settings, etc.
+  /// </summary>
   Config: (Game * GraphicsDeviceManager -> unit) voption
+  /// <summary>List of renderer factories for drawing.</summary>
   Renderers: (Game -> IRenderer<'Model>) list
+  /// <summary>List of MonoGame component factories.</summary>
   Components: (Game -> IGameComponent) list
+  /// <summary>Optional function to generate a message each frame.</summary>
   Tick: (GameTime -> 'Msg) voption
 }
 

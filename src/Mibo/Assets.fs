@@ -8,23 +8,52 @@ open Microsoft.Xna.Framework.Audio
 open Microsoft.Xna.Framework.Content
 open System.IO
 
+/// <summary>
 /// Per-game asset loader/cache service.
+/// </summary>
+/// <remarks>
+/// <para>Unlike the legacy <c>Assets</c> module API (which relies on module-level mutable state),
+/// values of <see cref="T:Mibo.Elmish.IAssets"/> are safe to create per <see cref="T:Mibo.Elmish.ElmishGame`2"/> instance and can be stored
+/// in a closure/ref and threaded through Elmish <c>update</c>/<c>view</c>.</para>
+/// </remarks>
+/// <example>
+/// <code>
+/// // In init:
+/// let texture = Assets.texture "sprites/player" ctx
+/// let font = Assets.font "fonts/main" ctx
 ///
-/// Unlike the legacy `Assets` module API (which relies on module-level mutable state),
-/// values of `IAssets` are safe to create per `ElmishGame` instance and can be stored
-/// in a closure/ref and threaded through Elmish `update`/`view`.
+/// // For custom assets:
+/// let shader = Assets.getOrCreate "myShader" (fun gd -&gt; new MyEffect(gd)) ctx
+/// </code>
+/// </example>
 type IAssets =
+  /// The GraphicsDevice for creating GPU resources.
   abstract GraphicsDevice: GraphicsDevice
+
+  /// The ContentManager for loading compiled XNB assets.
   abstract Content: ContentManager
 
+  /// <summary>Loads and caches a <see cref="T:Microsoft.Xna.Framework.Graphics.Texture2D"/> from the content pipeline.</summary>
   abstract Texture: path: string -> Texture2D
+
+  /// <summary>Loads and caches a <see cref="T:Microsoft.Xna.Framework.Graphics.SpriteFont"/> from the content pipeline.</summary>
   abstract Font: path: string -> SpriteFont
+
+  /// <summary>Loads and caches a <see cref="T:Microsoft.Xna.Framework.Audio.SoundEffect"/> from the content pipeline.</summary>
   abstract Sound: path: string -> SoundEffect
+
+  /// <summary>Loads and caches a 3D <see cref="T:Microsoft.Xna.Framework.Graphics.Model"/> from the content pipeline.</summary>
   abstract Model: path: string -> Model
 
+  /// <summary>Gets a previously created custom asset by key.</summary>
   abstract Get<'T> : key: string -> 'T voption
+
+  /// <summary>Creates and caches a custom asset using the provided factory.</summary>
+  /// <remarks>The factory receives the <see cref="T:Microsoft.Xna.Framework.Graphics.GraphicsDevice"/> for creating GPU resources.</remarks>
   abstract Create<'T> : key: string -> factory: (GraphicsDevice -> 'T) -> 'T
 
+  /// <summary>Gets a cached asset or creates it if not present.</summary>
+  /// <remarks>This is the preferred method for custom assets - it's idempotent and ensures assets are created only once.</remarks>
   abstract GetOrCreate<'T> :
     key: string -> factory: (GraphicsDevice -> 'T) -> 'T
 
@@ -129,9 +158,12 @@ module AssetsService =
   let createFromContext(ctx: GameContext) : IAssets =
     create ctx.Content ctx.GraphicsDevice
 
-/// Friendly `GameContext`-based accessors for the built-in `IAssets` service.
-///
-/// These functions assume `Program.withAssets` has been applied.
+/// <summary>
+/// Friendly <see cref="T:Mibo.Elmish.GameContext"/>-based accessors for the built-in <see cref="T:Mibo.Elmish.IAssets"/> service.
+/// </summary>
+/// <remarks>
+/// These functions assume <see cref="M:Mibo.Elmish.Program.withAssets"/> has been applied.
+/// </remarks>
 module Assets =
 
   let tryGetService(ctx: GameContext) : IAssets voption =
@@ -178,8 +210,10 @@ module Assets =
     : 'T =
     (getService ctx).GetOrCreate<'T> key factory
 
+  /// <summary>
   /// Load a JSON file and decode it using the provided JDeck decoder.
-  /// Reads from the Content directory (uses TitleContainer.OpenStream).
+  /// </summary>
+  /// <remarks> Reads from the Content directory (uses <see cref="T:Microsoft.Xna.Framework.TitleContainer"/>).</remarks>
   let fromJson<'T> (path: string) (decoder: JDeck.Decoder<'T>) =
     try
       let json = File.ReadAllText path
@@ -190,8 +224,8 @@ module Assets =
     with ex ->
       failwithf "Failed to load %s: %s" path ex.Message
 
-  /// Load a JSON file with caching (game-lifetime).
-  /// On first call, decodes and caches; subsequent calls return cached value.
+  /// <summary>Load a JSON file with caching (game-lifetime).</summary>
+  /// <remarks>On first call, decodes and caches; subsequent calls return cached value.</remarks>
   let fromJsonCache<'T>
     (path: string)
     (decoder: JDeck.Decoder<'T>)
@@ -205,8 +239,8 @@ module Assets =
       let value = fromJson path decoder
       assets.Create path (fun _ -> value)
 
-  /// Load an asset using a custom loader function.
-  /// The loader receives the file path and should return the loaded asset.
+  /// <summary>Load an asset using a custom loader function.</summary>
+  /// <remarks>The loader receives the file path and should return the loaded asset.</remarks>
   let fromCustom<'T>
     (path: string)
     (loader: string -> 'T)
@@ -214,7 +248,7 @@ module Assets =
     : 'T =
     loader path
 
-  /// Load an asset using a custom loader with caching (game-lifetime).
+  /// <summary>Load an asset using a custom loader with caching (game-lifetime).</summary>
   let fromCustomCache<'T>
     (path: string)
     (loader: string -> 'T)

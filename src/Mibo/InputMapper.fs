@@ -5,24 +5,60 @@ open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Input
 open Mibo.Elmish
 
+/// <summary>
 /// Represents a physical hardware input trigger.
+/// </summary>
+/// <remarks>
+/// Triggers are the "source" side of input mapping - they represent actual
+/// hardware inputs that can be detected.
+/// </remarks>
 type Trigger =
+  /// A keyboard key.
   | Key of Keys
-  | MouseBut of int // 0=Left, 1=Right, 2=Middle
+  /// A mouse button (0=Left, 1=Right, 2=Middle).
+  | MouseBut of int
+  /// A gamepad button for a specific player.
   | GamepadBut of PlayerIndex * Buttons
 
-/// Configuration: Mappings from Actions to Triggers.
+/// <summary>
+/// Configuration mapping game actions to their trigger inputs.
+/// </summary>
+/// <remarks>
+/// InputMap is immutable and can be stored in your model. Use the <see cref="T:Mibo.Input.InputMap"/>
+/// module functions to build mappings.
+/// </remarks>
+/// <example>
+/// <code>
+/// type Action = MoveLeft | MoveRight | Jump | Fire
+///
+/// let inputMap =
+///     InputMap.empty
+///     |&gt; InputMap.key MoveLeft Keys.A
+///     |&gt; InputMap.key MoveLeft Keys.Left
+///     |&gt; InputMap.key MoveRight Keys.D
+///     |&gt; InputMap.key MoveRight Keys.Right
+///     |&gt; InputMap.key Jump Keys.Space
+///     |&gt; InputMap.mouse Fire 0  // Left click
+///     |&gt; InputMap.gamepadButton Jump PlayerIndex.One Buttons.A
+/// </code>
+/// </example>
 type InputMap<'Action when 'Action: comparison> = {
+
+  /// Map from action to all triggers that can activate it.
   ActionToTriggers: Map<'Action, Trigger list>
+  /// Reverse lookup: map from trigger to all actions it activates.
   TriggerToActions: Map<Trigger, 'Action list>
 }
 
+/// Functions for building InputMap configurations.
 module InputMap =
+  /// An empty input map with no bindings.
   let empty = {
     ActionToTriggers = Map.empty
     TriggerToActions = Map.empty
   }
 
+  /// Binds a trigger to an action. Multiple triggers can map to the same action.
   let bind (action: 'Action) (trigger: Trigger) (map: InputMap<'Action>) =
     let existingTriggers =
       map.ActionToTriggers |> Map.tryFind action |> Option.defaultValue []
@@ -37,12 +73,15 @@ module InputMap =
         map.TriggerToActions |> Map.add trigger (action :: existingActions)
     }
 
+  /// Binds a keyboard key to an action.
   let key (action: 'Action) (k: Keys) (map: InputMap<'Action>) =
     bind action (Key k) map
 
+  /// Binds a mouse button to an action (0=Left, 1=Right, 2=Middle).
   let mouse (action: 'Action) (btn: int) (map: InputMap<'Action>) =
     bind action (MouseBut btn) map
 
+  /// Binds a gamepad button for a specific player to an action.
   let gamepadButton
     (action: 'Action)
     (player: PlayerIndex)
@@ -51,12 +90,32 @@ module InputMap =
     =
     bind action (GamepadBut(player, btn)) map
 
-/// Runtime State
+/// <summary>
+/// Runtime state tracking which actions are currently active.
+/// </summary>
+/// <remarks>
+/// ActionState is the "output" of the input mapping system. It tells you
+/// which actions are held, just started, or just released.
+/// </remarks>
+/// <example>
+/// <code>
+/// if actionState.Started.Contains Jump then
+///     // Player just pressed jump this frame
+///
+/// if actionState.Held.Contains MoveLeft then
+///     // Player is holding left
+/// </code>
+/// </example>
 type ActionState<'Action when 'Action: comparison> = {
+  /// Actions currently being held down.
   Held: Set<'Action>
+  /// Actions that started (pressed) this frame.
   Started: Set<'Action>
+  /// Actions that ended (released) this frame.
   Released: Set<'Action>
+  /// Analog values for actions (0.0 to 1.0). Used for triggers/thumbsticks.
   Values: Map<'Action, float32>
+  /// Internal: tracks which raw triggers are currently held.
   HeldTriggers: Set<Trigger>
 }
 
@@ -115,23 +174,29 @@ module ActionState =
         Released = Set.empty
   }
 
+/// <summary>
 /// Subscription-based input mapping.
-///
-/// This is intentionally "push" driven: it listens to raw IInput deltas and dispatches a
-/// user message that contains the mapped `ActionState<'Action>`.
-///
-/// Why this exists:
-/// - keeps the user's update signature unchanged (no context parameter)
-/// - user can opt into any model strategy by handling a single message
-/// - supports dynamic remapping via a `getMap` callback (e.g., backed by a ref/agent)
+/// </summary>
+/// <remarks>
+/// <para>This is intentionally "push" driven: it listens to raw <see cref="T:Mibo.Input.IInput"/> deltas and dispatches a
+/// user message that contains the mapped <see cref="T:Mibo.Input.ActionState`1"/>.</para>
+/// <para>Why this exists:</para>
+/// <ul>
+/// <li>keeps the user's update signature unchanged (no context parameter)</li>
+/// <li>user can opt into any model strategy by handling a single message</li>
+/// <li>supports dynamic remapping via a <c>getMap</c> callback (e.g., backed by a ref/agent)</li>
+/// </ul>
+/// </remarks>
 module InputMapper =
 
+  /// <summary>
   /// Subscribe to mapped action state changes.
-  ///
-  /// Notes on semantics:
-  /// - `Started`/`Released` are one-shot sets relative to the most recent hardware delta batch.
-  /// - If you store the state in your model, you typically want to clear one-shots each frame
-  ///   (or just treat them as event-like).
+  /// </summary>
+  /// <remarks>
+  /// <para><see cref="F:Mibo.Input.ActionState`1.Started"/>/<see cref="F:Mibo.Input.ActionState`1.Released"/> are one-shot sets relative to the most recent hardware delta batch.</para>
+  /// <para>If you store the state in your model, you typically want to clear one-shots each frame
+  /// (or just treat them as event-like).</para>
+  /// </remarks>
   let subscribe
     (getMap: unit -> InputMap<'Action>)
     (toMsg: ActionState<'Action> -> 'Msg)

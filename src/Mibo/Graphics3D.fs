@@ -8,15 +8,17 @@ open Mibo.Elmish
 
 // --- 3D Rendering Implementation ---
 
-/// Coarse rendering pass selection for 3D.
-///
-/// - Opaque: depth testing + opaque blending. Can be depth-sorted for performance.
-/// - Transparent: typically depth read + alpha blending. Must be sorted back-to-front.
+/// <summary>Coarse rendering pass selection for 3D.</summary>
+/// <remarks>
+/// <para><see cref="F:Mibo.Elmish.Graphics3D.RenderPass.Opaque"/>: depth testing + opaque blending. Can be depth-sorted for performance.</para>
+/// <para><see cref="F:Mibo.Elmish.Graphics3D.RenderPass.Transparent"/>: typically depth read + alpha blending. Must be sorted back-to-front.</para>
+/// </remarks>
 [<Struct>]
 type RenderPass =
   | Opaque
   | Transparent
 
+/// <summary>Standard transformation matrices used during effect setup.</summary>
 [<Struct>]
 type EffectContext = {
   World: Matrix
@@ -24,15 +26,20 @@ type EffectContext = {
   Projection: Matrix
 }
 
+/// <summary>Callback for configuring an effect before a draw operation.</summary>
 type EffectSetup = Effect -> EffectContext -> unit
 
+/// <summary>A 3D render command.</summary>
+/// <remarks>These commands are queued to a <see cref="T:Mibo.Elmish.RenderBuffer`1"/> and executed by <see cref="T:Mibo.Elmish.Graphics3D.Batch3DRenderer`1"/>.</remarks>
 [<Struct>]
 type RenderCmd3D =
-  /// Set viewport for multi-camera rendering (split-screen, minimaps, etc).
+  /// <summary>Set viewport for multi-camera rendering (split-screen, minimaps, etc).</summary>
   | SetViewport of viewport: Viewport
-  /// Clear the render target. Use between cameras in multi-camera setups.
+  /// <summary>Clear the render target. Use between cameras in multi-camera setups.</summary>
   | ClearTarget of clearColor: Color voption * clearDepth: bool
+  /// <summary>Sets the camera for subsequent draws.</summary>
   | SetCamera of camera: Camera
+  /// <summary>Draws a 3D mesh from a <see cref="T:Microsoft.Xna.Framework.Graphics.Model"/>.</summary>
   | DrawMesh of
     pass: RenderPass *
     model: Model *
@@ -41,16 +48,12 @@ type RenderCmd3D =
     texture: Texture2D voption *
     setup: EffectSetup voption
 
-  /// Escape hatch: run an arbitrary draw function.
-  ///
-  /// The function is invoked with the current camera View/Projection matrices (as last set
-  /// by `SetCamera`) so userland can integrate custom effects without forking the renderer.
+  /// <summary>Escape hatch: run an arbitrary draw function.</summary>
+  /// <remarks>The function is invoked with the current camera View/Projection matrices (as last set by <c>SetCamera</c>) so userland can integrate custom effects without forking the renderer.</remarks>
   | DrawCustom of draw: (GameContext * Matrix * Matrix -> unit)
 
-  /// Contract for skinned/animated models.
-  ///
-  /// If the underlying model uses `SkinnedEffect`, this renderer will apply `bones` via
-  /// `SkinnedEffect.SetBoneTransforms`.
+  /// <summary>Contract for skinned/animated models.</summary>
+  /// <remarks>If the underlying model uses <see cref="T:Microsoft.Xna.Framework.Graphics.SkinnedEffect"/>, this renderer will apply <c>bones</c> via <c>SkinnedEffect.SetBoneTransforms</c>.</remarks>
   | DrawSkinned of
     pass: RenderPass *
     model: Model *
@@ -60,12 +63,12 @@ type RenderCmd3D =
     texture: Texture2D voption *
     setup: EffectSetup voption
 
-  /// Draw an axis-aligned textured quad in 3D space.
-  /// Caller is responsible for setting up the effect (View, Projection, Texture, etc).
+  /// <summary>Draw an axis-aligned textured quad in 3D space.</summary>
+  /// <remarks>Caller is responsible for setting up the effect (View, Projection, Texture, etc).</remarks>
   | DrawQuad of effect: Effect * position: Vector3 * dQSize: Vector2
 
-  /// Draw a camera-facing billboard (particles, sprites in 3D).
-  /// Caller is responsible for setting up the effect.
+  /// <summary>Draw a camera-facing billboard (particles, sprites in 3D).</summary>
+  /// <remarks>Caller is responsible for setting up the effect.</remarks>
   | DrawBillboard of
     effect: Effect *
     position: Vector3 *
@@ -73,15 +76,12 @@ type RenderCmd3D =
     rotation: float32 *
     color: Color
 
-/// Convenience alias for a render buffer for 3D commands.
-///
-/// 3D rendering typically does not rely on a 2D-style render-layer ordering.
-/// We preserve *submission order* (do not sort), so the key is `unit`.
+/// <summary>Convenience alias for a render buffer for 3D commands.</summary>
+/// <remarks>3D rendering typically does not rely on a 2D-style render-layer ordering. We preserve submission order (do not sort), so the key is <c>unit</c>.</remarks>
 type RenderBuffer<'Cmd> = RenderBuffer<unit, 'Cmd>
 
-/// Configuration for `Batch3DRenderer`.
-///
-/// This controls the rendering *pass* defaults (clears + device state), not per-mesh material setup.
+/// <summary>Configuration for <see cref="T:Mibo.Elmish.Graphics3D.Batch3DRenderer`1"/>.</summary>
+/// <remarks>This controls the rendering pass defaults (clears + device state), not per-mesh material setup.</remarks>
 [<Struct>]
 type Batch3DConfig = {
   /// Optional color buffer clear.
@@ -89,9 +89,8 @@ type Batch3DConfig = {
   /// Whether to clear the depth buffer before rendering.
   ClearDepth: bool
 
-  /// Whether to restore the previous GraphicsDevice states after rendering.
-  ///
-  /// This makes composition with other renderers more predictable (at a small cost).
+  /// <summary>Whether to restore the previous <see cref="T:Microsoft.Xna.Framework.Graphics.GraphicsDevice"/> states after rendering.</summary>
+  /// <remarks>This makes composition with other renderers more predictable (at a small cost).</remarks>
   RestoreDeviceStates: bool
 
   OpaqueBlendState: BlendState
@@ -102,13 +101,12 @@ type Batch3DConfig = {
 
   RasterizerState: RasterizerState
 
-  /// If true, opaque draws are sorted front-to-back by distance to camera.
-  /// This can reduce overdraw.
+  /// <summary>If true, opaque draws are sorted front-to-back by distance to camera.</summary>
+  /// <remarks>This can reduce overdraw.</remarks>
   SortOpaqueFrontToBack: bool
 
-  /// Enables caching of BasicEffect lighting setup.
-  ///
-  /// If you want to animate lights every frame, disable caching and set `LightingSetup`.
+  /// <summary>Enables caching of <see cref="T:Microsoft.Xna.Framework.Graphics.BasicEffect"/> lighting setup.</summary>
+  /// <remarks>If you want to animate lights every frame, disable caching.</remarks>
   CacheBasicEffectLighting: bool
 }
 
@@ -141,7 +139,7 @@ module StandardEffects =
     effect.DirectionalLight0.Direction <- Vector3(-1.0f, -1.0f, -1.0f)
     effect.DirectionalLight0.SpecularColor <- Vector3.Zero
 
-/// Standard 3D Renderer using BasicEffect
+/// <summary>Standard 3D Renderer using <see cref="T:Microsoft.Xna.Framework.Graphics.BasicEffect"/>.</summary>
 type Batch3DRenderer<'Model>
   (
     game: Game,
@@ -467,6 +465,7 @@ type Batch3DRenderer<'Model>
         gd.RasterizerState <- prevRasterizer
 
 module Batch3DRenderer =
+  /// <summary>Creates a standard 3D renderer.</summary>
   let inline create<'Model>
     ([<InlineIfLambda>] view:
       GameContext -> 'Model -> RenderBuffer<RenderCmd3D> -> unit)
@@ -479,6 +478,7 @@ module Batch3DRenderer =
     )
     :> IRenderer<'Model>
 
+  /// <summary>Creates a 3D renderer with custom configuration.</summary>
   let inline createWithConfig<'Model>
     (config: Batch3DConfig)
     ([<InlineIfLambda>] view:
@@ -492,9 +492,7 @@ module Batch3DRenderer =
     )
     :> IRenderer<'Model>
 
-
-// --- Fluent Builder API ---
-
+/// <summary>Fluent builder for <see cref="T:Mibo.Elmish.Graphics3D.RenderCmd3D"/>.</summary>
 [<Struct>]
 type Draw3DBuilder = {
   Model: Model
@@ -505,7 +503,9 @@ type Draw3DBuilder = {
   Setup: EffectSetup voption
 }
 
+/// <summary>Functions for building and submitting 3D draw commands.</summary>
 module Draw3D =
+  /// <summary>Starts a mesh drawing command.</summary>
   let mesh model transform = {
     Model = model
     Transform = transform
@@ -525,14 +525,14 @@ module Draw3D =
   let withColor col (b: Draw3DBuilder) = { b with Color = ValueSome col }
   let withTexture tex (b: Draw3DBuilder) = { b with Texture = ValueSome tex }
 
-  /// Configure the effect for this draw command.
+  /// <summary>Configure the effect for this draw command.</summary>
   let withEffect (setup: EffectSetup) (b: Draw3DBuilder) = {
     b with
         Setup = ValueSome setup
   }
 
-  /// Helper: configure a standard BasicEffect with typical parameters (World/View/Proj).
-  /// This restores the default behavior of previous versions.
+  /// <summary>Helper: configure a standard <see cref="T:Microsoft.Xna.Framework.Graphics.BasicEffect"/> with typical parameters (World/View/Proj).</summary>
+  /// <remarks>This restores the default behavior of previous versions.</remarks>
   let withBasicEffect(b: Draw3DBuilder) =
     b
     |> withEffect(fun effect ctx ->
@@ -544,20 +544,22 @@ module Draw3D =
         StandardEffects.defaultLighting be
       | _ -> ())
 
+  /// <summary>Submits the draw command to the renderer's buffer.</summary>
   let submit (buffer: RenderBuffer<RenderCmd3D>) (b: Draw3DBuilder) =
     buffer.Add(
       (),
       DrawMesh(b.Pass, b.Model, b.Transform, b.Color, b.Texture, b.Setup)
     )
 
+  /// <summary>Submits a camera change command to the buffer.</summary>
   let camera (cam: Camera) (buffer: RenderBuffer<RenderCmd3D>) =
     buffer.Add((), SetCamera cam)
 
-  /// Set viewport for multi-camera rendering (split-screen, minimaps, etc).
+  /// <summary>Set viewport for multi-camera rendering (split-screen, minimaps, etc).</summary>
   let viewport (vp: Viewport) (buffer: RenderBuffer<RenderCmd3D>) =
     buffer.Add((), SetViewport vp)
 
-  /// Clear color and/or depth buffer. Use between cameras in multi-camera setups.
+  /// <summary>Clear color and/or depth buffer. Use between cameras in multi-camera setups.</summary>
   let clear
     (color: Color voption)
     (clearDepth: bool)
@@ -565,12 +567,14 @@ module Draw3D =
     =
     buffer.Add((), ClearTarget(color, clearDepth))
 
+  /// <summary>Submits a custom drawing command to the buffer.</summary>
   let custom
     (draw: GameContext * Matrix * Matrix -> unit)
     (buffer: RenderBuffer<RenderCmd3D>)
     =
     buffer.Add((), DrawCustom draw)
 
+  /// <summary>Submits a skinned model draw command to the buffer.</summary>
   let skinned
     (pass: RenderPass)
     (model: Model)
@@ -612,7 +616,7 @@ module Draw3D =
       )
     )
 
-  /// Draw an axis-aligned textured quad. Caller must configure effect.
+  /// <summary>Draw an axis-aligned textured quad. Caller must configure effect.</summary>
   let quad
     (effect: Effect)
     (position: Vector3)
@@ -621,7 +625,7 @@ module Draw3D =
     =
     buffer.Add((), DrawQuad(effect, position, size))
 
-  /// Draw a camera-facing billboard. Caller must configure effect.
+  /// <summary>Draw a camera-facing billboard. Caller must configure effect.</summary>
   let billboard
     (effect: Effect)
     (position: Vector3)

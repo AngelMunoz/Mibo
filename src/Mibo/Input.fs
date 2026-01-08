@@ -6,9 +6,22 @@ open Microsoft.Xna.Framework.Input
 open Microsoft.Xna.Framework.Input.Touch
 open Mibo.Elmish
 
+/// <summary>
+/// Keyboard state delta containing keys that changed this frame.
+/// </summary>
+/// <remarks>
+/// This struct is emitted when keyboard state changes. Both arrays may be
+/// empty if only modifier state changed without key presses.
+/// </remarks>
 [<Struct>]
-type KeyboardDelta = { Pressed: Keys[]; Released: Keys[] }
+type KeyboardDelta = {
+  /// Keys that were pressed this frame (were up, now down).
+  Pressed: Keys[]
+  /// Keys that were released this frame (were down, now up).
+  Released: Keys[]
+}
 
+/// <summary>Mouse button state changes for a single frame.</summary>
 [<Struct>]
 type MouseButtons = {
   LeftPressed: bool
@@ -19,32 +32,56 @@ type MouseButtons = {
   MiddleReleased: bool
 }
 
+/// <summary>
+/// Mouse state delta containing position and button changes.
+/// </summary>
+/// <remarks>
+/// This struct is emitted when mouse state changes (movement, button press,
+/// or scroll wheel).
+/// </remarks>
 [<Struct>]
 type MouseDelta = {
+  /// Current mouse position in screen coordinates.
   Position: Point
+  /// Change in position since last frame.
   PositionDelta: Point
+  /// Button state changes.
   Buttons: MouseButtons
+  /// Scroll wheel delta (positive = up, negative = down).
   ScrollDelta: int
 }
 
+/// <summary>A single touch point for touch input.</summary>
 [<Struct>]
 type TouchPoint = {
+  /// Unique identifier for tracking this touch across frames.
   Id: int
+  /// Touch position in screen coordinates.
   Position: Vector2
+  /// Current state of the touch (Pressed, Moved, Released).
   State: TouchLocationState
 }
 
+/// <summary>Touch input state containing all active touch points.</summary>
 [<Struct>]
 type TouchDelta = { Touches: TouchPoint[] }
 
-/// Gamepad button state changes
+/// <summary>Gamepad button state changes for a single frame.</summary>
 [<Struct>]
 type GamepadButtons = {
+  /// Buttons that were pressed this frame.
   Pressed: Buttons[]
+  /// Buttons that were released this frame.
   Released: Buttons[]
 }
 
-/// Gamepad analog input values (normalized)
+/// <summary>
+/// Gamepad analog input values (thumbsticks and triggers).
+/// </summary>
+/// <remarks>
+/// All values are normalized: thumbsticks range from -1 to 1,
+/// triggers range from 0 to 1.
+/// </remarks>
 [<Struct>]
 type GamepadAnalog = {
   LeftThumbstick: Vector2
@@ -53,28 +90,47 @@ type GamepadAnalog = {
   RightTrigger: float32
 }
 
-/// Per-player gamepad delta (only emitted for connected controllers)
+/// <summary>
+/// Per-player gamepad delta containing button and analog changes.
+/// </summary>
+/// <remarks>
+/// Only emitted for connected controllers when input changes.
+/// </remarks>
 [<Struct>]
 type GamepadDelta = {
+  /// Which player this input is from (One through Four).
   PlayerIndex: PlayerIndex
+  /// Button state changes.
   Buttons: GamepadButtons
+  /// Current analog input values.
   Analog: GamepadAnalog
 }
 
-/// Gamepad connection state change
+/// <summary>Gamepad connection state change event.</summary>
 [<Struct>]
 type GamepadConnection = {
   PlayerIndex: PlayerIndex
   IsConnected: bool
 }
 
-/// Per-game input service.
-/// This service is intended to be registered into `Game.Services` by `Program.withInput`.
+/// <summary>
+/// Per-game input service providing reactive observables for hardware input.
+/// </summary>
+/// <remarks>
+/// Subscribe to these observables to receive input deltas. The service is
+/// typically registered by <see cref="M:Mibo.Elmish.Program.withInput"/> and accessed via the
+/// Keyboard, Mouse, Touch, and Gamepad subscription modules.
+/// </remarks>
 type IInput =
+  /// Emits when keyboard state changes.
   abstract KeyboardDelta: IObservable<KeyboardDelta>
+  /// Emits when mouse state changes (position, buttons, or scroll).
   abstract MouseDelta: IObservable<MouseDelta>
+  /// Emits when touch input is detected.
   abstract TouchDelta: IObservable<TouchDelta>
+  /// Emits when gamepad input changes (buttons or analog).
   abstract GamepadDelta: IObservable<GamepadDelta>
+  /// Emits when a gamepad connects or disconnects.
   abstract GamepadConnection: IObservable<GamepadConnection>
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -256,9 +312,19 @@ module InputPolling =
 // Input Component Factory
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// <summary>
+/// Factory and service access for the core input polling component.
+/// </summary>
 module Input =
 
-  /// Create an input component that polls hardware each frame and publishes deltas via IInput.
+  /// <summary>
+  /// Creates an input component that polls hardware each frame.
+  /// </summary>
+  /// <remarks>
+  /// The component implements both <see cref="T:Microsoft.Xna.Framework.IGameComponent"/> (for the MonoGame lifecycle)
+  /// and <see cref="T:Mibo.Input.IInput"/> (for reactive input access). Normally called internally by
+  /// <see cref="M:Mibo.Elmish.Program.withInput"/>.
+  /// </remarks>
   let create(game: Game) =
     // Mutable state captured in closure
     let keyboardDelta = Event<KeyboardDelta>()
@@ -306,6 +372,9 @@ module Input =
 
     input
 
+  /// Attempts to get the IInput service from the game context.
+  ///
+  /// Returns ValueNone if the service is not registered (i.e., Program.withInput wasn't used).
   let tryGetService(ctx: GameContext) : IInput voption =
     let svc = ctx.Game.Services.GetService(typeof<IInput>)
 
@@ -314,6 +383,9 @@ module Input =
     | :? IInput as i -> ValueSome i
     | _ -> ValueNone
 
+  /// Gets the IInput service from the game context.
+  ///
+  /// Throws if the service is not registered. Use Program.withInput to ensure registration.
   let getService(ctx: GameContext) : IInput =
     match tryGetService ctx with
     | ValueSome i -> i
@@ -321,7 +393,31 @@ module Input =
       failwith
         "IInput service not registered. Add Program.withInput to your program."
 
+/// <summary>
+/// Keyboard input subscriptions for Elmish.
+/// </summary>
+/// <remarks>
+/// These functions create subscriptions that dispatch messages when keyboard
+/// state changes. Requires <see cref="M:Mibo.Elmish.Program.withInput"/> to be applied.
+/// </remarks>
+/// <example>
+/// <code>
+/// let subscribe ctx model =
+///     Sub.batch [
+///         Keyboard.onPressed KeyPressed ctx
+///         Keyboard.onReleased KeyReleased ctx
+///     ]
+/// </code>
+/// </example>
 module Keyboard =
+
+  /// <summary>
+  /// Subscribes to both key press and release events.
+  /// </summary>
+  /// <remarks>
+  /// <para>The subscription ID is shared, so only one <c>listen</c> subscription
+  /// can be active at a time per Elmish program.</para>
+  /// </remarks>
   let listen
     (onPressed: Keys -> 'Msg)
     (onReleased: Keys -> 'Msg)
@@ -340,6 +436,12 @@ module Keyboard =
 
     Sub.Active(subId, subscribe)
 
+  /// <summary>
+  /// Subscribes to key press events only.
+  /// </summary>
+  /// <remarks>
+  /// Dispatches the handler for each key that was pressed this frame.
+  /// </remarks>
   let onPressed (handler: Keys -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
     let subId = SubId.ofString "Mibo/Input/Keyboard/onPressed"
 
@@ -351,6 +453,7 @@ module Keyboard =
 
     Sub.Active(subId, subscribe)
 
+  /// <summary>Subscribes to key release events only.</summary>
   let onReleased (handler: Keys -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
     let subId = SubId.ofString "Mibo/Input/Keyboard/onReleased"
 
@@ -362,8 +465,10 @@ module Keyboard =
 
     Sub.Active(subId, subscribe)
 
+/// <summary>Mouse input subscriptions for Elmish.</summary>
 module Mouse =
 
+  /// <summary>Subscribes to all mouse events (position, buttons, and scroll).</summary>
   let listen (handler: MouseDelta -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
     let subId = SubId.ofString "Mibo/Input/Mouse/listen"
 
@@ -384,6 +489,7 @@ module Mouse =
 
     Sub.Active(subId, subscribe)
 
+  /// <summary>Subscribes to left-click events at a specific position.</summary>
   let onLeftClick (handler: Point -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
     let subId = SubId.ofString "Mibo/Input/Mouse/onLeftClick"
 
@@ -417,7 +523,9 @@ module Mouse =
 
     Sub.Active(subId, subscribe)
 
+/// <summary>Touch input subscriptions for Elmish.</summary>
 module Touch =
+  /// <summary>Subscribes to all touch events.</summary>
   let listen (handler: TouchPoint[] -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
     let subId = SubId.ofString "Mibo/Input/Touch/listen"
 
@@ -427,9 +535,9 @@ module Touch =
 
     Sub.Active(subId, subscribe)
 
+/// <summary>Gamepad input subscriptions for Elmish.</summary>
 module Gamepad =
-
-  /// Listen to all gamepad input changes (buttons and analog)
+  /// <summary>Listen to all gamepad input changes (buttons and analog).</summary>
   let listen (handler: GamepadDelta -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
     let subId = SubId.ofString "Mibo/Input/Gamepad/listen"
 
@@ -439,7 +547,7 @@ module Gamepad =
 
     Sub.Active(subId, subscribe)
 
-  /// Listen to gamepad input for a specific player
+  /// <summary>Listen to gamepad input for a specific player.</summary>
   let listenPlayer
     (player: PlayerIndex)
     (handler: GamepadDelta -> 'Msg)
@@ -455,7 +563,7 @@ module Gamepad =
 
     Sub.Active(subId, subscribe)
 
-  /// Called when a gamepad connects
+  /// <summary>Called when a gamepad connects.</summary>
   let onConnected
     (handler: PlayerIndex -> 'Msg)
     (ctx: GameContext)
@@ -470,7 +578,7 @@ module Gamepad =
 
     Sub.Active(subId, subscribe)
 
-  /// Called when a gamepad disconnects
+  /// <summary>Called when a gamepad disconnects.</summary>
   let onDisconnected
     (handler: PlayerIndex -> 'Msg)
     (ctx: GameContext)
@@ -485,7 +593,7 @@ module Gamepad =
 
     Sub.Active(subId, subscribe)
 
-  /// Listen to all connection/disconnection events
+  /// <summary>Listen to all connection/disconnection events.</summary>
   let onConnectionChange
     (handler: GamepadConnection -> 'Msg)
     (ctx: GameContext)

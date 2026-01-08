@@ -1,0 +1,42 @@
+name: Build and Deploy Docs
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "src/Mibo/**"
+      - "docs/**"
+  workflow_dispatch:
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore src/Mibo
+
+      - name: Install fsdocs
+        run: dotnet tool restore
+
+      - name: Build Library
+        run: dotnet build src/Mibo -c Release
+
+      - name: Build Documentation
+        run: |
+          # The tool expects to find projects and docs/
+          dotnet fsdocs build --output output --clean
+
+      # Note: This is where you would normally deploy to GitHub Pages
+      # For now, we just build it to ensure everything is correct.
+      - name: Upload Docs Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mibo-documentation
+          path: output/

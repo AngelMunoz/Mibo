@@ -6,18 +6,22 @@ open Microsoft.Xna.Framework.Graphics
 open FSharp.UMX
 open Mibo.Elmish
 
+/// <summary>Unit of measure for render layer ordering.</summary>
+/// <remarks>Lower values are drawn first (background), higher values drawn last (foreground).</remarks>
 [<Measure>]
 type RenderLayer
 
-/// Convenience alias for a render buffer keyed by `int<RenderLayer>`.
-///
-/// This preserves the simple `RenderBuffer<'Cmd>` API at call sites while the core
-/// buffer remains generic (`RenderBuffer<'Key,'Cmd>`).
+/// <summary>Convenience alias for a render buffer keyed by <see cref="T:Mibo.Elmish.Graphics2D.RenderLayer"/>.</summary>
+/// <remarks>This preserves the simple <c>RenderBuffer&lt;'Cmd&gt;</c> API at call sites while the core buffer remains generic (<see cref="T:Mibo.Elmish.RenderBuffer`2"/>).</remarks>
 type RenderBuffer<'Cmd> = RenderBuffer<int<RenderLayer>, 'Cmd>
 
+/// <summary>A 2D render command.</summary>
+/// <remarks>These commands are queued to a <see cref="T:Mibo.Elmish.RenderBuffer`1"/> and executed by <see cref="T:Mibo.Elmish.Graphics2D.Batch2DRenderer`1"/>.</remarks>
 [<Struct>]
 type RenderCmd2D =
+  /// Changes the camera transform for subsequent draws.
   | SetCamera of camera: Camera
+  /// Draws a textured quad.
   | DrawTexture of
     texture: Texture2D *
     dest: Rectangle *
@@ -28,23 +32,28 @@ type RenderCmd2D =
     effects: SpriteEffects *
     depth: float32
 
-/// Configuration for `Batch2DRenderer`.
-///
-/// These settings configure the *rendering pass* (Clear + SpriteBatch.Begin parameters),
-/// not individual sprites (those are controlled by `RenderCmd2D` / `Draw2DBuilder`).
+/// <summary>Configuration for <see cref="T:Mibo.Elmish.Graphics2D.Batch2DRenderer`1"/>.</summary>
+/// <remarks>These settings configure the *rendering pass* (Clear + SpriteBatch.Begin parameters), not individual sprites (those are controlled by <see cref="T:Mibo.Elmish.Graphics2D.RenderCmd2D"/> / <see cref="T:Mibo.Elmish.Graphics2D.Draw2DBuilder"/>).</remarks>
 [<Struct>]
 type Batch2DConfig = {
+  /// Optional color to clear the screen with before drawing.
   ClearColor: Color voption
   /// Whether to sort the command buffer by `RenderLayer` before issuing draws.
   /// Keep this enabled if you rely on `RenderLayer` for deterministic ordering.
   SortCommands: bool
+  /// SpriteBatch sort mode (Deferred, Immediate, etc).
   SortMode: SpriteSortMode
+  /// Blend state for sprite drawing.
   BlendState: BlendState
+  /// Sampler state for texture filtering.
   SamplerState: SamplerState
+  /// Depth stencil state.
   DepthStencilState: DepthStencilState
+  /// Rasterizer state.
   RasterizerState: RasterizerState
+  /// Optional shader effect for all sprites.
   Effect: Effect
-  /// Global transform matrix for the batch. 
+  /// Global transform matrix for the batch.
   /// Note: If using `SetCamera` commands, this initial matrix might be overridden during the pass.
   TransformMatrix: Matrix voption
 }
@@ -65,7 +74,7 @@ module Batch2DConfig =
     TransformMatrix = ValueNone
   }
 
-/// Standard 2D Renderer using SpriteBatch
+/// <summary>Standard 2D Renderer using <see cref="T:Microsoft.Xna.Framework.Graphics.SpriteBatch"/>.</summary>
 type Batch2DRenderer<'Model>
   (
     game: Game,
@@ -112,36 +121,38 @@ type Batch2DRenderer<'Model>
 
         match cmd with
         | SetCamera cam ->
-            if isBatching then
-                spriteBatch.End()
-                isBatching <- false
-            
-            currentTransform <- Nullable cam.View
-            // Restart batch with new transform
-            spriteBatch.Begin(
-                config.SortMode,
-                config.BlendState,
-                config.SamplerState,
-                config.DepthStencilState,
-                config.RasterizerState,
-                config.Effect,
-                currentTransform
-            )
-            isBatching <- true
+          if isBatching then
+            spriteBatch.End()
+            isBatching <- false
+
+          currentTransform <- Nullable cam.View
+          // Restart batch with new transform
+          spriteBatch.Begin(
+            config.SortMode,
+            config.BlendState,
+            config.SamplerState,
+            config.DepthStencilState,
+            config.RasterizerState,
+            config.Effect,
+            currentTransform
+          )
+
+          isBatching <- true
 
         | DrawTexture(tex, dest, src, color, rot, origin, fx, depth) ->
           if not isBatching then
-             // Should not happen if logic above is correct, but safe guard
-             spriteBatch.Begin(
-                config.SortMode,
-                config.BlendState,
-                config.SamplerState,
-                config.DepthStencilState,
-                config.RasterizerState,
-                config.Effect,
-                currentTransform
-             )
-             isBatching <- true
+            // Should not happen if logic above is correct, but safe guard
+            spriteBatch.Begin(
+              config.SortMode,
+              config.BlendState,
+              config.SamplerState,
+              config.DepthStencilState,
+              config.RasterizerState,
+              config.Effect,
+              currentTransform
+            )
+
+            isBatching <- true
 
           if src.HasValue then
             spriteBatch.Draw(
@@ -161,7 +172,7 @@ type Batch2DRenderer<'Model>
         spriteBatch.End()
 
 module Batch2DRenderer =
-
+  /// <summary>Creates a standard 2D renderer.</summary>
   let inline create<'Model>
     ([<InlineIfLambda>] view:
       GameContext -> 'Model -> RenderBuffer<RenderCmd2D> -> unit)
@@ -174,6 +185,7 @@ module Batch2DRenderer =
     )
     :> IRenderer<'Model>
 
+  /// <summary>Creates a 2D renderer with custom configuration.</summary>
   let inline createWithConfig<'Model>
     (config: Batch2DConfig)
     ([<InlineIfLambda>] view:
@@ -188,6 +200,7 @@ module Batch2DRenderer =
     :> IRenderer<'Model>
 
 
+/// <summary>Fluent builder for <see cref="T:Mibo.Elmish.Graphics2D.RenderCmd2D"/>.</summary>
 [<Struct>]
 type Draw2DBuilder = {
   Texture: Texture2D
@@ -201,7 +214,9 @@ type Draw2DBuilder = {
   Layer: int<RenderLayer>
 }
 
+/// <summary>Functions for building and submitting 2D draw commands.</summary>
 module Draw2D =
+  /// <summary>Starts a sprite drawing command.</summary>
   let sprite tex dest = {
     Texture = tex
     Dest = dest
@@ -218,6 +233,7 @@ module Draw2D =
   let withColor col (b: Draw2DBuilder) = { b with Color = col }
   let atLayer layer (b: Draw2DBuilder) = { b with Layer = layer }
 
+  /// <summary>Submits the draw command to the renderer's buffer.</summary>
   let submit (buffer: RenderBuffer<RenderCmd2D>) (b: Draw2DBuilder) =
     buffer.Add(
       b.Layer,
@@ -233,5 +249,10 @@ module Draw2D =
       )
     )
 
-  let camera (cam: Camera) (layer: int<RenderLayer>) (buffer: RenderBuffer<RenderCmd2D>) =
+  /// <summary>Submits a camera change command to the buffer.</summary>
+  let camera
+    (cam: Camera)
+    (layer: int<RenderLayer>)
+    (buffer: RenderBuffer<RenderCmd2D>)
+    =
     buffer.Add(layer, SetCamera cam)
