@@ -32,7 +32,7 @@ jobs:
       - name: Build Documentation
         run: |
           # The tool expects to find projects and docs/
-          dotnet fsdocs build --output output --clean --projects src/Mibo/Mibo.fsproj --properties Configuration=Release
+          dotnet fsdocs build --output output --clean --properties Configuration=Release
 
       # Note: This is where you would normally deploy to GitHub Pages
       # For now, we just build it to ensure everything is correct.
