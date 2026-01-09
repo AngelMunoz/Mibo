@@ -5,9 +5,9 @@
     <PackageId>Mibo.Templates</PackageId>
     <Title>Mibo Templates</Title>
     <Authors>Mibo Authors</Authors>
-    <Description>Templates for creating Mibo games (2D, 3D, MultiPlatform).</Description>
+    <Description>Mibo templates for creating functional 2D and 3D games with F#, Elmish, and MonoGame. Includes project templates for 2D, 3D, and Multi-Platform (Desktop, Android, iOS) game development.</Description>
     <PackageTags>dotnet-new;templates;mibo;game;monogame;fsharp</PackageTags>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>netstandard2.0</TargetFramework>
     <IncludeContentInPack>true</IncludeContentInPack>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <ContentTargetFolders>content</ContentTargetFolders>
@@ -16,7 +16,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="Templates/**/*" Exclude="Templates/**/bin/**;Templates/**/obj/**" />
+    <Content Include="Templates/**/*" Exclude="Templates/**/bin/**;Templates/**/obj/**;Templates/**/.DS_Store" />
+    <Compile Remove="**/*" />
   </ItemGroup>
 
 </Project>
