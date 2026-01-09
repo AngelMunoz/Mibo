@@ -1,0 +1,90 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract Release Data
+        id: extract
+        run: |
+          # Find the first version header (e.g. ## [1.0.0] - 2023-01-01)
+          # We skip [Unreleased]
+          VERSION_LINE=$(grep -n "^## \[[0-9]" CHANGELOG.md | head -n 1)
+
+          if [ -z "$VERSION_LINE" ]; then
+            echo "No version found in CHANGELOG.md"
+            exit 1
+          fi
+
+          LINE_NUM=$(echo "$VERSION_LINE" | cut -d: -f1)
+          VERSION=$(echo "$VERSION_LINE" | sed -E 's/.*## \[([^]]+)\].*/\1/')
+
+          echo "Found version: $VERSION at line $LINE_NUM"
+
+          # Find the next header (either [Unreleased], another version, or end of file) to determine end of current section
+          # We start looking AFTER the found version line
+          NEXT_HEADER_LINE=$(tail -n +$((LINE_NUM + 1)) CHANGELOG.md | grep -n "^## \[" | head -n 1 | cut -d: -f1)
+
+          if [ -z "$NEXT_HEADER_LINE" ]; then
+            # No next header, read until end
+            BODY=$(tail -n +$((LINE_NUM + 1)) CHANGELOG.md)
+          else
+            # Calculate how many lines to read
+            # NEXT_HEADER_LINE is relative to the tail output, so it's the number of lines to grab minus 1
+            BODY=$(tail -n +$((LINE_NUM + 1)) CHANGELOG.md | head -n $((NEXT_HEADER_LINE - 1)))
+          fi
+
+          # Write body to file to avoid escaping issues
+          echo "$BODY" > RELEASE_NOTES.md
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if Tag Exists
+        id: check_tag
+        run: |
+          if git rev-parse "v${{ steps.extract.outputs.version }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.extract.outputs.version }} already exists."
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup .NET
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore dependencies
+        if: steps.check_tag.outputs.exists == 'false'
+        run: dotnet restore
+
+      - name: Build
+        if: steps.check_tag.outputs.exists == 'false'
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Pack Mibo
+        if: steps.check_tag.outputs.exists == 'false'
+        run: dotnet pack src/Mibo/Mibo.fsproj --configuration Release --no-build --output nupkgs
+
+      - name: Pack Mibo.Templates
+        if: steps.check_tag.outputs.exists == 'false'
+        run: dotnet pack src/Mibo.Templates.csproj --configuration Release --no-build --output nupkgs
+
+      - name: Create Release
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.extract.outputs.version }}
+          name: v${{ steps.extract.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          files: nupkgs/*.nupkg
