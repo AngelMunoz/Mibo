@@ -98,7 +98,6 @@ let update msg model =
         { model with Position = model.Position + Vector2(dx, 0.0f) }, Cmd.none
 ```
 
-
 ## Level 2 — Establish a simulation “transaction”
 
 **Best for:** Growing projects where you need to prevent "spaghetti logic." By forcing all gameplay changes into `Tick`, you avoid race conditions caused by random events mutating state unpredictably.
@@ -197,7 +196,7 @@ match msg with
 
 **Goal:** stable simulation independent of framerate.
 
-**Pattern:** run your simulation in fixed slices $\Delta t$.
+**Pattern:** run your simulation in fixed slices.
 
 You can do this manually (accumulator in the model), or use Mibo's framework-managed fixed timestep:
 
