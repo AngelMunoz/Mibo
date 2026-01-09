@@ -27,7 +27,7 @@ let emit (pos: Vector2) (count: int) (model: Model) : unit =
     model.Particles.Add(ParticleFactory.createAt pos)
 
 /// MutableSystem: ages particles, removes expired
-let update<'Msg> (dt: float32) (model: Model) : struct(Model * Cmd<'Msg> list) =
+let update<'Msg> (dt: float32) (model: Model) : struct(Model * Cmd<'Msg>) =
     let particles = model.Particles
     let mutable i = particles.Count - 1
     while i >= 0 do
@@ -35,7 +35,7 @@ let update<'Msg> (dt: float32) (model: Model) : struct(Model * Cmd<'Msg> list) =
       | ValueNone -> particles.RemoveAt(i)
       | ValueSome updated -> particles[i] <- updated
       i <- i - 1
-    struct (model, [])
+    struct (model, Cmd.none)
 
 // ─────────────────────────────────────────────────────────────
 // View: Render particles

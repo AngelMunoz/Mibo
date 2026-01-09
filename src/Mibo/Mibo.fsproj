@@ -8,18 +8,29 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Elmish.fs" />
+    <Compile Include="Elmish.Commands.fs" />
+    <Compile Include="Elmish.Subscriptions.fs" />
+    <Compile Include="Elmish.Time.fs" />
+    <Compile Include="Elmish.Rendering.fs" />
+    <Compile Include="Elmish.ProgramTypes.fs" />
+    <Compile Include="Elmish.Runtime.fs" />
     <Compile Include="Camera.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="InputMapper.fs" />
     <Compile Include="Culling.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Graphics2D.fs" />
+    <Compile Include="Sprite3DTypes.fs" />
+    <Compile Include="SpriteQuadBatch.fs" />
     <Compile Include="QuadBatch.fs" />
     <Compile Include="BillboardBatch.fs" />
     <Compile Include="Graphics3D.fs" />
     <Compile Include="System.fs" />
     <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mibo.Tests" />
   </ItemGroup>
 
   <ItemGroup>

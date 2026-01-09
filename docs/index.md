@@ -4,11 +4,11 @@ category: Documentation
 index: 0
 ---
 
-# WIP THIS IS WORK IN PROGRESS DO NOT BELIVE ANYTHING YOU READ HERE UNLESS YOU DONT SEE THIS WARNING
-
 # Mibo: A Functional Game Framework for F#
 
 Mibo is a lightweight, Elmish-based game framework built on top of MonoGame. It brings the power of the **Model-View-Update (MVU)** architecture to game development, encouraging pure game logic and predictable state management.
+
+If you prefer learning by example, the projects in `src/Sample` and `src/3DSample` show complete, working setups.
 
 ## Why Mibo?
 
@@ -37,4 +37,25 @@ Instead of checking for specific keys in your player logic, Mibo encourages mapp
 
 ## Getting Started
 
-Check out the [Getting Started](getting-started.html) guide to create your first Mibo game. [omit]
+Run one of the samples, then copy its program setup (composition root) into your own project.
+
+## Documentation
+
+- Architecture
+
+  - [Elmish (MVU) runtime](elmish.html)
+  - [Programs & composition](program.html)
+  - [System pipeline (phases + snapshot)](system.html)
+  - [Scaling Mibo (Simple → Complex)](scaling.html)
+
+- Core services
+
+  - [Input (raw + mapped)](input.html)
+  - [Assets (loading + caching)](assets.html)
+
+- Rendering
+  - [Rendering overview + custom renderers](rendering.html)
+  - [Rendering 2D](rendering2d.html)
+  - [Rendering 3D](rendering3d.html)
+  - [Camera](camera.html)
+  - [Culling](culling.html)

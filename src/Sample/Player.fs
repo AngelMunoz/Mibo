@@ -15,23 +15,34 @@ open MiboSample.Domain
 
 
 /// ReadonlySystem: processes player actions and generates commands
-let processActions<'Msg> (onFired: Guid<EntityId> -> Vector2 -> 'Msg)=
+let processActions<'Msg>(onFired: Guid<EntityId> -> Vector2 -> 'Msg) =
   fun (snapshot: ModelSnapshot) ->
     let playerId = snapshot.PlayerId
-    let cmds =
+
+    let cmd =
       match snapshot.Positions.TryGetValue(playerId) with
       | (true, position) when snapshot.Actions.Held.Contains Fire ->
-        [ Cmd.ofEffect(Effect<'Msg>(fun dispatch -> dispatch(onFired playerId position))) ]
-      | _ -> []
-    struct (snapshot, cmds)
+        Cmd.ofEffect(
+          Effect<'Msg>(fun dispatch -> dispatch(onFired playerId position))
+        )
+      | _ -> Cmd.none
+
+    struct (snapshot, cmd)
 
 // ─────────────────────────────────────────────────────────────
 // View: Render player entity
 // ─────────────────────────────────────────────────────────────
 
-let view (ctx: GameContext) (position: Vector2) (color: Color) (size: Vector2) (buffer: RenderBuffer<RenderCmd2D>) =
+let view
+  (ctx: GameContext)
+  (position: Vector2)
+  (color: Color)
+  (size: Vector2)
+  (buffer: RenderBuffer<RenderCmd2D>)
+  =
   let tex =
-    ctx |> Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
+    ctx
+    |> Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
       let t = new Texture2D(gd, 1, 1)
       t.SetData([| Color.White |])
       t)
@@ -41,6 +52,7 @@ let view (ctx: GameContext) (position: Vector2) (color: Color) (size: Vector2) (
   Draw2D.camera cam 0<RenderLayer> buffer
 
   let rect = Rectangle(int position.X, int position.Y, int size.X, int size.Y)
+
   Draw2D.sprite tex rect
   |> Draw2D.withColor color
   |> Draw2D.atLayer 10<RenderLayer>

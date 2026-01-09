@@ -136,10 +136,10 @@ let update
   | SpawnCrate ->
     // Update doesn't have GameContext by design; use current default window size.
     // This is just a sample; a real game would model viewport changes explicitly.
-    let struct (m, cmds) =
+    let struct (m, cmd) =
       Crates.spawnOne crateRetryMode (fun () -> SpawnCrate) 800 600 model
 
-    struct (m, Cmd.batch cmds)
+    struct (m, cmd)
 
   | CrateHit crateId ->
     let m = Crates.removeCrate crateId model

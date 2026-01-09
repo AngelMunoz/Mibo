@@ -47,7 +47,23 @@ let mkProgram (init: GameContext -> struct ('Model * Cmd<'Msg>)) update = {
   Renderers = []
   Components = []
   Tick = ValueNone
+  FixedStep = ValueNone
+  DispatchMode = DispatchMode.Immediate
 }
+
+/// <summary>
+/// Configures how the runtime schedules messages dispatched while processing a frame.
+/// </summary>
+/// <remarks>
+/// Use <see cref="F:Mibo.Elmish.DispatchMode.Immediate"/> for maximum responsiveness (default), or
+/// <see cref="F:Mibo.Elmish.DispatchMode.FrameBounded"/> to guarantee that messages dispatched during
+/// processing are deferred to the next MonoGame <c>Update</c> call.
+/// </remarks>
+let withDispatchMode
+  (mode: DispatchMode)
+  (program: Program<'Model, 'Msg>)
+  : Program<'Model, 'Msg> =
+  { program with DispatchMode = mode }
 
 /// <summary>
 /// Adds a subscription function to the program.
@@ -187,6 +203,33 @@ let withTick (map: GameTime -> 'Msg) (program: Program<'Model, 'Msg>) = {
   program with
       Tick = ValueSome map
 }
+
+/// <summary>
+/// Enables a framework-managed fixed timestep simulation.
+/// </summary>
+/// <remarks>
+/// When enabled, the runtime will dispatch the mapped message zero or more times per MonoGame
+/// <c>Update</c> call to advance simulation in stable increments.
+/// <para>
+/// This is complementary to <see cref="M:Mibo.Elmish.Program.withTick"/>: you can use fixed-step
+/// messages for simulation and keep <c>Tick</c> for per-frame tasks (UI, camera smoothing, etc).
+/// </para>
+/// </remarks>
+let withFixedStep
+  (cfg: FixedStepConfig<'Msg>)
+  (program: Program<'Model, 'Msg>)
+  : Program<'Model, 'Msg> =
+
+  if cfg.StepSeconds <= 0.0f then
+    invalidArg (nameof cfg.StepSeconds) "StepSeconds must be > 0"
+
+  if cfg.MaxStepsPerFrame <= 0 then
+    invalidArg (nameof cfg.MaxStepsPerFrame) "MaxStepsPerFrame must be > 0"
+
+  {
+    program with
+        FixedStep = ValueSome cfg
+  }
 
 /// <summary>
 /// Registers the IAssets service for loading and caching game assets.

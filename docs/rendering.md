@@ -1,59 +1,80 @@
 ---
-title: Rendering in Mibo
+title: Custom Rendering in Mibo
 category: Rendering
-index: 3
+index: 33
 ---
 
-# 2D and 3D Rendering
+# Rendering in Mibo
 
-Mibo provides efficient, deferred rendering systems for both 2D and 3D graphics.
+Mibo’s rendering story is intentionally simple:
 
-## The RenderBuffer Pattern
+- Your Elmish `update` stays pure.
+- Your `view` function **submits render commands** to a `RenderBuffer`.
+- A renderer (`IRenderer<'Model>`) executes those commands each frame.
 
-Unlike standard MonoGame where you might call `SpriteBatch.Draw` inside your update or draw loop, Mibo uses a **Deferred Rendering** pattern:
+This keeps drawing as _data submission_, which composes nicely as projects grow.
 
-1. Your `view` function submits drawing commands to a `RenderBuffer`.
-2. Commands are stored and sorted (e.g., by layer or depth).
-3. The `BatchRenderer` executes these commands in batches to minimize draw calls.
+## Renderers are just `IRenderer<'Model>`
 
-## 2D Rendering
-
-Use the `Batch2DRenderer` and `Draw2D` module for high-performance sprite batching.
+A renderer is anything that implements:
 
 ```fsharp
-let view ctx model buffer =
-    Draw2D.sprite texture model.Pos
-    |> Draw2D.withColor Color.White
-    |> Draw2D.submit buffer
+type IRenderer<'Model> =
+    abstract member Draw: GameContext * 'Model * GameTime -> unit
 ```
 
-### Features
-
-- **Layer Sorting**: Automatically sorts sprites by `int<RenderLayer>`.
-- **Camera Support**: Easily apply 2D camera transforms.
-- **Fluent API**: Build complex draw commands with a readable builder pattern.
-
-## 3D Rendering
-
-Mibo's 3D system handles complex scenes with multiple materials, skinned models, and batching.
+You add renderers with:
 
 ```fsharp
-let view ctx model buffer =
-    Draw3D.mesh myModel worldMatrix
-    |> Draw3D.withColor Color.Green
-    |> Draw3D.submit buffer
+Program.withRenderer (fun game -> myRenderer :> IRenderer<Model>)
 ```
 
-### Features
+Multiple renderers can be added (e.g. 3D world + 2D UI). They run in the order they were added.
 
-- **Opaque/Transparent Passes**: Handles transparency sorting automatically.
-- **Skinned Animation**: Built-in support for MonoGame's `SkinnedEffect`.
-- **Custom Effects**: Easily apply custom shaders to specific draw commands.
-- **Primitive Batching**: High-performance batchers for Quads and Billboards.
+## The `RenderBuffer` pattern
 
-## Camera System
+Instead of drawing immediately inside `update`, you typically:
 
-Mibo provides a unified `Camera` type used by both 2D and 3D renderers.
+1. allocate a buffer (owned by the renderer)
+2. clear it each frame
+3. call your `view` to fill it
+4. optionally sort it
+5. execute the commands
 
-- `Camera2D`: Helpers for orthographic views, zoom, and world-to-screen conversion.
-- `Camera3D`: Helpers for perspective views, orbiting, and raycasting for picking.
+The built-in renderers follow this pattern, and custom renderers can too.
+
+## Writing your own renderer
+
+If you have a custom draw pipeline (special post-processing, instancing, debug overlays, etc), implement `IRenderer<'Model>`.
+
+Minimal example:
+
+```fsharp
+type MyRenderer(game: Game) =
+    interface IRenderer<Model> with
+        member _.Draw(ctx, model, gameTime) =
+            // use ctx.GraphicsDevice, ctx.Content, etc
+            // draw based on model
+            ()
+```
+
+Then install it:
+
+```fsharp
+Program.mkProgram init update
+|> Program.withRenderer (fun game -> MyRenderer(game) :> IRenderer<Model>)
+```
+
+## Built-in renderers
+
+Mibo includes:
+
+- 2D SpriteBatch renderer: `Mibo.Elmish.Graphics2D.Batch2DRenderer`
+- 3D renderer with pass handling and primitive batching: `Mibo.Elmish.Graphics3D.Batch3DRenderer`
+
+See the dedicated pages:
+
+- [Rendering 2D](rendering2d.html)
+- [Rendering 3D](rendering3d.html)
+- [Camera](camera.html)
+- [Culling](culling.html)

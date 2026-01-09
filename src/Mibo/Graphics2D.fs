@@ -19,8 +19,37 @@ type RenderBuffer<'Cmd> = RenderBuffer<int<RenderLayer>, 'Cmd>
 /// <remarks>These commands are queued to a <see cref="T:Mibo.Elmish.RenderBuffer`1"/> and executed by <see cref="T:Mibo.Elmish.Graphics2D.Batch2DRenderer`1"/>.</remarks>
 [<Struct>]
 type RenderCmd2D =
+  /// Set viewport for multi-camera rendering (split-screen, minimaps, etc).
+  | SetViewport of viewport: Viewport
+
+  /// Clear the render target. Use between cameras in multi-camera setups.
+  | ClearTarget of clearColor: Color voption * clearDepth: bool
+
   /// Changes the camera transform for subsequent draws.
   | SetCamera of camera: Camera
+
+  /// Set the SpriteBatch effect for subsequent draws.
+  ///
+  /// ValueNone means "use the renderer's configured default".
+  | SetEffect of effect: Effect voption
+
+  /// Set SpriteBatch blend state for subsequent draws.
+  | SetBlendState of blendState: BlendState
+
+  /// Set SpriteBatch sampler state for subsequent draws.
+  | SetSamplerState of samplerState: SamplerState
+
+  /// Set SpriteBatch depth-stencil state for subsequent draws.
+  | SetDepthStencilState of depthStencilState: DepthStencilState
+
+  /// Set SpriteBatch rasterizer state for subsequent draws.
+  | SetRasterizerState of rasterizerState: RasterizerState
+
+  /// Escape hatch: run an arbitrary draw function.
+  ///
+  /// The function is invoked outside of SpriteBatch (SpriteBatch is ended before calling it).
+  | DrawCustom of draw: (GameContext -> unit)
+
   /// Draws a textured quad.
   | DrawTexture of
     texture: Texture2D *
@@ -98,59 +127,148 @@ type Batch2DRenderer<'Model>
       if config.SortCommands then
         buffer.Sort()
 
+      // Current SpriteBatch state (mutable via commands)
+      let mutable currentSortMode = config.SortMode
+      let mutable currentBlend = config.BlendState
+      let mutable currentSampler = config.SamplerState
+      let mutable currentDepthStencil = config.DepthStencilState
+      let mutable currentRasterizer = config.RasterizerState
+      let mutable currentEffect = config.Effect
+
       let mutable currentTransform =
         match config.TransformMatrix with
         | ValueSome m -> Nullable m
         | ValueNone -> Nullable()
 
-      // Begin the initial batch
-      spriteBatch.Begin(
-        config.SortMode,
-        config.BlendState,
-        config.SamplerState,
-        config.DepthStencilState,
-        config.RasterizerState,
-        config.Effect,
-        currentTransform
-      )
+      let beginBatch() =
+        spriteBatch.Begin(
+          currentSortMode,
+          currentBlend,
+          currentSampler,
+          currentDepthStencil,
+          currentRasterizer,
+          currentEffect,
+          currentTransform
+        )
+
+      let endBatch() = spriteBatch.End()
 
       let mutable isBatching = true
+      beginBatch()
 
       for i = 0 to buffer.Count - 1 do
         let struct (_, cmd) = buffer.Item(i)
 
         match cmd with
+        | SetViewport vp ->
+          if isBatching then
+            endBatch()
+            isBatching <- false
+
+          ctx.GraphicsDevice.Viewport <- vp
+
+          beginBatch()
+          isBatching <- true
+
+        | ClearTarget(colorOpt, clearDepth) ->
+          if isBatching then
+            endBatch()
+            isBatching <- false
+
+          match colorOpt, clearDepth with
+          | ValueSome c, true ->
+            ctx.GraphicsDevice.Clear(
+              ClearOptions.Target ||| ClearOptions.DepthBuffer,
+              c,
+              1.0f,
+              0
+            )
+          | ValueSome c, false ->
+            ctx.GraphicsDevice.Clear(ClearOptions.Target, c, 1.0f, 0)
+          | ValueNone, true ->
+            ctx.GraphicsDevice.Clear(
+              ClearOptions.DepthBuffer,
+              Color.Black,
+              1.0f,
+              0
+            )
+          | ValueNone, false -> ()
+
+          beginBatch()
+          isBatching <- true
+
         | SetCamera cam ->
           if isBatching then
-            spriteBatch.End()
+            endBatch()
             isBatching <- false
 
           currentTransform <- Nullable cam.View
-          // Restart batch with new transform
-          spriteBatch.Begin(
-            config.SortMode,
-            config.BlendState,
-            config.SamplerState,
-            config.DepthStencilState,
-            config.RasterizerState,
-            config.Effect,
-            currentTransform
-          )
+          beginBatch()
+          isBatching <- true
 
+        | SetEffect effectOpt ->
+          if isBatching then
+            endBatch()
+            isBatching <- false
+
+          currentEffect <-
+            match effectOpt with
+            | ValueSome e -> e
+            | ValueNone -> config.Effect
+
+          beginBatch()
+          isBatching <- true
+
+        | SetBlendState bs ->
+          if isBatching then
+            endBatch()
+            isBatching <- false
+
+          currentBlend <- bs
+          beginBatch()
+          isBatching <- true
+
+        | SetSamplerState ss ->
+          if isBatching then
+            endBatch()
+            isBatching <- false
+
+          currentSampler <- ss
+          beginBatch()
+          isBatching <- true
+
+        | SetDepthStencilState ds ->
+          if isBatching then
+            endBatch()
+            isBatching <- false
+
+          currentDepthStencil <- ds
+          beginBatch()
+          isBatching <- true
+
+        | SetRasterizerState rs ->
+          if isBatching then
+            endBatch()
+            isBatching <- false
+
+          currentRasterizer <- rs
+          beginBatch()
+          isBatching <- true
+
+        | DrawCustom draw ->
+          if isBatching then
+            endBatch()
+            isBatching <- false
+
+          draw ctx
+
+          beginBatch()
           isBatching <- true
 
         | DrawTexture(tex, dest, src, color, rot, origin, fx, depth) ->
           if not isBatching then
             // Should not happen if logic above is correct, but safe guard
-            spriteBatch.Begin(
-              config.SortMode,
-              config.BlendState,
-              config.SamplerState,
-              config.DepthStencilState,
-              config.RasterizerState,
-              config.Effect,
-              currentTransform
-            )
+            beginBatch()
 
             isBatching <- true
 
@@ -169,7 +287,7 @@ type Batch2DRenderer<'Model>
             spriteBatch.Draw(tex, dest, color)
 
       if isBatching then
-        spriteBatch.End()
+        endBatch()
 
 module Batch2DRenderer =
   /// <summary>Creates a standard 2D renderer.</summary>
@@ -256,3 +374,70 @@ module Draw2D =
     (buffer: RenderBuffer<RenderCmd2D>)
     =
     buffer.Add(layer, SetCamera cam)
+
+  /// <summary>Submits a viewport change command to the buffer.</summary>
+  let viewport
+    (vp: Viewport)
+    (layer: int<RenderLayer>)
+    (buffer: RenderBuffer<RenderCmd2D>)
+    =
+    buffer.Add(layer, SetViewport vp)
+
+  /// <summary>Clear color and/or depth buffer. Useful between cameras in multi-camera setups.</summary>
+  let clear
+    (color: Color voption)
+    (clearDepth: bool)
+    (layer: int<RenderLayer>)
+    (buffer: RenderBuffer<RenderCmd2D>)
+    =
+    buffer.Add(layer, ClearTarget(color, clearDepth))
+
+  /// <summary>Set the SpriteBatch effect for subsequent draws.</summary>
+  /// <remarks>Use ValueNone to revert to the renderer's configured default.</remarks>
+  let effect
+    (effect: Effect voption)
+    (layer: int<RenderLayer>)
+    (buffer: RenderBuffer<RenderCmd2D>)
+    =
+    buffer.Add(layer, SetEffect effect)
+
+  /// <summary>Set the SpriteBatch blend state for subsequent draws.</summary>
+  let blendState
+    (blendState: BlendState)
+    (layer: int<RenderLayer>)
+    (buffer: RenderBuffer<RenderCmd2D>)
+    =
+    buffer.Add(layer, SetBlendState blendState)
+
+  /// <summary>Set the SpriteBatch sampler state for subsequent draws.</summary>
+  let samplerState
+    (samplerState: SamplerState)
+    (layer: int<RenderLayer>)
+    (buffer: RenderBuffer<RenderCmd2D>)
+    =
+    buffer.Add(layer, SetSamplerState samplerState)
+
+  /// <summary>Set the SpriteBatch depth-stencil state for subsequent draws.</summary>
+  let depthStencilState
+    (depthStencilState: DepthStencilState)
+    (layer: int<RenderLayer>)
+    (buffer: RenderBuffer<RenderCmd2D>)
+    =
+    buffer.Add(layer, SetDepthStencilState depthStencilState)
+
+  /// <summary>Set the SpriteBatch rasterizer state for subsequent draws.</summary>
+  let rasterizerState
+    (rasterizerState: RasterizerState)
+    (layer: int<RenderLayer>)
+    (buffer: RenderBuffer<RenderCmd2D>)
+    =
+    buffer.Add(layer, SetRasterizerState rasterizerState)
+
+  /// <summary>Submits a custom drawing command to the buffer.</summary>
+  /// <remarks>The SpriteBatch is ended before calling <c>draw</c>, and restarted after.</remarks>
+  let custom
+    (draw: GameContext -> unit)
+    (layer: int<RenderLayer>)
+    (buffer: RenderBuffer<RenderCmd2D>)
+    =
+    buffer.Add(layer, DrawCustom draw)

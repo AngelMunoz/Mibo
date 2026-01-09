@@ -30,7 +30,7 @@ let private applyMovement (position: Vector2) (direction: Vector2) (speed: float
   else position + direction * speed * dt
 
 /// MutableSystem: mutates positions, returns model unchanged
-let update (dt: float32) (model: Model) : struct (Model * Cmd<'Msg> list) =
+let update (dt: float32) (model: Model) : struct (Model * Cmd<'Msg>) =
   let entityId = model.PlayerId
   match model.Positions.TryGetValue(entityId) with
   | true, position ->
@@ -39,4 +39,4 @@ let update (dt: float32) (model: Model) : struct (Model * Cmd<'Msg> list) =
     let newPosition = applyMovement position direction speed dt
     model.Positions[entityId] <- newPosition
   | _ -> ()
-  struct (model, [])
+  struct (model, Cmd.none)

@@ -41,10 +41,7 @@ let private resolveCollision
   | _ -> newPos, velocity, false
 
 /// Physics system update: gravity, jump, position, collision
-let update<'Msg>
-  (dt: float32)
-  (state: State)
-  : struct (State * Cmd<'Msg> list) =
+let update<'Msg> (dt: float32) (state: State) : struct (State * Cmd<'Msg>) =
   let playerRadius = getPlayerRadius state.Assets
 
   // Apply jump first (modifies velocity before gravity)
@@ -71,4 +68,4 @@ let update<'Msg>
         Velocity = finalVel
         IsGrounded = grounded
   },
-  []
+  Cmd.none

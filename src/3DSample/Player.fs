@@ -11,7 +11,7 @@ open _3DSample
 // ─────────────────────────────────────────────────────────────
 
 /// Check if player has fallen and respawn if needed
-let checkRespawn<'Msg>(state: State) : struct (State * Cmd<'Msg> list) =
+let checkRespawn<'Msg>(state: State) : struct (State * Cmd<'Msg>) =
   if state.PlayerPosition.Y <= Constants.fallLimit then
     {
       state with
@@ -19,9 +19,9 @@ let checkRespawn<'Msg>(state: State) : struct (State * Cmd<'Msg> list) =
           Velocity = Vector3.Zero
           IsGrounded = false
     },
-    []
+    Cmd.none
   else
-    state, []
+    state, Cmd.none
 
 /// Render the player ball with rotation
 let view

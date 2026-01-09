@@ -18,11 +18,8 @@ let private computeRollDelta (dt: float32) (velocity: Vector3) : Quaternion =
 
 /// Rotation system update: applies rolling rotation based on velocity
 /// Ball keeps rotating even when airborne for momentum effect
-let update<'Msg>
-  (dt: float32)
-  (state: State)
-  : struct (State * Cmd<'Msg> list) =
+let update<'Msg> (dt: float32) (state: State) : struct (State * Cmd<'Msg>) =
   let rotationDelta = computeRollDelta dt state.Velocity
   let newRotation = Quaternion.Concatenate(state.Rotation, rotationDelta)
 
-  { state with Rotation = newRotation }, []
+  { state with Rotation = newRotation }, Cmd.none

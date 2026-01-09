@@ -8,27 +8,6 @@ open Mibo.Elmish
 
 // --- 3D Rendering Implementation ---
 
-/// <summary>Coarse rendering pass selection for 3D.</summary>
-/// <remarks>
-/// <para><see cref="F:Mibo.Elmish.Graphics3D.RenderPass.Opaque"/>: depth testing + opaque blending. Can be depth-sorted for performance.</para>
-/// <para><see cref="F:Mibo.Elmish.Graphics3D.RenderPass.Transparent"/>: typically depth read + alpha blending. Must be sorted back-to-front.</para>
-/// </remarks>
-[<Struct>]
-type RenderPass =
-  | Opaque
-  | Transparent
-
-/// <summary>Standard transformation matrices used during effect setup.</summary>
-[<Struct>]
-type EffectContext = {
-  World: Matrix
-  View: Matrix
-  Projection: Matrix
-}
-
-/// <summary>Callback for configuring an effect before a draw operation.</summary>
-type EffectSetup = Effect -> EffectContext -> unit
-
 /// <summary>A 3D render command.</summary>
 /// <remarks>These commands are queued to a <see cref="T:Mibo.Elmish.RenderBuffer`1"/> and executed by <see cref="T:Mibo.Elmish.Graphics3D.Batch3DRenderer`1"/>.</remarks>
 [<Struct>]
@@ -63,18 +42,17 @@ type RenderCmd3D =
     texture: Texture2D voption *
     setup: EffectSetup voption
 
-  /// <summary>Draw an axis-aligned textured quad in 3D space.</summary>
-  /// <remarks>Caller is responsible for setting up the effect (View, Projection, Texture, etc).</remarks>
-  | DrawQuad of effect: Effect * position: Vector3 * dQSize: Vector2
+  /// <summary>Sprite-style quad draw (90% case): unlit textured quad using built-in sprite effect.</summary>
+  | DrawSpriteQuad of spriteQuad: SpriteQuadCmd
 
-  /// <summary>Draw a camera-facing billboard (particles, sprites in 3D).</summary>
-  /// <remarks>Caller is responsible for setting up the effect.</remarks>
-  | DrawBillboard of
-    effect: Effect *
-    position: Vector3 *
-    size: Vector2 *
-    rotation: float32 *
-    color: Color
+  /// <summary>Sprite-style billboard draw (90% case): unlit textured billboard using built-in sprite effect.</summary>
+  | DrawSpriteBillboard of spriteBillboard: SpriteBillboardCmd
+
+  /// <summary>Effect-driven quad draw: user provides an effect and optional setup callback.</summary>
+  | DrawQuadEffect of quadEffect: EffectQuadCmd
+
+  /// <summary>Effect-driven billboard draw: user provides an effect and optional setup callback.</summary>
+  | DrawBillboardEffect of billboardEffect: EffectBillboardCmd
 
 /// <summary>Convenience alias for a render buffer for 3D commands.</summary>
 /// <remarks>3D rendering typically does not rely on a 2D-style render-layer ordering. We preserve submission order (do not sort), so the key is <c>unit</c>.</remarks>
@@ -101,6 +79,18 @@ type Batch3DConfig = {
 
   RasterizerState: RasterizerState
 
+  /// <summary>Sampler state used for Sprite3D draws (billboards/quads).</summary>
+  SpriteSamplerState: SamplerState
+
+  /// <summary>Rasterizer state used for Sprite3D draws (billboards/quads).</summary>
+  SpriteRasterizerState: RasterizerState
+
+  SpriteOpaqueBlendState: BlendState
+  SpriteOpaqueDepthStencilState: DepthStencilState
+
+  SpriteTransparentBlendState: BlendState
+  SpriteTransparentDepthStencilState: DepthStencilState
+
   /// <summary>If true, opaque draws are sorted front-to-back by distance to camera.</summary>
   /// <remarks>This can reduce overdraw.</remarks>
   SortOpaqueFrontToBack: bool
@@ -125,6 +115,16 @@ module Batch3DConfig =
     TransparentDepthStencilState = DepthStencilState.DepthRead
 
     RasterizerState = RasterizerState.CullCounterClockwise
+
+    // Sprite3D defaults: unlit textured quads/billboards.
+    SpriteSamplerState = SamplerState.LinearClamp
+    SpriteRasterizerState = RasterizerState.CullNone
+
+    SpriteOpaqueBlendState = BlendState.Opaque
+    SpriteOpaqueDepthStencilState = DepthStencilState.Default
+
+    SpriteTransparentBlendState = BlendState.AlphaBlend
+    SpriteTransparentDepthStencilState = DepthStencilState.DepthRead
 
     SortOpaqueFrontToBack = false
     CacheBasicEffectLighting = true
@@ -184,14 +184,22 @@ type Batch3DRenderer<'Model>
     opaque.Clear()
     transparent.Clear()
 
-  // Batchers for quads and billboards
-  let mutable quadBatch = QuadBatch.create(game.GraphicsDevice)
+  // Sprite batchers
+  let mutable spriteQuadBatch = SpriteQuadBatch.create(game.GraphicsDevice)
   let mutable billboardBatch = BillboardBatch.create(game.GraphicsDevice)
+
+  // Built-in unlit sprite effect (texture + vertex color)
+  let spriteEffect =
+    let e = new BasicEffect(game.GraphicsDevice)
+    e.LightingEnabled <- false
+    e.TextureEnabled <- true
+    e.VertexColorEnabled <- true
+    e
 
   interface IDisposable with
     member _.Dispose() =
-      QuadBatch.dispose &quadBatch
-      BillboardBatch.dispose &billboardBatch
+      SpriteQuadBatch.dispose spriteQuadBatch
+      BillboardBatch.dispose billboardBatch
 
   interface IRenderer<'Model> with
     member _.Draw(ctx: GameContext, model: 'Model, gameTime: GameTime) =
@@ -249,107 +257,43 @@ type Batch3DRenderer<'Model>
           )
 
       // Partition the submission-ordered command stream into passes.
-      // Camera and Custom draws preserve their relative ordering by being executed in-stream
-      // (Custom) or applied to subsequent draws (Camera).
-      clearLists()
+      // We treat changes to viewport/camera/clears/custom as barriers. Between barriers,
+      // we sort and execute opaque/transparent draws. This keeps sorting correct per camera.
+
       let mutable camPos = getCameraWorldPosition viewMatrix
 
-      // Track camera basis vectors for billboards
+      // Camera basis vectors for spherical billboards
       let mutable camRight = Vector3.Right
       let mutable camUp = Vector3.Up
 
-      let mutable currentQuadEffect = null
-      let mutable currentBillboardEffect = null
+      let updateCameraBasis() =
+        let invView = Matrix.Invert(viewMatrix)
+        camRight <- Vector3(invView.M11, invView.M21, invView.M31)
+        camUp <- Vector3(invView.M12, invView.M22, invView.M32)
 
-      for i = 0 to buffer.Count - 1 do
-        let struct (_, cmd) = buffer.Item(i)
+      let calcBillboardBasis
+        (mode: BillboardMode)
+        (pos: Vector3)
+        : struct (Vector3 * Vector3) =
+        match mode with
+        | Spherical -> struct (camRight, camUp)
+        | Cylindrical upAxis ->
+          // Keep up fixed, rotate around it to face the camera.
+          let viewDir = camPos - pos
+          let mutable right = Vector3.Cross(upAxis, viewDir)
 
-        match cmd with
-        | SetViewport vp -> gd.Viewport <- vp
+          if right.LengthSquared() < 0.000001f then
+            // Degenerate: camera aligned with up axis; fall back to spherical.
+            struct (camRight, camUp)
+          else
+            right.Normalize()
+            let mutable up = Vector3.Cross(viewDir, right)
 
-        | ClearTarget(colorOpt, clearDepth) ->
-          match colorOpt, clearDepth with
-          | ValueSome c, true ->
-            gd.Clear(
-              ClearOptions.Target ||| ClearOptions.DepthBuffer,
-              c,
-              1.0f,
-              0
-            )
-          | ValueSome c, false -> gd.Clear(ClearOptions.Target, c, 1.0f, 0)
-          | ValueNone, true ->
-            gd.Clear(ClearOptions.DepthBuffer, Color.Black, 1.0f, 0)
-          | ValueNone, false -> ()
-
-        | SetCamera cam ->
-          viewMatrix <- cam.View
-          projectionMatrix <- cam.Projection
-          camPos <- getCameraWorldPosition viewMatrix
-
-          // Extract camera basis from view matrix for billboards
-          let invView = Matrix.Invert(viewMatrix)
-          camRight <- Vector3(invView.M11, invView.M21, invView.M31)
-          camUp <- Vector3(invView.M12, invView.M22, invView.M32)
-
-        | DrawCustom draw -> draw(ctx, viewMatrix, projectionMatrix)
-
-        | DrawMesh(pass, m, transform, _colorOpt, _texOpt, _setupOpt) ->
-          let pos = transform.Translation
-          let distSq = Vector3.DistanceSquared(camPos, pos)
-
-          match pass with
-          | Opaque -> opaque.Add struct (distSq, cmd)
-          | Transparent -> transparent.Add struct (distSq, cmd)
-
-        | DrawSkinned(pass, m, transform, _bones, _colorOpt, _texOpt, _setupOpt) ->
-          let pos = transform.Translation
-          let distSq = Vector3.DistanceSquared(camPos, pos)
-
-          match pass with
-          | Opaque -> opaque.Add struct (distSq, cmd)
-          | Transparent -> transparent.Add struct (distSq, cmd)
-
-        | DrawQuad(effect, position, size) ->
-          if effect <> currentQuadEffect then
-            QuadBatch.flush &quadBatch
-            QuadBatch.begin' effect &quadBatch
-            currentQuadEffect <- effect
-
-          QuadBatch.draw position size &quadBatch
-
-        | DrawBillboard(effect, position, size, rotation, color) ->
-          if effect <> currentBillboardEffect then
-            BillboardBatch.end' &billboardBatch // flush previous
-            BillboardBatch.begin' effect &billboardBatch
-            currentBillboardEffect <- effect
-
-          BillboardBatch.draw
-            position
-            size
-            rotation
-            color
-            camRight
-            camUp
-            &billboardBatch
-
-      // Flush remaining batches
-      QuadBatch.end' &quadBatch
-      BillboardBatch.end' &billboardBatch
-
-      // Optional opaque sorting (front-to-back).
-      if config.SortOpaqueFrontToBack then
-        opaque.Sort
-          { new Collections.Generic.IComparer<struct (float32 * RenderCmd3D)> with
-              member _.Compare(struct (da, _), struct (db, _)) = compare da db
-          }
-
-      // Transparent must be back-to-front.
-      transparent.Sort
-        { new Collections.Generic.IComparer<struct (float32 * RenderCmd3D)> with
-            member _.Compare(struct (da, _), struct (db, _)) =
-              // Descending: far -> near
-              compare db da
-        }
+            if up.LengthSquared() < 0.000001f then
+              struct (camRight, camUp)
+            else
+              up.Normalize()
+              struct (right, up)
 
       let drawModelMeshes
         (pass: RenderPass)
@@ -368,6 +312,8 @@ type Batch3DRenderer<'Model>
         | Transparent ->
           gd.DepthStencilState <- config.TransparentDepthStencilState
           gd.BlendState <- config.TransparentBlendState
+
+        gd.RasterizerState <- config.RasterizerState
 
         for mesh in m.Meshes do
           for part in mesh.MeshParts do
@@ -393,15 +339,7 @@ type Batch3DRenderer<'Model>
             match effect with
             | :? BasicEffect as be ->
               setWvp be
-
-              if config.CacheBasicEffectLighting then
-                match configuredBasicEffects.TryGetValue(be) with
-                | true, _ -> ()
-                | false, _ ->
-                  StandardEffects.defaultLighting be
-                  configuredBasicEffects.Add(be, box())
-              else
-                StandardEffects.defaultLighting be
+              applyBasicEffectLighting be
 
               colorOpt
               |> ValueOption.iter(fun c -> be.DiffuseColor <- c.ToVector3())
@@ -424,40 +362,347 @@ type Batch3DRenderer<'Model>
 
             mesh.Draw()
 
-      // Execute passes
-      for i = 0 to opaque.Count - 1 do
-        let struct (_, cmd) = opaque[i]
+      let flushSpriteQuadBatch (effect: Effect) (state: SpriteQuadBatch.State) =
+        // Caller has configured effect + device state.
+        SpriteQuadBatch.end' effect state
+        SpriteQuadBatch.begin' state
+
+      let flushBillboardBatch(state: BillboardBatch.State) =
+        BillboardBatch.end' state
+
+      let sortOpaqueIfNeeded() =
+        if config.SortOpaqueFrontToBack then
+          opaque.Sort
+            { new Collections.Generic.IComparer<struct (float32 * RenderCmd3D)> with
+                member _.Compare(struct (da, _), struct (db, _)) = compare da db
+            }
+
+      let sortTransparentBackToFront() =
+        transparent.Sort
+          { new Collections.Generic.IComparer<struct (float32 * RenderCmd3D)> with
+              member _.Compare(struct (da, _), struct (db, _)) =
+                // Descending: far -> near
+                compare db da
+          }
+
+      let drawSpritesInList
+        (pass: RenderPass)
+        (items: ResizeArray<struct (float32 * RenderCmd3D)>)
+        =
+        let mutable currentSpriteQuadTexture: Texture2D = null
+        let mutable currentSpriteBillboardTexture: Texture2D = null
+
+        // Reset batches
+        SpriteQuadBatch.begin' spriteQuadBatch
+        BillboardBatch.end' billboardBatch
+
+        let applySpriteStates(pass: RenderPass) =
+          match pass with
+          | Opaque ->
+            gd.BlendState <- config.SpriteOpaqueBlendState
+            gd.DepthStencilState <- config.SpriteOpaqueDepthStencilState
+          | Transparent ->
+            gd.BlendState <- config.SpriteTransparentBlendState
+            gd.DepthStencilState <- config.SpriteTransparentDepthStencilState
+
+          gd.RasterizerState <- config.SpriteRasterizerState
+          gd.SamplerStates[0] <- config.SpriteSamplerState
+
+        let ensureSpriteQuadEffect(tex: Texture2D) =
+          if tex <> currentSpriteQuadTexture then
+            // Flush pending sprite quads before switching textures.
+            if not(isNull currentSpriteQuadTexture) then
+              applySpriteStates pass
+              spriteEffect.View <- viewMatrix
+              spriteEffect.Projection <- projectionMatrix
+              flushSpriteQuadBatch spriteEffect spriteQuadBatch
+
+            currentSpriteQuadTexture <- tex
+            spriteEffect.Texture <- tex
+
+        let flushPendingQuads() =
+          if
+            spriteQuadBatch.QuadCount > 0
+            && not(isNull currentSpriteQuadTexture)
+          then
+            applySpriteStates pass
+            spriteEffect.View <- viewMatrix
+            spriteEffect.Projection <- projectionMatrix
+            flushSpriteQuadBatch spriteEffect spriteQuadBatch
+
+        let flushPendingBillboards() =
+          if billboardBatch.SpriteCount > 0 then
+            BillboardBatch.end' billboardBatch
+
+        for i = 0 to items.Count - 1 do
+          let struct (_, cmd) = items[i]
+
+          match cmd with
+          | DrawSpriteQuad s ->
+            // Switching from billboards: flush.
+            flushPendingBillboards()
+
+            ensureSpriteQuadEffect s.Texture
+            let q = s.Quad
+
+            SpriteQuadBatch.draw
+              q.Center
+              q.Right
+              q.Up
+              q.Color
+              q.Uv
+              spriteQuadBatch
+
+          | DrawSpriteBillboard s ->
+            // Flush any pending quads before drawing billboards.
+            flushPendingQuads()
+
+            if s.Texture <> currentSpriteBillboardTexture then
+              flushPendingBillboards()
+              currentSpriteBillboardTexture <- s.Texture
+              applySpriteStates pass
+              spriteEffect.View <- viewMatrix
+              spriteEffect.Projection <- projectionMatrix
+              spriteEffect.Texture <- s.Texture
+              BillboardBatch.begin' (spriteEffect :> Effect) billboardBatch
+            else
+              applySpriteStates pass
+
+            let b = s.Billboard
+            let struct (right, up) = calcBillboardBasis b.Mode b.Position
+
+            BillboardBatch.drawUv
+              b.Position
+              b.Size
+              b.Rotation
+              b.Color
+              b.Uv
+              right
+              up
+              billboardBatch
+
+          | DrawQuadEffect e ->
+            // Flush sprite batches before custom-effect quads.
+            flushPendingBillboards()
+            flushPendingQuads()
+
+            let effect = e.Effect
+
+            // Per-command setup; since we can't assume parameters are stable across draws,
+            // render this command immediately (one quad per command) for correctness.
+            e.Setup
+            |> ValueOption.iter(fun setup ->
+              setup effect {
+                World = Matrix.Identity
+                View = viewMatrix
+                Projection = projectionMatrix
+              })
+
+            applySpriteStates pass
+
+            SpriteQuadBatch.begin' spriteQuadBatch
+            let q = e.Quad
+
+            SpriteQuadBatch.draw
+              q.Center
+              q.Right
+              q.Up
+              q.Color
+              q.Uv
+              spriteQuadBatch
+
+            SpriteQuadBatch.end' effect spriteQuadBatch
+
+          | DrawBillboardEffect e ->
+            // Flush sprite batches before effect billboards.
+            flushPendingQuads()
+            flushPendingBillboards()
+
+            let effect = e.Effect
+
+            e.Setup
+            |> ValueOption.iter(fun setup ->
+              setup effect {
+                World = Matrix.Identity
+                View = viewMatrix
+                Projection = projectionMatrix
+              })
+
+            applySpriteStates pass
+
+            BillboardBatch.begin' effect billboardBatch
+            let b = e.Billboard
+            let struct (right, up) = calcBillboardBasis b.Mode b.Position
+
+            BillboardBatch.drawUv
+              b.Position
+              b.Size
+              b.Rotation
+              b.Color
+              b.Uv
+              right
+              up
+              billboardBatch
+
+            BillboardBatch.end' billboardBatch
+
+          | _ -> ()
+
+        // Final flush
+        flushPendingQuads()
+
+        flushPendingBillboards()
+
+      let flushSegment() =
+        if opaque.Count = 0 && transparent.Count = 0 then
+          ()
+        else
+          sortOpaqueIfNeeded()
+          sortTransparentBackToFront()
+
+          // Execute opaque then transparent
+          for i = 0 to opaque.Count - 1 do
+            let struct (_, cmd) = opaque[i]
+
+            match cmd with
+            | DrawMesh(pass, m, transform, colorOpt, texOpt, setupOpt) ->
+              drawModelMeshes
+                pass
+                m
+                transform
+                colorOpt
+                texOpt
+                ValueNone
+                setupOpt
+            | DrawSkinned(pass, m, transform, bones, colorOpt, texOpt, setupOpt) ->
+              drawModelMeshes
+                pass
+                m
+                transform
+                colorOpt
+                texOpt
+                (ValueSome bones)
+                setupOpt
+            | _ -> ()
+
+          drawSpritesInList Opaque opaque
+
+          for i = 0 to transparent.Count - 1 do
+            let struct (_, cmd) = transparent[i]
+
+            match cmd with
+            | DrawMesh(pass, m, transform, colorOpt, texOpt, setupOpt) ->
+              drawModelMeshes
+                pass
+                m
+                transform
+                colorOpt
+                texOpt
+                ValueNone
+                setupOpt
+            | DrawSkinned(pass, m, transform, bones, colorOpt, texOpt, setupOpt) ->
+              drawModelMeshes
+                pass
+                m
+                transform
+                colorOpt
+                texOpt
+                (ValueSome bones)
+                setupOpt
+            | _ -> ()
+
+          drawSpritesInList Transparent transparent
+
+          clearLists()
+
+      // Initial basis
+      updateCameraBasis()
+
+      clearLists()
+
+      for i = 0 to buffer.Count - 1 do
+        let struct (_, cmd) = buffer.Item(i)
 
         match cmd with
-        | DrawMesh(pass, m, transform, colorOpt, texOpt, setupOpt) ->
-          drawModelMeshes pass m transform colorOpt texOpt ValueNone setupOpt
-        | DrawSkinned(pass, m, transform, bones, colorOpt, texOpt, setupOpt) ->
-          drawModelMeshes
-            pass
-            m
-            transform
-            colorOpt
-            texOpt
-            (ValueSome bones)
-            setupOpt
-        | _ -> ()
+        | SetViewport vp ->
+          flushSegment()
+          gd.Viewport <- vp
 
-      for i = 0 to transparent.Count - 1 do
-        let struct (_, cmd) = transparent[i]
+        | ClearTarget(colorOpt, clearDepth) ->
+          flushSegment()
 
-        match cmd with
-        | DrawMesh(pass, m, transform, colorOpt, texOpt, setupOpt) ->
-          drawModelMeshes pass m transform colorOpt texOpt ValueNone setupOpt
-        | DrawSkinned(pass, m, transform, bones, colorOpt, texOpt, setupOpt) ->
-          drawModelMeshes
-            pass
-            m
-            transform
-            colorOpt
-            texOpt
-            (ValueSome bones)
-            setupOpt
-        | _ -> ()
+          match colorOpt, clearDepth with
+          | ValueSome c, true ->
+            gd.Clear(
+              ClearOptions.Target ||| ClearOptions.DepthBuffer,
+              c,
+              1.0f,
+              0
+            )
+          | ValueSome c, false -> gd.Clear(ClearOptions.Target, c, 1.0f, 0)
+          | ValueNone, true ->
+            gd.Clear(ClearOptions.DepthBuffer, Color.Black, 1.0f, 0)
+          | ValueNone, false -> ()
+
+        | SetCamera cam ->
+          flushSegment()
+
+          viewMatrix <- cam.View
+          projectionMatrix <- cam.Projection
+          camPos <- getCameraWorldPosition viewMatrix
+          updateCameraBasis()
+
+        | DrawCustom draw ->
+          flushSegment()
+          draw(ctx, viewMatrix, projectionMatrix)
+          // Re-apply baseline state for subsequent draws.
+          gd.RasterizerState <- config.RasterizerState
+
+        | DrawMesh(pass, m, transform, _colorOpt, _texOpt, _setupOpt) ->
+          let pos = transform.Translation
+          let distSq = Vector3.DistanceSquared(camPos, pos)
+
+          match pass with
+          | Opaque -> opaque.Add struct (distSq, cmd)
+          | Transparent -> transparent.Add struct (distSq, cmd)
+
+        | DrawSkinned(pass, m, transform, _bones, _colorOpt, _texOpt, _setupOpt) ->
+          let pos = transform.Translation
+          let distSq = Vector3.DistanceSquared(camPos, pos)
+
+          match pass with
+          | Opaque -> opaque.Add struct (distSq, cmd)
+          | Transparent -> transparent.Add struct (distSq, cmd)
+
+        | DrawSpriteQuad s ->
+          let distSq = Vector3.DistanceSquared(camPos, s.Quad.Center)
+
+          match s.Pass with
+          | Opaque -> opaque.Add struct (distSq, cmd)
+          | Transparent -> transparent.Add struct (distSq, cmd)
+
+        | DrawSpriteBillboard s ->
+          let distSq = Vector3.DistanceSquared(camPos, s.Billboard.Position)
+
+          match s.Pass with
+          | Opaque -> opaque.Add struct (distSq, cmd)
+          | Transparent -> transparent.Add struct (distSq, cmd)
+
+        | DrawQuadEffect e ->
+          let distSq = Vector3.DistanceSquared(camPos, e.Quad.Center)
+
+          match e.Pass with
+          | Opaque -> opaque.Add struct (distSq, cmd)
+          | Transparent -> transparent.Add struct (distSq, cmd)
+
+        | DrawBillboardEffect e ->
+          let distSq = Vector3.DistanceSquared(camPos, e.Billboard.Position)
+
+          match e.Pass with
+          | Opaque -> opaque.Add struct (distSq, cmd)
+          | Transparent -> transparent.Add struct (distSq, cmd)
+
+      flushSegment()
 
       if config.RestoreDeviceStates then
         gd.BlendState <- prevBlend
@@ -616,25 +861,153 @@ module Draw3D =
       )
     )
 
-  /// <summary>Draw an axis-aligned textured quad. Caller must configure effect.</summary>
-  let quad
-    (effect: Effect)
-    (position: Vector3)
-    (size: Vector2)
-    (buffer: RenderBuffer<RenderCmd3D>)
-    =
-    buffer.Add((), DrawQuad(effect, position, size))
+  // --- Sprite3D helpers (90% path) ---
 
-  /// <summary>Draw a camera-facing billboard. Caller must configure effect.</summary>
-  let billboard
-    (effect: Effect)
-    (position: Vector3)
-    (size: float32)
-    (rotation: float32)
-    (color: Color)
+  /// <summary>Create a quad with sensible defaults (white tint, full UVs).</summary>
+  let quad3D (center: Vector3) (right: Vector3) (up: Vector3) : Quad3D = {
+    Center = center
+    Right = right
+    Up = up
+    Color = Color.White
+    Uv = UvRect.full
+  }
+
+  /// <summary>Create a quad on the XZ plane (useful for ground decals).</summary>
+  let quadOnXZ (center: Vector3) (size: Vector2) : Quad3D =
+    let right = Vector3(size.X * 0.5f, 0.0f, 0.0f)
+    let up = Vector3(0.0f, 0.0f, size.Y * 0.5f)
+    quad3D center right up
+
+  /// <summary>Create a quad on the XY plane (useful for in-world UI).</summary>
+  let quadOnXY (center: Vector3) (size: Vector2) : Quad3D =
+    let right = Vector3(size.X * 0.5f, 0.0f, 0.0f)
+    let up = Vector3(0.0f, size.Y * 0.5f, 0.0f)
+    quad3D center right up
+
+  let withQuadColor (color: Color) (q: Quad3D) = { q with Color = color }
+  let withQuadUv (uv: UvRect) (q: Quad3D) = { q with Uv = uv }
+
+  /// <summary>Create a billboard with sensible defaults (white tint, full UVs, spherical).</summary>
+  let billboard3D (position: Vector3) (size: Vector2) : Billboard3D = {
+    Position = position
+    Size = size
+    Rotation = 0.0f
+    Color = Color.White
+    Uv = UvRect.full
+    Mode = Spherical
+  }
+
+  let withBillboardRotation (rotation: float32) (b: Billboard3D) = {
+    b with
+        Rotation = rotation
+  }
+
+  let withBillboardColor (color: Color) (b: Billboard3D) = {
+    b with
+        Color = color
+  }
+
+  let withBillboardUv (uv: UvRect) (b: Billboard3D) = { b with Uv = uv }
+
+  let cylindrical (upAxis: Vector3) (b: Billboard3D) = {
+    b with
+        Mode = Cylindrical upAxis
+  }
+
+  /// <summary>Draw a textured quad using the built-in unlit Sprite3D pipeline.</summary>
+  let quad
+    (texture: Texture2D)
+    (quad: Quad3D)
     (buffer: RenderBuffer<RenderCmd3D>)
     =
     buffer.Add(
       (),
-      DrawBillboard(effect, position, Vector2(size), rotation, color)
+      DrawSpriteQuad {
+        Pass = Opaque
+        Texture = texture
+        Quad = quad
+      }
+    )
+
+  /// <summary>Draw a textured quad (transparent pass) using the built-in unlit Sprite3D pipeline.</summary>
+  let quadTransparent
+    (texture: Texture2D)
+    (quad: Quad3D)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add(
+      (),
+      DrawSpriteQuad {
+        Pass = Transparent
+        Texture = texture
+        Quad = quad
+      }
+    )
+
+  /// <summary>Draw a camera-facing billboard using the built-in unlit Sprite3D pipeline.</summary>
+  let billboard
+    (texture: Texture2D)
+    (billboard: Billboard3D)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add(
+      (),
+      DrawSpriteBillboard {
+        Pass = Transparent
+        Texture = texture
+        Billboard = billboard
+      }
+    )
+
+  /// <summary>Draw a billboard in the opaque pass using the built-in unlit Sprite3D pipeline.</summary>
+  let billboardOpaque
+    (texture: Texture2D)
+    (billboard: Billboard3D)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add(
+      (),
+      DrawSpriteBillboard {
+        Pass = Opaque
+        Texture = texture
+        Billboard = billboard
+      }
+    )
+
+  // --- Effect-driven helpers (advanced path) ---
+
+  /// <summary>Draw a quad using a custom effect. Setup is invoked for this command (View/Proj provided).</summary>
+  let quadEffect
+    (pass: RenderPass)
+    (effect: Effect)
+    (setup: EffectSetup voption)
+    (quad: Quad3D)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add(
+      (),
+      DrawQuadEffect {
+        Pass = pass
+        Effect = effect
+        Setup = setup
+        Quad = quad
+      }
+    )
+
+  /// <summary>Draw a billboard using a custom effect. Setup is invoked for this command (View/Proj provided).</summary>
+  let billboardEffect
+    (pass: RenderPass)
+    (effect: Effect)
+    (setup: EffectSetup voption)
+    (billboard: Billboard3D)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add(
+      (),
+      DrawBillboardEffect {
+        Pass = pass
+        Effect = effect
+        Setup = setup
+        Billboard = billboard
+      }
     )

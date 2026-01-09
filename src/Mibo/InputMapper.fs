@@ -174,6 +174,11 @@ module ActionState =
         Released = Set.empty
   }
 
+/// Service Interface for Input Mapping
+type IInputMapper<'Action when 'Action: comparison> =
+  abstract CurrentState: ActionState<'Action>
+  abstract Update: unit -> unit
+
 /// <summary>
 /// Subscription-based input mapping.
 /// </summary>
@@ -278,10 +283,30 @@ module InputMapper =
     : Sub<'Msg> =
     subscribe (fun () -> map) toMsg ctx
 
-/// Service Interface for Input Mapping
-type IInputMapper<'Action when 'Action: comparison> =
-  abstract CurrentState: ActionState<'Action>
-  abstract Update: unit -> unit
+  /// Attempts to get the IInputMapper service from the game context.
+  ///
+  /// Returns ValueNone if the service is not registered (i.e., Program.withInputMapper wasn't used).
+  let tryGetService<'Action when 'Action: comparison>
+    (ctx: GameContext)
+    : IInputMapper<'Action> voption =
+    let svc = ctx.Game.Services.GetService(typeof<IInputMapper<'Action>>)
+
+    match svc with
+    | null -> ValueNone
+    | :? IInputMapper<'Action> as m -> ValueSome m
+    | _ -> ValueNone
+
+  /// Gets the IInputMapper service from the game context.
+  ///
+  /// Throws if the service is not registered. Use Program.withInputMapper to ensure registration.
+  let getService<'Action when 'Action: comparison>
+    (ctx: GameContext)
+    : IInputMapper<'Action> =
+    match tryGetService<'Action> ctx with
+    | ValueSome m -> m
+    | ValueNone ->
+      failwith
+        "IInputMapper service not registered. Add Program.withInputMapper to your program."
 
 /// Service Implementation
 type InputMapperService<'Action when 'Action: comparison>

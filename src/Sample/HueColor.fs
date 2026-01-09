@@ -40,7 +40,7 @@ let shiftTarget (entityId: Guid<EntityId>) (amount: float32) (model: Model) : Mo
   { model with TargetHues = Map.add entityId next model.TargetHues }
 
 /// ReadonlySystem: lerps hues toward targets
-let update (dt: float32) (lerpSpeed: float32) (snapshot: ModelSnapshot) : struct (ModelSnapshot * Cmd<'Msg> list) =
+let update (dt: float32) (lerpSpeed: float32) (snapshot: ModelSnapshot) : struct (ModelSnapshot * Cmd<'Msg>) =
   let playerId = snapshot.PlayerId
   let current = snapshot.Hues |> Map.tryFind playerId |> Option.defaultValue 0f
   let target = snapshot.TargetHues |> Map.tryFind playerId |> Option.defaultValue 0f
@@ -50,4 +50,4 @@ let update (dt: float32) (lerpSpeed: float32) (snapshot: ModelSnapshot) : struct
     if changed then { snapshot with Hues = Map.add playerId newHue snapshot.Hues }
     else snapshot
 
-  struct (newSnapshot, [])
+  struct (newSnapshot, Cmd.none)

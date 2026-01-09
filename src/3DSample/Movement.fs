@@ -68,11 +68,8 @@ let private applyAccelerationOrFriction
   Vector3(newHorizontalVel.X, currentVel.Y, newHorizontalVel.Y)
 
 /// Movement system update: processes input and applies acceleration/friction
-let update<'Msg>
-  (dt: float32)
-  (state: State)
-  : struct (State * Cmd<'Msg> list) =
+let update<'Msg> (dt: float32) (state: State) : struct (State * Cmd<'Msg>) =
   let moveDir = computeDirection state.Actions
   let newVelocity = applyAccelerationOrFriction dt moveDir state.Velocity
 
-  { state with Velocity = newVelocity }, []
+  { state with Velocity = newVelocity }, Cmd.none

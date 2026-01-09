@@ -13,7 +13,6 @@ open Microsoft.Xna.Framework.Graphics
 /// </remarks>
 module BillboardBatch =
 
-  [<Struct>]
   type State = {
     mutable Vertices: VertexPositionColorTexture[]
     mutable Indices: int16[]
@@ -23,7 +22,7 @@ module BillboardBatch =
     GraphicsDevice: GraphicsDevice
   }
 
-  let private ensureBuffers(state: byref<State>) =
+  let private ensureBuffers(state: State) =
     if isNull state.VertexBuffer then
       state.VertexBuffer <-
         new DynamicVertexBuffer(
@@ -52,7 +51,7 @@ module BillboardBatch =
 
       state.IndexBuffer.SetData(state.Indices)
 
-  let private ensureCapacity (numSprites: int) (state: byref<State>) =
+  let private ensureCapacity (numSprites: int) (state: State) =
     let requiredVerts = (state.SpriteCount + numSprites) * 4
 
     if requiredVerts > state.Vertices.Length then
@@ -113,7 +112,7 @@ module BillboardBatch =
   }
 
   /// <summary>Return pooled arrays. Call when the batch is no longer needed.</summary>
-  let dispose(state: byref<State>) =
+  let dispose(state: State) =
     if not(isNull state.Vertices) then
       ArrayPool.Shared.Return state.Vertices
       state.Vertices <- null
@@ -124,21 +123,22 @@ module BillboardBatch =
 
   /// <summary>Begin a batch.</summary>
   /// <remarks>Caller is responsible for configuring their effect before calling. The effect's first pass will be applied.</remarks>
-  let inline begin' (effect: Effect) (state: byref<State>) =
+  let inline begin' (effect: Effect) (state: State) =
     state.SpriteCount <- 0
     effect.CurrentTechnique.Passes.[0].Apply()
 
-  /// <summary>Adds a billboard to the batch.</summary>
-  let draw
+  /// <summary>Adds a billboard to the batch with custom UVs (texture atlas).</summary>
+  let drawUv
     (position: Vector3)
     (size: Vector2)
     (rotation: float32)
     (color: Color)
+    (uv: Mibo.Elmish.Graphics3D.UvRect)
     (camRight: Vector3)
     (camUp: Vector3)
-    (state: byref<State>)
+    (state: State)
     =
-    ensureCapacity 1 &state
+    ensureCapacity 1 state
 
     let halfSize = size * 0.5f
 
@@ -161,24 +161,46 @@ module BillboardBatch =
 
     let idx = state.SpriteCount * 4
 
+    let u0, v0', u1, v1' = uv.U0, uv.V0, uv.U1, uv.V1
+
     state.Vertices[idx + 0] <-
-      VertexPositionColorTexture(v0, color, Vector2(0.0f, 0.0f))
+      VertexPositionColorTexture(v0, color, Vector2(u0, v0'))
 
     state.Vertices[idx + 1] <-
-      VertexPositionColorTexture(v1, color, Vector2(1.0f, 0.0f))
+      VertexPositionColorTexture(v1, color, Vector2(u1, v0'))
 
     state.Vertices[idx + 2] <-
-      VertexPositionColorTexture(v2, color, Vector2(1.0f, 1.0f))
+      VertexPositionColorTexture(v2, color, Vector2(u1, v1'))
 
     state.Vertices[idx + 3] <-
-      VertexPositionColorTexture(v3, color, Vector2(0.0f, 1.0f))
+      VertexPositionColorTexture(v3, color, Vector2(u0, v1'))
 
     state.SpriteCount <- state.SpriteCount + 1
 
+  /// <summary>Adds a billboard to the batch.</summary>
+  let draw
+    (position: Vector3)
+    (size: Vector2)
+    (rotation: float32)
+    (color: Color)
+    (camRight: Vector3)
+    (camUp: Vector3)
+    (state: State)
+    =
+    drawUv
+      position
+      size
+      rotation
+      color
+      Mibo.Elmish.Graphics3D.UvRect.full
+      camRight
+      camUp
+      state
+
   /// <summary>Ends the batch and flushes all draw commands to the GPU.</summary>
-  let end'(state: byref<State>) =
+  let end'(state: State) =
     if state.SpriteCount > 0 then
-      ensureBuffers &state
+      ensureBuffers state
       state.VertexBuffer.SetData(state.Vertices, 0, state.SpriteCount * 4)
       state.GraphicsDevice.SetVertexBuffer state.VertexBuffer
       state.GraphicsDevice.Indices <- state.IndexBuffer

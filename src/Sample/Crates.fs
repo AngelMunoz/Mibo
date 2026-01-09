@@ -34,16 +34,16 @@ let ensureTarget<'Msg>
   (mode: RetryMode)
   (mkSpawn: unit -> 'Msg)
   (snapshot: ModelSnapshot)
-  : struct (ModelSnapshot * Cmd<'Msg> list) =
+  : struct (ModelSnapshot * Cmd<'Msg>) =
   if snapshot.Crates.Count >= targetCount then
-    struct (snapshot, [])
+    struct (snapshot, Cmd.none)
   else
     let cmd =
       match mode with
       | Deferred -> Cmd.ofMsg(mkSpawn()) |> Cmd.deferNextFrame
       | Immediate -> Cmd.ofMsg(mkSpawn())
 
-    struct (snapshot, [ cmd ])
+    struct (snapshot, cmd)
 
 let spawnOne
   (mode: RetryMode)
@@ -51,9 +51,9 @@ let spawnOne
   (width: int)
   (height: int)
   (model: Model)
-  : struct (Model * Cmd<'Msg> list) =
+  : struct (Model * Cmd<'Msg>) =
   if model.Crates.Count >= targetCount then
-    struct (model, [])
+    struct (model, Cmd.none)
   else
 
   let rng = Random.Shared
@@ -81,23 +81,23 @@ let spawnOne
 
   if intersects playerPos playerSize pos crateSize then
     if model.Crates.Count >= targetCount then
-      struct (model, [])
+      struct (model, Cmd.none)
     else
       let cmd =
         match mode with
         | Deferred -> Cmd.ofMsg(mkSpawn()) |> Cmd.deferNextFrame
         | Immediate -> Cmd.ofMsg(mkSpawn())
 
-      struct (model, [ cmd ])
+      struct (model, cmd)
   else
     let id = Guid.NewGuid() |> UMX.tag<EntityId>
     model.Crates.Add id
     model.Positions[id] <- pos
 
     if mode = Immediate && model.Crates.Count < targetCount then
-      struct (model, [ Cmd.ofMsg(mkSpawn()) ])
+      struct (model, Cmd.ofMsg(mkSpawn()))
     else
-      struct (model, [])
+      struct (model, Cmd.none)
 
 let removeCrate (crateId: Guid<EntityId>) (model: Model) : Model =
   model.Positions.Remove(crateId) |> ignore
@@ -118,7 +118,7 @@ let removeCrate (crateId: Guid<EntityId>) (model: Model) : Model =
 let detectFirstOverlap<'Msg>
   (mkHit: Guid<EntityId> -> 'Msg)
   (snapshot: ModelSnapshot)
-  : struct (ModelSnapshot * Cmd<'Msg> list) =
+  : struct (ModelSnapshot * Cmd<'Msg>) =
   let playerPos = snapshot.Positions[snapshot.PlayerId]
 
   let playerSize =
@@ -142,9 +142,9 @@ let detectFirstOverlap<'Msg>
     i <- i + 1
 
   if found then
-    struct (snapshot, [ cmd ])
+    struct (snapshot, cmd)
   else
-    struct (snapshot, [])
+    struct (snapshot, Cmd.none)
 
 let view
   (ctx: GameContext)
