@@ -8,7 +8,35 @@ index: 0
 
 Mibo is a lightweight, Elmish-based game framework built on top of MonoGame. It brings the power of the **Model-View-Update (MVU)** architecture to game development, encouraging pure game logic and predictable state management.
 
+## Getting Started
+
+To get started with Mibo, you need the [dotnet SDK](https://get.dot.net) installed.
+
+Create a new Mibo project using the provided template:
+
+```bash
+dotnet new mibo2d -n MyMiboGame
+cd MyMiboGame
+dotnet run
+```
+
+Or the 3D template:
+
+```bash
+dotnet new mibo3d -n MyMibo3DGame
+cd MyMibo3DGame
+dotnet run
+```
+
 If you prefer learning by example, the projects in `src/Sample` and `src/3DSample` show complete, working setups.
+
+You can then start building your game using any of the following
+
+- [VsCode](https://code.visualstudio.com/) with the
+  - [Ionide extension](https://marketplace.visualstudio.com/items?itemName=Ionide.Ionide-fsharp) (MS Registry)
+  - [Ionide extension](https://open-vsx.org/extension/Ionide/Ionide-fsharp) (Open VSX Registry)
+- [JetBrains Rider](https://www.jetbrains.com/rider/)
+- [Visual Studio](https://visualstudio.microsoft.com/)
 
 ## Why Mibo?
 
