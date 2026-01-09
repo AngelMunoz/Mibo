@@ -35,6 +35,19 @@ The recurring theme is:
 - trivially testable logic
 - deterministic replay (record the message stream)
 
+```fsharp
+type Model = { Position: Vector2 }
+type Msg = Teleport of Vector2
+
+let update msg model =
+    match msg with
+    | Teleport pos -> { model with Position = pos }, Cmd.none
+
+let view ctx model buffer =
+    Draw2D.sprite texture (Rectangle(int model.Position.X, int model.Position.Y, 32, 32))
+    |> Draw2D.submit buffer
+```
+
 ## Level 1 — Add semantic input
 
 **Best for:** Action-heavy games (platformers, arcade) where rebindable keys and state queries (is "Jump" held?) are essential.
@@ -54,6 +67,37 @@ That usually looks like:
 
 - `InputMapped actions` updates a field (`model.Actions <- actions`)
 - `Tick gt` consumes `model.Actions` to advance simulation
+
+```fsharp
+type Action = MoveLeft | MoveRight | Jump
+
+let inputMap =
+    InputMap.empty
+    |> InputMap.key MoveLeft Keys.Left
+    |> InputMap.key MoveRight Keys.Right
+    |> InputMap.key Jump Keys.Space
+
+type Model = {
+    Position: Vector2
+    Actions: ActionState<Action>
+}
+
+let update msg model =
+    match msg with
+    | InputMapped actions ->
+        { model with Actions = actions }, Cmd.none
+
+    | Tick gt ->
+        // Simulation now depends on the stored 'Actions'
+        let dt = float32 gt.ElapsedGameTime.TotalSeconds
+        let dx =
+            if model.Actions.Held.Contains MoveRight then 100.0f * dt
+            elif model.Actions.Held.Contains MoveLeft then -100.0f * dt
+            else 0.0f
+
+        { model with Position = model.Position + Vector2(dx, 0.0f) }, Cmd.none
+```
+
 
 ## Level 2 — Establish a simulation “transaction”
 
@@ -76,6 +120,30 @@ This gives you an explicit boundary:
 - fewer ordering surprises
 - easier to reason about “what changed this frame”
 - makes later deterministic/multiplayer work much easier
+
+```fsharp
+type Msg =
+    | InputMapped of ActionState<Action> // Just updates the input buffer
+    | NetworkPacket of byte[]            // Just updates the network buffer
+    | Tick of GameTime                   // The ONLY place physics/gameplay runs
+
+let update msg model =
+    match msg with
+    | InputMapped actions ->
+        { model with Actions = actions }, Cmd.none
+
+    | NetworkPacket data ->
+        // Buffering network data, not processing it yet
+        model.NetworkBuffer.Enqueue(data)
+        model, Cmd.none
+
+    | Tick gt ->
+        // 1. Read buffers (Input, Network)
+        // 2. Run simulation (Physics, AI)
+        // 3. Update world
+        let newPos = Physics.integrate model.Position model.Actions gt
+        { model with Position = newPos }, Cmd.none
+```
 
 ## Level 3 — Phase pipelines + snapshot barriers
 
@@ -102,6 +170,26 @@ See: [System pipeline (phases + snapshot)](system.html)
 5. Emit commands/messages
 
 This is an “ECS-ish” approach that works well even if your storage is still dictionaries/arrays.
+
+```fsharp
+// Example from MiboSample: splitting mutable physics from readonly logic
+
+match msg with
+| Tick gt ->
+    let dt = float32 gt.ElapsedGameTime.TotalSeconds
+
+    System.start model
+    // Phase 1: Mutable systems (can mutate positions, particles)
+    |> System.pipeMutable (Physics.update dt)
+    |> System.pipeMutable (Particles.update dt)
+    // SNAPSHOT: transition to readonly
+    |> System.snapshot Model.toSnapshot
+    // Phase 2: Readonly systems (work with immutable snapshot)
+    |> System.pipe (HueColor.update dt 5.0f)
+    |> System.pipe (Player.processActions (fun id pos -> PlayerFired(id, pos)))
+    // Finish: convert back to Model
+    |> System.finish Model.fromSnapshot
+```
 
 ## Level 4 — Fixed timestep and determinism
 
@@ -134,6 +222,26 @@ See: [The Elmish Architecture](elmish.html) (fixed timestep + dispatch modes)
 - avoid reading mutable global state from `update`
 - represent time as data (the `Tick` message already does this)
 
+```fsharp
+// Using framework-managed fixed step
+type Msg =
+    | FixedStep of dt: float32
+    | Tick of GameTime // Still used for interpolation/rendering
+
+let update msg model =
+    match msg with
+    | FixedStep dt ->
+        // Run deterministic physics
+        let newPos = model.Pos + model.Vel * dt
+        { model with Pos = newPos }, Cmd.none
+
+    | Tick gt ->
+        // Only update visual/interpolation state
+        let alpha = float32 gt.ElapsedGameTime.TotalSeconds / fixedStep
+        let visualPos = Vector2.Lerp(model.PrevPos, model.Pos, alpha)
+        { model with VisualPos = visualPos }, Cmd.none
+```
+
 ## Level 5 — Frame-stable message processing
 
 **Best for:** Strict lockstep architectures or rollback networking where you need a guarantee that no "stray" messages can slip into the current frame after processing starts.
@@ -165,6 +273,18 @@ In `FrameBounded` mode:
 - if it dispatches later (async completion), and that completion happens while the runtime is draining messages, it may be deferred **one more frame**
 
 This is not a bug; it’s the natural result of combining “defer effect execution” with “frame-bounded message eligibility”.
+
+```fsharp
+// Example: Spawning entities safely at the start of the next frame
+// to avoid mutating the list while iterating it in the current frame.
+let update msg model =
+    match msg with
+    | EnemyDied id ->
+        let cleanup = Cmd.ofMsg (RemoveEntity id)
+        // Ensure spawn happens cleanly next frame
+        let spawnLoot = Cmd.ofMsg (SpawnLoot id) |> Cmd.deferNextFrame
+        model, Cmd.batch [ cleanup; spawnLoot ]
+```
 
 ## Choosing the right rung
 
