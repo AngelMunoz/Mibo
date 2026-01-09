@@ -22,9 +22,6 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
 
-      - name: Install fsdocs
-        run: dotnet tool restore
-
       - name: Build Library
         run: dotnet build src/Mibo -c Release
 
