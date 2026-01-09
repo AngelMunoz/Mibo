@@ -15,7 +15,9 @@ The recurring theme is:
 - keep expensive logic **data-oriented** (snapshots + mutable hot paths when needed)
 - introduce **explicit boundaries** (per-tick phases, and optionally frame-bounded dispatch)
 
-## Level 0 — Pure MVU (card games, menus, puzzle games)
+## Level 0 — Pure MVU
+
+**Best for:** card games, menus, puzzle games.
 
 **Goal:** maximum simplicity.
 
@@ -33,7 +35,9 @@ The recurring theme is:
 - trivially testable logic
 - deterministic replay (record the message stream)
 
-## Level 1 — Add semantic input (platformers, arcade games)
+## Level 1 — Add semantic input
+
+**Best for:** Action-heavy games (platformers, arcade) where rebindable keys and state queries (is "Jump" held?) are essential.
 
 **Goal:** stop sprinkling device-specific checks across gameplay.
 
@@ -51,7 +55,9 @@ That usually looks like:
 - `InputMapped actions` updates a field (`model.Actions <- actions`)
 - `Tick gt` consumes `model.Actions` to advance simulation
 
-## Level 2 — Establish a simulation “transaction” (`Tick` owns gameplay writes)
+## Level 2 — Establish a simulation “transaction”
+
+**Best for:** Growing projects where you need to prevent "spaghetti logic." By forcing all gameplay changes into `Tick`, you avoid race conditions caused by random events mutating state unpredictably.
 
 **Goal:** keep your mental model simple when the game grows.
 
@@ -71,7 +77,9 @@ This gives you an explicit boundary:
 - easier to reason about “what changed this frame”
 - makes later deterministic/multiplayer work much easier
 
-## Level 3 — Phase pipelines + snapshot barriers (ARPG/RTS-style subsystems)
+## Level 3 — Phase pipelines + snapshot barriers
+
+**Best for:** Complex simulations (ARPG, RTS) where update order matters. E.g., Physics must run before Collision, which must run before AI.
 
 **Goal:** support many subsystems without turning update into spaghetti.
 
@@ -95,7 +103,9 @@ See: [System pipeline (phases + snapshot)](system.html)
 
 This is an “ECS-ish” approach that works well even if your storage is still dictionaries/arrays.
 
-## Level 4 — Fixed timestep and determinism (network-ready foundation)
+## Level 4 — Fixed timestep and determinism
+
+**Best for:** Networked games or physics-heavy simulations that require deterministic behavior independent of the user's framerate.
 
 **Goal:** stable simulation independent of framerate.
 
@@ -124,7 +134,9 @@ See: [The Elmish Architecture](elmish.html) (fixed timestep + dispatch modes)
 - avoid reading mutable global state from `update`
 - represent time as data (the `Tick` message already does this)
 
-## Level 5 — Frame-stable message processing (optional “advanced mode”)
+## Level 5 — Frame-stable message processing
+
+**Best for:** Strict lockstep architectures or rollback networking where you need a guarantee that no "stray" messages can slip into the current frame after processing starts.
 
 By default, Mibo processes messages **immediately**: a message dispatched while the runtime is draining the queue can be processed in the same MonoGame `Update` call.
 
