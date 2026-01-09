@@ -1,7 +1,7 @@
 ---
 title: Input
-category: Core
-index: 10
+category: Amenities
+index: 20
 ---
 
 # Input (raw + mapped)

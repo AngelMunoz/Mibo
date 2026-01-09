@@ -1,7 +1,7 @@
 ---
 title: Rendering 2D
 category: Rendering
-index: 31
+index: 11
 ---
 
 # Rendering 2D

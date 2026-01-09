@@ -1,7 +1,7 @@
 ---
 title: Culling
 category: Rendering
-index: 22
+index: 14
 ---
 
 # Culling (visibility helpers)

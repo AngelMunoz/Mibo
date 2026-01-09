@@ -48,14 +48,15 @@ Run one of the samples, then copy its program setup (composition root) into your
   - [System pipeline (phases + snapshot)](system.html)
   - [Scaling Mibo (Simple → Complex)](scaling.html)
 
-- Core services
-
-  - [Input (raw + mapped)](input.html)
-  - [Assets (loading + caching)](assets.html)
-
 - Rendering
+
   - [Rendering overview + custom renderers](rendering.html)
   - [Rendering 2D](rendering2d.html)
   - [Rendering 3D](rendering3d.html)
   - [Camera](camera.html)
   - [Culling](culling.html)
+
+- Amenities
+
+  - [Input (raw + mapped)](input.html)
+  - [Assets (loading + caching)](assets.html)

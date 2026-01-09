@@ -1,7 +1,7 @@
 ---
 title: Custom Rendering in Mibo
 category: Rendering
-index: 33
+index: 10
 ---
 
 # Rendering in Mibo

@@ -1,7 +1,7 @@
 ---
 title: Assets
-category: Core
-index: 10
+category: Amenities
+index: 21
 ---
 
 # Assets (loading + caching)

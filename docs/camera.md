@@ -1,7 +1,7 @@
 ---
 title: Camera
 category: Rendering
-index: 21
+index: 13
 ---
 
 # Camera (2D + 3D)
