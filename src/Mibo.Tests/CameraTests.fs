@@ -69,4 +69,49 @@ let tests =
         bounds.Height
         300
         "Visible height should be halved at 2x zoom"
+
+    testCase "Camera3D screenPointToRay generates correct ray at center"
+    <| fun _ ->
+      let position = Vector3(0.0f, 0.0f, 10.0f)
+      let target = Vector3.Zero
+      let up = Vector3.Up
+      let fov = MathHelper.PiOver4
+      let aspect = 800.0f / 600.0f
+      let cam = Camera3D.lookAt position target up fov aspect 0.1f 100.0f
+
+      let screenCenter = Vector2(400.0f, 300.0f)
+      let ray = Camera3D.screenPointToRay cam screenCenter viewport
+
+      // Ray should start near the camera and point towards the origin (0,0,-1)
+      Expect.floatClose
+        Accuracy.medium
+        (float ray.Position.X)
+        0.0
+        "Ray X should be 0"
+
+      Expect.floatClose
+        Accuracy.medium
+        (float ray.Position.Y)
+        0.0
+        "Ray Y should be 0"
+
+      Expect.isTrue (ray.Position.Z < 10.0f) "Ray should start at near plane"
+
+      Expect.floatClose
+        Accuracy.medium
+        (float ray.Direction.X)
+        0.0
+        "Direction X should be 0"
+
+      Expect.floatClose
+        Accuracy.medium
+        (float ray.Direction.Y)
+        0.0
+        "Direction Y should be 0"
+
+      Expect.floatClose
+        Accuracy.medium
+        (float ray.Direction.Z)
+        -1.0
+        "Direction Z should be -1"
   ]

@@ -27,6 +27,21 @@ let tests =
           Expect.equal effs.[1] eff2 "Second effect should match"
         | _ -> Tests.failtest "Expected a Batch command"
 
+      testCase "Cmd.batch flattens nested batches"
+      <| fun _ ->
+        let eff1 = Effect(fun dispatch -> dispatch 1)
+        let eff2 = Effect(fun dispatch -> dispatch 2)
+        let cmd1 = Cmd.ofEffect eff1
+        let cmd2 = Cmd.ofEffect eff2
+        let nested = Cmd.batch [ cmd1; Cmd.batch [ cmd2 ] ]
+
+        match nested with
+        | Batch effs ->
+          Expect.equal effs.Length 2 "Should have flattened to 2 effects"
+          Expect.equal effs.[0] eff1 "First effect should match"
+          Expect.equal effs.[1] eff2 "Second effect should match"
+        | _ -> Tests.failtest "Expected a Batch command"
+
       testCase "Cmd.map preserves effect behavior"
       <| fun _ ->
         let mutable result = 0
@@ -74,6 +89,45 @@ let tests =
 
         match batched with
         | BatchSub subs -> Expect.equal subs.Length 2 "Should have 2 subs"
+        | _ -> Tests.failtest "Expected a BatchSub"
+
+      testCase "Sub.map prefixes IDs and handles nested batches"
+      <| fun _ ->
+        let subA =
+          Active(
+            SubId.ofString "A",
+            fun _ ->
+              { new System.IDisposable with
+                  member _.Dispose() = ()
+              }
+          )
+
+        let subB =
+          Active(
+            SubId.ofString "B",
+            fun _ ->
+              { new System.IDisposable with
+                  member _.Dispose() = ()
+              }
+          )
+
+        let batched = Sub.batch [ subA; Sub.batch [ subB ] ]
+
+        let mapped = Sub.map "prefix" id batched
+
+        match mapped with
+        | BatchSub subs ->
+          Expect.equal subs.Length 2 "Should have 2 mapped subs"
+
+          match subs.[0] with
+          | Active(id, _) ->
+            Expect.equal (SubId.value id) "prefix/A" "ID A should be prefixed"
+          | _ -> Tests.failtest "Expected Active sub A"
+
+          match subs.[1] with
+          | Active(id, _) ->
+            Expect.equal (SubId.value id) "prefix/B" "ID B should be prefixed"
+          | _ -> Tests.failtest "Expected Active sub B"
         | _ -> Tests.failtest "Expected a BatchSub"
     ]
 
