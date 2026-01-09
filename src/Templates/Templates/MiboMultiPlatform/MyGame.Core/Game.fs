@@ -15,11 +15,12 @@ let update (msg: Msg) (model: Model) = struct (model, Cmd.none)
 
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
     // Draw something simple
-    let pixel = Assets.getOrCreate "pixel" (fun gd ->
-        let t = new Texture2D(gd, 1, 1)
-        t.SetData([| Color.White |])
-        t
-    ) ctx
+    let pixel = 
+        Assets.getOrCreate "pixel" (fun gd ->
+            let t = new Texture2D(gd, 1, 1)
+            t.SetData([| Color.White |])
+            t
+        ) ctx
 
     Draw2D.sprite pixel (Rectangle(100, 100, 50, 50))
     |> Draw2D.withColor Color.Lime

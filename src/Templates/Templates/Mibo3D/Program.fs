@@ -9,15 +9,6 @@ open Mibo.Elmish.Graphics3D
 open Mibo.Input
 
 // ─────────────────────────────────────────────────────────────
-// Model
-// ─────────────────────────────────────────────────────────────
-
-type Model = {
-    Position: Vector3
-    Input: ActionState<GameAction>
-}
-
-// ─────────────────────────────────────────────────────────────
 // Input
 // ─────────────────────────────────────────────────────────────
 
@@ -37,6 +28,15 @@ let inputMap =
     |> InputMap.key MoveLeft Keys.Left
     |> InputMap.key MoveRight Keys.D
     |> InputMap.key MoveRight Keys.Right
+
+// ─────────────────────────────────────────────────────────────
+// Model
+// ─────────────────────────────────────────────────────────────
+
+type Model = {
+    Position: Vector3
+    Input: ActionState<GameAction>
+}
 
 // ─────────────────────────────────────────────────────────────
 // Messages
@@ -86,11 +86,12 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd3D>) =
 
     // Draw a simple quad for the player if no model
     // We'll create a simple texture on the fly for the template
-    let texture = Assets.getOrCreate "texture" (fun gd ->
-        let t = new Texture2D(gd, 1, 1)
-        t.SetData([| Color.Red |])
-        t
-    ) ctx
+    let texture = 
+        Assets.getOrCreate "texture" (fun gd ->
+            let t = new Texture2D(gd, 1, 1)
+            t.SetData([| Color.Red |])
+            t
+        ) ctx
 
     let quad = Draw3D.quadOnXZ model.Position (Vector2(1.f, 1.f))
     Draw3D.quad texture quad buffer
@@ -106,7 +107,7 @@ let main _ =
         |> Program.withAssets
         |> Program.withRenderer (Batch3DRenderer.create view)
         |> Program.withInput
-        |> Program.withSubscription (InputMapper.subscribeStatic inputMap InputChanged)
+        |> Program.withSubscription (fun ctx _ -> InputMapper.subscribeStatic inputMap InputChanged ctx)
         |> Program.withTick Tick
         |> Program.withConfig (fun (game, graphics) ->
             game.Window.Title <- "Mibo 3D Game"

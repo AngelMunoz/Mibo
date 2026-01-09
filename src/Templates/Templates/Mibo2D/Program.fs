@@ -9,16 +9,6 @@ open Mibo.Elmish.Graphics2D
 open Mibo.Input
 
 // ─────────────────────────────────────────────────────────────
-// Model
-// ─────────────────────────────────────────────────────────────
-
-type Model = {
-    Position: Vector2
-    Velocity: Vector2
-    Input: ActionState<GameAction>
-}
-
-// ─────────────────────────────────────────────────────────────
 // Input
 // ─────────────────────────────────────────────────────────────
 
@@ -38,6 +28,16 @@ let inputMap =
     |> InputMap.key MoveUp Keys.W
     |> InputMap.key MoveDown Keys.Down
     |> InputMap.key MoveDown Keys.S
+
+// ─────────────────────────────────────────────────────────────
+// Model
+// ─────────────────────────────────────────────────────────────
+
+type Model = {
+    Position: Vector2
+    Velocity: Vector2
+    Input: ActionState<GameAction>
+}
 
 // ─────────────────────────────────────────────────────────────
 // Messages
@@ -88,15 +88,12 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
     // Draw player (using a 1x1 pixel texture if no asset loaded, or load one)
-    // For template simplicity, we'll assume a "pixel" asset or just clear screen
-    // We can generate a 1x1 texture in init if needed, but let's assume a basic texture usage.
-    // For this template, we'll just draw a rectangle using a 1x1 white pixel created in Assets.
-
-    let pixel = Assets.getOrCreate "pixel" (fun gd ->
-        let t = new Texture2D(gd, 1, 1)
-        t.SetData([| Color.White |])
-        t
-    ) ctx
+    let pixel = 
+        Assets.getOrCreate "pixel" (fun gd ->
+            let t = new Texture2D(gd, 1, 1)
+            t.SetData([| Color.White |])
+            t
+        ) ctx
 
     Draw2D.sprite pixel (Rectangle(int model.Position.X, int model.Position.Y, 32, 32))
     |> Draw2D.withColor Color.CornflowerBlue
@@ -113,7 +110,7 @@ let main _ =
         |> Program.withAssets
         |> Program.withRenderer (Batch2DRenderer.create view)
         |> Program.withInput
-        |> Program.withSubscription (InputMapper.subscribeStatic inputMap InputChanged)
+        |> Program.withSubscription (fun ctx _ -> InputMapper.subscribeStatic inputMap InputChanged ctx)
         |> Program.withTick Tick
         |> Program.withConfig (fun (game, graphics) ->
             game.Window.Title <- "Mibo 2D Game"
