@@ -11,8 +11,8 @@ Key ideas:
 
 If you prefer learning by example, check out the working sample projects:
 
-- `src/Sample` (2D sample)
-- `src/3DSample` (3D sample)
+- `samples/2DSample` (2D sample)
+- `samples/3DSample` (3D sample)
 
 ## What’s in the box?
 
@@ -47,16 +47,16 @@ Start here:
   - 3D: `docs/rendering3d.md`
   - Camera: `docs/camera.md`
 
-## Getting started (Windows)
+## Getting started
 
 Prerequisites:
 
-- **.NET SDK 10** (the samples target `net10.0`)
+- **.NET SDK 10**
 - A working OpenGL setup (MonoGame DesktopGL)
 
 From the repo root:
 
-```powershell
+```bash
 dotnet --version
 dotnet tool restore
 dotnet restore
@@ -64,18 +64,41 @@ dotnet build
 dotnet test
 ```
 
+### Templates
+
+Mibo provides project templates to get you started quickly.
+
+Install the templates:
+
+```bash
+dotnet new install Mibo.Templates
+```
+
+Create a new project:
+
+```bash
+# 2D Game
+dotnet new mibo2d -n My2DGame
+
+# 3D Game
+dotnet new mibo3d -n My3DGame
+
+# Multi-Platform (Desktop, Android, iOS)
+dotnet new mibo-multi -n MyMultiPlatformGame
+```
+
 ### Run the samples
 
 2D sample:
 
-```powershell
-dotnet run --project .\src\Sample\MiboSample.fsproj
+```bash
+dotnet run --project samples/2DSample/MiboSample.fsproj
 ```
 
 3D sample:
 
-```powershell
-dotnet run --project .\src\3DSample\3DSample.fsproj
+```bash
+dotnet run --project samples/3DSample/3DSample.fsproj
 ```
 
 ### Content pipeline tooling
@@ -86,23 +109,25 @@ This repo uses local dotnet tools (see `.config/dotnet-tools.json`) for MonoGame
 
 If you need to edit a content project:
 
-```powershell
+```bash
 dotnet tool restore
-dotnet mgcb-editor-windows
+# Run the editor appropriate for your OS
+dotnet mgcb-editor-linux 
+# or dotnet mgcb-editor-windows / dotnet mgcb-editor-mac
 ```
 
 ### Build the documentation site (optional)
 
 The repo uses `fsdocs-tool`.
 
-```powershell
+```bash
 dotnet tool restore
 dotnet fsdocs build
 ```
 
 To watch locally while editing:
 
-```powershell
+```bash
 dotnet tool restore
 dotnet fsdocs watch
 ```
@@ -111,8 +136,9 @@ dotnet fsdocs watch
 
 - `src/Mibo` — the core framework library
 - `src/Mibo.Tests` — unit tests
-- `src/Sample` — 2D sample game
-- `src/3DSample` — 3D sample game
+- `src/Templates` — project templates source
+- `samples/2DSample` — 2D sample game
+- `samples/3DSample` — 3D sample game
 - `docs/` — documentation source
 
 ## Feedback welcome
