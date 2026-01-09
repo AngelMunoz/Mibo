@@ -4,6 +4,7 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>_3DSample</RootNamespace>
+    <IsPackable>false</IsPackable>
     <PublishReadyToRun>false</PublishReadyToRun>
     <TieredCompilation>false</TieredCompilation>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
