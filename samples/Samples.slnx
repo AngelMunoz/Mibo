@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/2DSample/">
+    <Project Path="2DSample/MiboSample.fsproj" />
+  </Folder>
+  <Project Path="3DSample/3DSample.fsproj" />
+</Solution>

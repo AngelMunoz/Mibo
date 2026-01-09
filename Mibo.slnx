@@ -1,13 +1,7 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/3DSample/3DSample.fsproj" />
-    <Project Path="src/Mibo.Tests/Mibo.Tests.fsproj" />
     <Project Path="src/Mibo/Mibo.fsproj" />
-  </Folder>
-  <Folder Name="/src/Sample/">
-    <Project Path="src/Sample/MiboSample.fsproj" />
-  </Folder>
-  <Folder Name="/src/Templates/">
+    <Project Path="src/Mibo.Tests/Mibo.Tests.fsproj" />
     <Project Path="src/Templates/Mibo.Templates.csproj" />
   </Folder>
 </Solution>
