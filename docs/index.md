@@ -47,6 +47,7 @@ Run one of the samples, then copy its program setup (composition root) into your
   - [Programs & composition](program.html)
   - [System pipeline (phases + snapshot)](system.html)
   - [Scaling Mibo (Simple → Complex)](scaling.html)
+  - [F# For Perf](performance.html)
 
 - Rendering
 

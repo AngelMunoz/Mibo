@@ -170,6 +170,9 @@ See: [System pipeline (phases + snapshot)](system.html)
 
 This is an “ECS-ish” approach that works well even if your storage is still dictionaries/arrays.
 
+> **Performance Implementation:** As you add more subsystems and entities, you will likely need to move from immutable lists to mutable collections to avoid GC pressure.
+> See [F# For Perf: Level 3 (Mutable Collections)](performance.html#level-3--mutable-collections) for the implementation details.
+
 ```fsharp
 // Example from MiboSample: splitting mutable physics from readonly logic
 
@@ -220,6 +223,9 @@ See: [The Elmish Architecture](elmish.html) (fixed timestep + dispatch modes)
 - put RNG state (seed) in the model (don’t call ambient `System.Random()` from update)
 - avoid reading mutable global state from `update`
 - represent time as data (the `Tick` message already does this)
+
+> **Performance Implementation:** Physics logic executed multiple times per frame is the "hottest" path in your game.
+> To keep this zero-allocation, see [F# For Perf: Level 5 (ByRef/InRef)](performance.html#level-5--byref-inref-span-and-memory).
 
 ```fsharp
 // Using framework-managed fixed step
@@ -295,3 +301,5 @@ You can ship a lot of games at Level 2–3.
 - **RTS:** Level 3–4 (+ Level 5 if you want strict boundaries)
 
 Pick the simplest level that fits your game today, and add the next pieces only when you feel the need.
+
+Once you have chosen your architecture, check out [F# For Perf](performance.html) to ensure your implementation stays fast as you scale.
