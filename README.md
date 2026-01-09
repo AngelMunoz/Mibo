@@ -1,135 +1,120 @@
 # Mibo
 
-A Feedback looking sample of the Mibo micro-framework for F# and MonoGame.
+Mibo is a lightweight, Elmish-inspired **micro-framework** for **F#** that helps you build games on top of **MonoGame** (the underlying game framework).
+It’s designed to stay fun for small games while still providing an upgrade path for bigger projects (ARPG/RTS-style complexity) without forcing you to rewrite your engine.
 
-I am looking to apply lessons learned from the [Kipo](https://github.com/AngelMunoz/Kipo) project while authoring an ARPG game in F#.
-I would like however to follow a little bit more the F# path so others can join in and make their own games.
+Key ideas:
 
-While I chase high perf in Kipo, I am aware that usual patterns like Elmish may not suite the best for Game performance, yet for simpler smaller games I think it is a really good fit.
+- Keep `update` **pure** (MVU)
+- Submit render commands to a `RenderBuffer` in `view`
+- Use explicit boundaries (tick ownership, phases, snapshot barriers) when scaling up
 
-Mibo aims to provide a pluggable-batteries included amenities for both 2D and 3D games.
+If you prefer learning by example, check out the working sample projects:
 
-Out of the box we provide a few ones already
+- `src/Sample` (2D sample)
+- `src/3DSample` (3D sample)
 
-- Asset Loading/Retrieving
-- Camera
-- 2D Graphics Rendering
-- 3D Graphics Rendering
-- Input
-- Elmish Loop
+## What’s in the box?
 
-Ideally using the Elmish architecture one is able to start writing games quite easy, this is demonstrated by [Xelmish](https://github.com/ChrisPritchard/Xelmish), I would like to extend it to 3D and larger games like I am doing with Kipo but in a more F# way.
+- **Elmish runtime** for MonoGame games (MVU loop)
+  - optional **fixed timestep** support
+  - optional **frame-bounded dispatch** for stricter frame boundaries
+- **Input** (raw input + semantic mapping / rebinding-friendly)
+- **Assets** (loading + caching helpers)
+- **Rendering**
+  - 2D SpriteBatch renderer (layers + multi-camera amenities)
+  - 3D renderer with opaque/transparent passes + multi-camera amenities
+  - Sprite3D “90% path” for unlit textured **quads and billboards**
+  - escape hatches (`DrawCustom`) when you need custom GPU work
+- **Camera** helpers + culling utilities
 
-The [Sample](./Sample) directory contains a project of how one can structure a game using Mibo.
+## Documentation
 
-while it has some of the elmish traits, you will notice that it diverges in the way it handles the world model.
+The docs live in `docs/` and are intended to be the authoritative reference.
 
-In Kipo I learned that going for Domain modeled entities ends up causing performance and complexity issues when it comes to extensibility, so I would like to see if Mibo is able to promote a more component based world model.
+Start here:
 
-This is not the final shape, but it certainly is a step in the vision of what I would like Mibo to be.
+- Architecture
+  - Elmish runtime: `docs/elmish.md`
+  - System pipeline (phases + snapshot): `docs/system.md`
+  - Scaling ladder (Simple → Complex): `docs/scaling.md`
+- Core services
+  - Input: `docs/input.md`
+  - Assets: `docs/assets.md`
+- Rendering
+  - Overview / composition: `docs/rendering.md`
+  - 2D: `docs/rendering2d.md`
+  - 3D: `docs/rendering3d.md`
+  - Camera: `docs/camera.md`
 
-I would like some feedback specially if you are interested in using F# for more than just 2D games and would like to juice out MonoGame performance while staying in the F# ecosystem.
+## Getting started (Windows)
 
-Current thoughts and Ideas follow after.
+Prerequisites:
 
-## Why Component-Based World vs Domain Models?
+- **.NET SDK 10** (the samples target `net10.0`)
+- A working OpenGL setup (MonoGame DesktopGL)
 
-Traditional Elmish apps use **domain-shaped models**:
-
-```fsharp
-// Domain-shaped: Each entity owns its data
-type Player = { Position: Vector2; Velocity: Vector2; Health: int }
-type Enemy = { Position: Vector2; Velocity: Vector2; AIState: AIState }
-type Model = { Player: Player; Enemies: Enemy list }
-```
-
-This works great for UIs and simple games, but **doesn't scale** for games with many entities:
-
-| Problem                     | Why It Hurts                                                                                 |
-| --------------------------- | -------------------------------------------------------------------------------------------- |
-| **Nested updates**          | `{ model with Player = { model.Player with Position = ... } }` - each level is an allocation |
-| **Cross-entity operations** | "Find all entities near X" requires iterating multiple collections                           |
-| **System reuse**            | Movement logic duplicated for Player, Enemy, Projectile, etc.                                |
-| **Growing complexity**      | Adding a component to all entities means changing every type                                 |
-
-**Component-based world** solves these:
-
-```fsharp
-// Component-based: World owns components, entities are just IDs
-[<Struct>]
-type Model = {
-  Positions: Dictionary<EntityId, Vector2>   // all positions
-  Velocities: Dictionary<EntityId, Vector2>  // all velocities
-  Health: Dictionary<EntityId, int>          // entities that have health
-}
-```
-
-| Benefit                  | Why It Helps                                                |
-| ------------------------ | ----------------------------------------------------------- |
-| **Flat updates**         | `positions[entityId] <- newPos` - O(1), no nesting          |
-| **Cross-entity queries** | Spatial queries just iterate the Positions dictionary       |
-| **System reuse**         | One movement system for all entities with Position+Velocity |
-| **Composition**          | Add Health to any entity by inserting into the dictionary   |
-
-### When TO Use Domain-Shaped Models
-
-Domain models are still the right choice when:
-
-- **UI state**: Menus, dialogs, HUD - hierarchical, low frequency
-- **Control flow**: Game modes, scene state, player intent
-- **Configuration**: Level definitions, item databases, skill trees
-- **Single-instance entities**: The player, the camera, the cursor
-
-The key insight: **Use components for "many of the same thing", models for "one specific thing".**
-
-## Storage Strategy
-
-Choose the right collection based on update frequency and lifetime:
-
-| Collection              | When to Use                                                                                            |
-| ----------------------- | ------------------------------------------------------------------------------------------------------ |
-| **Immutable Map**       | Static data set once at spawn (speed, color). Safe default; switch to Dictionary when it becomes slow. |
-| **Mutable Dictionary**  | Stable entity components that don't change every frame. Switch here when Map churn hurts.              |
-| **Mutable ResizeArray** | Burst, short-lived objects (particles, projectiles). Avoids allocation churn of Map updates.           |
-
-In this sample:
-
-- `Positions`, `Inputs` → Dictionary (entity components, updated frequently)
-- `Particles` → ResizeArray (short-lived effects, not entities)
-- `Speeds`, `Colors`, `Sizes` → Map (static config, set once)
-
-## Running the Sample
+From the repo root:
 
 ```powershell
-cd src/Sample
-dotnet run
+dotnet --version
+dotnet tool restore
+dotnet restore
+dotnet build
+dotnet test
 ```
 
-- **Arrow keys**: Move the player
-- **Space**: Fire particles
-- **Box**: Bounces and spawns more particles
+### Run the samples
 
-## File Structure
+2D sample:
 
-| File           | Purpose                                                       |
-| -------------- | ------------------------------------------------------------- |
-| `Domain.fs`    | Shared types: `EntityId`, `InputState`                        |
-| `Player.fs`    | Player system: `World.tick`, `World.keyDown` (pure functions) |
-| `Particles.fs` | Particle system: `World.emit`, `World.tick`                   |
-| `Program.fs`   | World model, orchestration, Elmish wiring                     |
+```powershell
+dotnet run --project .\src\Sample\MiboSample.fsproj
+```
 
-## What's Next
+3D sample:
 
-See [ROADMAP.md](./ROADMAP.md) for the detailed feature plan and status.
+```powershell
+dotnet run --project .\src\3DSample\3DSample.fsproj
+```
 
-We have recently completed:
+### Content pipeline tooling
 
-- Game configuration and system scheduling (Phase 1)
-- State pipeline with mutable/readonly boundaries (Phase 2)
-- Asset loading helpers with JSON/custom loaders (Phase 3)
-- Rendering infrastructure: viewport commands, billboard/quad renderers (Phase 4)
-- Culling helpers and Camera extensions (Phase 5)
+This repo uses local dotnet tools (see `.config/dotnet-tools.json`) for MonoGame content:
 
-In general I want to keep Mibo simple and flexible, if you just want a super simple platformer with squares jumping around, or a 3D ARPG with thousands of entities, I want Mibo to be a good fit for both.
+- `mgcb` / `mgcb-editor-*`
 
-So the roadmap somewhat aims to provide the necessary building blocks towards that.
+If you need to edit a content project:
+
+```powershell
+dotnet tool restore
+dotnet mgcb-editor-windows
+```
+
+### Build the documentation site (optional)
+
+The repo uses `fsdocs-tool`.
+
+```powershell
+dotnet tool restore
+dotnet fsdocs build
+```
+
+To watch locally while editing:
+
+```powershell
+dotnet tool restore
+dotnet fsdocs watch
+```
+
+## Repo structure
+
+- `src/Mibo` — the core framework library
+- `src/Mibo.Tests` — unit tests
+- `src/Sample` — 2D sample game
+- `src/3DSample` — 3D sample game
+- `docs/` — documentation source
+
+## Feedback welcome
+
+If you’re interested in using F# beyond simple 2D games—while still staying in the MonoGame ecosystem—issues and PRs are very welcome.

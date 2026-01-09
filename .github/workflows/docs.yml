@@ -6,6 +6,7 @@ on:
     paths:
       - "src/Mibo/**"
       - "docs/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 jobs:
@@ -18,6 +19,9 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+
+      - name: Install fsdocs
+        run: dotnet tool restore
 
       - name: Restore dependencies
         run: dotnet restore
