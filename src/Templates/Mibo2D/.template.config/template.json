@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Mibo Authors",
+  "classifications": [ "Game", "Mibo", "2D" ],
+  "name": "Mibo 2D Game",
+  "identity": "Mibo.Templates.2D",
+  "shortName": "mibo2d",
+  "tags": {
+    "language": "F#",
+    "type": "project"
+  },
+  "sourceName": "Mibo2D",
+  "preferNameDirectory": true
+}

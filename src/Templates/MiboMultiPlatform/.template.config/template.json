@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Mibo Authors",
+  "classifications": [ "Game", "Mibo", "MultiPlatform" ],
+  "name": "Mibo MultiPlatform Solution",
+  "identity": "Mibo.Templates.MultiPlatform",
+  "shortName": "mibo-multi",
+  "tags": {
+    "language": "F#",
+    "type": "solution"
+  },
+  "sourceName": "MyGame",
+  "preferNameDirectory": true,
+  "sources": [
+      {
+          "modifiers": [
+              {
+                  "rename": {
+                      "MyGame.Core": "src/MyGame.Core",
+                      "MyGame.Desktop": "src/MyGame.Desktop",
+                      "MyGame.Android": "src/MyGame.Android",
+                      "MyGame.iOS": "src/MyGame.iOS",
+                      "MyGame.WindowsDX": "src/MyGame.WindowsDX"
+                  }
+              }
+          ]
+      }
+  ]
+}
