@@ -7,4 +7,7 @@
   <Folder Name="/src/Sample/">
     <Project Path="src/Sample/MiboSample.fsproj" />
   </Folder>
+  <Folder Name="/src/Templates/">
+    <Project Path="src/Templates/Mibo.Templates.csproj" />
+  </Folder>
 </Solution>
