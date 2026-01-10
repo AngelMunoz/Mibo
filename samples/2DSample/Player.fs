@@ -7,6 +7,7 @@ open Microsoft.Xna.Framework.Input
 open FSharp.UMX
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
+open Mibo.Animation
 open MiboSample.Domain
 
 // ─────────────────────────────────────────────────────────────
@@ -30,30 +31,22 @@ let processActions<'Msg>(onFired: Guid<EntityId> -> Vector2 -> 'Msg) =
     struct (snapshot, cmd)
 
 // ─────────────────────────────────────────────────────────────
-// View: Render player entity
+// View: Render player entity with animated sprite
 // ─────────────────────────────────────────────────────────────
 
 let view
   (ctx: GameContext)
   (position: Vector2)
+  (playerSprite: AnimatedSprite)
   (color: Color)
-  (size: Vector2)
   (buffer: RenderBuffer<RenderCmd2D>)
   =
-  let tex =
-    ctx
-    |> Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
-      let t = new Texture2D(gd, 1, 1)
-      t.SetData([| Color.White |])
-      t)
-
+  // Set up camera following player
   let vp = ctx.GraphicsDevice.Viewport
   let cam = Camera2D.create position 1.0f (Point(vp.Width, vp.Height))
   Draw2D.camera cam 0<RenderLayer> buffer
 
-  let rect = Rectangle(int position.X, int position.Y, int size.X, int size.Y)
-
-  Draw2D.sprite tex rect
-  |> Draw2D.withColor color
-  |> Draw2D.atLayer 10<RenderLayer>
-  |> Draw2D.submit buffer
+  // Draw player sprite at position with color tint
+  playerSprite
+  |> AnimatedSprite.withColor color
+  |> AnimatedSprite.draw position 10<RenderLayer> buffer

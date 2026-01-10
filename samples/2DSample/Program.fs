@@ -7,6 +7,7 @@ open FSharp.UMX
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open Mibo.Input
+open Mibo.Animation
 open MiboSample
 open MiboSample.Domain
 open MiboSample.Crates
@@ -37,7 +38,7 @@ let crateRetryMode = RetryMode.Immediate
 // Init
 // ─────────────────────────────────────────────────────────────
 
-let init(_ctx: GameContext) : struct (Model * Cmd<Msg>) =
+let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
   let playerId = Guid.NewGuid() |> UMX.tag<EntityId>
 
   let positions = Dictionary<Guid<EntityId>, Vector2>()
@@ -52,24 +53,30 @@ let init(_ctx: GameContext) : struct (Model * Cmd<Msg>) =
     |> InputMap.key MoveDown Keys.Down
     |> InputMap.key Fire Keys.Space
 
-  // Make the current mapping available to the subscription.
   inputMapRef.Value <- inputMap
 
-  struct ({
-            Positions = positions
-            Actions = ActionState.empty
-            InputMap = inputMap
-            Particles = ResizeArray()
-            Crates = ResizeArray()
-            Speeds = Map.ofList [ playerId, 200.f ]
-            Hues = Map.ofList [ playerId, 0.f ]
-            TargetHues = Map.ofList [ playerId, 0.f ]
-            Sizes = Map.ofList [ playerId, Vector2(32.f, 32.f) ]
-            PlayerId = playerId
-            BoxBounces = 0
-            CrateHits = 0
-          },
-          Cmd.none)
+  // Load animation assets
+  let animations = Animation.load ctx
+
+  {
+    Positions = positions
+    Actions = ActionState.empty
+    InputMap = inputMap
+    Particles = ResizeArray()
+    Crates = ResizeArray()
+    Speeds = Map.ofList [ playerId, 200.f ]
+    Hues = Map.ofList [ playerId, 0.f ]
+    TargetHues = Map.ofList [ playerId, 0.f ]
+    Sizes = Map.ofList [ playerId, Vector2(32.f, 32.f) ]
+    PlayerId = playerId
+    BoxBounces = 0
+    CrateHits = 0
+    PlayerSprite = animations.PlayerSprite
+    Decoration = animations.ChestSprite
+    CrateSprite = animations.CrateSprite
+    ItemSprite = animations.ItemSprite
+  },
+  Cmd.none
 
 // ─────────────────────────────────────────────────────────────
 // Update: Composable Pipeline
@@ -97,6 +104,7 @@ let update
       |> System.pipe(Crates.ensureTarget crateRetryMode (fun () -> SpawnCrate))
       |> System.pipe(Crates.detectFirstOverlap(fun id -> CrateHit id))
       |> System.pipe(Player.processActions(fun id pos -> PlayerFired(id, pos)))
+      |> System.pipe(Animation.update dt) // Update animations)
       // Finish: convert back to Model
       |> System.finish Model.fromSnapshot
 
@@ -110,28 +118,29 @@ let update
             let isFiring = finalModel.Actions.Held.Contains Fire
             box.SpeedScale <- if isFiring then 2.5f else 1.0f
             box.Tint <- if isFiring then Color.HotPink else Color.DeepSkyBlue
+            box.Sprite <- ValueSome finalModel.Decoration
             box.SetVisible(true)))
       )
 
-    struct (finalModel, Cmd.batch2(allCmds, interopCmd))
+    finalModel, Cmd.batch2(allCmds, interopCmd)
 
 
   | InputMapped actions ->
     // User handles their own model strategy: here we store the mapped ActionState.
-    struct ({ model with Actions = actions }, Cmd.none)
+    { model with Actions = actions }, Cmd.none
 
   | PlayerFired(id, pos) ->
     let newModel = HueColor.shiftTarget id 15.f model
-    struct (newModel, Cmd.ofMsg(EmitParticles(pos, 100)) |> Cmd.deferNextFrame)
+    newModel, Cmd.ofMsg(EmitParticles(pos, 100)) |> Cmd.deferNextFrame
 
   | EmitParticles(pos, count) ->
     Particles.emit pos count model
-    struct (model, Cmd.none)
+    model, Cmd.none
 
   | DemoBoxBounced count ->
-    struct ({ model with BoxBounces = count },
-            Cmd.ofMsg(EmitParticles(model.Positions[model.PlayerId], 20))
-            |> Cmd.deferNextFrame)
+    { model with BoxBounces = count },
+    Cmd.ofMsg(EmitParticles(model.Positions[model.PlayerId], 20))
+    |> Cmd.deferNextFrame
 
   | SpawnCrate ->
     // Update doesn't have GameContext by design; use current default window size.
@@ -139,7 +148,7 @@ let update
     let struct (m, cmd) =
       Crates.spawnOne crateRetryMode (fun () -> SpawnCrate) 800 600 model
 
-    struct (m, cmd)
+    m, cmd
 
   | CrateHit crateId ->
     let m = Crates.removeCrate crateId model
@@ -149,12 +158,12 @@ let update
       | Deferred -> Cmd.ofMsg SpawnCrate |> Cmd.deferNextFrame
       | Immediate -> Cmd.ofMsg SpawnCrate
 
-    struct (m,
-            Cmd.batch [
-              Cmd.ofMsg(EmitParticles(model.Positions[model.PlayerId], 40))
-              |> Cmd.deferNextFrame
-              spawnCmd
-            ])
+    m,
+    Cmd.batch [
+      Cmd.ofMsg(EmitParticles(model.Positions[model.PlayerId], 40))
+      |> Cmd.deferNextFrame
+      spawnCmd
+    ]
 
 // ─────────────────────────────────────────────────────────────
 // View
@@ -171,14 +180,14 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
   let hue = model.Hues |> Map.tryFind playerId |> Option.defaultValue 0f
   let color = HueColor.hueToColor hue
 
-  let size =
-    model.Sizes
-    |> Map.tryFind playerId
-    |> Option.defaultValue(Vector2(32f, 32f))
-
-  Player.view ctx pos color size buffer
+  // Draw player sprite with camera setup and color tint
+  Player.view ctx pos model.PlayerSprite color buffer
   Crates.view ctx snapshot buffer
   Particles.view ctx model.Particles buffer
+
+  // Draw chest at a fixed WORLD position (stays in place in the world)
+  let chestWorldPos = Vector2(200.0f, 150.0f)
+  model.Decoration |> AnimatedSprite.draw chestWorldPos 5<RenderLayer> buffer
 
 // ─────────────────────────────────────────────────────────────
 // Subscribe

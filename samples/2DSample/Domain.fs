@@ -5,6 +5,7 @@ open System.Collections.Generic
 open Microsoft.Xna.Framework
 open FSharp.UMX
 open Mibo.Input
+open Mibo.Animation
 
 // ─────────────────────────────────────────────────────────────
 // Core Types
@@ -71,6 +72,12 @@ type Model = {
   PlayerId: Guid<EntityId>
   BoxBounces: int
   CrateHits: int
+  // Player sprite
+  PlayerSprite: AnimatedSprite
+  // Decoration animation demo
+  Decoration: AnimatedSprite
+  CrateSprite: AnimatedSprite
+  ItemSprite: AnimatedSprite
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -91,6 +98,10 @@ type ModelSnapshot = {
   PlayerId: Guid<EntityId>
   BoxBounces: int
   CrateHits: int
+  PlayerSprite: AnimatedSprite
+  Decoration: AnimatedSprite
+  CrateSprite: AnimatedSprite
+  ItemSprite: AnimatedSprite
 }
 
 module Model =
@@ -108,6 +119,10 @@ module Model =
     PlayerId = model.PlayerId
     BoxBounces = model.BoxBounces
     CrateHits = model.CrateHits
+    PlayerSprite = model.PlayerSprite
+    Decoration = model.Decoration
+    CrateSprite = model.CrateSprite
+    ItemSprite = model.ItemSprite
   }
 
   let fromSnapshot(snapshot: ModelSnapshot) : Model = {
@@ -123,4 +138,8 @@ module Model =
     PlayerId = snapshot.PlayerId
     BoxBounces = snapshot.BoxBounces
     CrateHits = snapshot.CrateHits
+    PlayerSprite = snapshot.PlayerSprite
+    Decoration = snapshot.Decoration
+    CrateSprite = snapshot.CrateSprite
+    ItemSprite = snapshot.ItemSprite
   }
