@@ -89,3 +89,4 @@ Run one of the samples, then copy its program setup (composition root) into your
 
   - [Input (raw + mapped)](input.html)
   - [Assets (loading + caching)](assets.html)
+  - [Animation (2D sprites)](animation.html)

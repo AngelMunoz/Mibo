@@ -3,12 +3,12 @@ module MiboSample.DemoComponents
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open Mibo.Animation
 
 /// A small, self-contained MonoGame `DrawableGameComponent` used to demonstrate
 /// drop-in interoperability through `Program.withComponent`.
 ///
-/// It draws a bouncing colored rectangle as an overlay (it will draw after the Elmish renderers
-/// because `ElmishGame.Draw` calls `base.Draw` at the end).
+/// It draws a bouncing colored rectangle as an overlay.
 type BouncingBoxOverlay(game: Game) =
   inherit DrawableGameComponent(game)
 
@@ -19,12 +19,9 @@ type BouncingBoxOverlay(game: Game) =
   let mutable vel = Vector2(180.0f, 120.0f)
   let size = Vector2(40.0f, 40.0f)
 
-  do
-    // Make it obvious this is "on top" of the regular renderer.
-    base.DrawOrder <- 10_000
+  do base.DrawOrder <- 10_000
 
   override _.LoadContent() =
-    // These must be created on the main game thread.
     spriteBatch <- new SpriteBatch(game.GraphicsDevice)
     pixel <- new Texture2D(game.GraphicsDevice, 1, 1)
     pixel.SetData([| Color.White |])
@@ -43,8 +40,6 @@ type BouncingBoxOverlay(game: Game) =
 
   override _.Update(gameTime: GameTime) =
     let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
-
-    // Cap dt to avoid tunneling when the app regains focus.
     let dt = min dt 0.05f
 
     pos <- pos + vel * dt
@@ -74,7 +69,6 @@ type BouncingBoxOverlay(game: Game) =
       ()
     else
       let rect = Rectangle(int pos.X, int pos.Y, int size.X, int size.Y)
-
       spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.NonPremultiplied)
       spriteBatch.Draw(pixel, rect, Color.LimeGreen)
       spriteBatch.End()
@@ -82,11 +76,9 @@ type BouncingBoxOverlay(game: Game) =
     base.Draw(gameTime)
 
 module BouncingBoxOverlay =
-
   /// Factory for `Program.withComponent`.
   let create(game: Game) =
     new BouncingBoxOverlay(game) :> IGameComponent
-
 
 /// A `DrawableGameComponent` that demonstrates *two-way* interop with Elmish:
 /// - Component -> Elmish: raises an event when it bounces off the screen bounds.
@@ -103,6 +95,7 @@ type InteractiveBoxOverlay(game: Game) =
 
   let mutable tint = Color.DeepSkyBlue
   let mutable speedScale = 1.0f
+  let mutable sprite: AnimatedSprite voption = ValueNone
 
   let bounceCount = ref 0
   let bounced = Event<int>()
@@ -112,7 +105,6 @@ type InteractiveBoxOverlay(game: Game) =
     base.Enabled <- true
     base.Visible <- true
 
-  /// Fired each time the box bounces. Payload is the running bounce count.
   member _.Bounced = bounced.Publish
 
   member _.Tint
@@ -123,8 +115,11 @@ type InteractiveBoxOverlay(game: Game) =
     with get () = speedScale
     and set value = speedScale <- max 0.0f value
 
-  member _.SetVisible(value: bool) = base.Visible <- value
+  member _.Sprite
+    with get () = sprite
+    and set value = sprite <- value
 
+  member _.SetVisible(value: bool) = base.Visible <- value
   member _.SetEnabled(value: bool) = base.Enabled <- value
 
   override _.LoadContent() =
@@ -148,7 +143,6 @@ type InteractiveBoxOverlay(game: Game) =
     let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
     let dt = min dt 0.05f
 
-    // Apply scaling from Elmish.
     let stepVel = vel * speedScale
     pos <- pos + stepVel * dt
 
@@ -180,29 +174,55 @@ type InteractiveBoxOverlay(game: Game) =
       bounceCount.Value <- bounceCount.Value + 1
       bounced.Trigger(bounceCount.Value)
 
+    sprite
+    |> ValueOption.iter(fun s ->
+      sprite <- ValueSome(AnimatedSprite.update dt s))
+
     base.Update(gameTime)
 
   override _.Draw(gameTime: GameTime) =
-    if isNull spriteBatch || isNull pixel then
+    if isNull spriteBatch then
       ()
     else
-      let rect = Rectangle(int pos.X, int pos.Y, int size.X, int size.Y)
-      spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.NonPremultiplied)
-      spriteBatch.Draw(pixel, rect, tint)
+      spriteBatch.Begin(
+        SpriteSortMode.Deferred,
+        BlendState.NonPremultiplied,
+        SamplerState.PointClamp
+      )
+
+      match sprite with
+      | ValueSome s ->
+        let src = AnimatedSprite.currentSource s
+        let tex = s.Sheet.Texture
+        let origin = s.Sheet.Origin
+        let scale = Vector2(s.Scale, s.Scale)
+
+        let effects = AnimatedSprite.toSpriteEffects s
+
+        spriteBatch.Draw(
+          tex,
+          pos,
+          Nullable src,
+          tint,
+          s.Rotation,
+          origin,
+          scale,
+          effects,
+          0.0f
+        )
+      | ValueNone ->
+        if not(isNull pixel) then
+          let rect = Rectangle(int pos.X, int pos.Y, int size.X, int size.Y)
+          spriteBatch.Draw(pixel, rect, tint)
+
       spriteBatch.End()
 
     base.Draw(gameTime)
 
 module InteractiveBoxOverlayBridge =
-
   open Mibo.Elmish
-
-  /// Factory for `Program.withComponentRef`.
   let create(game: Game) = new InteractiveBoxOverlay(game)
 
-  /// Subscribe to the component's bounce event.
-  ///
-  /// If the component isn't available yet, this subscribes to nothing.
   let subscribeBounced
     (componentRef: ComponentRef<InteractiveBoxOverlay>)
     (ofBounce: int -> 'Msg)

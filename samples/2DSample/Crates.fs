@@ -7,9 +7,10 @@ open FSharp.UMX
 
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
+open Mibo.Animation
 open MiboSample.Domain
 
-let targetCount = 200
+let targetCount = 100
 let crateSize = Vector2(18f, 18f)
 
 [<Struct>]
@@ -68,8 +69,8 @@ let spawnOne
   let marginX = int(crateSize.X * 0.5f) + 2
   let marginY = int(crateSize.Y * 0.5f) + 2
 
-  let jitterX = rng.Next(-80, 81)
-  let jitterY = rng.Next(-80, 81)
+  let jitterX = rng.Next(-600, 601)
+  let jitterY = rng.Next(-600, 601)
 
   let rawX = int playerPos.X + jitterX
   let rawY = int playerPos.Y + jitterY
@@ -151,22 +152,10 @@ let view
   (snapshot: ModelSnapshot)
   (buffer: RenderBuffer<RenderCmd2D>)
   =
-  let tex =
-    ctx
-    |> Assets.getOrCreate<Texture2D> "pixel" (fun gd ->
-      let t = new Texture2D(gd, 1, 1)
-      t.SetData([| Color.White |])
-      t)
-
   for i = 0 to snapshot.Crates.Count - 1 do
     let crateId = snapshot.Crates[i]
 
     match snapshot.Positions.TryGetValue(crateId) with
     | true, pos ->
-      let rect = rectFromCenter pos crateSize
-
-      Draw2D.sprite tex rect
-      |> Draw2D.withColor(Color.SandyBrown)
-      |> Draw2D.atLayer 2<RenderLayer>
-      |> Draw2D.submit buffer
+      snapshot.CrateSprite |> AnimatedSprite.draw pos 2<RenderLayer> buffer
     | _ -> ()
