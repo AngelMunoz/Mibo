@@ -21,6 +21,7 @@
     <Compile Include="Culling.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Graphics2D.fs" />
+    <Compile Include="Animation.fs" />
     <Compile Include="Sprite3DTypes.fs" />
     <Compile Include="SpriteQuadBatch.fs" />
     <Compile Include="QuadBatch.fs" />
