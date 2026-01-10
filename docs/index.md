@@ -12,6 +12,12 @@ Mibo is a lightweight, Elmish-based game framework built on top of MonoGame. It 
 
 To get started with Mibo, you need the [dotnet SDK](https://get.dot.net) installed.
 
+Install the templates:
+
+```bash
+dotnet new install Mibo.Templates
+```
+
 Create a new Mibo project using the provided template:
 
 ```bash
