@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Animation: `Mibo.Animation` module for format-agnostic 2D sprite handling.
+- Animation: `GridAnimationDef` struct for ergonomic, self-documenting grid-based animation definitions.
+- Animation: `SpriteSheet` factories for uniform grids, manual frame arrays, and static textures.
+- Animation: `AnimatedSprite` runtime for state-driven playback, scaling, and flip control.
+- Animation: Optimized index-based playback to eliminate string allocations in update loops.
+- Rendering: Direct integration between `AnimatedSprite` and `Graphics2D` rendering primitives.
+
 ## [1.0.1] - 2026-01-09
 
 ### Fixed
