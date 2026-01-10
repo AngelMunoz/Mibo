@@ -190,8 +190,11 @@ type Animation = {
 ### Helpers
 
 ```fsharp
-// Total duration of the animation
-let duration = Animation.duration anim
+// Total duration of a specific animation
+let totalTime = Animation.duration anim
+
+// Total duration of the current animation in a sprite
+let spriteTime = AnimatedSprite.duration sprite
 
 // Check if playback finished (always false for looping)
 let finished = AnimatedSprite.isFinished sprite
@@ -271,7 +274,7 @@ If you use a tool like TexturePacker or Aseprite to pack your sprites into a sin
 
 If your animations are split across files (e.g., `hero_idle.png` and `hero_walk.png`):
 
-- **Option A: Create separate SpriteSheets**. Since an `AnimatedSprite` can have its `Sheet` swapped at runtime, you can simply change the sheet when the state changes.
+- **Option A: Create separate SpriteSheets**. Since an `AnimatedSprite` is an immutable struct, you can create a new instance with a different `Sheet` when the state changes.
 - **Option B: Combine them at build time**. It is generally better to use a tool to combine these into one atlas so they share a single `SpriteSheet` and texture.
 
 ```fsharp

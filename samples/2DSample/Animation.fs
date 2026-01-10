@@ -30,7 +30,7 @@ let load(ctx: GameContext) : AnimationAssets =
   }
 
   let walkAnim: Animation = {
-    Frames = [| for row in 0..3 -> Rectangle(0, row * 48, 48, 48) |]
+    Frames = [| for row in 1..3 -> Rectangle(0, row * 48, 48, 48) |]
     FrameDuration = 1.0f / 8.0f
     Loop = true
   }

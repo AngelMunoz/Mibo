@@ -105,6 +105,17 @@ type AnimatedSprite = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Animation Module: Data Queries
+// ─────────────────────────────────────────────────────────────────────────────
+
+module Animation =
+  /// <summary>
+  /// Get the total duration of an animation in seconds.
+  /// </summary>
+  let inline duration(anim: Animation) =
+    float32 anim.Frames.Length * anim.FrameDuration
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SpriteSheet Module: Factory Functions (Cold Path)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -438,32 +449,36 @@ module AnimatedSprite =
       // Direct array access - O(1), no dictionary lookup
       let anim = sprite.Sheet.AnimationsByIndex.[sprite.AnimationIndex]
 
-      if anim.Frames.Length = 0 then
+      if anim.Frames.Length = 0 || anim.FrameDuration <= 0.0f then
         sprite
       else
-        let newTime = sprite.TimeInFrame + deltaSeconds
+        let totalTime = sprite.TimeInFrame + deltaSeconds
+        let framesToSkip = int(totalTime / anim.FrameDuration)
 
-        if newTime < anim.FrameDuration then
-          // Still on same frame - just update time
-          { sprite with TimeInFrame = newTime }
+        if framesToSkip = 0 then
+          { sprite with TimeInFrame = totalTime }
         else
-          // Advance frame
-          let nextFrame = sprite.CurrentFrame + 1
+          let remainingTime = totalTime % anim.FrameDuration
+          let nextFrame = sprite.CurrentFrame + framesToSkip
 
-          if nextFrame >= anim.Frames.Length then
-            if anim.Loop then
-              {
-                sprite with
-                    CurrentFrame = 0
-                    TimeInFrame = newTime - anim.FrameDuration
-              }
-            else
-              { sprite with Finished = true }
-          else
+          if nextFrame < anim.Frames.Length then
             {
               sprite with
                   CurrentFrame = nextFrame
-                  TimeInFrame = newTime - anim.FrameDuration
+                  TimeInFrame = remainingTime
+            }
+          elif anim.Loop then
+            {
+              sprite with
+                  CurrentFrame = nextFrame % anim.Frames.Length
+                  TimeInFrame = remainingTime
+            }
+          else
+            {
+              sprite with
+                  Finished = true
+                  CurrentFrame = anim.Frames.Length - 1
+                  TimeInFrame = 0.0f
             }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -493,6 +508,12 @@ module AnimatedSprite =
     match sprite.Sheet.AnimationIndices.TryGetValue(animName) with
     | true, idx -> idx = sprite.AnimationIndex && not sprite.Finished
     | false, _ -> false
+
+  /// <summary>
+  /// Get the total duration of the current animation.
+  /// </summary>
+  let inline duration(sprite: AnimatedSprite) =
+    Animation.duration sprite.Sheet.AnimationsByIndex.[sprite.AnimationIndex]
 
   // ─────────────────────────────────────────────────────────────────────────
   // Visual Properties (Cold/Warm - struct copy)
@@ -547,8 +568,11 @@ module AnimatedSprite =
   // Drawing (HOT PATH - Zero allocations)
   // ─────────────────────────────────────────────────────────────────────────
 
-  let inline private spriteEffects (flipX: bool) (flipY: bool) =
-    match flipX, flipY with
+  /// <summary>
+  /// Get the MonoGame SpriteEffects for the sprite's current flip state.
+  /// </summary>
+  let inline toSpriteEffects(sprite: AnimatedSprite) =
+    match sprite.FlipX, sprite.FlipY with
     | false, false -> SpriteEffects.None
     | true, false -> SpriteEffects.FlipHorizontally
     | false, true -> SpriteEffects.FlipVertically
@@ -578,17 +602,12 @@ module AnimatedSprite =
         layer,
         DrawTexture(
           sprite.Sheet.Texture,
-          Rectangle(
-            int position.X - scaledW / 2,
-            int position.Y - scaledH / 2,
-            scaledW,
-            scaledH
-          ),
+          Rectangle(int position.X, int position.Y, scaledW, scaledH),
           Nullable src,
           sprite.Color,
           sprite.Rotation,
-          Vector2.Zero, // Origin must be Zero when using dest rect
-          spriteEffects sprite.FlipX sprite.FlipY,
+          sprite.Sheet.Origin,
+          toSpriteEffects sprite,
           0.0f
         )
       )
@@ -614,17 +633,12 @@ module AnimatedSprite =
         layer,
         DrawTexture(
           sprite.Sheet.Texture,
-          Rectangle(
-            int position.X - scaledW / 2,
-            int position.Y - scaledH / 2,
-            scaledW,
-            scaledH
-          ),
+          Rectangle(int position.X, int position.Y, scaledW, scaledH),
           Nullable src,
           sprite.Color,
           sprite.Rotation,
-          Vector2.Zero, // Origin must be Zero when using dest rect
-          spriteEffects sprite.FlipX sprite.FlipY,
+          sprite.Sheet.Origin,
+          toSpriteEffects sprite,
           depth
         )
       )
@@ -632,6 +646,10 @@ module AnimatedSprite =
   /// <summary>
   /// Draw the sprite at a specific destination rectangle (ignores scale/origin).
   /// </summary>
+  /// <remarks>
+  /// Note: Rotation will occur around the top-left corner (Vector2.Zero)
+  /// of the destination rectangle.
+  /// </remarks>
   let drawRect
     (destRect: Rectangle)
     (layer: int<RenderLayer>)
@@ -652,7 +670,7 @@ module AnimatedSprite =
           sprite.Color,
           sprite.Rotation,
           Vector2.Zero,
-          spriteEffects sprite.FlipX sprite.FlipY,
+          toSpriteEffects sprite,
           0.0f
         )
       )

@@ -197,15 +197,7 @@ type InteractiveBoxOverlay(game: Game) =
         let origin = s.Sheet.Origin
         let scale = Vector2(s.Scale, s.Scale)
 
-        let effects =
-          if s.FlipX && s.FlipY then
-            SpriteEffects.FlipHorizontally ||| SpriteEffects.FlipVertically
-          elif s.FlipX then
-            SpriteEffects.FlipHorizontally
-          elif s.FlipY then
-            SpriteEffects.FlipVertically
-          else
-            SpriteEffects.None
+        let effects = AnimatedSprite.toSpriteEffects s
 
         spriteBatch.Draw(
           tex,
