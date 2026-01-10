@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-01-09
+
 ### Added
 
 - Animation: `Mibo.Animation` module for format-agnostic 2D sprite handling.
