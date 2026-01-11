@@ -17,6 +17,7 @@
     <Compile Include="Physics.fs" />
     <Compile Include="Rotation.fs" />
     <Compile Include="Player.fs" />
+    <Compile Include="Grid.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

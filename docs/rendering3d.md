@@ -12,6 +12,7 @@ The core building blocks are:
 
 - `RenderBuffer<unit, RenderCmd3D>` (submission order is preserved)
 - `Batch3DRenderer` (executes commands and manages opaque/transparent passes)
+- `LineBatch` (efficiently manages and batches 3D line primitives)
 
 ## Minimal 3D renderer
 
@@ -170,7 +171,63 @@ let tree =
 Draw3D.billboard model.TreeTex tree buffer
 ```
 
-### Using your own effect (advanced)
+## Lines and Grids
+
+Mibo provides three ways to render 3D lines, ranging from simple debugging to high-performance effects.
+
+### Simple segments
+
+For drawing a single line segment (e.g., debug rays or simple outlines):
+
+```fsharp
+open Mibo.Elmish.Graphics3D
+
+Draw3D.line
+    (Vector3(0f, 0f, 0f))
+    (Vector3(10f, 0f, 0f))
+    Color.Red
+    buffer
+```
+
+### Multiple segments
+
+For drawing many lines efficiently (e.g., grids, wireframes):
+
+```fsharp
+let vertices = [|
+    VertexPositionColor(Vector3(0f, 0f, 0f), Color.White)
+    VertexPositionColor(Vector3(10f, 0f, 0f), Color.White)
+    // ...
+|]
+
+// lineCount is the number of segments (2 vertices per segment)
+Draw3D.lines vertices (vertices.Length / 2) buffer
+```
+
+### Custom effects
+
+For advanced effects like glowing lines, dashed lines, or distance-faded grids (shader-based):
+
+```fsharp
+let gridEffect = Assets.effect "Effects/Grid" ctx
+
+let setup (e: Effect) (ec: EffectContext) =
+    e.Parameters.["World"].SetValue(ec.World)
+    e.Parameters.["View"].SetValue(ec.View)
+    e.Parameters.["Projection"].SetValue(ec.Projection)
+    e.Parameters.["PlayerPosition"].SetValue(playerPos)
+    e.Parameters.["MaxDistance"].SetValue(7.0f)
+
+Draw3D.linesEffect
+    Transparent
+    gridEffect
+    (ValueSome setup)
+    vertices
+    (vertices.Length / 2)
+    buffer
+```
+
+## Using your own effect (advanced)
 
 If you want full control over shader semantics, use the effect-driven commands:
 

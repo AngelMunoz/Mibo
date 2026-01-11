@@ -70,16 +70,22 @@ module Program =
     let platformModel = Assets.model "Models/Platform/platform_4x4x1_blue" ctx
     let platformBounds = Platform.computeBounds platformModel
 
+    // Create platforms with computed bounds
+    let platforms =
+      Platform.positions |> List.map(Platform.create platformBounds)
+
+    let gridVerts, gridLineCount = Grid.create platforms 3.0f Color.White
+    let gridEffect = Assets.effect "Effects/Grid" ctx
+
     let assets = {
       PlayerModel = playerModel
       PlayerBounds = playerBounds
       PlatformModel = platformModel
       PlatformBounds = platformBounds
+      PlatformGrid = gridVerts
+      PlatformGridLineCount = gridLineCount
+      GridEffect = gridEffect
     }
-
-    // Create platforms with computed bounds
-    let platforms =
-      Platform.positions |> List.map(Platform.create platformBounds)
 
     {
       PlayerPosition = Vector3(0f, 2f, 0f)
@@ -138,11 +144,21 @@ module Program =
     Draw3D.camera camera buffer
 
     // Draw platforms
-    for plat in state.Platforms do
+    for (plat: PlatformData) in state.Platforms do
       let platformMatrix = Matrix.CreateTranslation(plat.Position)
 
       Draw3D.mesh state.Assets.PlatformModel platformMatrix
       |> Draw3D.submit buffer
+
+    // Draw the distance-faded grid surrounding platforms
+    Grid.draw
+      state.PlayerPosition
+      7.0f
+      state.Assets.GridEffect
+      state.Assets.PlatformGrid
+      state.Assets.PlatformGridLineCount
+      buffer
+
 
     // Draw the player
     Player.view ctx state buffer

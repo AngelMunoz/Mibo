@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- Rendering: First-class 3D line rendering support via `DrawLine`, `DrawLines`, and `DrawLinesEffect`.
+- Rendering: `LineBatch` for efficient, performance-oriented batching of 3D line primitives using `ArrayPool`.
+- Rendering: Optimized `Draw3D.line` and `Draw3D.lines` helpers for submission to the 3D pipeline.
+- Assets: Added `Effect` loading support to `IAssets` and `Assets` module for managing custom shaders.
+- Assets: Consistent caching for `Effect` assets, parity with textures and models.
+- System: Added `dispatch` and `dispatchWith` helpers for scheduling messages into the `System` pipeline.
+
+### Changed
+
+- Program: Refactored `withConfig` to be a cumulative pipeline for additive platform configuration.
+
 ## [1.1.0] - 2026-01-09
 
 ### Added

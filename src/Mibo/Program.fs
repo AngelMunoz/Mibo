@@ -43,7 +43,7 @@ let mkProgram (init: GameContext -> struct ('Model * Cmd<'Msg>)) update = {
   Init = init
   Update = update
   Subscribe = (fun _ctx _model -> Sub.none)
-  Config = ValueNone
+  Config = []
   Renderers = []
   Components = []
   Tick = ValueNone
@@ -110,7 +110,7 @@ let withConfig
   =
   {
     program with
-        Config = ValueSome configure
+        Config = configure :: program.Config
   }
 
 /// <summary>

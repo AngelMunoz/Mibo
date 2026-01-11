@@ -120,16 +120,16 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
       | _ -> ()
 
   do
-    // Apply user configuration or use sensible defaults
-    match program.Config with
-    | ValueSome configure -> configure(this, graphics)
-    | ValueNone ->
-      // Default settings (can be overridden via Program.withConfig)
-      this.Content.RootDirectory <- "Content"
-      this.IsMouseVisible <- true
-      this.Window.AllowUserResizing <- true
-      graphics.PreferredBackBufferWidth <- 800
-      graphics.PreferredBackBufferHeight <- 600
+    // Default settings (can be overridden via Program.withConfig)
+    this.Content.RootDirectory <- "Content"
+    this.IsMouseVisible <- true
+    this.Window.AllowUserResizing <- true
+    graphics.PreferredBackBufferWidth <- 800
+    graphics.PreferredBackBufferHeight <- 600
+
+    // Apply cumulative user configuration
+    for configure in List.rev program.Config do
+      configure(this, graphics)
 
   override _.Initialize() =
     // Add MonoGame components *before* base.Initialize() so they receive Initialize/LoadContent

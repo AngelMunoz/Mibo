@@ -32,6 +32,9 @@ type GameAssets = {
   PlayerBounds: BoundingBox
   PlatformModel: Model
   PlatformBounds: BoundingBox
+  PlatformGrid: VertexPositionColor[]
+  PlatformGridLineCount: int
+  GridEffect: Effect
 }
 
 /// Game state - fully immutable, idiomatic F#
