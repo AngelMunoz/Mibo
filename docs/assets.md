@@ -26,7 +26,7 @@ Program.mkProgram init update
 Then use the helpers from `Mibo.Elmish.Assets` anywhere you have a `GameContext`:
 
 ```fsharp
-let init (ctx: GameContext): struct(Model, Cmd<Msg>) =
+let init (ctx: GameContext): struct(Model * Cmd<Msg>) =
   let player = Assets.texture "sprites/player" ctx
   let font = Assets.font "fonts/ui" ctx
   let shader = Assets.effect "Effects/Grid" ctx

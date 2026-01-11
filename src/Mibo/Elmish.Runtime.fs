@@ -128,7 +128,7 @@ type ElmishGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     graphics.PreferredBackBufferHeight <- 600
 
     // Apply cumulative user configuration
-    for configure in program.Config do
+    for configure in List.rev program.Config do
       configure(this, graphics)
 
   override _.Initialize() =

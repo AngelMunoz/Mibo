@@ -110,7 +110,7 @@ let withConfig
   =
   {
     program with
-        Config = program.Config @ [ configure ]
+        Config = configure :: program.Config
   }
 
 /// <summary>
