@@ -38,10 +38,10 @@ type Program<'Model, 'Msg> = {
   /// <summary>Returns subscriptions based on current model state.</summary>
   Subscribe: GameContext -> 'Model -> Sub<'Msg>
   /// <summary>
-  /// Configuration callback invoked in the game constructor.
+  /// List of configuration callbacks invoked in the game constructor.
   /// Use this to set resolution, vsync, window settings, etc.
   /// </summary>
-  Config: (Game * GraphicsDeviceManager -> unit) voption
+  Config: (Game * GraphicsDeviceManager -> unit) list
   /// <summary>List of renderer factories for drawing.</summary>
   Renderers: (Game -> IRenderer<'Model>) list
   /// <summary>List of MonoGame component factories.</summary>

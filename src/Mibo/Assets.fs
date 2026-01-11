@@ -45,6 +45,9 @@ type IAssets =
   /// <summary>Loads and caches a 3D <see cref="T:Microsoft.Xna.Framework.Graphics.Model"/> from the content pipeline.</summary>
   abstract Model: path: string -> Model
 
+  /// <summary>Loads and caches a <see cref="T:Microsoft.Xna.Framework.Graphics.Effect"/> from the content pipeline.</summary>
+  abstract Effect: path: string -> Effect
+
   /// <summary>Gets a previously created custom asset by key.</summary>
   abstract Get<'T> : key: string -> 'T voption
 
@@ -72,6 +75,7 @@ module AssetsService =
     let fontCache = Dictionary<string, SpriteFont>()
     let soundCache = Dictionary<string, SoundEffect>()
     let modelCache = Dictionary<string, Model>()
+    let effectCache = Dictionary<string, Effect>()
 
     // Generic cache for user-created assets
     let assetCache = Dictionary<string, obj>()
@@ -126,6 +130,9 @@ module AssetsService =
 
         member _.Model(path: string) : Model =
           loadWithCache modelCache path (fun p -> content.Load<Model>(p))
+
+        member _.Effect(path: string) : Effect =
+          loadWithCache effectCache path (fun p -> content.Load<Effect>(p))
 
         member _.Get<'T>(key: string) : 'T voption =
           match assetCache.TryGetValue(key) with
@@ -192,6 +199,9 @@ module Assets =
 
   let sound (path: string) (ctx: GameContext) : SoundEffect =
     (getService ctx).Sound path
+
+  let effect (path: string) (ctx: GameContext) : Effect =
+    (getService ctx).Effect path
 
   let get<'T> (key: string) (ctx: GameContext) : 'T voption =
     (getService ctx).Get<'T> key

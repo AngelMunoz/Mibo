@@ -54,6 +54,26 @@ type RenderCmd3D =
   /// <summary>Effect-driven billboard draw: user provides an effect and optional setup callback.</summary>
   | DrawBillboardEffect of billboardEffect: EffectBillboardCmd
 
+  /// <summary>Draw a single line segment using the built-in BasicEffect.</summary>
+  | DrawLine of line: struct (Vector3 * Vector3 * Color) * pass: RenderPass
+
+  /// <summary>Draw line segments using the built-in BasicEffect (vertex colors).</summary>
+  /// <remarks>Lines are batched together; flushes occur on pass/camera/effect changes.</remarks>
+  | DrawLines of
+    lines: VertexPositionColor[] *
+    lineCount: int *
+    pass: RenderPass
+
+  /// <summary>Draw line segments using a custom effect.</summary>
+  /// <remarks>Use for glowing lines, dashed lines, or other custom line effects.</remarks>
+  | DrawLinesEffect of
+    lines: VertexPositionColor[] *
+    lineCount: int *
+    effect: Effect *
+    setup: EffectSetup voption *
+    pass: RenderPass
+
+
 /// <summary>Convenience alias for a render buffer for 3D commands.</summary>
 /// <remarks>3D rendering typically does not rely on a 2D-style render-layer ordering. We preserve submission order (do not sort), so the key is <c>unit</c>.</remarks>
 type RenderBuffer<'Cmd> = RenderBuffer<unit, 'Cmd>
@@ -187,6 +207,7 @@ type Batch3DRenderer<'Model>
   // Sprite batchers
   let mutable spriteQuadBatch = SpriteQuadBatch.create(game.GraphicsDevice)
   let mutable billboardBatch = BillboardBatch.create(game.GraphicsDevice)
+  let mutable lineBatch = LineBatch.create(game.GraphicsDevice)
 
   // Built-in unlit sprite effect (texture + vertex color)
   let spriteEffect =
@@ -196,10 +217,19 @@ type Batch3DRenderer<'Model>
     e.VertexColorEnabled <- true
     e
 
+  // Built-in line effect (vertex color, no texture)
+  let lineEffect =
+    let e = new BasicEffect(game.GraphicsDevice)
+    e.LightingEnabled <- false
+    e.TextureEnabled <- false
+    e.VertexColorEnabled <- true
+    e
+
   interface IDisposable with
     member _.Dispose() =
       SpriteQuadBatch.dispose spriteQuadBatch
       BillboardBatch.dispose billboardBatch
+      LineBatch.dispose lineBatch
 
   interface IRenderer<'Model> with
     member _.Draw(ctx: GameContext, model: 'Model, gameTime: GameTime) =
@@ -546,6 +576,51 @@ type Batch3DRenderer<'Model>
 
             BillboardBatch.end' billboardBatch
 
+          | DrawLine(struct (p1, p2, color), _) ->
+            // Flush sprite batches before drawing lines
+            flushPendingQuads()
+            flushPendingBillboards()
+
+            applySpriteStates pass
+            lineEffect.View <- viewMatrix
+            lineEffect.Projection <- projectionMatrix
+
+            LineBatch.begin' lineBatch
+            LineBatch.addLine p1 p2 color lineBatch
+            LineBatch.end' lineEffect lineBatch
+
+          | DrawLines(verts, lineCount, _) ->
+            // Flush sprite batches before drawing lines
+            flushPendingQuads()
+            flushPendingBillboards()
+
+            applySpriteStates pass
+            lineEffect.View <- viewMatrix
+            lineEffect.Projection <- projectionMatrix
+
+            LineBatch.begin' lineBatch
+            LineBatch.addLines verts lineCount lineBatch
+            LineBatch.end' lineEffect lineBatch
+
+          | DrawLinesEffect(verts, lineCount, effect, setupOpt, _) ->
+            // Flush sprite batches before drawing lines with custom effect
+            flushPendingQuads()
+            flushPendingBillboards()
+
+            setupOpt
+            |> ValueOption.iter(fun setup ->
+              setup effect {
+                World = Matrix.Identity
+                View = viewMatrix
+                Projection = projectionMatrix
+              })
+
+            applySpriteStates pass
+
+            LineBatch.begin' lineBatch
+            LineBatch.addLines verts lineCount lineBatch
+            LineBatch.end' effect lineBatch
+
           | _ -> ()
 
         // Final flush
@@ -701,6 +776,22 @@ type Batch3DRenderer<'Model>
           match e.Pass with
           | Opaque -> opaque.Add struct (distSq, cmd)
           | Transparent -> transparent.Add struct (distSq, cmd)
+
+        | DrawLine(_, pass) ->
+          match pass with
+          | Opaque -> opaque.Add struct (0f, cmd)
+          | Transparent -> transparent.Add struct (0f, cmd)
+
+        | DrawLines(_, _, pass) ->
+          // Lines don't have a single center; use 0 for submission-order within pass
+          match pass with
+          | Opaque -> opaque.Add struct (0f, cmd)
+          | Transparent -> transparent.Add struct (0f, cmd)
+
+        | DrawLinesEffect(_, _, _, _, pass) ->
+          match pass with
+          | Opaque -> opaque.Add struct (0f, cmd)
+          | Transparent -> transparent.Add struct (0f, cmd)
 
       flushSegment()
 
@@ -1011,3 +1102,50 @@ module Draw3D =
         Billboard = billboard
       }
     )
+
+  // --- Line helpers ---
+
+  /// <summary>Draw a single line segment using the built-in unlit line pipeline.</summary>
+  let line
+    (p1: Vector3)
+    (p2: Vector3)
+    (color: Color)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add((), DrawLine(struct (p1, p2, color), Opaque))
+
+  /// <summary>Draw a single line segment (transparent pass) using the built-in unlit line pipeline.</summary>
+  let lineTransparent
+    (p1: Vector3)
+    (p2: Vector3)
+    (color: Color)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add((), DrawLine(struct (p1, p2, color), Transparent))
+
+  /// <summary>Draw multiple line segments using the built-in unlit line pipeline.</summary>
+  let lines
+    (verts: VertexPositionColor[])
+    (lineCount: int)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add((), DrawLines(verts, lineCount, Opaque))
+
+  /// <summary>Draw multiple line segments (transparent pass) using the built-in unlit line pipeline.</summary>
+  let linesTransparent
+    (verts: VertexPositionColor[])
+    (lineCount: int)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add((), DrawLines(verts, lineCount, Transparent))
+
+  /// <summary>Draw multiple line segments using a custom effect.</summary>
+  let linesEffect
+    (pass: RenderPass)
+    (effect: Effect)
+    (setup: EffectSetup voption)
+    (verts: VertexPositionColor[])
+    (lineCount: int)
+    (buffer: RenderBuffer<RenderCmd3D>)
+    =
+    buffer.Add((), DrawLinesEffect(verts, lineCount, effect, setup, pass))
