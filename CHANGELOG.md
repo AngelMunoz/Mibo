@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-01-10
+
 ### Added
 
 - Rendering: First-class 3D line rendering support via `DrawLine`, `DrawLines`, and `DrawLinesEffect`.
@@ -14,6 +16,8 @@
 ### Changed
 
 - Program: Refactored `withConfig` to be a cumulative pipeline for additive platform configuration.
+
+- Updated templates to be consistent within them and with the package.
 
 ## [1.1.0] - 2026-01-09
 
