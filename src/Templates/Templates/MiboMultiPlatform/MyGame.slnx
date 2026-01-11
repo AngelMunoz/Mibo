@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="MyGame.Core/MyGame.Core.fsproj" />
+    <Project Path="MyGame.Desktop/MyGame.Desktop.fsproj" />
+    <Project Path="MyGame.Android/MyGame.Android.fsproj" />
+    <Project Path="MyGame.WindowsDX/MyGame.WindowsDX.fsproj" />
+    <Project Path="MyGame.iOS/MyGame.iOS.fsproj" />
+  </Folder>
+</Solution>

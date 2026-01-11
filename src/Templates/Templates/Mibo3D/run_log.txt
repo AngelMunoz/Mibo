@@ -1,0 +1,23 @@
+Unhandled exception. Microsoft.Xna.Framework.Content.ContentLoadException: The content file was not found.
+ ---> System.IO.FileNotFoundException: Could not find file 'c:\Users\scyth\repos\Mibo\src\Templates\Templates\Mibo3D\bin\Debug\net10.0\cube.xnb'.
+File name: 'c:\Users\scyth\repos\Mibo\src\Templates\Templates\Mibo3D\bin\Debug\net10.0\cube.xnb'
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at Microsoft.Xna.Framework.TitleContainer.PlatformOpenStream(String safeName)
+   at Microsoft.Xna.Framework.TitleContainer.OpenStream(String name)
+   at Microsoft.Xna.Framework.Content.ContentManager.OpenStream(String assetName)
+   --- End of inner exception stack trace ---
+   at Microsoft.Xna.Framework.Content.ContentManager.OpenStream(String assetName)
+   at Microsoft.Xna.Framework.Content.ContentManager.ReadAsset[T](String assetName, Action`1 recordDisposableObject)
+   at Microsoft.Xna.Framework.Content.ContentManager.Load[T](String assetName)
+   at Mibo.Elmish.AssetsService.create@114-6.Mibo.Elmish.IAssets.Model(String path)
+   at Mibo3D.Program.view(GameContext ctx, Model model, RenderBuffer`2 buffer) in c:\Users\scyth\repos\Mibo\src\Templates\Templates\Mibo3D\Program.fs:line 143
+   at Mibo3D.Program.Pipe #1 stage #2 at line 160@161-1.Invoke(Tuple`3 tupledArg)
+   at Mibo.Elmish.Graphics3D.Batch3DRenderer`1.Mibo.Elmish.IRenderer<'Model>.Draw(GameContext ctx, Model model, GameTime gameTime)
+   at Mibo.Elmish.ElmishGame`2.Draw(GameTime gameTime)
+   at Microsoft.Xna.Framework.Game.DoDraw(GameTime gameTime)
+   at Microsoft.Xna.Framework.Game.Tick()
+   at Microsoft.Xna.Framework.SdlGamePlatform.RunLoop()
+   at Microsoft.Xna.Framework.Game.Run(GameRunBehavior runBehavior)
+   at Mibo3D.Program.main(String[] _arg1) in c:\Users\scyth\repos\Mibo\src\Templates\Templates\Mibo3D\Program.fs:line 179

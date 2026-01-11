@@ -5,16 +5,15 @@ open MyGame.Core.Game
 
 [<EntryPoint>]
 let main _ =
-    // Configure window here if needed, or pass config to program in Core
-    let program = 
-        program 
-        |> Program.withConfig (fun (game, graphics) ->
-            game.Window.Title <- "Mibo MultiPlatform Game"
-            graphics.PreferredBackBufferWidth <- 800
-            graphics.PreferredBackBufferHeight <- 600
-            game.IsMouseVisible <- true
-        )
+  // Configure window here if needed, or pass config to program in Core
+  let program =
+    program
+    |> Program.withConfig(fun (game, graphics) ->
+      game.IsMouseVisible <- true
+      game.Window.Title <- "MyGame Desktop"
+      graphics.PreferredBackBufferWidth <- 800
+      graphics.PreferredBackBufferHeight <- 600)
 
-    use game = new ElmishGame<Model, Msg>(program)
-    game.Run()
-    0
+  use game = new ElmishGame<Model, Msg>(program)
+  game.Run()
+  0

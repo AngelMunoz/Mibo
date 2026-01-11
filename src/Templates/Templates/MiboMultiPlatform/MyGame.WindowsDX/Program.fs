@@ -7,15 +7,14 @@ open Mibo.Elmish
 [<EntryPoint>]
 [<STAThread>]
 let main _ =
-    let program = 
-        program 
-        |> Program.withConfig (fun (game, graphics) ->
-            game.Window.Title <- "Mibo WindowsDX Game"
-            graphics.PreferredBackBufferWidth <- 800
-            graphics.PreferredBackBufferHeight <- 600
-            game.IsMouseVisible <- true
-        )
+  let program =
+    program
+    |> Program.withConfig(fun (game, graphics) ->
+      game.IsMouseVisible <- true
+      game.Window.Title <- "MyGame Windows"
+      graphics.PreferredBackBufferWidth <- 800
+      graphics.PreferredBackBufferHeight <- 600)
 
-    use game = new ElmishGame<Model, Msg>(program)
-    game.Run()
-    0
+  use game = new ElmishGame<Model, Msg>(program)
+  game.Run()
+  0
