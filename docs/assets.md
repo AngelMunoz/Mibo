@@ -11,7 +11,7 @@ Mibo exposes a per-game asset service (`IAssets`) that wraps MonoGame’s `Conte
 What it provides:
 
 - **no module-level global caches** (safe with multiple game instances/tests)
-- **fast repeated loads** (`Texture`, `Model`, etc are cached)
+- **fast repeated loads** (`Texture`, `Model`, `Effect`, etc are cached)
 - **custom assets** (shaders, JSON config, decoded content)
 
 ## Enabling the service
@@ -26,10 +26,11 @@ Program.mkProgram init update
 Then use the helpers from `Mibo.Elmish.Assets` anywhere you have a `GameContext`:
 
 ```fsharp
-let init (ctx: GameContext) =
+let init (ctx: GameContext): struct(Model, Cmd<Msg>) =
   let player = Assets.texture "sprites/player" ctx
   let font = Assets.font "fonts/ui" ctx
-  struct ({ PlayerTex = player; Font = font }, Cmd.none)
+  let shader = Assets.effect "Effects/Grid" ctx
+  { PlayerTex = player; Font = font; Shader = shader }, Cmd.none
 ```
 
 ## Custom assets (GPU-backed or not)
