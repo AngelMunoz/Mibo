@@ -24,7 +24,6 @@ type Env = {
 }
 
 // 1. Create environment independent of the program
-//    (Favor factory functions over direct constructors)
 let env = {
     Network = Network.create "https://api.example.com"
     Leaderboard = Leaderboard.create ()
