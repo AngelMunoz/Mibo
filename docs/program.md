@@ -54,7 +54,8 @@ Enables the `IAssets` service. This provides caching for every core MonoGame typ
 Installs the hardware polling service. This is required if you want to use the high-level `Keyboard`, `Mouse`, `Gamepad`, or `Touch` subscription modules.
 
 ### `withSubscription`
-Connects your Elmish subscriptions to the runtime. The subscription function is re-evaluated every time your model changes, allowing you to dynamically start/stop listeners (like "only listen for Gamepad if in Gameplay state").
+Connects your Elmish subscriptions to the runtime. The subscription function is re-evaluated every time your model changes, allowing you to dynamically start/stop listeners.
+See [The Subscription](elmish.html#the-subscription) in the Elmish guide for a detailed breakdown of What, Why, How, and When to use them.
 
 ---
 
@@ -113,10 +114,8 @@ match audioRef.TryGet() with
 ### `withConfig`
 Gives you direct access to the `Game` object and the `GraphicsDeviceManager` before the game even initializes.
 
-> [!TIP]
-> **Cumulative Pipeline**: You can call `withConfig` multiple times; each callback is executed in the order it was added, allowing you to layer configuration (e.g., base settings in your library, platform overrides in your executable).
+> _**TIP**_: **Cumulative Pipeline**: You can call `withConfig` multiple times; each callback is executed in the order it was added, allowing you to layer configuration (e.g., base settings in your library, platform overrides in your executable).
 
-> [!IMPORTANT]
-> **Platform Specifics**: This is where you should put logic that varies by platform. For example, your Desktop project might set a fixed window size, while your Mobile project might handle screen orientation or full-screen modes.
+> _**IMPORTANT**_: **Platform Specifics**: This is where you should put logic that varies by platform. For example, your Desktop project might set a fixed window size, while your Mobile project might handle screen orientation or full-screen modes.
 
 Use this to set the window title, resolution, multi-sampling, or `IsFixedTimeStep`.

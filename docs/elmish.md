@@ -45,6 +45,38 @@ let update msg model =
         model, Cmd.none
 ```
 
+## The Subscription
+
+Your `update` function is pure and passive—it only runs when it receives a message. But games need to be proactive; they need to react to time, raw input, network packets, and async results that happen *outside* that pure loop.
+
+**Subscriptions** bridge this gap. They are active listeners that sit alongside your model, waiting for external events and converting them into messages that your `update` function can handle.
+
+### Defining a subscription
+
+Instead of manually polling hardware or managing event listeners, you simply define a `subscribe` function. This function looks at your current `Model` and declares *what* you want to listen to right now.
+
+```fsharp
+let subscribe (ctx: GameContext) (model: Model) =
+    Sub.batch [
+        // Always listen for keyboard input
+        Keyboard.onPressed (fun key -> KeyPressed key) ctx
+
+        // Only listen for mouse clicks if the game is not paused
+        if not model.IsPaused then
+            Mouse.onLeftClick (fun point -> ClickedAt point) ctx
+    ]
+```
+
+### How it works
+
+Mibo re-evaluates this function **every time your model changes**. It compares the new list of subscriptions to the previous one:
+
+- **New** subscriptions are started immediately.
+- **Removed** subscriptions are stopped (and resources disposed).
+- **Unchanged** subscriptions are kept alive.
+
+This declarative approach makes managing complex event logic trivial. You don't need to manually register/unregister handlers when switching states (like from "Menu" to "Gameplay")—you just stop returning the subscription in your list, and Mibo handles the cleanup.
+
 ## The View
 
 In Mibo, the **View** doesn't return a visual tree like in web apps. Instead, it receives a `RenderBuffer` and submits drawing commands to it.
