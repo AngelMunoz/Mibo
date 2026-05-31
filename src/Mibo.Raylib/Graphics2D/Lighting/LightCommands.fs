@@ -77,7 +77,7 @@ module LightCommands =
   /// Draws an animated sprite with the current lighting state.
   /// Automatically extracts texture, source rect, origin, rotation, color,
   /// and normal map from the AnimatedSprite and its SpriteSheet.
-  /// Handles FlipX by negating the source rect width.
+  /// Handles FlipX/FlipY by negating the source rect width/height.
   /// </summary>
   let inline litAnimatedSprite
     (lightCtx: LightContext2D)
@@ -90,6 +90,12 @@ module LightCommands =
     let src =
       if animSprite.FlipX then
         Rectangle(src.X, src.Y, -src.Width, src.Height)
+      else
+        src
+
+    let src =
+      if animSprite.FlipY then
+        Rectangle(src.X, src.Y, src.Width, -src.Height)
       else
         src
 

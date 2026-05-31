@@ -10,7 +10,7 @@
 
 ### Changed
 
-- `LitSprite` command now carries a `SpriteState` instead of individual texture/dest/source/origin/rotation/color fields.
+- **Breaking:** `LitSprite` command signature changed — now carries `LightContext2D * SpriteState` instead of 8 individual fields. Consumers must update pattern matches and `LightDraw.litSprite` call sites to use the new `SpriteState` type.
 - `SpriteState` moved from `Command2D` module to top-level `Mibo.Elmish.Graphics2D` namespace.
 
 ## [1.0.0] - 2026.05.30

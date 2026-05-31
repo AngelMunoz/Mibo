@@ -62,9 +62,6 @@ uniform int occluderCount;
 uniform float shadowSoftness;
 uniform float shadowMaxDistance;
 
-uniform sampler2D normalMap;
-uniform int useNormalMap;
-
 float sdSegment(vec2 p, vec2 a, vec2 b)
 {
     vec2 pa = p - a;
@@ -110,18 +107,9 @@ float sampleShadow(vec2 worldPos, vec2 lightDirOrPos, bool isDirectional, float 
     return clamp(res, 0.0, 1.0);
 }
 
-vec3 getNormal()
-{
-    if (useNormalMap == 0)
-        return vec3(0.0, 0.0, 1.0);
-    vec3 n = texture(normalMap, fragTexCoord).rgb * 2.0 - 1.0;
-    return normalize(n);
-}
-
 void main()
 {
     vec4 texColor = texture(texture0, fragTexCoord) * fragColor;
-    vec3 normal = getNormal();
     vec3 lighting = ambientColor;
 
     for (int i = 0; i < dirLightCount && i < MAX_DIR_LIGHTS; i++)
@@ -129,9 +117,7 @@ void main()
         float shadow = 1.0;
         if (dirLightShadowIdx[i] >= 0)
             shadow = sampleShadow(fragWorldPos, dirLightDirs[i], true, shadowSoftness);
-        vec2 L = -normalize(dirLightDirs[i]);
-        float NdotL = (useNormalMap == 0) ? 1.0 : max(dot(normal, vec3(L, 0.0)), 0.0);
-        lighting += dirLightColors[i] * dirLightIntensities[i] * NdotL * shadow;
+        lighting += dirLightColors[i] * dirLightIntensities[i] * shadow;
     }
 
     for (int i = 0; i < pointLightCount && i < MAX_POINT_LIGHTS; i++)
@@ -143,10 +129,7 @@ void main()
             float shadow = 1.0;
             if (pointLightShadowIdx[i] >= 0)
                 shadow = sampleShadow(fragWorldPos, pointLightPos[i], false, shadowSoftness);
-            vec2 toLight = pointLightPos[i] - fragWorldPos;
-            vec2 L = length(toLight) > 0.001 ? normalize(toLight) : vec2(0.0, 0.0);
-            float NdotL = (useNormalMap == 0) ? 1.0 : max(dot(normal, vec3(L, 0.0)), 0.0);
-            lighting += pointLightColors[i] * pointLightIntensities[i] * atten * NdotL * shadow;
+            lighting += pointLightColors[i] * pointLightIntensities[i] * atten * shadow;
         }
     }
 
