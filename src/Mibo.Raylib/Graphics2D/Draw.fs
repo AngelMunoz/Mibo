@@ -35,7 +35,7 @@ module Draw =
   // ──────────────────────────────────────────────
 
   /// <summary>Draws a sprite from a pre-configured SpriteState.</summary>
-  let inline sprite (state: Command2D.SpriteState) (buffer: RenderBuffer2D) =
+  let inline sprite (state: SpriteState) (buffer: RenderBuffer2D) =
     buffer.Add(Command2D.sprite state)
     buffer
 

@@ -7,6 +7,7 @@ open Raylib_cs
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics2D.Lighting
+open Mibo.Animation
 open Mibo.Layout
 
 // ──────────────────────────────────────────────
@@ -16,6 +17,15 @@ open Mibo.Layout
 let private tex =
   Texture2D(
     Id = 1u,
+    Width = 64,
+    Height = 64,
+    Mipmaps = 1,
+    Format = PixelFormat.UncompressedR8G8B8A8
+  )
+
+let private normalMapTex =
+  Texture2D(
+    Id = 2u,
     Width = 64,
     Height = 64,
     Mipmaps = 1,
@@ -496,7 +506,7 @@ let commandFactoryTests =
     }
 
     test "sprite factory maps SpriteState fields correctly" {
-      let state: Command2D.SpriteState = {
+      let state: SpriteState = {
         Texture = tex
         Dest = rect
         Source = Rectangle(0.0f, 0.0f, 64.0f, 64.0f)
@@ -504,6 +514,7 @@ let commandFactoryTests =
         Rotation = 45.0f
         Color = Color.Red
         Layer = 3<RenderLayer>
+        NormalMap = ValueNone
       }
 
       let cmd = Command2D.sprite state
@@ -616,6 +627,21 @@ let spriteStateTests =
       Expect.equal s.Layer 5<RenderLayer> "Layer should be overridden"
     }
 
+    test "create defaults NormalMap to ValueNone" {
+      let s = SpriteState.create(tex, rect, rect)
+      Expect.isFalse s.NormalMap.IsSome "NormalMap should default to ValueNone"
+    }
+
+    test "withNormalMap sets NormalMap" {
+      let s =
+        SpriteState.create(tex, rect, rect)
+        |> SpriteState.withNormalMap normalMapTex
+
+      match s.NormalMap with
+      | ValueSome nm -> Expect.equal nm normalMapTex "NormalMap should be set"
+      | ValueNone -> Tests.failtest "Expected NormalMap to be ValueSome"
+    }
+
     test "chained with* calls preserve earlier overrides" {
       let s =
         SpriteState.create(tex, rect, rect)
@@ -623,6 +649,7 @@ let spriteStateTests =
         |> SpriteState.withRotation 45.0f
         |> SpriteState.withColor Color.Blue
         |> SpriteState.withLayer 10<RenderLayer>
+        |> SpriteState.withNormalMap normalMapTex
 
       Expect.equal s.Origin (Vector2(1.0f, 1.0f)) "Origin should persist"
 
@@ -634,6 +661,10 @@ let spriteStateTests =
 
       Expect.equal s.Color Color.Blue "Color should persist"
       Expect.equal s.Layer 10<RenderLayer> "Layer should persist"
+
+      match s.NormalMap with
+      | ValueSome nm -> Expect.equal nm normalMapTex "NormalMap should persist"
+      | ValueNone -> Tests.failtest "Expected NormalMap to persist"
     }
   ]
 
@@ -1571,6 +1602,127 @@ let lightCommandTests =
         "Should have 1 directional light accumulated"
 
       Expect.equal ctx.Occluders.Count 1 "Should have 1 occluder accumulated"
+    }
+
+    test "litSprite with no normal map creates LitSprite with ValueNone" {
+      let shader = Unchecked.defaultof<Shader>
+      use ctx = new LightContext2D(litShader = shader)
+
+      let sprite =
+        SpriteState.create(tex, rect, rect)
+        |> SpriteState.withLayer 5<RenderLayer>
+
+      let cmd = LightCommands.litSprite ctx sprite
+
+      match cmd with
+      | Command2D.LitSprite(_, s) ->
+        Expect.equal s.Texture tex "Texture should match"
+        Expect.isFalse s.NormalMap.IsSome "NormalMap should be ValueNone"
+        Expect.equal s.Layer 5<RenderLayer> "Layer should match"
+      | _ -> Tests.failtest "Expected LitSprite"
+    }
+
+    test "litSprite with normal map creates LitSprite with ValueSome" {
+      let shader = Unchecked.defaultof<Shader>
+      use ctx = new LightContext2D(litShader = shader)
+
+      let sprite =
+        SpriteState.create(tex, rect, rect)
+        |> SpriteState.withNormalMap normalMapTex
+        |> SpriteState.withLayer 3<RenderLayer>
+
+      let cmd = LightCommands.litSprite ctx sprite
+
+      match cmd with
+      | Command2D.LitSprite(_, s) ->
+        Expect.equal s.Texture tex "Texture should match"
+
+        match s.NormalMap with
+        | ValueSome nm -> Expect.equal nm normalMapTex "NormalMap should match"
+        | ValueNone -> Tests.failtest "Expected NormalMap to be ValueSome"
+
+        Expect.equal s.Layer 3<RenderLayer> "Layer should match"
+      | _ -> Tests.failtest "Expected LitSprite"
+    }
+
+    test "litAnimatedSprite extracts sheet texture and normal map" {
+      let shader = Unchecked.defaultof<Shader>
+      use ctx = new LightContext2D(litShader = shader)
+
+      let sheet =
+        SpriteSheet.fromFrames tex (Vector2(16.0f, 16.0f)) [|
+          struct ("idle",
+                  {
+                    Frames = [| rect |]
+                    FrameDuration = 1.0f
+                    Loop = false
+                  })
+        |]
+        |> SpriteSheet.withNormalMap normalMapTex
+
+      let anim = AnimatedSprite.create sheet "idle"
+      let dest = Rectangle(10.0f, 20.0f, 32.0f, 32.0f)
+      let cmd = LightCommands.litAnimatedSprite ctx 7<RenderLayer> dest anim
+
+      match cmd with
+      | Command2D.LitSprite(_, s) ->
+        Expect.equal s.Texture tex "Texture should match sheet texture"
+        Expect.equal s.Dest dest "Dest should match"
+        Expect.equal s.Layer 7<RenderLayer> "Layer should match"
+
+        match s.NormalMap with
+        | ValueSome nm ->
+          Expect.equal nm normalMapTex "NormalMap should match sheet normal map"
+        | ValueNone -> Tests.failtest "Expected NormalMap from sheet"
+      | _ -> Tests.failtest "Expected LitSprite"
+    }
+
+    test "litAnimatedSprite respects FlipX" {
+      let shader = Unchecked.defaultof<Shader>
+      use ctx = new LightContext2D(litShader = shader)
+
+      let sheet =
+        SpriteSheet.fromFrames tex (Vector2(16.0f, 16.0f)) [|
+          struct ("walk",
+                  {
+                    Frames = [| rect |]
+                    FrameDuration = 0.1f
+                    Loop = true
+                  })
+        |]
+
+      let anim = AnimatedSprite.create sheet "walk" |> AnimatedSprite.flipX
+      let dest = Rectangle(10.0f, 20.0f, 32.0f, 32.0f)
+      let cmd = LightCommands.litAnimatedSprite ctx 5<RenderLayer> dest anim
+
+      match cmd with
+      | Command2D.LitSprite(_, s) ->
+        Expect.isTrue
+          (s.Source.Width < 0.0f)
+          "Source width should be negative for FlipX"
+      | _ -> Tests.failtest "Expected LitSprite"
+    }
+
+    test "LightDraw.litSprite works with normal map via pipe" {
+      let shader = Unchecked.defaultof<Shader>
+      use ctx = new LightContext2D(litShader = shader)
+      let buf = RenderBuffer2D()
+
+      let sprite =
+        SpriteState.create(tex, rect, rect)
+        |> SpriteState.withNormalMap normalMapTex
+        |> SpriteState.withLayer 4<RenderLayer>
+
+      buf |> LightDraw.litSprite ctx sprite |> Draw.drop
+
+      Expect.equal buf.Count 1 "Should have 1 command"
+
+      match buf[0] with
+      | Command2D.LitSprite(_, s) ->
+        match s.NormalMap with
+        | ValueSome nm -> Expect.equal nm normalMapTex "NormalMap should match"
+        | ValueNone -> Tests.failtest "Expected NormalMap"
+      | _ -> Tests.failtest "Expected LitSprite"
     }
   ]
 

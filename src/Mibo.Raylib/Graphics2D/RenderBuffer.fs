@@ -70,7 +70,7 @@ type RenderBuffer2D
     | Command2D.DrawImmediate(_, layer) -> layer
     | Command2D.Clear(_, layer) -> layer
     | Command2D.NoopLight layer -> layer
-    | Command2D.LitSprite(_, _, _, _, _, _, _, layer) -> layer
+    | Command2D.LitSprite(_, sprite) -> sprite.Layer
     | Command2D.EndLighting(_, layer) -> layer
     | Command2D.EnableShadows(_, layer) -> layer
     | Command2D.DisableShadows(_, layer) -> layer

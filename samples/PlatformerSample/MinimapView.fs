@@ -147,15 +147,14 @@ let private viewInner
 
   if minimap.TexReady then
     buffer
-    |> Draw.sprite {
-      Texture = minimap.Texture
-      Dest = Rectangle(minimapX, minimapY, minimapSize, minimapSize)
-      Source = Rectangle(0.0f, 0.0f, float32 texSize, float32 texSize)
-      Origin = Vector2.Zero
-      Rotation = 0.0f
-      Color = Color.White
-      Layer = 1010<RenderLayer>
-    }
+    |> Draw.sprite(
+      SpriteState.create(
+        minimap.Texture,
+        Rectangle(minimapX, minimapY, minimapSize, minimapSize),
+        Rectangle(0.0f, 0.0f, float32 texSize, float32 texSize)
+      )
+      |> SpriteState.withLayer 1010<RenderLayer>
+    )
     |> Draw.drop
 
   let centerX = minimapX + halfMinimap
