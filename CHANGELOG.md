@@ -1,8 +1,19 @@
 # Changelog
 
-[Unreleased]
+## [Unreleased]
 
-## [1.0.0] - 2026-05-30
+### Added
+
+- 2D normal map support: `SpriteState.NormalMap` field for per-pixel lighting on lit sprites. `LightContext2D` manages two shader variants (standard and normal-mapped) and switches between them via `BeginShaderMode`. The normal-map shader uses a 2D-compatible Half-Lambert lighting model (`NdotL = max(1.0 + dot(normal.xy, L), 0)`) for correct visual results with 2D light directions.
+- `LightDraw.litAnimatedSprite` helper for animated sprites with automatic flip handling.
+- `SpriteState` promoted to top-level type with builder DSL (`create`, `withNormalMap`, `withLayer`, etc.).
+
+### Changed
+
+- **Breaking:** `LitSprite` command signature changed — now carries `LightContext2D * SpriteState` instead of 8 individual fields. Consumers must update pattern matches and `LightDraw.litSprite` call sites to use the new `SpriteState` type.
+- `SpriteState` moved from `Command2D` module to top-level `Mibo.Elmish.Graphics2D` namespace.
+
+## [1.0.0] - 2026.05.30
 
 ### Added
 

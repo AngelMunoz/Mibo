@@ -10,6 +10,21 @@ open Mibo.Elmish.Graphics2D.Lighting
 [<Measure>]
 type RenderLayer
 
+/// <summary>State required to render a 2D sprite via DrawTexturePro.</summary>
+[<Struct>]
+type SpriteState = {
+  Texture: Texture2D
+  Dest: Rectangle
+  Source: Rectangle
+  Origin: Vector2
+  Rotation: float32
+  Color: Color
+  Layer: int<RenderLayer>
+  /// <summary>Optional normal map texture for per-pixel lighting. When present,
+  /// the lit shader samples this to compute diffuse lighting per pixel.</summary>
+  NormalMap: Texture2D voption
+}
+
 /// <summary>
 /// Closed set of 2D render commands. Stored in <see cref="T:Mibo.Elmish.Graphics2D.RenderBuffer2D"/>
 /// and dispatched via pattern matching — no interface boxing.
@@ -224,15 +239,7 @@ type Command2D =
   | Clear of clearColor: Color * layer: int<RenderLayer>
   // Lighting
   | NoopLight of layer: int<RenderLayer>
-  | LitSprite of
-    litLightCtx: LightContext2D *
-    litTexture: Texture2D *
-    litDest: Rectangle *
-    litSource: Rectangle *
-    litOrigin: Vector2 *
-    litRotation: float32 *
-    litColor: Color *
-    layer: int<RenderLayer>
+  | LitSprite of litLightCtx: LightContext2D * litSprite: SpriteState
   | EndLighting of endLightingCtx: LightContext2D * layer: int<RenderLayer>
   // Shadow Control
   | EnableShadows of enableShadowsCtx: LightContext2D * layer: int<RenderLayer>
@@ -252,17 +259,6 @@ type Command2D =
 module Command2D =
 
   /// <summary>State required to render a 2D sprite via DrawTexturePro.</summary>
-  [<Struct>]
-  type SpriteState = {
-    Texture: Texture2D
-    Dest: Rectangle
-    Source: Rectangle
-    Origin: Vector2
-    Rotation: float32
-    Color: Color
-    Layer: int<RenderLayer>
-  }
-
   /// <summary>State required to render 2D text via raylib's DrawTextEx.</summary>
   [<Struct>]
   type TextState = {
@@ -593,13 +589,13 @@ module Command2D =
     =
     Command2D.DisableShadows(lightCtx, layer)
 
-/// <summary>Convenience builders for <see cref="T:Mibo.Elmish.Graphics2D.Command2D.SpriteState"/>.</summary>
+/// <summary>Convenience builders for <see cref="T:Mibo.Elmish.Graphics2D.SpriteState"/>.</summary>
 module SpriteState =
 
-  /// <summary>Creates a sprite state with required fields. Defaults: Origin=Zero, Rotation=0, Color=White, Layer=0.</summary>
+  /// <summary>Creates a sprite state with required fields. Defaults: Origin=Zero, Rotation=0, Color=White, Layer=0, NormalMap=None.</summary>
   let create
     (texture: Texture2D, dest: Rectangle, source: Rectangle)
-    : Command2D.SpriteState =
+    : SpriteState =
     {
       Texture = texture
       Dest = dest
@@ -608,26 +604,26 @@ module SpriteState =
       Rotation = 0.0f
       Color = Color.White
       Layer = 0<RenderLayer>
+      NormalMap = ValueNone
     }
 
-  let inline withOrigin (v: Vector2) (s: Command2D.SpriteState) = {
-    s with
-        Origin = v
-  }
+  let inline withOrigin (v: Vector2) (s: SpriteState) = { s with Origin = v }
 
-  let inline withRotation (v: float32) (s: Command2D.SpriteState) = {
+  let inline withRotation (v: float32) (s: SpriteState) = {
     s with
         Rotation = v
   }
 
-  let inline withColor (v: Color) (s: Command2D.SpriteState) = {
-    s with
-        Color = v
-  }
+  let inline withColor (v: Color) (s: SpriteState) = { s with Color = v }
 
-  let inline withLayer (v: int<RenderLayer>) (s: Command2D.SpriteState) = {
+  let inline withLayer (v: int<RenderLayer>) (s: SpriteState) = {
     s with
         Layer = v
+  }
+
+  let inline withNormalMap (v: Texture2D) (s: SpriteState) = {
+    s with
+        NormalMap = ValueSome v
   }
 
 /// <summary>Convenience builders for <see cref="T:Mibo.Elmish.Graphics2D.Command2D.TextState"/>.</summary>

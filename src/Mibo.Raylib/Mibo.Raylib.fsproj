@@ -22,6 +22,7 @@
     <Compile Include="InputMapper.fs" />
     <Compile Include="Camera.fs" />
     <Compile Include="Culling.fs" />
+    <Compile Include="Animation.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Elmish.Program.fs" />
     <Compile Include="Elmish.Runtime.fs" />
@@ -38,7 +39,6 @@
     <Compile Include="Graphics2D/Lighting/GridOccluders.fs" />
     <Compile Include="Graphics2D/Lighting/LightCommands.fs" />
     <Compile Include="Graphics2D/Lighting/Particle.fs" />
-    <Compile Include="Animation.fs" />
     <Compile Include="Graphics3D/Light3D.fs" />
     <Compile Include="Graphics3D/Material3D.fs" />
     <Compile Include="Graphics3D/Primitive3D.fs" />

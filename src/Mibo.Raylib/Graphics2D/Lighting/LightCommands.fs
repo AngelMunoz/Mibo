@@ -1,6 +1,8 @@
 namespace Mibo.Elmish.Graphics2D.Lighting
 
+open System.Numerics
 open Raylib_cs
+open Mibo.Animation
 open Mibo.Elmish.Graphics2D
 
 // ═══════════════════════════════════════════════════════════════════
@@ -66,20 +68,49 @@ module LightCommands =
   /// <summary>
   /// Draws a sprite with the current lighting state from the given light context.
   /// Activates the lit shader and uploads light uniforms on first call each frame.
+  /// The sprite's NormalMap field controls per-pixel lighting when set.
   /// </summary>
-  let inline litSprite
+  let inline litSprite (lightCtx: LightContext2D) (sprite: SpriteState) =
+    Command2D.LitSprite(lightCtx, sprite)
+
+  /// <summary>
+  /// Draws an animated sprite with the current lighting state.
+  /// Automatically extracts texture, source rect, origin, rotation, color,
+  /// and normal map from the AnimatedSprite and its SpriteSheet.
+  /// Handles FlipX/FlipY by negating the source rect width/height.
+  /// </summary>
+  let inline litAnimatedSprite
     (lightCtx: LightContext2D)
-    (sprite: Command2D.SpriteState)
+    (layer: int<RenderLayer>)
+    (dest: Rectangle)
+    (animSprite: AnimatedSprite)
     =
+    let src = AnimatedSprite.currentSource animSprite
+
+    let src =
+      if animSprite.FlipX then
+        Rectangle(src.X, src.Y, -src.Width, src.Height)
+      else
+        src
+
+    let src =
+      if animSprite.FlipY then
+        Rectangle(src.X, src.Y, src.Width, -src.Height)
+      else
+        src
+
     Command2D.LitSprite(
       lightCtx,
-      sprite.Texture,
-      sprite.Dest,
-      sprite.Source,
-      sprite.Origin,
-      sprite.Rotation,
-      sprite.Color,
-      sprite.Layer
+      {
+        Texture = animSprite.Sheet.Texture
+        Dest = dest
+        Source = src
+        Origin = animSprite.Sheet.Origin
+        Rotation = animSprite.Rotation
+        Color = animSprite.Color
+        Layer = layer
+        NormalMap = animSprite.Sheet.NormalMap
+      }
     )
 
   /// <summary>
@@ -160,10 +191,20 @@ module LightDraw =
 
   let inline litSprite
     (lightCtx: LightContext2D)
-    (sprite: Command2D.SpriteState)
+    (sprite: SpriteState)
     (buffer: RenderBuffer2D)
     =
     buffer.Add(LightCommands.litSprite lightCtx sprite)
+    buffer
+
+  let inline litAnimatedSprite
+    (lightCtx: LightContext2D)
+    (layer: int<RenderLayer>)
+    (dest: Rectangle)
+    (animSprite: AnimatedSprite)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(LightCommands.litAnimatedSprite lightCtx layer dest animSprite)
     buffer
 
   let inline endLighting

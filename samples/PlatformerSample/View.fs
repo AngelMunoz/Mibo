@@ -163,15 +163,10 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
       r (int torch.Position.X - 16) (int torch.Position.Y - 32) 32 32
 
     buffer
-    |> LightDraw.litSprite model.Lighting {
-      Texture = model.Assets.TorchSheet.Texture
-      Dest = torchDest
-      Source = torchSrc
-      Origin = Vector2.Zero
-      Rotation = 0.0f
-      Color = Color.White
-      Layer = 7<RenderLayer>
-    }
+    |> LightDraw.litSprite
+      model.Lighting
+      (SpriteState.create(model.Assets.TorchSheet.Texture, torchDest, torchSrc)
+       |> SpriteState.withLayer 7<RenderLayer>)
     |> Draw.drop
 
   // Add occluders
@@ -218,45 +213,34 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
               let wy = chunk.Grid.Origin.Y + float32 y * tileSize
               let dest = Rectangle(wx, wy, tileSize, tileSize)
 
-              buffer
-              |> LightDraw.litSprite model.Lighting {
-                Texture = model.Assets.TileTexture
-                Dest = dest
-                Source = tileSpriteSrc chunkBiome tile
-                Origin = Vector2.Zero
-                Rotation = 0.0f
-                Color = Color.White
-                Layer = 10<RenderLayer>
-              }
-              |> Draw.drop)
+              let sprite =
+                let sprite =
+                  SpriteState.create(
+                    model.Assets.TileTexture,
+                    dest,
+                    tileSpriteSrc chunkBiome tile
+                  )
+                  |> SpriteState.withLayer 10<RenderLayer>
+
+                if tile = TileType.Coin then
+                  sprite
+                  |> SpriteState.withNormalMap model.Assets.CoinNormalMap
+                else
+                  sprite
+
+              buffer |> LightDraw.litSprite model.Lighting sprite |> Draw.drop)
           chunk.Grid
 
-  // Lit player sprite
-  let playerSrc = AnimatedSprite.currentSource model.PlayerSprite
-  let mutable playerSrcMut = playerSrc
-
-  if model.PlayerSprite.FlipX then
-    playerSrcMut <-
-      Rectangle(
-        playerSrcMut.X,
-        playerSrcMut.Y,
-        -playerSrcMut.Width,
-        playerSrcMut.Height
-      )
-
+  // Lit player sprite (uses litAnimatedSprite for automatic flip/normal map handling)
   let playerDrawY = int(model.PlayerPosition.Y + playerHeight - 64.0f)
   let playerDest = r (int model.PlayerPosition.X) playerDrawY 64 64
 
   buffer
-  |> LightDraw.litSprite model.Lighting {
-    Texture = model.Assets.PlayerSheet.Texture
-    Dest = playerDest
-    Source = playerSrcMut
-    Origin = Vector2.Zero
-    Rotation = 0.0f
-    Color = Color.White
-    Layer = 20<RenderLayer>
-  }
+  |> LightDraw.litAnimatedSprite
+    model.Lighting
+    20<RenderLayer>
+    playerDest
+    model.PlayerSprite
   |> Draw.drop
 
   // Particles
@@ -272,26 +256,28 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
   // End camera
   |> Draw.endCamera 1000<RenderLayer>
   // UI
-  |> Draw.text {
-    Font = model.Assets.Font
-    Text =
-      $"Day/Night Cycle | Time: {model.DayNightTimeOfDay:F1}h | Chunks: {model.Chunks.Count} | Score: {model.Score} | Pos: %.1f{model.PlayerPosition.X},%.1f{model.PlayerPosition.Y} | WASD/Arrows: Move | Space: Jump | R: Respawn"
-    Position = Vector2(10.0f, 10.0f)
-    FontSize = 20.0f
-    Spacing = 1.0f
-    Color = Color.White
-    Layer = 1001<RenderLayer>
-  }
-  |> Draw.text {
-    Font = model.Assets.Font
-    Text =
-      $"FPS: {model.Diagnostics.Fps} | Frame Time: {model.Diagnostics.FrameTime * 1000.0f:F1}ms"
-    Position = Vector2(10.0f, 32.0f)
-    FontSize = 20.0f
-    Spacing = 1.0f
-    Color = Color.White
-    Layer = 1001<RenderLayer>
-  }
+  |> Draw.text(
+    TextState.create(
+      model.Assets.Font,
+      $"Day/Night Cycle | Time: {model.DayNightTimeOfDay:F1}h | Chunks: {model.Chunks.Count} | Score: {model.Score} | Pos: %.1f{model.PlayerPosition.X},%.1f{model.PlayerPosition.Y} | WASD/Arrows: Move | Space: Jump | R: Respawn",
+      Vector2(10.0f, 10.0f)
+    )
+    |> TextState.withFontSize 20.0f
+    |> TextState.withSpacing 1.0f
+    |> TextState.withColor Color.White
+    |> TextState.withLayer 1001<RenderLayer>
+  )
+  |> Draw.text(
+    TextState.create(
+      model.Assets.Font,
+      $"FPS: {model.Diagnostics.Fps} | Frame Time: {model.Diagnostics.FrameTime * 1000.0f:F1}ms",
+      Vector2(10.0f, 32.0f)
+    )
+    |> TextState.withFontSize 20.0f
+    |> TextState.withSpacing 1.0f
+    |> TextState.withColor Color.White
+    |> TextState.withLayer 1001<RenderLayer>
+  )
   // Minimap
   |> Minimap.view ctx model
   |> Draw.drop

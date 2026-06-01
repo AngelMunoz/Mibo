@@ -8,6 +8,7 @@ open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics2D.Lighting
 open Mibo.Input
 open Mibo.Animation
+open Mibo.Layout
 open PlatformerSample.Constants
 open PlatformerSample.Types
 open PlatformerSample.WorldGen
@@ -34,6 +35,7 @@ let loadAssets(ctx: GameContext) : SpriteAssets =
 
   let font = assets.Font("assets/Fonts/monogram.ttf")
   let jumpSound = assets.Sound("assets/sfx_jump.ogg")
+  let coinNormalMap = assets.Texture("assets/NormalMap.png")
 
   // White 1x1 texture for particles (black would multiply to zero)
   let particleImg =
@@ -43,7 +45,7 @@ let loadAssets(ctx: GameContext) : SpriteAssets =
   Raylib.UnloadImage(particleImg)
 
   let playerSheet =
-    SpriteSheet.fromFrames playerTex (Vector2(64.0f, 64.0f)) [|
+    SpriteSheet.fromFrames playerTex Vector2.Zero [|
       struct ("idle",
               {
                 Frames = [| r 645 0 128 128 |]
@@ -86,6 +88,7 @@ let loadAssets(ctx: GameContext) : SpriteAssets =
     TileTexture = tileTex
     TorchSheet = torchSheet
     ParticleTexture = particleTex
+    CoinNormalMap = coinNormalMap
     Font = font
     JumpSound = jumpSound
   }

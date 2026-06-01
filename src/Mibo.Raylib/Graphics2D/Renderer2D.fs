@@ -1,3 +1,5 @@
+#nowarn "9"
+
 namespace Mibo.Elmish.Graphics2D
 
 open System
@@ -350,23 +352,39 @@ type Renderer2D<'Model>
       | Command2D.DrawImmediate(action, _) -> drawImmediate action
       | Command2D.Clear(color, _) -> Raylib.ClearBackground(color)
       | Command2D.NoopLight _ -> ()
-      | Command2D.LitSprite(lightCtx,
-                            texture,
-                            dest,
-                            source,
-                            origin,
-                            rotation,
-                            color,
-                            _) ->
-        if not lightCtx.ShaderActive then
-          beginShader lightCtx.Shader
-          lightCtx.ShaderActive <- true
+      | Command2D.LitSprite(lightCtx, sprite) ->
+        // Select the correct shader variant for this sprite.
+        // beginShader handles the batch flush and BeginShaderMode switch
+        // when the shader ID changes — the standard raylib pattern.
+        let targetShader =
+          match sprite.NormalMap with
+          | ValueSome _ -> lightCtx.NormalMapShader
+          | ValueNone -> lightCtx.Shader
 
+        beginShader targetShader
+        lightCtx.ShaderActive <- true
+
+        // Upload light uniforms once per frame (to both shader variants).
         if lightCtx.UniformsDirty then
           lightCtx.UploadUniforms()
           lightCtx.UniformsDirty <- false
 
-        Raylib.DrawTexturePro(texture, source, dest, origin, rotation, color)
+        lightCtx.EnsureLocationsCached()
+
+        // Bind the normal map texture when using the normal-map shader.
+        match sprite.NormalMap with
+        | ValueSome nm ->
+          Raylib.SetShaderValueTexture(targetShader, lightCtx.LocNormalMap, nm)
+        | ValueNone -> ()
+
+        Raylib.DrawTexturePro(
+          sprite.Texture,
+          sprite.Source,
+          sprite.Dest,
+          sprite.Origin,
+          sprite.Rotation,
+          sprite.Color
+        )
       | Command2D.EndLighting(lightCtx, _) ->
         if lightCtx.ShaderActive then
           endShader()
