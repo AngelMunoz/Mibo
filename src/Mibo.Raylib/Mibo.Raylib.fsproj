@@ -6,6 +6,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Properties/AssemblyInfo.fs" />
     <Compile Include="Layout/Grid2D.fs" />
     <Compile Include="Layout/Layout.fs" />
     <Compile Include="Layout/Platformer.fs" />
