@@ -338,6 +338,7 @@ module internal ShadowPassHelpers =
 
     let arr = pool.Rent(max meshCount 1)
     let mutable count = 0
+    let mutable skinnedStart = count
     shadowsEnabled <- true
     i <- 0
 
@@ -387,7 +388,30 @@ module internal ShadowPassHelpers =
 
       i <- i + 1
 
-    struct (arr, count)
+    // Partition: move skinned draws to end
+    let mutable writeIdx = 0
+
+    for j = 0 to count - 1 do
+      match arr[j].Bones with
+      | ValueNone ->
+        if writeIdx <> j then
+          arr[writeIdx] <- arr[j]
+
+        writeIdx <- writeIdx + 1
+      | ValueSome _ -> ()
+
+    skinnedStart <- writeIdx
+
+    for j = 0 to count - 1 do
+      match arr[j].Bones with
+      | ValueSome _ ->
+        if writeIdx <> j then
+          arr[writeIdx] <- arr[j]
+
+        writeIdx <- writeIdx + 1
+      | ValueNone -> ()
+
+    struct (arr, count, skinnedStart)
 
   /// Register all shadow-casting lights with the atlas. Returns true if any casters found.
   let collectShadowCasters(lights: LightBuffers, atlas: ShadowAtlas) =
@@ -1275,6 +1299,7 @@ module internal PipelineFunctions =
     frameState
 
   /// Render all mesh draws into a single shadow atlas region.
+  /// Draws are partitioned: [0..skinnedStart) are non-skinned, [skinnedStart..meshDrawCount) are skinned.
   let renderShadowRegion
     (
       shadowAtlas: ShadowAtlas,
@@ -1282,7 +1307,8 @@ module internal PipelineFunctions =
       camera: Camera3D,
       resources: inref<ShadowDepthResources>,
       meshDraws: MeshDraw[],
-      meshDrawCount: int
+      meshDrawCount: int,
+      skinnedStart: int
     ) =
     shadowAtlas.GetRegionViewport(regionIndex)
     Raylib.BeginMode3D(camera)
@@ -1295,50 +1321,61 @@ module internal PipelineFunctions =
 
     shadowAtlas.SetRegionViewProj(regionIndex, vp)
 
-    let mutable shaderActive = false
+    // ── Non-skinned batch: single BeginShaderMode block ──
+    if skinnedStart > 0 then
+      Raylib.BeginShaderMode resources.Shader
+      let mutable lastTransform = Unchecked.defaultof<Matrix4x4>
 
-    for i = 0 to meshDrawCount - 1 do
-      let draw = meshDraws[i]
-      let nm = computeNormalMatrix draw.Transform
+      for i = 0 to skinnedStart - 1 do
+        let draw = meshDraws[i]
 
-      match draw.Bones with
-      | ValueSome bones ->
-        if shaderActive then
-          Raylib.EndShaderMode()
-          shaderActive <- false
+        if draw.Transform <> lastTransform then
+          let nm = computeNormalMatrix draw.Transform
+
+          Raylib.SetShaderValueMatrix(
+            resources.Shader,
+            resources.NormalMatrixLoc,
+            nm
+          )
+
+          lastTransform <- draw.Transform
+
+        Raylib.DrawMesh(draw.Mesh, resources.Material, draw.Transform)
+
+      Raylib.EndShaderMode()
+
+    // ── Skinned batch: one Begin/End per mesh (bones differ per mesh) ──
+    if skinnedStart < meshDrawCount then
+      let mutable lastTransform = Unchecked.defaultof<Matrix4x4>
+
+      for i = skinnedStart to meshDrawCount - 1 do
+        let draw = meshDraws[i]
 
         Raylib.BeginShaderMode resources.SkinnedShader
 
-        Raylib.SetShaderValueMatrix(
-          resources.SkinnedShader,
-          resources.SkinnedNormalMatrixLoc,
-          nm
-        )
+        if draw.Transform <> lastTransform then
+          let nm = computeNormalMatrix draw.Transform
 
-        uploadBoneMatrices(
-          resources.SkinnedShader,
-          resources.BoneLoc,
-          ReadOnlySpan bones
-        )
+          Raylib.SetShaderValueMatrix(
+            resources.SkinnedShader,
+            resources.SkinnedNormalMatrixLoc,
+            nm
+          )
+
+          lastTransform <- draw.Transform
+
+        match draw.Bones with
+        | ValueSome bones ->
+          uploadBoneMatrices(
+            resources.SkinnedShader,
+            resources.BoneLoc,
+            ReadOnlySpan bones
+          )
+        | ValueNone -> ()
 
         Raylib.DrawMesh(draw.Mesh, resources.SkinnedMaterial, draw.Transform)
 
         Raylib.EndShaderMode()
-      | ValueNone ->
-        if not shaderActive then
-          Raylib.BeginShaderMode resources.Shader
-          shaderActive <- true
-
-        Raylib.SetShaderValueMatrix(
-          resources.Shader,
-          resources.NormalMatrixLoc,
-          nm
-        )
-
-        Raylib.DrawMesh(draw.Mesh, resources.Material, draw.Transform)
-
-    if shaderActive then
-      Raylib.EndShaderMode()
 
     Raylib.EndMode3D()
 
@@ -1351,6 +1388,7 @@ module internal PipelineFunctions =
       lights: LightBuffers,
       meshDraws: MeshDraw[],
       meshDrawCount: int,
+      skinnedStart: int,
       frameState: inref<FrameState>,
       gameCtx: GameContext
     ) =
@@ -1401,7 +1439,8 @@ module internal PipelineFunctions =
                     ptCamera,
                     &resources,
                     meshDraws,
-                    meshDrawCount
+                    meshDrawCount,
+                    skinnedStart
                   )
 
                 | ShadowCasterType.Spot ->
@@ -1420,7 +1459,8 @@ module internal PipelineFunctions =
                     spotCamera,
                     &resources,
                     meshDraws,
-                    meshDrawCount
+                    meshDrawCount,
+                    skinnedStart
                   )
 
                 | _ ->
@@ -1441,7 +1481,8 @@ module internal PipelineFunctions =
                     dirCamera,
                     &resources,
                     meshDraws,
-                    meshDrawCount
+                    meshDrawCount,
+                    skinnedStart
                   )
 
                   Rlgl.SetClipPlanes(prevNear, prevFar)
@@ -1677,7 +1718,8 @@ type ForwardPbrPipeline
       skinned.LightsDirty <- true
 
       // ── Step 2: Shadow pass (render all casters to atlas) ──
-      let struct (meshDraws, meshDrawCount) = collectMeshDraws buffer
+      let struct (meshDraws, meshDrawCount, skinnedStart) =
+        collectMeshDraws buffer
 
       let shadowResources = {
         Shader = depthShadowShader
@@ -1700,6 +1742,7 @@ type ForwardPbrPipeline
             lights,
             meshDraws,
             meshDrawCount,
+            skinnedStart,
             &frameState,
             gameCtx
           )
