@@ -23,6 +23,7 @@
     <Compile Include="Camera.fs" />
     <Compile Include="Culling.fs" />
     <Compile Include="Animation.fs" />
+    <Compile Include="Animation3D.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Elmish.Program.fs" />
     <Compile Include="Elmish.Runtime.fs" />

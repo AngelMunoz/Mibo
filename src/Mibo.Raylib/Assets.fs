@@ -34,6 +34,13 @@ type IAssets =
   /// <summary>Loads and caches a <see cref="T:Raylib_cs.Model"/> from file.</summary>
   abstract Model: path: string -> Model
 
+  /// <summary>Loads and caches <see cref="T:Raylib_cs.ModelAnimation"/>[] from file.</summary>
+  /// <remarks>
+  /// Loads all skeletal animations from a model file (glb/gltf/iqm).
+  /// Returns an empty array if the model has no animations.
+  /// </remarks>
+  abstract ModelAnimations: path: string -> ModelAnimation[]
+
   /// <summary>Gets a previously created custom asset by key.</summary>
   abstract Get<'T> : key: string -> 'T voption
 
@@ -67,6 +74,7 @@ type AssetsService(baseAssetPath: string voption) =
   let fonts = Dictionary<string, Font>()
   let sounds = Dictionary<string, Sound>()
   let models = Dictionary<string, Model>()
+  let modelAnimations = Dictionary<string, ModelAnimation[]>()
 
   member _.BasePath = baseAssetPath
 
@@ -111,6 +119,21 @@ type AssetsService(baseAssetPath: string voption) =
         models.Add(resolved, m)
         m
 
+    member _.ModelAnimations(path) =
+      let resolved = resolvePath path
+
+      match modelAnimations.TryGetValue(resolved) with
+      | true, anims -> anims
+      | _ ->
+        let animsSpan = Raylib.LoadModelAnimations(resolved)
+        let anims = Array.zeroCreate<ModelAnimation> animsSpan.Length
+
+        for i = 0 to animsSpan.Length - 1 do
+          anims[i] <- animsSpan[i]
+
+        modelAnimations.Add(resolved, anims)
+        anims
+
     member _.Get<'T>(key: string) : 'T voption =
       match typedCache.TryGetValue(key) with
       | true, (:? 'T as v) -> ValueSome v
@@ -135,6 +158,7 @@ type AssetsService(baseAssetPath: string voption) =
       fonts.Clear()
       sounds.Clear()
       models.Clear()
+      modelAnimations.Clear()
 
     member _.Dispose() =
       for kv in textures do
@@ -156,6 +180,11 @@ type AssetsService(baseAssetPath: string voption) =
         Raylib.UnloadModel(kv.Value)
 
       models.Clear()
+
+      for kv in modelAnimations do
+        Raylib.UnloadModelAnimations(kv.Value.AsSpan())
+
+      modelAnimations.Clear()
 
       typedCache.Clear()
 

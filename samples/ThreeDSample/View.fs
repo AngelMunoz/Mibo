@@ -9,6 +9,7 @@ open FSharp.NativeInterop
 open Raylib_cs
 open Mibo.Elmish
 open Mibo.Elmish.Graphics3D
+open Mibo.Animation
 open Mibo.Layout3D
 open ThreeDSample.Constants
 open ThreeDSample.Types
@@ -143,8 +144,7 @@ let view (ctx: GameContext) (model: GameModel) (buffer: RenderBuffer3D) =
         chunk.Grid
         buffer
 
-  let playerModel =
-    loadOrGetModel model.ModelCache KenneyModels.characterOobi ctx
+  let playerModel = model.PlayerAnim.Model
 
   let playerTransform =
     let rot = Raymath.MatrixRotateY(model.PlayerFacing)
@@ -157,6 +157,8 @@ let view (ctx: GameContext) (model: GameModel) (buffer: RenderBuffer3D) =
       )
 
     Raymath.MatrixMultiply(rot, trans)
+
+  Animation3DState.applyToModel model.PlayerAnim
 
   let p = model.Particles
 

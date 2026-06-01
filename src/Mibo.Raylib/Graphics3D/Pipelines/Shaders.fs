@@ -112,6 +112,94 @@ void main()
 }
 """
 
+  let forwardVertexSkinned =
+    """#version 330
+
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+in vec3 vertexNormal;
+in vec4 vertexColor;
+in vec4 vertexBoneIndices;
+in vec4 vertexBoneWeights;
+
+out vec2 fragTexCoord;
+out vec4 fragColor;
+out vec3 fragNormal;
+out vec3 fragWorldPos;
+
+uniform mat4 mvp;
+uniform mat4 matModel;
+uniform mat4 normalMatrix;
+uniform mat4 boneMatrices[128];
+
+void main()
+{
+    int ids0 = int(vertexBoneIndices.x);
+    int ids1 = int(vertexBoneIndices.y);
+    int ids2 = int(vertexBoneIndices.z);
+    int ids3 = int(vertexBoneIndices.w);
+
+    mat4 skinMatrix =
+        vertexBoneWeights.x * boneMatrices[ids0] +
+        vertexBoneWeights.y * boneMatrices[ids1] +
+        vertexBoneWeights.z * boneMatrices[ids2] +
+        vertexBoneWeights.w * boneMatrices[ids3];
+
+    vec4 skinnedPos = skinMatrix * vec4(vertexPosition, 1.0);
+    vec3 skinnedNormal = mat3(skinMatrix) * vertexNormal;
+
+    fragTexCoord = vertexTexCoord;
+    fragColor = vertexColor;
+    fragNormal = mat3(normalMatrix) * skinnedNormal;
+    fragWorldPos = (matModel * skinnedPos).xyz;
+    gl_Position = mvp * skinnedPos;
+}
+"""
+
+  let depthShadowVertexSkinned =
+    """#version 330
+
+in vec3 vertexPosition;
+in vec3 vertexNormal;
+in vec2 vertexTexCoord;
+in vec4 vertexColor;
+in vec4 vertexBoneIndices;
+in vec4 vertexBoneWeights;
+
+uniform mat4 mvp;
+uniform mat4 matModel;
+uniform mat4 normalMatrix;
+uniform mat4 boneMatrices[128];
+
+out vec3 fragPosition;
+out vec2 fragTexCoord;
+out vec4 fragColor;
+out vec3 fragNormal;
+
+void main()
+{
+    int ids0 = int(vertexBoneIndices.x);
+    int ids1 = int(vertexBoneIndices.y);
+    int ids2 = int(vertexBoneIndices.z);
+    int ids3 = int(vertexBoneIndices.w);
+
+    mat4 skinMatrix =
+        vertexBoneWeights.x * boneMatrices[ids0] +
+        vertexBoneWeights.y * boneMatrices[ids1] +
+        vertexBoneWeights.z * boneMatrices[ids2] +
+        vertexBoneWeights.w * boneMatrices[ids3];
+
+    vec4 skinnedPos = skinMatrix * vec4(vertexPosition, 1.0);
+    vec3 skinnedNormal = mat3(skinMatrix) * vertexNormal;
+
+    fragPosition = vec3(matModel * skinnedPos);
+    fragTexCoord = vertexTexCoord;
+    fragColor    = vertexColor;
+    fragNormal   = normalize(mat3(normalMatrix) * skinnedNormal);
+    gl_Position  = mvp * skinnedPos;
+}
+"""
+
   let postProcessVertex =
     """#version 330
 
@@ -509,6 +597,26 @@ void main()
   /// <summary>Loads the depth-only shadow pass vertex + fragment shader (C example compatible).</summary>
   let loadDepthShadowShader() : Shader =
     Raylib.LoadShaderFromMemory(depthShadowVertex, depthShadowFragment)
+
+  /// <summary>Loads the skinned forward PBR vertex + fragment shader.</summary>
+  /// <remarks>
+  /// Uses <c>vertexBoneIndices</c> and <c>vertexBoneWeights</c> vertex attributes plus
+  /// a <c>boneMatrices[128]</c> uniform array for GPU skeletal animation.
+  /// Raylib binds these attribute/uniform names automatically during shader linking.
+  /// </remarks>
+  let loadForwardSkinnedShader
+    (maxPointLights: int)
+    (maxSpotLights: int)
+    (maxShadowCasters: int)
+    : Shader =
+    Raylib.LoadShaderFromMemory(
+      forwardVertexSkinned,
+      forwardFragmentFmt maxPointLights maxSpotLights maxShadowCasters
+    )
+
+  /// <summary>Loads the skinned depth-only shadow pass vertex + fragment shader.</summary>
+  let loadDepthShadowSkinnedShader() : Shader =
+    Raylib.LoadShaderFromMemory(depthShadowVertexSkinned, depthShadowFragment)
 
   /// <summary>Loads the built-in fullscreen post-process vertex + fragment shader.</summary>
   let loadPostProcessShader() : Shader =

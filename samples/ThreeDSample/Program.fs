@@ -7,6 +7,7 @@ open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics3D
 open Mibo.Elmish.Graphics3D.Pipelines
+open Mibo.Animation
 open Mibo.Input
 open ThreeDSample.Constants
 open ThreeDSample.Types
@@ -56,6 +57,14 @@ let init(ctx: GameContext) =
 
   let assets = GameContext.getService<IAssets> ctx
   model.JumpSound <- assets.Sound("assets/sfx_jump.ogg")
+
+  let playerModel = assets.Model(KenneyModels.characterOobi)
+  model.PlayerModel <- playerModel
+
+  let animClips = assets.ModelAnimations(KenneyModels.characterOobi)
+  let clips = Animation3DClips.fromModelAnimations animClips
+  model.PlayerAnimClips <- clips
+  model.PlayerAnim <- Animation3DState.create playerModel clips "idle" 60.0f
 
   let target = spawnPosition + Vector3(0.0f, playerHeight * 0.5f, 0.0f)
   model.CameraTarget <- target

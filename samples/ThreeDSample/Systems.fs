@@ -6,6 +6,7 @@ open System.Numerics
 open Raylib_cs
 open Mibo.Elmish
 open Mibo.Elmish.Graphics3D
+open Mibo.Animation
 open Mibo.Input
 open Mibo.Layout3D
 open ThreeDSample.Constants
@@ -275,6 +276,32 @@ let inline diagnosticsSystem
   diag.ParticleCount <- model.Particles.Count
   struct (model, Cmd.none)
 
+let inline animationSystem
+  (dt: float32)
+  (model: GameModel)
+  : struct (GameModel * Cmd<Msg>) =
+  if model.PlayerAnim.Clips.Clips.Length = 0 then
+    struct (model, Cmd.none)
+  else
+    let isMoving =
+      model.Actions.Held.Contains(GameAction.MoveForward)
+      || model.Actions.Held.Contains(GameAction.MoveBackward)
+      || model.Actions.Held.Contains(GameAction.MoveLeft)
+      || model.Actions.Held.Contains(GameAction.MoveRight)
+
+    let targetAnim =
+      if not model.IsGrounded then "jump"
+      elif isMoving then "walk"
+      else "idle"
+
+    let anim =
+      model.PlayerAnim
+      |> Animation3DState.blendTo targetAnim 0.15f
+      |> Animation3DState.update dt
+
+    model.PlayerAnim <- anim
+    struct (model, Cmd.none)
+
 let inline lightingSystem
   (dt: float32)
   (model: GameModel)
@@ -370,6 +397,7 @@ let update (msg: Msg) (model: GameModel) : struct (GameModel * Cmd<Msg>) =
     System.start model
     |> System.pipeMutable(inputSystem dt)
     |> System.pipeMutable(physicsSystem dt)
+    |> System.pipeMutable(animationSystem dt)
     |> System.pipeMutable(chunkSystem dt)
     |> System.pipeMutable(particleSystem dt)
     |> System.pipeMutable(minimapSystem dt)

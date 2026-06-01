@@ -154,6 +154,7 @@ type private PipelineContext
   (
     forwardShader: Shader,
     instancedShader: Shader,
+    skinnedShader: Shader,
     materialCache: Dictionary<MaterialKey, Material>,
     maxPointLights: int,
     maxSpotLights: int,
@@ -497,6 +498,164 @@ type private PipelineContext
 
       iLocsCached <- true
 
+  // ------------------------------------------------------------------
+  // Skinned shader location cache (bone uniforms + same fragment uniforms)
+  // ------------------------------------------------------------------
+
+  let mutable sLocsCached = false
+  let mutable sLocAlbedoColor = -1
+  let mutable sLocRoughness = -1
+  let mutable sLocMetallic = -1
+  let mutable sLocEmissionColor = -1
+  let mutable sLocOpacity = -1
+  let mutable sLocTiling = -1
+  let mutable sLocUseNormalMap = -1
+
+  let mutable sLocAmbientColor = -1
+  let mutable sLocAmbientIntensity = -1
+  let mutable sLocDirLightDir = -1
+  let mutable sLocDirLightColor = -1
+  let mutable sLocDirLightIntensity = -1
+  let mutable sLocDirLightCastsShadows = -1
+  let mutable sLocPointLightCount = -1
+  let sLocPointLightPos = Array.zeroCreate<int> maxPointLights
+  let sLocPointLightColor = Array.zeroCreate<int> maxPointLights
+  let sLocPointLightIntensity = Array.zeroCreate<int> maxPointLights
+  let sLocPointLightRadius = Array.zeroCreate<int> maxPointLights
+  let sLocPointLightFalloff = Array.zeroCreate<int> maxPointLights
+
+  let mutable sLocSpotLightCount = -1
+  let sLocSpotLightPos = Array.zeroCreate<int> maxSpotLights
+  let sLocSpotLightDir = Array.zeroCreate<int> maxSpotLights
+  let sLocSpotLightColor = Array.zeroCreate<int> maxSpotLights
+  let sLocSpotLightIntensity = Array.zeroCreate<int> maxSpotLights
+  let sLocSpotLightRadius = Array.zeroCreate<int> maxSpotLights
+  let sLocSpotLightInnerCutoff = Array.zeroCreate<int> maxSpotLights
+  let sLocSpotLightOuterCutoff = Array.zeroCreate<int> maxSpotLights
+
+  let mutable sLocCameraPos = -1
+  let mutable sLocNormalMatrix = -1
+  let mutable sLocShadowPass = -1
+  let mutable sLocShadowAtlas = -1
+  let mutable sLocShadowCasterCount = -1
+  let sLocShadowViewProjs = Array.zeroCreate<int> maxShadowCasters
+  let sLocShadowUVOffsets = Array.zeroCreate<int> maxShadowCasters
+  let sLocShadowLightPositions = Array.zeroCreate<int> maxShadowCasters
+  let sLocShadowBiases = Array.zeroCreate<int> maxShadowCasters
+  let sLocShadowTypes = Array.zeroCreate<int> maxShadowCasters
+
+  let mutable sLocBones = -1
+
+  let mutable skinnedLightsDirty = true
+
+  let cacheSkinnedLocations() =
+    if not sLocsCached then
+      sLocAlbedoColor <- Raylib.GetShaderLocation(skinnedShader, "albedoColor")
+      sLocRoughness <- Raylib.GetShaderLocation(skinnedShader, "roughness")
+      sLocMetallic <- Raylib.GetShaderLocation(skinnedShader, "metallic")
+
+      sLocEmissionColor <-
+        Raylib.GetShaderLocation(skinnedShader, "emissionColor")
+
+      sLocOpacity <- Raylib.GetShaderLocation(skinnedShader, "opacity")
+      sLocTiling <- Raylib.GetShaderLocation(skinnedShader, "tiling")
+
+      sLocUseNormalMap <-
+        Raylib.GetShaderLocation(skinnedShader, "useNormalMap")
+
+      sLocNormalMatrix <-
+        Raylib.GetShaderLocation(skinnedShader, "normalMatrix")
+
+      sLocAmbientColor <-
+        Raylib.GetShaderLocation(skinnedShader, "ambientColor")
+
+      sLocAmbientIntensity <-
+        Raylib.GetShaderLocation(skinnedShader, "ambientIntensity")
+
+      sLocDirLightDir <- Raylib.GetShaderLocation(skinnedShader, "dirLightDir")
+
+      sLocDirLightColor <-
+        Raylib.GetShaderLocation(skinnedShader, "dirLightColor")
+
+      sLocDirLightIntensity <-
+        Raylib.GetShaderLocation(skinnedShader, "dirLightIntensity")
+
+      sLocDirLightCastsShadows <-
+        Raylib.GetShaderLocation(skinnedShader, "dirLightCastsShadows")
+
+      sLocPointLightCount <-
+        Raylib.GetShaderLocation(skinnedShader, "pointLightCount")
+
+      for i = 0 to maxPointLights - 1 do
+        sLocPointLightPos[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"pointLightPos[{i}]")
+
+        sLocPointLightColor[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"pointLightColor[{i}]")
+
+        sLocPointLightIntensity[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"pointLightIntensity[{i}]")
+
+        sLocPointLightRadius[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"pointLightRadius[{i}]")
+
+        sLocPointLightFalloff[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"pointLightFalloff[{i}]")
+
+      sLocSpotLightCount <-
+        Raylib.GetShaderLocation(skinnedShader, "spotLightCount")
+
+      for i = 0 to maxSpotLights - 1 do
+        sLocSpotLightPos[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"spotLightPos[{i}]")
+
+        sLocSpotLightDir[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"spotLightDir[{i}]")
+
+        sLocSpotLightColor[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"spotLightColor[{i}]")
+
+        sLocSpotLightIntensity[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"spotLightIntensity[{i}]")
+
+        sLocSpotLightRadius[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"spotLightRadius[{i}]")
+
+        sLocSpotLightInnerCutoff[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"spotLightInnerCutoff[{i}]")
+
+        sLocSpotLightOuterCutoff[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"spotLightOuterCutoff[{i}]")
+
+      sLocCameraPos <- Raylib.GetShaderLocation(skinnedShader, "cameraPos")
+      sLocShadowPass <- Raylib.GetShaderLocation(skinnedShader, "shadowPass")
+
+      sLocShadowAtlas <- Raylib.GetShaderLocation(skinnedShader, "shadowAtlas")
+
+      rlSetUniformInt sLocShadowAtlas 15
+
+      sLocShadowCasterCount <-
+        Raylib.GetShaderLocation(skinnedShader, "shadowCasterCount")
+
+      for i = 0 to maxShadowCasters - 1 do
+        sLocShadowViewProjs[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"shadowViewProjs[{i}]")
+
+        sLocShadowUVOffsets[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"shadowUVOffsets[{i}]")
+
+        sLocShadowLightPositions[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"shadowLightPositions[{i}]")
+
+        sLocShadowBiases[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"shadowBiases[{i}]")
+
+        sLocShadowTypes[i] <-
+          Raylib.GetShaderLocation(skinnedShader, $"shadowTypes[{i}]")
+
+      sLocBones <- Raylib.GetShaderLocation(skinnedShader, "boneMatrices[0]")
+      sLocsCached <- true
+
   let colorToVec3(c: Color) =
     Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
 
@@ -646,6 +805,147 @@ type private PipelineContext
       lastInstancedRaylibMaterial <- mat
       hasLastInstancedMaterial <- true
       mat
+
+  let mutable skinnedMaterialCache = Dictionary<MaterialKey, Material>()
+  let mutable lastSkinnedMaterialKey = Unchecked.defaultof<MaterialKey>
+  let mutable hasLastSkinnedMaterial = false
+  let mutable lastSkinnedRaylibMaterial = Unchecked.defaultof<Material>
+
+  let getOrCreateSkinnedMaterial(mat3d: Material3D) : Material =
+    let key = MaterialKey.fromMaterial3D mat3d
+
+    if hasLastSkinnedMaterial && key = lastSkinnedMaterialKey then
+      lastSkinnedRaylibMaterial
+    else
+      match skinnedMaterialCache.TryGetValue key with
+      | true, mat ->
+        lastSkinnedMaterialKey <- key
+        lastSkinnedRaylibMaterial <- mat
+        hasLastSkinnedMaterial <- true
+        mat
+      | false, _ ->
+
+      let mutable mat = Raylib.LoadMaterialDefault()
+      mat.Shader <- skinnedShader
+
+      match mat3d.AlbedoMap with
+      | ValueSome t ->
+        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Albedo, t)
+      | ValueNone -> ()
+
+      match mat3d.RoughnessMap with
+      | ValueSome t ->
+        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Roughness, t)
+      | ValueNone -> ()
+
+      match mat3d.MetallicMap with
+      | ValueSome t ->
+        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Metalness, t)
+      | ValueNone -> ()
+
+      match mat3d.NormalMap with
+      | ValueSome t ->
+        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Normal, t)
+      | ValueNone -> ()
+
+      match mat3d.EmissionMap with
+      | ValueSome t ->
+        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Emission, t)
+      | ValueNone -> ()
+
+      skinnedMaterialCache[key] <- mat
+      lastSkinnedMaterialKey <- key
+      lastSkinnedRaylibMaterial <- mat
+      hasLastSkinnedMaterial <- true
+      mat
+
+  let uploadLightsSkinned() =
+    cacheSkinnedLocations()
+
+    match ambient.Count with
+    | 0 ->
+      setShaderVec3 skinnedShader sLocAmbientColor Vector3.Zero
+      setShaderFloat skinnedShader sLocAmbientIntensity 0.0f
+    | _ ->
+      let a = ambient[0]
+      setShaderVec3 skinnedShader sLocAmbientColor (colorToVec3 a.Color)
+      setShaderFloat skinnedShader sLocAmbientIntensity a.Intensity
+
+    match dirLights.Count with
+    | 0 ->
+      setShaderVec3 skinnedShader sLocDirLightDir Vector3.Zero
+      setShaderVec3 skinnedShader sLocDirLightColor Vector3.Zero
+      setShaderFloat skinnedShader sLocDirLightIntensity 0.0f
+      setShaderInt skinnedShader sLocDirLightCastsShadows 0
+    | _ ->
+      let d = dirLights[0]
+      setShaderVec3 skinnedShader sLocDirLightDir d.Direction
+      setShaderVec3 skinnedShader sLocDirLightColor (colorToVec3 d.Color)
+      setShaderFloat skinnedShader sLocDirLightIntensity d.Intensity
+
+      setShaderInt
+        skinnedShader
+        sLocDirLightCastsShadows
+        (if d.CastsShadows then 1 else 0)
+
+    let ptCount = min pointLights.Count maxPointLights
+    setShaderInt skinnedShader sLocPointLightCount ptCount
+
+    for i = 0 to ptCount - 1 do
+      let l = pointLights[i]
+      setShaderVec3 skinnedShader sLocPointLightPos[i] l.Position
+      setShaderVec3 skinnedShader sLocPointLightColor[i] (colorToVec3 l.Color)
+      setShaderFloat skinnedShader sLocPointLightIntensity[i] l.Intensity
+      setShaderFloat skinnedShader sLocPointLightRadius[i] l.Radius
+      setShaderFloat skinnedShader sLocPointLightFalloff[i] l.Falloff
+
+    let spCount = min spotLights.Count maxSpotLights
+    setShaderInt skinnedShader sLocSpotLightCount spCount
+
+    for i = 0 to spCount - 1 do
+      let s: SpotLight3D = spotLights[i]
+      setShaderVec3 skinnedShader sLocSpotLightPos[i] s.Position
+      setShaderVec3 skinnedShader sLocSpotLightDir[i] s.Direction
+      setShaderVec3 skinnedShader sLocSpotLightColor[i] (colorToVec3 s.Color)
+      setShaderFloat skinnedShader sLocSpotLightIntensity[i] s.Intensity
+      setShaderFloat skinnedShader sLocSpotLightRadius[i] s.Radius
+      setShaderFloat skinnedShader sLocSpotLightInnerCutoff[i] s.InnerCutoff
+      setShaderFloat skinnedShader sLocSpotLightOuterCutoff[i] s.OuterCutoff
+
+    skinnedLightsDirty <- false
+
+  let setMaterialUniformsSkinned (normalMatrix: Matrix4x4) (mat3d: Material3D) =
+    cacheSkinnedLocations()
+
+    setShaderVec4 skinnedShader sLocAlbedoColor (colorToVec4 mat3d.AlbedoColor)
+
+    setShaderFloat skinnedShader sLocRoughness mat3d.Roughness
+    setShaderFloat skinnedShader sLocMetallic mat3d.Metallic
+
+    setShaderVec4
+      skinnedShader
+      sLocEmissionColor
+      (colorToVec4 mat3d.EmissionColor)
+
+    setShaderFloat skinnedShader sLocOpacity mat3d.Opacity
+    setShaderVec2 skinnedShader sLocTiling mat3d.Tiling
+
+    let useNormal =
+      match mat3d.NormalMap with
+      | ValueSome _ -> 1
+      | ValueNone -> 0
+
+    setShaderInt skinnedShader sLocUseNormalMap useNormal
+
+    Raylib.SetShaderValueMatrix(skinnedShader, sLocNormalMatrix, normalMatrix)
+
+  let uploadBoneMatrices(bones: Matrix4x4[]) =
+    cacheSkinnedLocations()
+
+    let count = min bones.Length 128
+
+    for i = 0 to count - 1 do
+      Raylib.SetShaderValueMatrix(skinnedShader, sLocBones + i, bones[i])
 
   let ensureShaderActive() =
     if not shaderActive then
@@ -892,14 +1192,27 @@ type private PipelineContext
       Raylib.DrawLine3D(start, finish, color)
 
   member _.DrawSkinnedMesh
-    (
-      mesh: Mesh,
-      transform: Matrix4x4,
-      material: Material3D,
-      _boneMatrices: Matrix4x4[]
-    ) =
-    let normalMatrix = computeNormalMatrix transform
-    drawMeshCore mesh transform normalMatrix material
+    (mesh: Mesh, transform: Matrix4x4, material: Material3D, bones: Matrix4x4[])
+    =
+    if cameraActive then
+      ensureShaderInactive()
+      Raylib.BeginShaderMode skinnedShader
+      shaderActive <- true
+
+      if skinnedLightsDirty then
+        uploadLightsSkinned()
+
+      setShaderVec3 skinnedShader sLocCameraPos currentCamera.Position
+      setShaderInt skinnedShader sLocShadowPass 0
+
+      let normalMatrix = computeNormalMatrix transform
+      setMaterialUniformsSkinned normalMatrix material
+      uploadBoneMatrices bones
+
+      let mat = getOrCreateSkinnedMaterial material
+      Raylib.DrawMesh(mesh, mat, transform)
+
+      ensureShaderInactive()
 
   member _.DrawMeshInstanced
     (
@@ -967,22 +1280,26 @@ type private PipelineContext
     pointLights.Add light
     lightsDirty <- true
     instLightsDirty <- true
+    skinnedLightsDirty <- true
 
   member _.AddDirectionalLight(light: DirectionalLight3D) =
     dirLights.Add light
     lightsDirty <- true
     instLightsDirty <- true
+    skinnedLightsDirty <- true
 
   member _.AddSpotLight(light: SpotLight3D) =
     spotLights.Add light
     lightsDirty <- true
     instLightsDirty <- true
+    skinnedLightsDirty <- true
 
   member _.SetAmbientLight(light: AmbientLight3D) =
     ambient.Clear()
     ambient.Add light
     lightsDirty <- true
     instLightsDirty <- true
+    skinnedLightsDirty <- true
 
   member _.DrawImmediate(action: unit -> unit) =
     let savedCam = cameraActive
@@ -1019,6 +1336,11 @@ type private PipelineContext
       Raylib.UnloadMaterial mat
 
     instancedMaterialCache.Clear()
+
+    for KeyValue(_, mat) in skinnedMaterialCache do
+      Raylib.UnloadMaterial mat
+
+    skinnedMaterialCache.Clear()
 
   member internal _.CacheInstancedShadowLocations() =
     cacheInstancedLocations() // ensure base locations are cached first
@@ -1089,8 +1411,10 @@ type private PipelineContext
     pointLights.Clear()
     spotLights.Clear()
     hasLastMaterial <- false
+    hasLastSkinnedMaterial <- false
     cameraActive <- false
     shaderActive <- false
+    skinnedLightsDirty <- true
 
   member internal _.EndAll() =
     if shaderActive then
@@ -1107,7 +1431,11 @@ type private PipelineContext
 
 module private ShadowPassHelpers =
   [<Struct>]
-  type MeshDraw = { Mesh: Mesh; Transform: Matrix4x4 }
+  type MeshDraw = {
+    Mesh: Mesh
+    Transform: Matrix4x4
+    Bones: Matrix4x4[] voption
+  }
 
   let collectMeshDraws(buffer: RenderBuffer3D) =
     let pool = System.Buffers.ArrayPool<MeshDraw>.Shared
@@ -1143,15 +1471,31 @@ module private ShadowPassHelpers =
       | Command3D.DisableShadows -> shadowsEnabled <- false
       | Command3D.EnableShadows -> shadowsEnabled <- true
       | Command3D.DrawMesh(mesh, transform, _) when shadowsEnabled ->
-        arr[count] <- { Mesh = mesh; Transform = transform }
+        arr[count] <- {
+          Mesh = mesh
+          Transform = transform
+          Bones = ValueNone
+        }
+
         count <- count + 1
-      | Command3D.DrawSkinnedMesh(mesh, transform, _, _) when shadowsEnabled ->
-        arr[count] <- { Mesh = mesh; Transform = transform }
+      | Command3D.DrawSkinnedMesh(mesh, transform, _, bones) when shadowsEnabled ->
+        arr[count] <- {
+          Mesh = mesh
+          Transform = transform
+          Bones = ValueSome bones
+        }
+
         count <- count + 1
       | Command3D.DrawModel(model, transform) when shadowsEnabled ->
         for mi = 0 to model.MeshCount - 1 do
           let mesh = NativePtr.get model.Meshes mi
-          arr[count] <- { Mesh = mesh; Transform = transform }
+
+          arr[count] <- {
+            Mesh = mesh
+            Transform = transform
+            Bones = ValueNone
+          }
+
           count <- count + 1
       | Command3D.DrawMeshInstanced(mesh, transforms, _, instanceCount) when
         shadowsEnabled
@@ -1160,6 +1504,7 @@ module private ShadowPassHelpers =
           arr[count] <- {
             Mesh = mesh
             Transform = transforms[ti]
+            Bones = ValueNone
           }
 
           count <- count + 1
@@ -1189,7 +1534,7 @@ module private ShadowPassHelpers =
 ///   <item><description>Accumulated point and directional lights (configurable max point lights via uniform arrays, default 8)</description></item>
 ///   <item><description>Material caching: converts <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/> to raylib <c>Material</c> on first use</description></item>
 ///   <item><description>Post-process via ping-pong render targets</description></item>
-///   <item><description>CPU skinning fallback placeholder for <c>DrawSkinnedMesh</c></description></item>
+///   <item><description>GPU skeletal animation via <c>DrawSkinnedMesh</c> with bone matrix uniforms</description></item>
 /// </list>
 /// </remarks>
 type ForwardPbrPipeline
@@ -1209,10 +1554,15 @@ type ForwardPbrPipeline
 
   let mutable forwardShader: Shader = Unchecked.defaultof<Shader>
   let mutable instancedShader: Shader = Unchecked.defaultof<Shader>
+  let mutable skinnedShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowShader: Shader = Unchecked.defaultof<Shader>
+  let mutable depthShadowSkinnedShader: Shader = Unchecked.defaultof<Shader>
   let mutable postProcessShader: Shader = Unchecked.defaultof<Shader>
   let materialCache = Dictionary<MaterialKey, Material>()
   let mutable depthShadowMaterial: Material = Unchecked.defaultof<Material>
+
+  let mutable depthShadowSkinnedMaterial: Material =
+    Unchecked.defaultof<Material>
 
   let mutable shadowAtlas: ShadowAtlas = Unchecked.defaultof<ShadowAtlas>
 
@@ -1285,6 +1635,9 @@ type ForwardPbrPipeline
       instancedShader <-
         Shaders.loadForwardInstancedShader maxPt maxSp atlasCfg.MaxCasters
 
+      skinnedShader <-
+        Shaders.loadForwardSkinnedShader maxPt maxSp atlasCfg.MaxCasters
+
       // Tell raylib that the per-instance model transform lives at the
       // `instanceTransform` vertex attribute.  When DrawMeshInstanced is
       // called, raylib uploads the transforms array to this attribute.
@@ -1297,10 +1650,14 @@ type ForwardPbrPipeline
         instanceTransformLoc
 
       depthShadowShader <- Shaders.loadDepthShadowShader()
+      depthShadowSkinnedShader <- Shaders.loadDepthShadowSkinnedShader()
       postProcessShader <- Shaders.loadPostProcessShader()
 
       depthShadowMaterial <- Raylib.LoadMaterialDefault()
       depthShadowMaterial.Shader <- depthShadowShader
+
+      depthShadowSkinnedMaterial <- Raylib.LoadMaterialDefault()
+      depthShadowSkinnedMaterial.Shader <- depthShadowSkinnedShader
 
       shadowAtlas <- ShadowAtlas(atlasCfg, biasCfg)
       shadowAtlas.Initialize()
@@ -1309,6 +1666,7 @@ type ForwardPbrPipeline
         PipelineContext(
           forwardShader,
           instancedShader,
+          skinnedShader,
           materialCache,
           maxPt,
           maxSp,
@@ -1322,10 +1680,13 @@ type ForwardPbrPipeline
 
       Raylib.UnloadShader forwardShader
       Raylib.UnloadShader instancedShader
+      Raylib.UnloadShader skinnedShader
       Raylib.UnloadShader depthShadowShader
+      Raylib.UnloadShader depthShadowSkinnedShader
       Raylib.UnloadShader postProcessShader
 
       Raylib.UnloadMaterial depthShadowMaterial
+      Raylib.UnloadMaterial depthShadowSkinnedMaterial
 
       for KeyValue(_, mat) in materialCache do
         Raylib.UnloadMaterial mat
@@ -1462,13 +1823,50 @@ type ForwardPbrPipeline
                 let draw = meshDraws[i]
                 let nm = computeNormalMatrix draw.Transform
 
-                Raylib.SetShaderValueMatrix(
-                  depthShadowShader,
-                  context.LocShadowNormalMatrix,
-                  nm
-                )
+                match draw.Bones with
+                | ValueSome bones ->
+                  Raylib.BeginShaderMode depthShadowSkinnedShader
 
-                Raylib.DrawMesh(draw.Mesh, depthShadowMaterial, draw.Transform)
+                  Raylib.SetShaderValueMatrix(
+                    depthShadowSkinnedShader,
+                    context.LocShadowNormalMatrix,
+                    nm
+                  )
+
+                  let shadowBoneLoc =
+                    Raylib.GetShaderLocation(
+                      depthShadowSkinnedShader,
+                      "boneMatrices[0]"
+                    )
+
+                  let shadowBoneCount = min bones.Length 128
+
+                  for bi = 0 to shadowBoneCount - 1 do
+                    Raylib.SetShaderValueMatrix(
+                      depthShadowSkinnedShader,
+                      shadowBoneLoc + bi,
+                      bones[bi]
+                    )
+
+                  Raylib.DrawMesh(
+                    draw.Mesh,
+                    depthShadowSkinnedMaterial,
+                    draw.Transform
+                  )
+
+                  Raylib.EndShaderMode()
+                | ValueNone ->
+                  Raylib.SetShaderValueMatrix(
+                    depthShadowShader,
+                    context.LocShadowNormalMatrix,
+                    nm
+                  )
+
+                  Raylib.DrawMesh(
+                    draw.Mesh,
+                    depthShadowMaterial,
+                    draw.Transform
+                  )
 
               Raylib.EndMode3D()
 
