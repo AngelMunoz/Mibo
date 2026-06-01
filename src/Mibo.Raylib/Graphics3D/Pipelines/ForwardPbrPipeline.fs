@@ -275,6 +275,7 @@ type internal ShadowDepthResources = {
   Material: Material
   SkinnedMaterial: Material
   NormalMatrixLoc: int
+  SkinnedNormalMatrixLoc: int
   BoneLoc: int
 }
 
@@ -1294,17 +1295,23 @@ module internal PipelineFunctions =
 
     shadowAtlas.SetRegionViewProj(regionIndex, vp)
 
+    let mutable shaderActive = false
+
     for i = 0 to meshDrawCount - 1 do
       let draw = meshDraws[i]
       let nm = computeNormalMatrix draw.Transform
 
       match draw.Bones with
       | ValueSome bones ->
+        if shaderActive then
+          Raylib.EndShaderMode()
+          shaderActive <- false
+
         Raylib.BeginShaderMode resources.SkinnedShader
 
         Raylib.SetShaderValueMatrix(
           resources.SkinnedShader,
-          resources.NormalMatrixLoc,
+          resources.SkinnedNormalMatrixLoc,
           nm
         )
 
@@ -1318,6 +1325,10 @@ module internal PipelineFunctions =
 
         Raylib.EndShaderMode()
       | ValueNone ->
+        if not shaderActive then
+          Raylib.BeginShaderMode resources.Shader
+          shaderActive <- true
+
         Raylib.SetShaderValueMatrix(
           resources.Shader,
           resources.NormalMatrixLoc,
@@ -1325,6 +1336,9 @@ module internal PipelineFunctions =
         )
 
         Raylib.DrawMesh(draw.Mesh, resources.Material, draw.Transform)
+
+    if shaderActive then
+      Raylib.EndShaderMode()
 
     Raylib.EndMode3D()
 
@@ -1485,6 +1499,10 @@ type ForwardPbrPipeline
   let mutable depthShadowSkinnedMaterial: Material =
     Unchecked.defaultof<Material>
 
+  let mutable shadowNormalMatrixLoc: int = -1
+  let mutable shadowSkinnedNormalMatrixLoc: int = -1
+  let mutable shadowBoneLoc: int = -1
+
   let mutable forward: ShaderVariant = Unchecked.defaultof<ShaderVariant>
   let mutable instanced: ShaderVariant = Unchecked.defaultof<ShaderVariant>
   let mutable skinned: ShaderVariant = Unchecked.defaultof<ShaderVariant>
@@ -1584,6 +1602,15 @@ type ForwardPbrPipeline
       depthShadowSkinnedMaterial <- Raylib.LoadMaterialDefault()
       depthShadowSkinnedMaterial.Shader <- depthShadowSkinnedShader
 
+      shadowNormalMatrixLoc <-
+        Raylib.GetShaderLocation(depthShadowShader, "normalMatrix")
+
+      shadowSkinnedNormalMatrixLoc <-
+        Raylib.GetShaderLocation(depthShadowSkinnedShader, "normalMatrix")
+
+      shadowBoneLoc <-
+        Raylib.GetShaderLocation(depthShadowSkinnedShader, "boneMatrices[0]")
+
       shadowAtlas <- ShadowAtlas(atlasCfg, biasCfg)
       shadowAtlas.Initialize()
 
@@ -1657,8 +1684,9 @@ type ForwardPbrPipeline
         SkinnedShader = depthShadowSkinnedShader
         Material = depthShadowMaterial
         SkinnedMaterial = depthShadowSkinnedMaterial
-        NormalMatrixLoc = skinned.Locs.ShadowNormalMatrix
-        BoneLoc = skinned.Locs.Bones
+        NormalMatrixLoc = shadowNormalMatrixLoc
+        SkinnedNormalMatrixLoc = shadowSkinnedNormalMatrixLoc
+        BoneLoc = shadowBoneLoc
       }
 
       let mutable hasShadowCasters = false
