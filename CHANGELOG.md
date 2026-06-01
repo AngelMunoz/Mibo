@@ -4,6 +4,10 @@
 
 ### Added
 
+- `ForwardPbrPipelineV2`: refactored forward PBR pipeline eliminating 3× shader variant duplication. Uses parameterized `ShaderVariant` structs, single `cacheLocations`/`uploadLights`/`setMaterialUniforms`/`getOrCreate` functions, and self-contained command handlers. Implements `IRenderPipeline3D` for swap-in/swap-out testing alongside the original pipeline.
+- `ShadowDepthResources` struct bundling shadow shader + material + uniform locations.
+- `ShadowPassHelpersV2` module with `collectShadowCasters`, `createDirectionalShadowCamera`, `renderShadowRegion`, `collectMeshDraws` helpers.
+- `PipelineFunctions` module with `preScan`, `clearLights`, `warmMaterial`, `handleDrawMesh`, `handleDrawModel`, `handleDrawSkinnedMesh`, `handleDrawMeshInstanced`, `handleDrawBillboard`, `handleDrawBillboardBatch`, `handleLightCommand`, `applyCameraConfig` helpers.
 - 2D normal map support: `SpriteState.NormalMap` field for per-pixel lighting on lit sprites. `LightContext2D` manages two shader variants (standard and normal-mapped) and switches between them via `BeginShaderMode`. The normal-map shader uses a 2D-compatible Half-Lambert lighting model (`NdotL = max(1.0 + dot(normal.xy, L), 0)`) for correct visual results with 2D light directions.
 - `LightDraw.litAnimatedSprite` helper for animated sprites with automatic flip handling.
 - `SpriteState` promoted to top-level type with builder DSL (`create`, `withNormalMap`, `withLayer`, etc.).
