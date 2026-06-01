@@ -71,7 +71,7 @@ type Renderer3D<'Model>
 
       buffer.Clear()
       view ctx model buffer
-      pipeline.Execute ctx buffer rtPool
+      pipeline.Execute(ctx, buffer, rtPool)
       (rtPool :> IRenderTargetPool3D).ReleaseAll()
 
   interface IDisposable with
