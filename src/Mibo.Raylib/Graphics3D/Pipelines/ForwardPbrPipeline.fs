@@ -87,7 +87,7 @@ module internal NativeHelpers =
 [<AutoOpen>]
 module internal NormalMatrixHelpers =
 
-  let computeNormalMatrix(model: Matrix4x4) =
+  let inline computeNormalMatrix(model: Matrix4x4) =
     let mutable inv = Matrix4x4.Identity
     Matrix4x4.Invert(model, &inv) |> ignore
     Matrix4x4.Transpose inv
@@ -114,7 +114,7 @@ type internal MaterialKey = {
 
 module internal MaterialKey =
 
-  let fromMaterial3D(mat: inref<Material3D>) : MaterialKey = {
+  let inline fromMaterial3D(mat: inref<Material3D>) : MaterialKey = {
     AlbedoMapId =
       match mat.AlbedoMap with
       | ValueSome t -> t.Id
@@ -513,10 +513,10 @@ module internal PipelineFunctions =
     SpotLights = ResizeArray<SpotLight3D> maxSp
   }
 
-  let colorToVec3(c: Color) =
+  let inline colorToVec3(c: Color) =
     Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
 
-  let colorToVec4(c: Color) =
+  let inline colorToVec4(c: Color) =
     Vector4(
       float32 c.R / 255.0f,
       float32 c.G / 255.0f,
@@ -888,7 +888,7 @@ module internal PipelineFunctions =
       Raylib.SetShaderValueMatrix(shader, boneLoc + i, bones[i])
 
   /// Clear all light buffers.
-  let clearLights(lights: LightBuffers) =
+  let inline clearLights(lights: LightBuffers) =
     lights.Ambient.Clear()
     lights.DirLights.Clear()
     lights.PointLights.Clear()
@@ -964,7 +964,7 @@ module internal PipelineFunctions =
     Raylib.EndShaderMode()
 
   /// Handle model draw: iterate meshes, upload lights once, draw each.
-  let handleDrawModel
+  let inline handleDrawModel
     (
       shader: Shader,
       variant: byref<ShaderVariant>,
@@ -1027,7 +1027,7 @@ module internal PipelineFunctions =
     Raylib.EndShaderMode()
 
   /// Handle instanced mesh draw: shader switch, lights, material, draw.
-  let handleDrawMeshInstanced
+  let inline handleDrawMeshInstanced
     (
       shader: Shader,
       variant: byref<ShaderVariant>,
@@ -1116,7 +1116,7 @@ module internal PipelineFunctions =
       )
 
   /// Handle light command: add or set light, mark dirty.
-  let handleLightCommand
+  let inline handleLightCommand
     (lights: LightBuffers, command: Command3D, lightsDirty: byref<bool>)
     =
     match command with
