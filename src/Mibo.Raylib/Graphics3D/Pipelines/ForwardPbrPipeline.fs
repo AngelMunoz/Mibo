@@ -809,19 +809,18 @@ type private PipelineContext
   let mutable skinnedMaterialCache = Dictionary<MaterialKey, Material>()
   let mutable lastSkinnedMaterialKey = Unchecked.defaultof<MaterialKey>
   let mutable hasLastSkinnedMaterial = false
+  let mutable lastSkinnedRaylibMaterial = Unchecked.defaultof<Material>
 
   let getOrCreateSkinnedMaterial(mat3d: Material3D) : Material =
     let key = MaterialKey.fromMaterial3D mat3d
 
     if hasLastSkinnedMaterial && key = lastSkinnedMaterialKey then
-      lastSkinnedMaterialKey <- key
-      lastSkinnedMaterialKey <- key
-      hasLastSkinnedMaterial <- true
-      skinnedMaterialCache[key]
+      lastSkinnedRaylibMaterial
     else
       match skinnedMaterialCache.TryGetValue key with
       | true, mat ->
         lastSkinnedMaterialKey <- key
+        lastSkinnedRaylibMaterial <- mat
         hasLastSkinnedMaterial <- true
         mat
       | false, _ ->
@@ -856,6 +855,7 @@ type private PipelineContext
 
       skinnedMaterialCache[key] <- mat
       lastSkinnedMaterialKey <- key
+      lastSkinnedRaylibMaterial <- mat
       hasLastSkinnedMaterial <- true
       mat
 
@@ -942,7 +942,9 @@ type private PipelineContext
   let uploadBoneMatrices(bones: Matrix4x4[]) =
     cacheSkinnedLocations()
 
-    for i = 0 to bones.Length - 1 do
+    let count = min bones.Length 128
+
+    for i = 0 to count - 1 do
       Raylib.SetShaderValueMatrix(skinnedShader, sLocBones + i, bones[i])
 
   let ensureShaderActive() =
@@ -1837,7 +1839,9 @@ type ForwardPbrPipeline
                       "boneMatrices[0]"
                     )
 
-                  for bi = 0 to bones.Length - 1 do
+                  let shadowBoneCount = min bones.Length 128
+
+                  for bi = 0 to shadowBoneCount - 1 do
                     Raylib.SetShaderValueMatrix(
                       depthShadowSkinnedShader,
                       shadowBoneLoc + bi,

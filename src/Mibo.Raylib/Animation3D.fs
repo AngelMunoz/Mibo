@@ -268,6 +268,8 @@ module Animation3DState =
     : Animation3DState =
     if state.Finished && state.BlendTargetIndex < 0 then
       state
+    elif state.Clips.Clips.Length = 0 then
+      state
     else
       let clip = state.Clips.ClipIndices.[state.CurrentClipIndex]
 
@@ -339,7 +341,9 @@ module Animation3DState =
   /// Must be called before rendering with <c>DrawModel</c>.
   /// </remarks>
   let applyToModel(state: Animation3DState) : unit =
-    if state.BlendTargetIndex >= 0 then
+    if state.Clips.Clips.Length = 0 then
+      ()
+    elif state.BlendTargetIndex >= 0 then
       let clipA = state.Clips.ClipIndices.[state.CurrentClipIndex]
       let clipB = state.Clips.ClipIndices.[state.BlendTargetIndex]
 
@@ -503,8 +507,17 @@ module AnimatedMesh =
           Span<Transform>(NativePtr.toVoidPtr nfPtr, boneCount)
 
       for i = 0 to boneCount - 1 do
-        let ct = cfPoses[i]
-        let nt = nfPoses[i]
+        let ct =
+          if i < cfPoses.Length then
+            cfPoses[i]
+          else
+            Unchecked.defaultof<Transform>
+
+        let nt =
+          if i < nfPoses.Length then
+            nfPoses[i]
+          else
+            Unchecked.defaultof<Transform>
 
         let translation = Vector3.Lerp(ct.Translation, nt.Translation, blend)
 
