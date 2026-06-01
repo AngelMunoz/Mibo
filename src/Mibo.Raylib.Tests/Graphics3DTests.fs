@@ -1295,7 +1295,7 @@ let shadowAtlasTests =
 let preScanTests =
   testList "preScan" [
     test "collects first camera from BeginCamera" {
-      let buffer = RenderBuffer3D()
+      use buffer = new RenderBuffer3D()
       let cam = Camera3D(Position = v3a, Target = v3b)
       buffer.Add(Command3D.beginCamera cam)
       let lights = createLightBuffers(8, 4)
@@ -1322,7 +1322,7 @@ let preScanTests =
     }
 
     test "first camera wins over subsequent" {
-      let buffer = RenderBuffer3D()
+      use buffer = new RenderBuffer3D()
       let cam1 = Camera3D(Position = v3a)
       let cam2 = Camera3D(Position = v3b)
       buffer.Add(Command3D.beginCamera cam1)
@@ -1350,7 +1350,7 @@ let preScanTests =
     }
 
     test "collects shadow origin" {
-      let buffer = RenderBuffer3D()
+      use buffer = new RenderBuffer3D()
       buffer.Add(Command3D.setShadowOrigin v3c)
       let lights = createLightBuffers(8, 4)
       let mutable fwd = Unchecked.defaultof<ShaderVariant>
@@ -1375,7 +1375,7 @@ let preScanTests =
     }
 
     test "collects lights from buffer" {
-      let buffer = RenderBuffer3D()
+      use buffer = new RenderBuffer3D()
       buffer.Add(Command3D.setAmbientLight(AmbientLight3D.create Color.White))
       buffer.Add(Command3D.addDirectionalLight(DirectionalLight3D.create v3a))
       buffer.Add(Command3D.addPointLight(PointLight3D.create(v3b, 10.0f)))
@@ -1404,7 +1404,7 @@ let preScanTests =
     }
 
     test "empty buffer returns empty frame state" {
-      let buffer = RenderBuffer3D()
+      use buffer = new RenderBuffer3D()
       let lights = createLightBuffers(8, 4)
       let mutable fwd = Unchecked.defaultof<ShaderVariant>
       let mutable inst = Unchecked.defaultof<ShaderVariant>

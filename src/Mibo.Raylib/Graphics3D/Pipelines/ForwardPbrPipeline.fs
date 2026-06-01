@@ -252,12 +252,16 @@ type internal ShaderVariant =
   val Locs: ShaderLocations
   val mutable MaterialCache: MaterialCache
   val mutable LightsDirty: bool
+  val mutable LastMaterialKey: MaterialKey
+  val mutable HasLastMaterial: bool
 
   new(locs: ShaderLocations, matCache: MaterialCache) =
     {
       Locs = locs
       MaterialCache = matCache
       LightsDirty = true
+      LastMaterialKey = Unchecked.defaultof<MaterialKey>
+      HasLastMaterial = false
     }
 
 // ------------------------------------------------------------------
@@ -811,7 +815,8 @@ module internal PipelineFunctions =
       shadowLocs: inref<ShadowUniforms>,
       cameraLoc: int,
       atlas: ShadowAtlas,
-      cameraPos: Vector3
+      cameraPos: Vector3,
+      maxCasters: int
     ) =
     if atlas.Fbo.Depth.Id <> 0u then
       Rlgl.EnableShader shader.Id
@@ -820,7 +825,7 @@ module internal PipelineFunctions =
       rlSetUniformInt shadowLocs.Atlas 15
       Rlgl.ActiveTextureSlot 0
 
-    let count = min atlas.ActiveCasterCount shadowLocs.CasterCount
+    let count = min atlas.ActiveCasterCount maxCasters
 
     for i = 0 to count - 1 do
       Raylib.SetShaderValueMatrix(
@@ -846,9 +851,10 @@ module internal PipelineFunctions =
       instanced: inref<ShaderVariant>,
       skinned: inref<ShaderVariant>,
       atlas: ShadowAtlas,
-      cameraPos: Vector3
+      cameraPos: Vector3,
+      maxCasters: int
     ) =
-    if hasCasters && cameraPos <> Unchecked.defaultof<Vector3> then
+    if hasCasters then
       atlas.PrepareUniforms()
       let fwd = forward.Locs
       let inst = instanced.Locs
@@ -859,7 +865,8 @@ module internal PipelineFunctions =
         &fwd.Shadow,
         fwd.CameraPos,
         atlas,
-        cameraPos
+        cameraPos,
+        maxCasters
       )
 
       uploadShadowUniformsForShader(
@@ -867,7 +874,8 @@ module internal PipelineFunctions =
         &inst.Shadow,
         inst.CameraPos,
         atlas,
-        cameraPos
+        cameraPos,
+        maxCasters
       )
 
       uploadShadowUniformsForShader(
@@ -875,7 +883,8 @@ module internal PipelineFunctions =
         &sk.Shadow,
         sk.CameraPos,
         atlas,
-        cameraPos
+        cameraPos,
+        maxCasters
       )
 
   /// Upload bone matrices to skinned shader — uses ReadOnlySpan for no-copy.
@@ -945,20 +954,24 @@ module internal PipelineFunctions =
       lights: LightBuffers,
       maxPt: int,
       maxSp: int,
-      lightsDirty: bool,
       mesh: Mesh,
       transform: Matrix4x4,
       material: Material3D
     ) =
     Raylib.BeginShaderMode shader
 
-    if lightsDirty || variant.LightsDirty then
+    if variant.LightsDirty then
       uploadLights(shader, &variant, lights, maxPt, maxSp)
       variant.LightsDirty <- false
 
     let nm = computeNormalMatrix transform
-    setMaterialUniforms(shader, &variant.Locs.Material, &material, nm)
     let key = MaterialKey.fromMaterial3D &material
+
+    if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
+      setMaterialUniforms(shader, &variant.Locs.Material, &material, nm)
+      variant.LastMaterialKey <- key
+      variant.HasLastMaterial <- true
+
     let mat = getOrCreate(&variant, shader, &material, &key)
     Raylib.DrawMesh(mesh, mat, transform)
     Raylib.EndShaderMode()
@@ -971,13 +984,12 @@ module internal PipelineFunctions =
       lights: LightBuffers,
       maxPt: int,
       maxSp: int,
-      lightsDirty: bool,
       model: Model,
       transform: Matrix4x4
     ) =
     Raylib.BeginShaderMode shader
 
-    if lightsDirty || variant.LightsDirty then
+    if variant.LightsDirty then
       uploadLights(shader, &variant, lights, maxPt, maxSp)
       variant.LightsDirty <- false
 
@@ -988,8 +1000,13 @@ module internal PipelineFunctions =
       let matIdx = NativePtr.get model.MeshMaterial mi
       let raylibMat = NativePtr.get model.Materials matIdx
       let mat3d = Material3D.fromRaylibMaterial raylibMat
-      setMaterialUniforms(shader, &variant.Locs.Material, &mat3d, nm)
       let key = MaterialKey.fromMaterial3D &mat3d
+
+      if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
+        setMaterialUniforms(shader, &variant.Locs.Material, &mat3d, nm)
+        variant.LastMaterialKey <- key
+        variant.HasLastMaterial <- true
+
       let mat = getOrCreate(&variant, shader, &mat3d, &key)
       Raylib.DrawMesh(mesh, mat, transform)
 
@@ -1003,7 +1020,6 @@ module internal PipelineFunctions =
       lights: LightBuffers,
       maxPt: int,
       maxSp: int,
-      lightsDirty: bool,
       currentCamera: Camera3D,
       mesh: Mesh,
       transform: Matrix4x4,
@@ -1012,16 +1028,21 @@ module internal PipelineFunctions =
     ) =
     Raylib.BeginShaderMode shader
 
-    if lightsDirty || variant.LightsDirty then
+    if variant.LightsDirty then
       uploadLights(shader, &variant, lights, maxPt, maxSp)
       variant.LightsDirty <- false
 
     setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
     setShaderInt shader variant.Locs.Shadow.Pass 0
     let nm = computeNormalMatrix transform
-    setMaterialUniforms(shader, &variant.Locs.Material, &material, nm)
-    uploadBoneMatrices(shader, variant.Locs.Bones, ReadOnlySpan bones)
     let key = MaterialKey.fromMaterial3D &material
+
+    if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
+      setMaterialUniforms(shader, &variant.Locs.Material, &material, nm)
+      variant.LastMaterialKey <- key
+      variant.HasLastMaterial <- true
+
+    uploadBoneMatrices(shader, variant.Locs.Bones, ReadOnlySpan bones)
     let mat = getOrCreate(&variant, shader, &material, &key)
     Raylib.DrawMesh(mesh, mat, transform)
     Raylib.EndShaderMode()
@@ -1034,7 +1055,6 @@ module internal PipelineFunctions =
       lights: LightBuffers,
       maxPt: int,
       maxSp: int,
-      lightsDirty: bool,
       currentCamera: Camera3D,
       mesh: Mesh,
       transforms: Matrix4x4[],
@@ -1043,21 +1063,26 @@ module internal PipelineFunctions =
     ) =
     Raylib.BeginShaderMode shader
 
-    if lightsDirty || variant.LightsDirty then
+    if variant.LightsDirty then
       uploadLights(shader, &variant, lights, maxPt, maxSp)
       variant.LightsDirty <- false
 
     setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
     setShaderInt shader variant.Locs.Shadow.Pass 0
 
-    setMaterialUniforms(
-      shader,
-      &variant.Locs.Material,
-      &material,
-      Matrix4x4.Identity
-    )
-
     let key = MaterialKey.fromMaterial3D &material
+
+    if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
+      setMaterialUniforms(
+        shader,
+        &variant.Locs.Material,
+        &material,
+        Matrix4x4.Identity
+      )
+
+      variant.LastMaterialKey <- key
+      variant.HasLastMaterial <- true
+
     let mat = getOrCreate(&variant, shader, &material, &key)
     Raylib.DrawMeshInstanced(mesh, mat, transforms, instanceCount)
     Raylib.EndShaderMode()
@@ -1117,22 +1142,35 @@ module internal PipelineFunctions =
 
   /// Handle light command: add or set light, mark dirty.
   let inline handleLightCommand
-    (lights: LightBuffers, command: Command3D, lightsDirty: byref<bool>)
-    =
+    (
+      lights: LightBuffers,
+      command: Command3D,
+      forward: byref<ShaderVariant>,
+      instanced: byref<ShaderVariant>,
+      skinned: byref<ShaderVariant>
+    ) =
     match command with
     | Command3D.SetAmbientLight l ->
       lights.Ambient.Clear()
       lights.Ambient.Add l
-      lightsDirty <- true
+      forward.LightsDirty <- true
+      instanced.LightsDirty <- true
+      skinned.LightsDirty <- true
     | Command3D.AddDirectionalLight l ->
       lights.DirLights.Add l
-      lightsDirty <- true
+      forward.LightsDirty <- true
+      instanced.LightsDirty <- true
+      skinned.LightsDirty <- true
     | Command3D.AddPointLight l ->
       lights.PointLights.Add l
-      lightsDirty <- true
+      forward.LightsDirty <- true
+      instanced.LightsDirty <- true
+      skinned.LightsDirty <- true
     | Command3D.AddSpotLight l ->
       lights.SpotLights.Add l
-      lightsDirty <- true
+      forward.LightsDirty <- true
+      instanced.LightsDirty <- true
+      skinned.LightsDirty <- true
     | _ -> ()
 
   /// Pre-scan buffer: collect camera, lights, shadow origin, and warm material caches.
@@ -1404,11 +1442,6 @@ module internal PipelineFunctions =
 // ------------------------------------------------------------------
 
 /// <summary>
-/// Refactored <see cref="T:Mibo.Elmish.Graphics3D.IRenderPipeline3D"/> implementation.
-/// Eliminates 3x shader variant duplication by using parameterized ShaderVariant structs.
-/// No PipelineContext class — all mutable state lives in the create closure.
-/// </summary>
-/// <summary>
 /// Refactored Forward PBR pipeline. Eliminates 3x shader variant duplication
 /// by using parameterized ShaderVariant structs. No PipelineContext class —
 /// all mutable state lives in the object-expression closure.
@@ -1464,8 +1497,6 @@ type ForwardPbrPipeline
     PointLights = ResizeArray<PointLight3D> maxPt
     SpotLights = ResizeArray<SpotLight3D> maxSp
   }
-
-  let mutable lightsDirty = true
 
   let ppPasses: PostProcessPass3D[] =
     match ppConfig.Passes with
@@ -1614,7 +1645,6 @@ type ForwardPbrPipeline
           skinnedShader
         )
 
-      lightsDirty <- true
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
@@ -1657,13 +1687,13 @@ type ForwardPbrPipeline
           &instanced,
           &skinned,
           shadowAtlas,
-          cam.Position
+          cam.Position,
+          atlasCfg.MaxCasters
         )
       | ValueNone -> ()
 
       // ── Step 4: Clear lights for forward pass (dispatch will re-add them) ──
       clearLights lights
-      lightsDirty <- true
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
@@ -1722,7 +1752,6 @@ type ForwardPbrPipeline
                 lights,
                 maxPt,
                 maxSp,
-                lightsDirty,
                 mesh,
                 transform,
                 material
@@ -1736,7 +1765,6 @@ type ForwardPbrPipeline
                 lights,
                 maxPt,
                 maxSp,
-                lightsDirty,
                 model,
                 transform
               )
@@ -1749,7 +1777,6 @@ type ForwardPbrPipeline
                 lights,
                 maxPt,
                 maxSp,
-                lightsDirty,
                 currentCamera,
                 mesh,
                 transform,
@@ -1768,7 +1795,6 @@ type ForwardPbrPipeline
                 lights,
                 maxPt,
                 maxSp,
-                lightsDirty,
                 currentCamera,
                 mesh,
                 transforms,
@@ -1800,7 +1826,7 @@ type ForwardPbrPipeline
           | Command3D.AddDirectionalLight _
           | Command3D.AddPointLight _
           | Command3D.AddSpotLight _ as cmd ->
-            handleLightCommand(lights, cmd, &lightsDirty)
+            handleLightCommand(lights, cmd, &forward, &instanced, &skinned)
 
           // ── Immediate mode (inline — unique save/restore pattern) ──
           | Command3D.DrawImmediate action ->
