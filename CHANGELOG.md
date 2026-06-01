@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026.06.01
+
 ### Added
 
 - `ShadowDepthResources` struct bundling shadow shader + material + uniform locations.
