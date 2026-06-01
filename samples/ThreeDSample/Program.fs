@@ -100,7 +100,7 @@ let main _ =
       Renderer2D.createWith Renderer2DConfig.noClear overlayView)
     |> Program.withRenderer(fun () ->
       let pipeline =
-        ForwardPbrPipelineV2(
+        ForwardPbrPipeline(
           shadowBiasConfig = {
             DirectionalBias = 0.002f
             PointBias = 0.01f

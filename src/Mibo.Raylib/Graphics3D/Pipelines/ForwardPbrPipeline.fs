@@ -3,8 +3,11 @@
 namespace Mibo.Elmish.Graphics3D.Pipelines
 
 open System
+open System.Buffers
 open System.Collections.Generic
 open System.Numerics
+open System.Runtime.CompilerServices
+open System.Runtime.InteropServices
 open FSharp.NativeInterop
 open Raylib_cs
 open Mibo.Elmish
@@ -17,7 +20,7 @@ open Mibo.Elmish.Graphics3D
 [<AutoOpen>]
 module private NativeHelpers =
 
-  let setShaderInt (shader: Shader) (loc: int) (value: int) =
+  let inline setShaderInt (shader: Shader) (loc: int) (value: int) =
     use p = fixed &value
 
     Raylib.SetShaderValue(
@@ -27,7 +30,7 @@ module private NativeHelpers =
       ShaderUniformDataType.Int
     )
 
-  let setShaderFloat (shader: Shader) (loc: int) (value: float32) =
+  let inline setShaderFloat (shader: Shader) (loc: int) (value: float32) =
     use p = fixed &value
 
     Raylib.SetShaderValue(
@@ -37,27 +40,7 @@ module private NativeHelpers =
       ShaderUniformDataType.Float
     )
 
-  let setShaderVec3 (shader: Shader) (loc: int) (v: Vector3) =
-    use p = fixed &v
-
-    Raylib.SetShaderValue(
-      shader,
-      loc,
-      NativePtr.toVoidPtr p,
-      ShaderUniformDataType.Vec3
-    )
-
-  let setShaderVec4 (shader: Shader) (loc: int) (v: Vector4) =
-    use p = fixed &v
-
-    Raylib.SetShaderValue(
-      shader,
-      loc,
-      NativePtr.toVoidPtr p,
-      ShaderUniformDataType.Vec4
-    )
-
-  let setShaderVec2 (shader: Shader) (loc: int) (v: Vector2) =
+  let inline setShaderVec2 (shader: Shader) (loc: int) (v: Vector2) =
     use p = fixed &v
 
     Raylib.SetShaderValue(
@@ -67,7 +50,27 @@ module private NativeHelpers =
       ShaderUniformDataType.Vec2
     )
 
-  let rlSetUniformInt (loc: int) (value: int) =
+  let inline setShaderVec3 (shader: Shader) (loc: int) (v: Vector3) =
+    use p = fixed &v
+
+    Raylib.SetShaderValue(
+      shader,
+      loc,
+      NativePtr.toVoidPtr p,
+      ShaderUniformDataType.Vec3
+    )
+
+  let inline setShaderVec4 (shader: Shader) (loc: int) (v: Vector4) =
+    use p = fixed &v
+
+    Raylib.SetShaderValue(
+      shader,
+      loc,
+      NativePtr.toVoidPtr p,
+      ShaderUniformDataType.Vec4
+    )
+
+  let inline rlSetUniformInt (loc: int) (value: int) =
     use p = fixed &value
 
     Rlgl.SetUniform(
@@ -76,6 +79,18 @@ module private NativeHelpers =
       int ShaderUniformDataType.Int,
       1
     )
+
+// ------------------------------------------------------------------
+// Normal Matrix Helper
+// ------------------------------------------------------------------
+
+[<AutoOpen>]
+module private NormalMatrixHelpers =
+
+  let inline computeNormalMatrix(model: Matrix4x4) =
+    let mutable inv = Matrix4x4.Identity
+    Matrix4x4.Invert(model, &inv) |> ignore
+    Matrix4x4.Transpose inv
 
 // ------------------------------------------------------------------
 // Material Cache Key
@@ -98,7 +113,8 @@ type private MaterialKey = {
 }
 
 module private MaterialKey =
-  let fromMaterial3D(mat: Material3D) : MaterialKey = {
+
+  let inline fromMaterial3D(mat: inref<Material3D>) : MaterialKey = {
     AlbedoMapId =
       match mat.AlbedoMap with
       | ValueSome t -> t.Id
@@ -129,1307 +145,163 @@ module private MaterialKey =
   }
 
 // ------------------------------------------------------------------
-// Normal Matrix Helper
+// Leaf Uniform Structs (immutable — [<IsReadOnly; Struct>])
 // ------------------------------------------------------------------
 
-[<AutoOpen>]
-module private NormalMatrixHelpers =
+[<IsReadOnly; Struct>]
+type private MaterialUniforms = {
+  AlbedoColor: int
+  Roughness: int
+  Metallic: int
+  EmissionColor: int
+  Opacity: int
+  Tiling: int
+  UseNormalMap: int
+  NormalMatrix: int
+}
 
-  /// Pre-computes the normal matrix (inverse-transpose of model matrix) on the CPU
-  /// instead of computing transpose(inverse(matModel)) per-vertex in the shader.
-  let computeNormalMatrix(model: Matrix4x4) =
-    let mutable inv = Matrix4x4.Identity
-    Matrix4x4.Invert(model, &inv) |> ignore
-    Matrix4x4.Transpose(inv)
+[<IsReadOnly; Struct>]
+type private AmbientUniforms = { Color: int; Intensity: int }
+
+[<IsReadOnly; Struct>]
+type private DirLightUniforms = {
+  Dir: int
+  Color: int
+  Intensity: int
+  CastsShadows: int
+}
+
+[<IsReadOnly; Struct>]
+type private PointLightUniforms = {
+  Count: int
+  Pos: int[]
+  Color: int[]
+  Intensity: int[]
+  Radius: int[]
+  Falloff: int[]
+}
+
+[<IsReadOnly; Struct>]
+type private SpotLightUniforms = {
+  Count: int
+  Pos: int[]
+  Dir: int[]
+  Color: int[]
+  Intensity: int[]
+  Radius: int[]
+  InnerCutoff: int[]
+  OuterCutoff: int[]
+}
+
+[<IsReadOnly; Struct>]
+type private ShadowUniforms = {
+  Pass: int
+  Atlas: int
+  CasterCount: int
+  ViewProjs: int[]
+  UVOffsets: int[]
+  LightPositions: int[]
+  Biases: int[]
+  Types: int[]
+}
 
 // ------------------------------------------------------------------
-// Shadow Configuration (uses ShadowAtlas types from ShadowAtlas.fs)
+// Composite Location Struct (immutable after creation)
 // ------------------------------------------------------------------
 
+[<IsReadOnly; Struct>]
+type private ShaderLocations = {
+  Shader: Shader
+  Cached: bool
+  Material: MaterialUniforms
+  Ambient: AmbientUniforms
+  DirLight: DirLightUniforms
+  PointLights: PointLightUniforms
+  SpotLights: SpotLightUniforms
+  Shadow: ShadowUniforms
+  CameraPos: int
+  ShadowNormalMatrix: int
+  Bones: int // -1 for non-skinned variants
+}
+
 // ------------------------------------------------------------------
-// Internal Context
+// Material Cache (mutable — class-style struct)
 // ------------------------------------------------------------------
 
-type private PipelineContext
-  (
-    forwardShader: Shader,
-    instancedShader: Shader,
-    skinnedShader: Shader,
-    materialCache: Dictionary<MaterialKey, Material>,
-    maxPointLights: int,
-    maxSpotLights: int,
-    maxShadowCasters: int
-  ) =
-
-  let mutable gameCtx = Unchecked.defaultof<GameContext>
-  let mutable cameraActive = false
-  let mutable currentCamera = Unchecked.defaultof<Camera3D>
-  let mutable shaderActive = false
-
-  let ambient = ResizeArray<AmbientLight3D> 1
-  let dirLights = ResizeArray<DirectionalLight3D> 1
-  let pointLights = ResizeArray<PointLight3D> maxPointLights
-  let spotLights = ResizeArray<SpotLight3D> maxSpotLights
-  let mutable lightsDirty = true
-  let mutable instLightsDirty = true
-
-  let mutable activeShadowMap: RenderTexture2D =
-    Unchecked.defaultof<RenderTexture2D>
-
-  let mutable activeLightViewProj = Matrix4x4.Identity
-
-  let mutable lastMaterialKey = Unchecked.defaultof<MaterialKey>
-  let mutable hasLastMaterial = false
-  let mutable lastRaylibMaterial = Unchecked.defaultof<Material>
-
-  let mutable locsCached = false
-  let mutable locAlbedoColor = -1
-  let mutable locRoughness = -1
-  let mutable locMetallic = -1
-  let mutable locEmissionColor = -1
-  let mutable locOpacity = -1
-  let mutable locTiling = -1
-  let mutable locUseNormalMap = -1
-
-  let mutable locAmbientColor = -1
-  let mutable locAmbientIntensity = -1
-  let mutable locDirLightDir = -1
-  let mutable locDirLightColor = -1
-  let mutable locDirLightIntensity = -1
-  let mutable locDirLightCastsShadows = -1
-  let mutable locPointLightCount = -1
-  let locPointLightPos = Array.zeroCreate<int> maxPointLights
-  let locPointLightColor = Array.zeroCreate<int> maxPointLights
-  let locPointLightIntensity = Array.zeroCreate<int> maxPointLights
-  let locPointLightRadius = Array.zeroCreate<int> maxPointLights
-  let locPointLightFalloff = Array.zeroCreate<int> maxPointLights
-
-  let mutable locSpotLightCount = -1
-  let locSpotLightPos = Array.zeroCreate<int> maxSpotLights
-  let locSpotLightDir = Array.zeroCreate<int> maxSpotLights
-  let locSpotLightColor = Array.zeroCreate<int> maxSpotLights
-  let locSpotLightIntensity = Array.zeroCreate<int> maxSpotLights
-  let locSpotLightRadius = Array.zeroCreate<int> maxSpotLights
-  let locSpotLightInnerCutoff = Array.zeroCreate<int> maxSpotLights
-  let locSpotLightOuterCutoff = Array.zeroCreate<int> maxSpotLights
-
-  let mutable locShadowMap = -1
-  let mutable locCameraPos = -1
-
-  let mutable locNormalMatrix = -1
-  let mutable locShadowNormalMatrix = -1
-  let mutable locShadowPass = -1
-  let mutable locShadowAtlas = -1
-  let mutable locShadowCasterCount = -1
-  let locShadowViewProjs = Array.zeroCreate<int> maxShadowCasters
-  let locShadowUVOffsets = Array.zeroCreate<int> maxShadowCasters
-  let locShadowLightPositions = Array.zeroCreate<int> maxShadowCasters
-  let locShadowBiases = Array.zeroCreate<int> maxShadowCasters
-  let locShadowTypes = Array.zeroCreate<int> maxShadowCasters
-
-  let cacheLocations() =
-    if not locsCached then
-      locAlbedoColor <- Raylib.GetShaderLocation(forwardShader, "albedoColor")
-      locRoughness <- Raylib.GetShaderLocation(forwardShader, "roughness")
-      locMetallic <- Raylib.GetShaderLocation(forwardShader, "metallic")
-
-      locEmissionColor <-
-        Raylib.GetShaderLocation(forwardShader, "emissionColor")
-
-      locOpacity <- Raylib.GetShaderLocation(forwardShader, "opacity")
-      locTiling <- Raylib.GetShaderLocation(forwardShader, "tiling")
-      locUseNormalMap <- Raylib.GetShaderLocation(forwardShader, "useNormalMap")
-      locNormalMatrix <- Raylib.GetShaderLocation(forwardShader, "normalMatrix")
-
-      locAmbientColor <- Raylib.GetShaderLocation(forwardShader, "ambientColor")
-
-      locAmbientIntensity <-
-        Raylib.GetShaderLocation(forwardShader, "ambientIntensity")
-
-      locDirLightDir <- Raylib.GetShaderLocation(forwardShader, "dirLightDir")
-
-      locDirLightColor <-
-        Raylib.GetShaderLocation(forwardShader, "dirLightColor")
-
-      locDirLightIntensity <-
-        Raylib.GetShaderLocation(forwardShader, "dirLightIntensity")
-
-      locDirLightCastsShadows <-
-        Raylib.GetShaderLocation(forwardShader, "dirLightCastsShadows")
-
-      locPointLightCount <-
-        Raylib.GetShaderLocation(forwardShader, "pointLightCount")
-
-      for i = 0 to maxPointLights - 1 do
-        locPointLightPos[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"pointLightPos[{i}]")
-
-        locPointLightColor[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"pointLightColor[{i}]")
-
-        locPointLightIntensity[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"pointLightIntensity[{i}]")
-
-        locPointLightRadius[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"pointLightRadius[{i}]")
-
-        locPointLightFalloff[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"pointLightFalloff[{i}]")
-
-      locSpotLightCount <-
-        Raylib.GetShaderLocation(forwardShader, "spotLightCount")
-
-      for i = 0 to maxSpotLights - 1 do
-        locSpotLightPos[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"spotLightPos[{i}]")
-
-        locSpotLightDir[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"spotLightDir[{i}]")
-
-        locSpotLightColor[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"spotLightColor[{i}]")
-
-        locSpotLightIntensity[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"spotLightIntensity[{i}]")
-
-        locSpotLightRadius[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"spotLightRadius[{i}]")
-
-        locSpotLightInnerCutoff[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"spotLightInnerCutoff[{i}]")
-
-        locSpotLightOuterCutoff[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"spotLightOuterCutoff[{i}]")
-
-      locCameraPos <- Raylib.GetShaderLocation(forwardShader, "cameraPos")
-      locShadowMap <- Raylib.GetShaderLocation(forwardShader, "shadowMap")
-
-      // Set shadowAtlas sampler to texture unit 15 to avoid material overrides
-      locShadowAtlas <- Raylib.GetShaderLocation(forwardShader, "shadowAtlas")
-      rlSetUniformInt locShadowAtlas 15
-
-      locShadowPass <- Raylib.GetShaderLocation(forwardShader, "shadowPass")
-
-      locShadowCasterCount <-
-        Raylib.GetShaderLocation(forwardShader, "shadowCasterCount")
-
-      for i = 0 to maxShadowCasters - 1 do
-        locShadowViewProjs[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"shadowViewProjs[{i}]")
-
-        locShadowUVOffsets[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"shadowUVOffsets[{i}]")
-
-        locShadowLightPositions[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"shadowLightPositions[{i}]")
-
-        locShadowBiases[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"shadowBiases[{i}]")
-
-        locShadowTypes[i] <-
-          Raylib.GetShaderLocation(forwardShader, $"shadowTypes[{i}]")
-
-      locsCached <- true
-
-  // ------------------------------------------------------------------
-  // Instanced shader location cache (same fragment shader uniforms,
-  // different vertex shader — locations may differ from forwardShader)
-  // ------------------------------------------------------------------
-
-  let mutable iLocsCached = false
-  let mutable iLocAlbedoColor = -1
-  let mutable iLocRoughness = -1
-  let mutable iLocMetallic = -1
-  let mutable iLocEmissionColor = -1
-  let mutable iLocOpacity = -1
-  let mutable iLocTiling = -1
-  let mutable iLocUseNormalMap = -1
-
-  let mutable iLocAmbientColor = -1
-  let mutable iLocAmbientIntensity = -1
-  let mutable iLocDirLightDir = -1
-  let mutable iLocDirLightColor = -1
-  let mutable iLocDirLightIntensity = -1
-  let mutable iLocDirLightCastsShadows = -1
-  let mutable iLocPointLightCount = -1
-  let iLocPointLightPos = Array.zeroCreate<int> maxPointLights
-  let iLocPointLightColor = Array.zeroCreate<int> maxPointLights
-  let iLocPointLightIntensity = Array.zeroCreate<int> maxPointLights
-  let iLocPointLightRadius = Array.zeroCreate<int> maxPointLights
-  let iLocPointLightFalloff = Array.zeroCreate<int> maxPointLights
-
-  let mutable iLocSpotLightCount = -1
-  let iLocSpotLightPos = Array.zeroCreate<int> maxSpotLights
-  let iLocSpotLightDir = Array.zeroCreate<int> maxSpotLights
-  let iLocSpotLightColor = Array.zeroCreate<int> maxSpotLights
-  let iLocSpotLightIntensity = Array.zeroCreate<int> maxSpotLights
-  let iLocSpotLightRadius = Array.zeroCreate<int> maxSpotLights
-  let iLocSpotLightInnerCutoff = Array.zeroCreate<int> maxSpotLights
-  let iLocSpotLightOuterCutoff = Array.zeroCreate<int> maxSpotLights
-
-  let mutable iLocCameraPos = -1
-  let mutable iLocNormalMatrix = -1
-  let mutable iLocShadowPass = -1
-  let mutable iLocShadowAtlas = -1
-  let mutable iLocShadowCasterCount = -1
-  let iLocShadowViewProjs = Array.zeroCreate<int> maxShadowCasters
-  let iLocShadowUVOffsets = Array.zeroCreate<int> maxShadowCasters
-  let iLocShadowLightPositions = Array.zeroCreate<int> maxShadowCasters
-  let iLocShadowBiases = Array.zeroCreate<int> maxShadowCasters
-  let iLocShadowTypes = Array.zeroCreate<int> maxShadowCasters
-
-  let cacheInstancedLocations() =
-    if not iLocsCached then
-      iLocAlbedoColor <-
-        Raylib.GetShaderLocation(instancedShader, "albedoColor")
-
-      iLocRoughness <- Raylib.GetShaderLocation(instancedShader, "roughness")
-      iLocMetallic <- Raylib.GetShaderLocation(instancedShader, "metallic")
-
-      iLocEmissionColor <-
-        Raylib.GetShaderLocation(instancedShader, "emissionColor")
-
-      iLocOpacity <- Raylib.GetShaderLocation(instancedShader, "opacity")
-      iLocTiling <- Raylib.GetShaderLocation(instancedShader, "tiling")
-
-      iLocUseNormalMap <-
-        Raylib.GetShaderLocation(instancedShader, "useNormalMap")
-
-      iLocNormalMatrix <-
-        Raylib.GetShaderLocation(instancedShader, "normalMatrix")
-
-      iLocAmbientColor <-
-        Raylib.GetShaderLocation(instancedShader, "ambientColor")
-
-      iLocAmbientIntensity <-
-        Raylib.GetShaderLocation(instancedShader, "ambientIntensity")
-
-      iLocDirLightDir <-
-        Raylib.GetShaderLocation(instancedShader, "dirLightDir")
-
-      iLocDirLightColor <-
-        Raylib.GetShaderLocation(instancedShader, "dirLightColor")
-
-      iLocDirLightIntensity <-
-        Raylib.GetShaderLocation(instancedShader, "dirLightIntensity")
-
-      iLocDirLightCastsShadows <-
-        Raylib.GetShaderLocation(instancedShader, "dirLightCastsShadows")
-
-      iLocPointLightCount <-
-        Raylib.GetShaderLocation(instancedShader, "pointLightCount")
-
-      for i = 0 to maxPointLights - 1 do
-        iLocPointLightPos[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"pointLightPos[{i}]")
-
-        iLocPointLightColor[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"pointLightColor[{i}]")
-
-        iLocPointLightIntensity[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"pointLightIntensity[{i}]")
-
-        iLocPointLightRadius[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"pointLightRadius[{i}]")
-
-        iLocPointLightFalloff[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"pointLightFalloff[{i}]")
-
-      iLocSpotLightCount <-
-        Raylib.GetShaderLocation(instancedShader, "spotLightCount")
-
-      for i = 0 to maxSpotLights - 1 do
-        iLocSpotLightPos[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"spotLightPos[{i}]")
-
-        iLocSpotLightDir[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"spotLightDir[{i}]")
-
-        iLocSpotLightColor[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"spotLightColor[{i}]")
-
-        iLocSpotLightIntensity[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"spotLightIntensity[{i}]")
-
-        iLocSpotLightRadius[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"spotLightRadius[{i}]")
-
-        iLocSpotLightInnerCutoff[i] <-
-          Raylib.GetShaderLocation(
-            instancedShader,
-            $"spotLightInnerCutoff[{i}]"
-          )
-
-        iLocSpotLightOuterCutoff[i] <-
-          Raylib.GetShaderLocation(
-            instancedShader,
-            $"spotLightOuterCutoff[{i}]"
-          )
-
-      iLocCameraPos <- Raylib.GetShaderLocation(instancedShader, "cameraPos")
-      iLocShadowPass <- Raylib.GetShaderLocation(instancedShader, "shadowPass")
-
-      iLocShadowAtlas <-
-        Raylib.GetShaderLocation(instancedShader, "shadowAtlas")
-
-      rlSetUniformInt iLocShadowAtlas 15
-
-      iLocShadowCasterCount <-
-        Raylib.GetShaderLocation(instancedShader, "shadowCasterCount")
-
-      for i = 0 to maxShadowCasters - 1 do
-        iLocShadowViewProjs[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"shadowViewProjs[{i}]")
-
-        iLocShadowUVOffsets[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"shadowUVOffsets[{i}]")
-
-        iLocShadowLightPositions[i] <-
-          Raylib.GetShaderLocation(
-            instancedShader,
-            $"shadowLightPositions[{i}]"
-          )
-
-        iLocShadowBiases[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"shadowBiases[{i}]")
-
-        iLocShadowTypes[i] <-
-          Raylib.GetShaderLocation(instancedShader, $"shadowTypes[{i}]")
-
-      iLocsCached <- true
-
-  // ------------------------------------------------------------------
-  // Skinned shader location cache (bone uniforms + same fragment uniforms)
-  // ------------------------------------------------------------------
-
-  let mutable sLocsCached = false
-  let mutable sLocAlbedoColor = -1
-  let mutable sLocRoughness = -1
-  let mutable sLocMetallic = -1
-  let mutable sLocEmissionColor = -1
-  let mutable sLocOpacity = -1
-  let mutable sLocTiling = -1
-  let mutable sLocUseNormalMap = -1
-
-  let mutable sLocAmbientColor = -1
-  let mutable sLocAmbientIntensity = -1
-  let mutable sLocDirLightDir = -1
-  let mutable sLocDirLightColor = -1
-  let mutable sLocDirLightIntensity = -1
-  let mutable sLocDirLightCastsShadows = -1
-  let mutable sLocPointLightCount = -1
-  let sLocPointLightPos = Array.zeroCreate<int> maxPointLights
-  let sLocPointLightColor = Array.zeroCreate<int> maxPointLights
-  let sLocPointLightIntensity = Array.zeroCreate<int> maxPointLights
-  let sLocPointLightRadius = Array.zeroCreate<int> maxPointLights
-  let sLocPointLightFalloff = Array.zeroCreate<int> maxPointLights
-
-  let mutable sLocSpotLightCount = -1
-  let sLocSpotLightPos = Array.zeroCreate<int> maxSpotLights
-  let sLocSpotLightDir = Array.zeroCreate<int> maxSpotLights
-  let sLocSpotLightColor = Array.zeroCreate<int> maxSpotLights
-  let sLocSpotLightIntensity = Array.zeroCreate<int> maxSpotLights
-  let sLocSpotLightRadius = Array.zeroCreate<int> maxSpotLights
-  let sLocSpotLightInnerCutoff = Array.zeroCreate<int> maxSpotLights
-  let sLocSpotLightOuterCutoff = Array.zeroCreate<int> maxSpotLights
-
-  let mutable sLocCameraPos = -1
-  let mutable sLocNormalMatrix = -1
-  let mutable sLocShadowPass = -1
-  let mutable sLocShadowAtlas = -1
-  let mutable sLocShadowCasterCount = -1
-  let sLocShadowViewProjs = Array.zeroCreate<int> maxShadowCasters
-  let sLocShadowUVOffsets = Array.zeroCreate<int> maxShadowCasters
-  let sLocShadowLightPositions = Array.zeroCreate<int> maxShadowCasters
-  let sLocShadowBiases = Array.zeroCreate<int> maxShadowCasters
-  let sLocShadowTypes = Array.zeroCreate<int> maxShadowCasters
-
-  let mutable sLocBones = -1
-
-  let mutable skinnedLightsDirty = true
-
-  let cacheSkinnedLocations() =
-    if not sLocsCached then
-      sLocAlbedoColor <- Raylib.GetShaderLocation(skinnedShader, "albedoColor")
-      sLocRoughness <- Raylib.GetShaderLocation(skinnedShader, "roughness")
-      sLocMetallic <- Raylib.GetShaderLocation(skinnedShader, "metallic")
-
-      sLocEmissionColor <-
-        Raylib.GetShaderLocation(skinnedShader, "emissionColor")
-
-      sLocOpacity <- Raylib.GetShaderLocation(skinnedShader, "opacity")
-      sLocTiling <- Raylib.GetShaderLocation(skinnedShader, "tiling")
-
-      sLocUseNormalMap <-
-        Raylib.GetShaderLocation(skinnedShader, "useNormalMap")
-
-      sLocNormalMatrix <-
-        Raylib.GetShaderLocation(skinnedShader, "normalMatrix")
-
-      sLocAmbientColor <-
-        Raylib.GetShaderLocation(skinnedShader, "ambientColor")
-
-      sLocAmbientIntensity <-
-        Raylib.GetShaderLocation(skinnedShader, "ambientIntensity")
-
-      sLocDirLightDir <- Raylib.GetShaderLocation(skinnedShader, "dirLightDir")
-
-      sLocDirLightColor <-
-        Raylib.GetShaderLocation(skinnedShader, "dirLightColor")
-
-      sLocDirLightIntensity <-
-        Raylib.GetShaderLocation(skinnedShader, "dirLightIntensity")
-
-      sLocDirLightCastsShadows <-
-        Raylib.GetShaderLocation(skinnedShader, "dirLightCastsShadows")
-
-      sLocPointLightCount <-
-        Raylib.GetShaderLocation(skinnedShader, "pointLightCount")
-
-      for i = 0 to maxPointLights - 1 do
-        sLocPointLightPos[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"pointLightPos[{i}]")
-
-        sLocPointLightColor[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"pointLightColor[{i}]")
-
-        sLocPointLightIntensity[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"pointLightIntensity[{i}]")
-
-        sLocPointLightRadius[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"pointLightRadius[{i}]")
-
-        sLocPointLightFalloff[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"pointLightFalloff[{i}]")
-
-      sLocSpotLightCount <-
-        Raylib.GetShaderLocation(skinnedShader, "spotLightCount")
-
-      for i = 0 to maxSpotLights - 1 do
-        sLocSpotLightPos[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"spotLightPos[{i}]")
-
-        sLocSpotLightDir[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"spotLightDir[{i}]")
-
-        sLocSpotLightColor[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"spotLightColor[{i}]")
-
-        sLocSpotLightIntensity[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"spotLightIntensity[{i}]")
-
-        sLocSpotLightRadius[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"spotLightRadius[{i}]")
-
-        sLocSpotLightInnerCutoff[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"spotLightInnerCutoff[{i}]")
-
-        sLocSpotLightOuterCutoff[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"spotLightOuterCutoff[{i}]")
-
-      sLocCameraPos <- Raylib.GetShaderLocation(skinnedShader, "cameraPos")
-      sLocShadowPass <- Raylib.GetShaderLocation(skinnedShader, "shadowPass")
-
-      sLocShadowAtlas <- Raylib.GetShaderLocation(skinnedShader, "shadowAtlas")
-
-      rlSetUniformInt sLocShadowAtlas 15
-
-      sLocShadowCasterCount <-
-        Raylib.GetShaderLocation(skinnedShader, "shadowCasterCount")
-
-      for i = 0 to maxShadowCasters - 1 do
-        sLocShadowViewProjs[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"shadowViewProjs[{i}]")
-
-        sLocShadowUVOffsets[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"shadowUVOffsets[{i}]")
-
-        sLocShadowLightPositions[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"shadowLightPositions[{i}]")
-
-        sLocShadowBiases[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"shadowBiases[{i}]")
-
-        sLocShadowTypes[i] <-
-          Raylib.GetShaderLocation(skinnedShader, $"shadowTypes[{i}]")
-
-      sLocBones <- Raylib.GetShaderLocation(skinnedShader, "boneMatrices[0]")
-      sLocsCached <- true
-
-  let colorToVec3(c: Color) =
-    Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
-
-  let colorToVec4(c: Color) =
-    Vector4(
-      float32 c.R / 255.0f,
-      float32 c.G / 255.0f,
-      float32 c.B / 255.0f,
-      float32 c.A / 255.0f
-    )
-
-  let uploadLightsInstanced() =
-    cacheInstancedLocations()
-
-    match ambient.Count with
-    | 0 ->
-      setShaderVec3 instancedShader iLocAmbientColor Vector3.Zero
-      setShaderFloat instancedShader iLocAmbientIntensity 0.0f
-    | _ ->
-      let a = ambient[0]
-      setShaderVec3 instancedShader iLocAmbientColor (colorToVec3 a.Color)
-      setShaderFloat instancedShader iLocAmbientIntensity a.Intensity
-
-    match dirLights.Count with
-    | 0 ->
-      setShaderVec3 instancedShader iLocDirLightDir Vector3.Zero
-      setShaderVec3 instancedShader iLocDirLightColor Vector3.Zero
-      setShaderFloat instancedShader iLocDirLightIntensity 0.0f
-      setShaderInt instancedShader iLocDirLightCastsShadows 0
-    | _ ->
-      let d = dirLights[0]
-      setShaderVec3 instancedShader iLocDirLightDir d.Direction
-      setShaderVec3 instancedShader iLocDirLightColor (colorToVec3 d.Color)
-      setShaderFloat instancedShader iLocDirLightIntensity d.Intensity
-
-      setShaderInt
-        instancedShader
-        iLocDirLightCastsShadows
-        (if d.CastsShadows then 1 else 0)
-
-    let ptCount = min pointLights.Count maxPointLights
-    setShaderInt instancedShader iLocPointLightCount ptCount
-
-    for i = 0 to ptCount - 1 do
-      let l = pointLights[i]
-      setShaderVec3 instancedShader iLocPointLightPos[i] l.Position
-      setShaderVec3 instancedShader iLocPointLightColor[i] (colorToVec3 l.Color)
-      setShaderFloat instancedShader iLocPointLightIntensity[i] l.Intensity
-      setShaderFloat instancedShader iLocPointLightRadius[i] l.Radius
-      setShaderFloat instancedShader iLocPointLightFalloff[i] l.Falloff
-
-    let spCount = min spotLights.Count maxSpotLights
-    setShaderInt instancedShader iLocSpotLightCount spCount
-
-    for i = 0 to spCount - 1 do
-      let s: SpotLight3D = spotLights[i]
-      setShaderVec3 instancedShader iLocSpotLightPos[i] s.Position
-      setShaderVec3 instancedShader iLocSpotLightDir[i] s.Direction
-      setShaderVec3 instancedShader iLocSpotLightColor[i] (colorToVec3 s.Color)
-      setShaderFloat instancedShader iLocSpotLightIntensity[i] s.Intensity
-      setShaderFloat instancedShader iLocSpotLightRadius[i] s.Radius
-      setShaderFloat instancedShader iLocSpotLightInnerCutoff[i] s.InnerCutoff
-      setShaderFloat instancedShader iLocSpotLightOuterCutoff[i] s.OuterCutoff
-
-    instLightsDirty <- false
-
-  let setMaterialUniformsInstanced
-    (normalMatrix: Matrix4x4)
-    (mat3d: Material3D)
-    =
-    cacheInstancedLocations()
-
-    setShaderVec4
-      instancedShader
-      iLocAlbedoColor
-      (colorToVec4 mat3d.AlbedoColor)
-
-    setShaderFloat instancedShader iLocRoughness mat3d.Roughness
-    setShaderFloat instancedShader iLocMetallic mat3d.Metallic
-
-    setShaderVec4
-      instancedShader
-      iLocEmissionColor
-      (colorToVec4 mat3d.EmissionColor)
-
-    setShaderFloat instancedShader iLocOpacity mat3d.Opacity
-    setShaderVec2 instancedShader iLocTiling mat3d.Tiling
-
-    let useNormal =
-      match mat3d.NormalMap with
-      | ValueSome _ -> 1
-      | ValueNone -> 0
-
-    setShaderInt instancedShader iLocUseNormalMap useNormal
-
-    Raylib.SetShaderValueMatrix(instancedShader, iLocNormalMatrix, normalMatrix)
-
-  let mutable instancedMaterialCache = Dictionary<MaterialKey, Material>()
-  let mutable lastInstancedMaterialKey = Unchecked.defaultof<MaterialKey>
-  let mutable hasLastInstancedMaterial = false
-  let mutable lastInstancedRaylibMaterial = Unchecked.defaultof<Material>
-
-  let getOrCreateInstancedMaterial(mat3d: Material3D) : Material =
-    let key = MaterialKey.fromMaterial3D mat3d
-
-    if hasLastInstancedMaterial && key = lastInstancedMaterialKey then
-      lastInstancedRaylibMaterial
-    else
-      match instancedMaterialCache.TryGetValue key with
-      | true, mat ->
-        lastInstancedMaterialKey <- key
-        lastInstancedRaylibMaterial <- mat
-        hasLastInstancedMaterial <- true
-        mat
-      | false, _ ->
-
-      let mutable mat = Raylib.LoadMaterialDefault()
-      mat.Shader <- instancedShader
-
-      match mat3d.AlbedoMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Albedo, t)
-      | ValueNone -> ()
-
-      match mat3d.RoughnessMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Roughness, t)
-      | ValueNone -> ()
-
-      match mat3d.MetallicMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Metalness, t)
-      | ValueNone -> ()
-
-      match mat3d.NormalMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Normal, t)
-      | ValueNone -> ()
-
-      match mat3d.EmissionMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Emission, t)
-      | ValueNone -> ()
-
-      instancedMaterialCache[key] <- mat
-      lastInstancedMaterialKey <- key
-      lastInstancedRaylibMaterial <- mat
-      hasLastInstancedMaterial <- true
-      mat
-
-  let mutable skinnedMaterialCache = Dictionary<MaterialKey, Material>()
-  let mutable lastSkinnedMaterialKey = Unchecked.defaultof<MaterialKey>
-  let mutable hasLastSkinnedMaterial = false
-  let mutable lastSkinnedRaylibMaterial = Unchecked.defaultof<Material>
-
-  let getOrCreateSkinnedMaterial(mat3d: Material3D) : Material =
-    let key = MaterialKey.fromMaterial3D mat3d
-
-    if hasLastSkinnedMaterial && key = lastSkinnedMaterialKey then
-      lastSkinnedRaylibMaterial
-    else
-      match skinnedMaterialCache.TryGetValue key with
-      | true, mat ->
-        lastSkinnedMaterialKey <- key
-        lastSkinnedRaylibMaterial <- mat
-        hasLastSkinnedMaterial <- true
-        mat
-      | false, _ ->
-
-      let mutable mat = Raylib.LoadMaterialDefault()
-      mat.Shader <- skinnedShader
-
-      match mat3d.AlbedoMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Albedo, t)
-      | ValueNone -> ()
-
-      match mat3d.RoughnessMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Roughness, t)
-      | ValueNone -> ()
-
-      match mat3d.MetallicMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Metalness, t)
-      | ValueNone -> ()
-
-      match mat3d.NormalMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Normal, t)
-      | ValueNone -> ()
-
-      match mat3d.EmissionMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Emission, t)
-      | ValueNone -> ()
-
-      skinnedMaterialCache[key] <- mat
-      lastSkinnedMaterialKey <- key
-      lastSkinnedRaylibMaterial <- mat
-      hasLastSkinnedMaterial <- true
-      mat
-
-  let uploadLightsSkinned() =
-    cacheSkinnedLocations()
-
-    match ambient.Count with
-    | 0 ->
-      setShaderVec3 skinnedShader sLocAmbientColor Vector3.Zero
-      setShaderFloat skinnedShader sLocAmbientIntensity 0.0f
-    | _ ->
-      let a = ambient[0]
-      setShaderVec3 skinnedShader sLocAmbientColor (colorToVec3 a.Color)
-      setShaderFloat skinnedShader sLocAmbientIntensity a.Intensity
-
-    match dirLights.Count with
-    | 0 ->
-      setShaderVec3 skinnedShader sLocDirLightDir Vector3.Zero
-      setShaderVec3 skinnedShader sLocDirLightColor Vector3.Zero
-      setShaderFloat skinnedShader sLocDirLightIntensity 0.0f
-      setShaderInt skinnedShader sLocDirLightCastsShadows 0
-    | _ ->
-      let d = dirLights[0]
-      setShaderVec3 skinnedShader sLocDirLightDir d.Direction
-      setShaderVec3 skinnedShader sLocDirLightColor (colorToVec3 d.Color)
-      setShaderFloat skinnedShader sLocDirLightIntensity d.Intensity
-
-      setShaderInt
-        skinnedShader
-        sLocDirLightCastsShadows
-        (if d.CastsShadows then 1 else 0)
-
-    let ptCount = min pointLights.Count maxPointLights
-    setShaderInt skinnedShader sLocPointLightCount ptCount
-
-    for i = 0 to ptCount - 1 do
-      let l = pointLights[i]
-      setShaderVec3 skinnedShader sLocPointLightPos[i] l.Position
-      setShaderVec3 skinnedShader sLocPointLightColor[i] (colorToVec3 l.Color)
-      setShaderFloat skinnedShader sLocPointLightIntensity[i] l.Intensity
-      setShaderFloat skinnedShader sLocPointLightRadius[i] l.Radius
-      setShaderFloat skinnedShader sLocPointLightFalloff[i] l.Falloff
-
-    let spCount = min spotLights.Count maxSpotLights
-    setShaderInt skinnedShader sLocSpotLightCount spCount
-
-    for i = 0 to spCount - 1 do
-      let s: SpotLight3D = spotLights[i]
-      setShaderVec3 skinnedShader sLocSpotLightPos[i] s.Position
-      setShaderVec3 skinnedShader sLocSpotLightDir[i] s.Direction
-      setShaderVec3 skinnedShader sLocSpotLightColor[i] (colorToVec3 s.Color)
-      setShaderFloat skinnedShader sLocSpotLightIntensity[i] s.Intensity
-      setShaderFloat skinnedShader sLocSpotLightRadius[i] s.Radius
-      setShaderFloat skinnedShader sLocSpotLightInnerCutoff[i] s.InnerCutoff
-      setShaderFloat skinnedShader sLocSpotLightOuterCutoff[i] s.OuterCutoff
-
-    skinnedLightsDirty <- false
-
-  let setMaterialUniformsSkinned (normalMatrix: Matrix4x4) (mat3d: Material3D) =
-    cacheSkinnedLocations()
-
-    setShaderVec4 skinnedShader sLocAlbedoColor (colorToVec4 mat3d.AlbedoColor)
-
-    setShaderFloat skinnedShader sLocRoughness mat3d.Roughness
-    setShaderFloat skinnedShader sLocMetallic mat3d.Metallic
-
-    setShaderVec4
-      skinnedShader
-      sLocEmissionColor
-      (colorToVec4 mat3d.EmissionColor)
-
-    setShaderFloat skinnedShader sLocOpacity mat3d.Opacity
-    setShaderVec2 skinnedShader sLocTiling mat3d.Tiling
-
-    let useNormal =
-      match mat3d.NormalMap with
-      | ValueSome _ -> 1
-      | ValueNone -> 0
-
-    setShaderInt skinnedShader sLocUseNormalMap useNormal
-
-    Raylib.SetShaderValueMatrix(skinnedShader, sLocNormalMatrix, normalMatrix)
-
-  let uploadBoneMatrices(bones: Matrix4x4[]) =
-    cacheSkinnedLocations()
-
-    let count = min bones.Length 128
-
-    for i = 0 to count - 1 do
-      Raylib.SetShaderValueMatrix(skinnedShader, sLocBones + i, bones[i])
-
-  let ensureShaderActive() =
-    if not shaderActive then
-      Raylib.BeginShaderMode forwardShader
-      shaderActive <- true
-
-  let ensureShaderInactive() =
-    if shaderActive then
-      Raylib.EndShaderMode()
-      shaderActive <- false
-
-  let uploadLights() =
-    cacheLocations()
-    ensureShaderActive()
-
-    match ambient.Count with
-    | 0 ->
-      setShaderVec3 forwardShader locAmbientColor Vector3.Zero
-      setShaderFloat forwardShader locAmbientIntensity 0.0f
-    | _ ->
-      let a = ambient[0]
-      setShaderVec3 forwardShader locAmbientColor (colorToVec3 a.Color)
-      setShaderFloat forwardShader locAmbientIntensity a.Intensity
-
-    match dirLights.Count with
-    | 0 ->
-      setShaderVec3 forwardShader locDirLightDir Vector3.Zero
-      setShaderVec3 forwardShader locDirLightColor Vector3.Zero
-      setShaderFloat forwardShader locDirLightIntensity 0.0f
-      setShaderInt forwardShader locDirLightCastsShadows 0
-    | _ ->
-      let d = dirLights[0]
-      setShaderVec3 forwardShader locDirLightDir d.Direction
-      setShaderVec3 forwardShader locDirLightColor (colorToVec3 d.Color)
-      setShaderFloat forwardShader locDirLightIntensity d.Intensity
-
-      setShaderInt
-        forwardShader
-        locDirLightCastsShadows
-        (if d.CastsShadows then 1 else 0)
-
-    let ptCount = min pointLights.Count maxPointLights
-    setShaderInt forwardShader locPointLightCount ptCount
-
-    for i = 0 to ptCount - 1 do
-      let l = pointLights[i]
-      setShaderVec3 forwardShader locPointLightPos[i] l.Position
-      setShaderVec3 forwardShader locPointLightColor[i] (colorToVec3 l.Color)
-      setShaderFloat forwardShader locPointLightIntensity[i] l.Intensity
-      setShaderFloat forwardShader locPointLightRadius[i] l.Radius
-      setShaderFloat forwardShader locPointLightFalloff[i] l.Falloff
-
-    let spCount = min spotLights.Count maxSpotLights
-    setShaderInt forwardShader locSpotLightCount spCount
-
-    for i = 0 to spCount - 1 do
-      let s: SpotLight3D = spotLights[i]
-      setShaderVec3 forwardShader locSpotLightPos[i] s.Position
-      setShaderVec3 forwardShader locSpotLightDir[i] s.Direction
-      setShaderVec3 forwardShader locSpotLightColor[i] (colorToVec3 s.Color)
-      setShaderFloat forwardShader locSpotLightIntensity[i] s.Intensity
-      setShaderFloat forwardShader locSpotLightRadius[i] s.Radius
-      setShaderFloat forwardShader locSpotLightInnerCutoff[i] s.InnerCutoff
-      setShaderFloat forwardShader locSpotLightOuterCutoff[i] s.OuterCutoff
-
-    lightsDirty <- false
-
-  let getOrCreateMaterial(mat3d: Material3D) : Material =
-    let key = MaterialKey.fromMaterial3D mat3d
-
-    if hasLastMaterial && key = lastMaterialKey then
-      lastRaylibMaterial
-    else
-      match materialCache.TryGetValue key with
-      | true, mat ->
-        lastMaterialKey <- key
-        lastRaylibMaterial <- mat
-        hasLastMaterial <- true
-        mat
-      | false, _ ->
-
-      let mutable mat = Raylib.LoadMaterialDefault()
-      mat.Shader <- forwardShader
-
-      match mat3d.AlbedoMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Albedo, t)
-      | ValueNone -> ()
-
-      match mat3d.RoughnessMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Roughness, t)
-      | ValueNone -> ()
-
-      match mat3d.MetallicMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Metalness, t)
-      | ValueNone -> ()
-
-      match mat3d.NormalMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Normal, t)
-      | ValueNone -> ()
-
-      match mat3d.EmissionMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Emission, t)
-      | ValueNone -> ()
-
-      materialCache[key] <- mat
-      lastMaterialKey <- key
-      lastRaylibMaterial <- mat
-      hasLastMaterial <- true
-      mat
-
-  let setMaterialUniforms (normalMatrix: Matrix4x4) (mat3d: Material3D) =
-    cacheLocations()
-    ensureShaderActive()
-
-    let key = MaterialKey.fromMaterial3D mat3d
-
-    if not hasLastMaterial || key <> lastMaterialKey then
-      setShaderVec4 forwardShader locAlbedoColor (colorToVec4 mat3d.AlbedoColor)
-      setShaderFloat forwardShader locRoughness mat3d.Roughness
-      setShaderFloat forwardShader locMetallic mat3d.Metallic
-
-      setShaderVec4
-        forwardShader
-        locEmissionColor
-        (colorToVec4 mat3d.EmissionColor)
-
-      setShaderFloat forwardShader locOpacity mat3d.Opacity
-      setShaderVec2 forwardShader locTiling mat3d.Tiling
-
-      let useNormal =
-        match mat3d.NormalMap with
-        | ValueSome _ -> 1
-        | ValueNone -> 0
-
-      setShaderInt forwardShader locUseNormalMap useNormal
-      lastMaterialKey <- key
-      hasLastMaterial <- true
-
-    Raylib.SetShaderValueMatrix(forwardShader, locNormalMatrix, normalMatrix)
-
-  let drawMeshCore
-    (mesh: Mesh)
-    (transform: Matrix4x4)
-    (normalMatrix: Matrix4x4)
-    (material: Material3D)
-    =
-    if cameraActive then
-      if lightsDirty then
-        uploadLights()
-
-      setMaterialUniforms normalMatrix material
-      let mat = getOrCreateMaterial material
-      Raylib.DrawMesh(mesh, mat, transform)
-
-  // ------------------------------------------------------------------
-  // Public rendering methods (called directly by pipeline dispatch)
-  // ------------------------------------------------------------------
-
-  member _.GameContext = gameCtx
-
-  member _.BeginCamera(cam: Camera3D) =
-    if cameraActive then
-      ensureShaderInactive()
-      Raylib.EndMode3D()
-
-    Raylib.BeginMode3D cam
-    cameraActive <- true
-    currentCamera <- cam
-
-  member _.BeginCameraConfig
-    (cfg: Camera3DConfig, windowWidth: int, windowHeight: int)
-    =
-    if cameraActive then
-      ensureShaderInactive()
-      Raylib.EndMode3D()
-
-    // Apply viewport and clear
-    match cfg.Viewport with
-    | ValueSome vp ->
-      let x = int(vp.X * float32 windowWidth)
-      let y = int(vp.Y * float32 windowHeight)
-      let w = int(vp.Width * float32 windowWidth)
-      let h = int(vp.Height * float32 windowHeight)
-
-      // Scissor-clear so we only clear the viewport region
-      match cfg.ClearColor with
-      | ValueSome color ->
-        Rlgl.EnableScissorTest()
-        Rlgl.Scissor(x, y, w, h)
-        Raylib.ClearBackground(color)
-        Rlgl.DisableScissorTest()
-      | ValueNone -> ()
-
-      Rlgl.Viewport(x, y, w, h)
-    | ValueNone ->
-      // Fullscreen — clear the whole screen
-      match cfg.ClearColor with
-      | ValueSome color -> Raylib.ClearBackground(color)
-      | ValueNone -> ()
-
-    Raylib.BeginMode3D cfg.Camera
-    cameraActive <- true
-    currentCamera <- cfg.Camera
-
-  member _.EndCamera() =
-    if cameraActive then
-      ensureShaderInactive()
-      Raylib.EndMode3D()
-      cameraActive <- false
-
-    // Restore viewport to full window
-    Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
-
-  member _.DrawMesh(mesh, transform, material) =
-    let normalMatrix = computeNormalMatrix transform
-    drawMeshCore mesh transform normalMatrix material
-
-  member _.DrawBillboard
-    (texture: Texture2D, position: Vector3, size: Vector2, color: Color)
-    =
-    if cameraActive then
-      ensureShaderInactive()
-      Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
-
-      let source =
-        Rectangle(0.0f, 0.0f, float32 texture.Width, float32 texture.Height)
-
-      Raylib.DrawBillboardRec(
-        currentCamera,
-        texture,
-        source,
-        position,
-        size,
-        color
-      )
-
-  member _.DrawLine3D(start: Vector3, finish: Vector3, color: Color) =
-    if cameraActive then
-      Raylib.DrawLine3D(start, finish, color)
-
-  member _.DrawSkinnedMesh
-    (mesh: Mesh, transform: Matrix4x4, material: Material3D, bones: Matrix4x4[])
-    =
-    if cameraActive then
-      ensureShaderInactive()
-      Raylib.BeginShaderMode skinnedShader
-      shaderActive <- true
-
-      if skinnedLightsDirty then
-        uploadLightsSkinned()
-
-      setShaderVec3 skinnedShader sLocCameraPos currentCamera.Position
-      setShaderInt skinnedShader sLocShadowPass 0
-
-      let normalMatrix = computeNormalMatrix transform
-      setMaterialUniformsSkinned normalMatrix material
-      uploadBoneMatrices bones
-
-      let mat = getOrCreateSkinnedMaterial material
-      Raylib.DrawMesh(mesh, mat, transform)
-
-      ensureShaderInactive()
-
-  member _.DrawMeshInstanced
-    (
-      mesh: Mesh,
-      transforms: Matrix4x4[],
-      material: Material3D,
-      instanceCount: int
-    ) =
-    if cameraActive then
-      // Switch to instanced shader
-      ensureShaderInactive()
-      Raylib.BeginShaderMode instancedShader
-      shaderActive <- true
-
-      if instLightsDirty then
-        uploadLightsInstanced()
-
-      // Set camera position for PBR
-      setShaderVec3 instancedShader iLocCameraPos currentCamera.Position
-      setShaderInt instancedShader iLocShadowPass 0
-
-      // Use identity normal matrix — per-instance normals come from
-      // mat3(instanceTransform) in the vertex shader
-      setMaterialUniformsInstanced Matrix4x4.Identity material
-      let mat = getOrCreateInstancedMaterial material
-      Raylib.DrawMeshInstanced(mesh, mat, transforms, instanceCount)
-
-      // Switch back to regular shader for subsequent non-instanced draws
-      ensureShaderInactive()
-
-  // TODO: Implement proper batching — compute billboard vertices manually and
-  // submit in a single rlBegin(RL_QUADS)/rlEnd block with one texture bind,
-  // instead of calling DrawBillboardRec per billboard (which flushes separately).
-  member _.DrawBillboardBatch
-    (
-      textures: Texture2D[],
-      positions: Vector3[],
-      sizes: Vector2[],
-      colors: Color[],
-      count: int
-    ) =
-    if cameraActive then
-      ensureShaderInactive()
-      Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
-
-      for i = 0 to count - 1 do
-        let source =
-          Rectangle(
-            0.0f,
-            0.0f,
-            float32 textures[i].Width,
-            float32 textures[i].Height
-          )
-
-        Raylib.DrawBillboardRec(
-          currentCamera,
-          textures[i],
-          source,
-          positions[i],
-          sizes[i],
-          colors[i]
-        )
-
-  member _.AddPointLight(light: PointLight3D) =
-    pointLights.Add light
-    lightsDirty <- true
-    instLightsDirty <- true
-    skinnedLightsDirty <- true
-
-  member _.AddDirectionalLight(light: DirectionalLight3D) =
-    dirLights.Add light
-    lightsDirty <- true
-    instLightsDirty <- true
-    skinnedLightsDirty <- true
-
-  member _.AddSpotLight(light: SpotLight3D) =
-    spotLights.Add light
-    lightsDirty <- true
-    instLightsDirty <- true
-    skinnedLightsDirty <- true
-
-  member _.SetAmbientLight(light: AmbientLight3D) =
-    ambient.Clear()
-    ambient.Add light
-    lightsDirty <- true
-    instLightsDirty <- true
-    skinnedLightsDirty <- true
-
-  member _.DrawImmediate(action: unit -> unit) =
-    let savedCam = cameraActive
-    let savedShader = shaderActive
-
-    if shaderActive then
-      Raylib.EndShaderMode()
-      shaderActive <- false
-
-    if cameraActive then
-      Raylib.EndMode3D()
-      cameraActive <- false
-
-    try
-      action()
-    finally
-      if savedCam then
-        Raylib.BeginMode3D currentCamera
-        cameraActive <- true
-
-      if savedShader then
-        Raylib.BeginShaderMode forwardShader
-        shaderActive <- true
-
-  member internal _.WarmMaterial(mat3d: Material3D) =
-    getOrCreateMaterial mat3d |> ignore
-
-  member internal _.CacheShadowLocations(shadowShader: Shader) =
-    locShadowNormalMatrix <-
-      Raylib.GetShaderLocation(shadowShader, "normalMatrix")
-
-  member internal _.UnloadInstancedMaterialCache() =
-    for KeyValue(_, mat) in instancedMaterialCache do
-      Raylib.UnloadMaterial mat
-
-    instancedMaterialCache.Clear()
-
-    for KeyValue(_, mat) in skinnedMaterialCache do
-      Raylib.UnloadMaterial mat
-
-    skinnedMaterialCache.Clear()
-
-  member internal _.CacheInstancedShadowLocations() =
-    cacheInstancedLocations() // ensure base locations are cached first
-    iLocShadowPass <- Raylib.GetShaderLocation(instancedShader, "shadowPass")
-    iLocShadowAtlas <- Raylib.GetShaderLocation(instancedShader, "shadowAtlas")
-
-    iLocShadowCasterCount <-
-      Raylib.GetShaderLocation(instancedShader, "shadowCasterCount")
-
-    for i = 0 to maxShadowCasters - 1 do
-      iLocShadowViewProjs[i] <-
-        Raylib.GetShaderLocation(instancedShader, $"shadowViewProjs[{i}]")
-
-      iLocShadowUVOffsets[i] <-
-        Raylib.GetShaderLocation(instancedShader, $"shadowUVOffsets[{i}]")
-
-      iLocShadowLightPositions[i] <-
-        Raylib.GetShaderLocation(instancedShader, $"shadowLightPositions[{i}]")
-
-      iLocShadowBiases[i] <-
-        Raylib.GetShaderLocation(instancedShader, $"shadowBiases[{i}]")
-
-      iLocShadowTypes[i] <-
-        Raylib.GetShaderLocation(instancedShader, $"shadowTypes[{i}]")
-
-  member internal _.LocNormalMatrix = locNormalMatrix
-  member internal _.LocShadowNormalMatrix = locShadowNormalMatrix
-  member internal _.LocShadowPass = locShadowPass
-  member internal _.LocShadowAtlas = locShadowAtlas
-  member internal _.LocShadowCasterCount = locShadowCasterCount
-  member internal _.LocShadowViewProjs = locShadowViewProjs
-  member internal _.LocShadowUVOffsets = locShadowUVOffsets
-  member internal _.LocShadowLightPositions = locShadowLightPositions
-  member internal _.LocShadowBiases = locShadowBiases
-  member internal _.LocShadowTypes = locShadowTypes
-  member internal _.LocCameraPos = locCameraPos
-
-  member internal _.ILocShadowPass = iLocShadowPass
-  member internal _.ILocShadowAtlas = iLocShadowAtlas
-  member internal _.ILocShadowCasterCount = iLocShadowCasterCount
-  member internal _.ILocShadowViewProjs = iLocShadowViewProjs
-  member internal _.ILocShadowUVOffsets = iLocShadowUVOffsets
-  member internal _.ILocShadowLightPositions = iLocShadowLightPositions
-  member internal _.ILocShadowBiases = iLocShadowBiases
-  member internal _.ILocShadowTypes = iLocShadowTypes
-  member internal _.ILocCameraPos = iLocCameraPos
-
-  member internal _.ClearLights() =
-    dirLights.Clear()
-    pointLights.Clear()
-    spotLights.Clear()
-
-  member internal _.DirLights = dirLights
-  member internal _.PointLights = pointLights
-  member internal _.SpotLights = spotLights
-
-  member internal _.Reset
-    (
-      gameContext: GameContext,
-      shadowFbo: RenderTexture2D,
-      lightViewProj: Matrix4x4
-    ) =
-    gameCtx <- gameContext
-    activeShadowMap <- shadowFbo
-    activeLightViewProj <- lightViewProj
-    ambient.Clear()
-    dirLights.Clear()
-    pointLights.Clear()
-    spotLights.Clear()
-    hasLastMaterial <- false
-    hasLastSkinnedMaterial <- false
-    cameraActive <- false
-    shaderActive <- false
-    skinnedLightsDirty <- true
-
-  member internal _.EndAll() =
-    if shaderActive then
-      Raylib.EndShaderMode()
-      shaderActive <- false
-
-    if cameraActive then
-      Raylib.EndMode3D()
-      cameraActive <- false
+[<Struct>]
+type private MaterialCache =
+  val mutable cache: Dictionary<MaterialKey, Material>
+  val mutable LastKey: MaterialKey
+  val mutable HasLast: bool
+  val mutable LastMaterial: Material
+
+  new(capacity: int) =
+    {
+      cache = Dictionary<MaterialKey, Material>(capacity)
+      LastKey = Unchecked.defaultof<MaterialKey>
+      HasLast = false
+      LastMaterial = Unchecked.defaultof<Material>
+    }
+
+// ------------------------------------------------------------------
+// Shader Variant (mutable — class-style struct)
+// ------------------------------------------------------------------
+
+[<Struct>]
+type private ShaderVariant =
+  val Locs: ShaderLocations
+  val mutable MaterialCache: MaterialCache
+  val mutable LightsDirty: bool
+
+  new(locs: ShaderLocations, matCache: MaterialCache) =
+    {
+      Locs = locs
+      MaterialCache = matCache
+      LightsDirty = true
+    }
+
+// ------------------------------------------------------------------
+// Shadow Depth Resources (immutable — bundles shadow shader + material)
+// ------------------------------------------------------------------
+
+[<IsReadOnly; Struct>]
+type private ShadowDepthResources = {
+  Shader: Shader
+  SkinnedShader: Shader
+  Material: Material
+  SkinnedMaterial: Material
+  NormalMatrixLoc: int
+  BoneLoc: int
+}
+
+// ------------------------------------------------------------------
+// Light Buffers (reference type)
+// ------------------------------------------------------------------
+
+type private LightBuffers = {
+  Ambient: ResizeArray<AmbientLight3D>
+  DirLights: ResizeArray<DirectionalLight3D>
+  PointLights: ResizeArray<PointLight3D>
+  SpotLights: ResizeArray<SpotLight3D>
+}
+
+// ------------------------------------------------------------------
+// Frame State (uses voption)
+// ------------------------------------------------------------------
+
+[<IsReadOnly; Struct>]
+type private FrameState = {
+  Camera: Camera3D voption
+  ShadowOrigin: Vector3 voption
+}
 
 // ------------------------------------------------------------------
 // Shadow Pass Helpers
 // ------------------------------------------------------------------
 
+[<AutoOpen>]
 module private ShadowPassHelpers =
+
   [<Struct>]
   type MeshDraw = {
     Mesh: Mesh
@@ -1438,10 +310,8 @@ module private ShadowPassHelpers =
   }
 
   let collectMeshDraws(buffer: RenderBuffer3D) =
-    let pool = System.Buffers.ArrayPool<MeshDraw>.Shared
+    let pool = ArrayPool<MeshDraw>.Shared
 
-    // Pre-scan to count actual mesh draws for precise allocation.
-    // Geometry between DisableShadows and EnableShadows is excluded.
     let mutable meshCount = 0
     let mutable shadowsEnabled = true
     let mutable i = 0
@@ -1514,59 +384,1080 @@ module private ShadowPassHelpers =
 
     struct (arr, count)
 
+  /// Register all shadow-casting lights with the atlas. Returns true if any casters found.
+  let collectShadowCasters(lights: LightBuffers, atlas: ShadowAtlas) =
+    let mutable hasCasters = false
+
+    for dir in lights.DirLights do
+      if dir.CastsShadows then
+        hasCasters <- true
+
+        atlas.AddCaster(
+          ShadowCasterType.Directional,
+          Vector3.Zero,
+          dir.Direction,
+          Vector3.Zero,
+          true,
+          ValueNone
+        )
+        |> ignore
+
+    for pt in lights.PointLights do
+      if pt.CastsShadows then
+        hasCasters <- true
+
+        atlas.AddCaster(
+          ShadowCasterType.Point,
+          pt.Position,
+          Vector3.Zero,
+          Vector3.Zero,
+          true,
+          pt.ShadowBias
+        )
+        |> ignore
+
+    for sp in lights.SpotLights do
+      if sp.CastsShadows then
+        hasCasters <- true
+
+        atlas.AddCaster(
+          ShadowCasterType.Spot,
+          sp.Position,
+          sp.Direction,
+          sp.Position + sp.Direction,
+          true,
+          sp.ShadowBias
+        )
+        |> ignore
+
+    hasCasters
+
+  /// Build an orthographic camera for directional-light shadow rendering.
+  let createDirectionalShadowCamera
+    (
+      caster: ShadowCasterData,
+      frameState: inref<FrameState>,
+      atlasCfg: ShadowAtlasConfig,
+      activeCamera: Camera3D
+    ) =
+    let lightFromDir = Vector3.Normalize(-caster.LightDirection)
+
+    let rawOrigin =
+      match frameState.ShadowOrigin with
+      | ValueSome origin -> origin
+      | ValueNone ->
+        match atlasCfg.OriginStrategy with
+        | ShadowOriginStrategy.CameraTarget -> activeCamera.Target
+        | ShadowOriginStrategy.SceneCenter -> Vector3.Zero
+        | ShadowOriginStrategy.Custom f -> f activeCamera
+
+    let gridSize = atlasCfg.GridSnapSize
+
+    let snappedX =
+      if gridSize > 0.0f then
+        MathF.Round(rawOrigin.X / gridSize) * gridSize
+      else
+        rawOrigin.X
+
+    let snappedZ =
+      if gridSize > 0.0f then
+        MathF.Round(rawOrigin.Z / gridSize) * gridSize
+      else
+        rawOrigin.Z
+
+    let shadowOrigin = Vector3(snappedX, rawOrigin.Y, snappedZ)
+
+    let lightDistance =
+      match atlasCfg.DirectionalLightDistance with
+      | ValueSome d -> d
+      | ValueNone -> 100.0f
+
+    let lightPos = shadowOrigin + lightFromDir * lightDistance
+
+    let safeUp =
+      if abs caster.LightDirection.Y > 0.99f then
+        Vector3.UnitZ
+      else
+        Vector3.UnitY
+
+    let orthoSize =
+      match atlasCfg.DirectionalLightSize with
+      | ValueSome s -> s
+      | ValueNone -> 50.0f
+
+    let shadowNear = 1.0f
+    let shadowFar = lightDistance + orthoSize * 2.0f
+
+    Rlgl.SetClipPlanes(float shadowNear, float shadowFar)
+
+    Camera3D(
+      Position = lightPos,
+      Target = shadowOrigin,
+      Up = safeUp,
+      FovY = orthoSize,
+      Projection = CameraProjection.Orthographic
+    )
+
 // ------------------------------------------------------------------
-// ForwardPbrPipeline
+// Pure / near-pure functions
+// ------------------------------------------------------------------
+
+[<AutoOpen>]
+module private PipelineFunctions =
+
+  let inline colorToVec3(c: Color) =
+    Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
+
+  let inline colorToVec4(c: Color) =
+    Vector4(
+      float32 c.R / 255.0f,
+      float32 c.G / 255.0f,
+      float32 c.B / 255.0f,
+      float32 c.A / 255.0f
+    )
+
+  /// Cache point light shader locations.
+  let cachePointLightLocs(shader: Shader, maxPt: int) =
+    let pos = Array.zeroCreate<int> maxPt
+    let color = Array.zeroCreate<int> maxPt
+    let intensity = Array.zeroCreate<int> maxPt
+    let radius = Array.zeroCreate<int> maxPt
+    let falloff = Array.zeroCreate<int> maxPt
+
+    for i = 0 to maxPt - 1 do
+      pos[i] <- Raylib.GetShaderLocation(shader, $"pointLightPos[{i}]")
+      color[i] <- Raylib.GetShaderLocation(shader, $"pointLightColor[{i}]")
+
+      intensity[i] <-
+        Raylib.GetShaderLocation(shader, $"pointLightIntensity[{i}]")
+
+      radius[i] <- Raylib.GetShaderLocation(shader, $"pointLightRadius[{i}]")
+      falloff[i] <- Raylib.GetShaderLocation(shader, $"pointLightFalloff[{i}]")
+
+    {
+      Count = Raylib.GetShaderLocation(shader, "pointLightCount")
+      Pos = pos
+      Color = color
+      Intensity = intensity
+      Radius = radius
+      Falloff = falloff
+    }
+
+  /// Cache spot light shader locations.
+  let cacheSpotLightLocs(shader: Shader, maxSp: int) =
+    let pos = Array.zeroCreate<int> maxSp
+    let dir = Array.zeroCreate<int> maxSp
+    let color = Array.zeroCreate<int> maxSp
+    let intensity = Array.zeroCreate<int> maxSp
+    let radius = Array.zeroCreate<int> maxSp
+    let innerCutoff = Array.zeroCreate<int> maxSp
+    let outerCutoff = Array.zeroCreate<int> maxSp
+
+    for i = 0 to maxSp - 1 do
+      pos[i] <- Raylib.GetShaderLocation(shader, $"spotLightPos[{i}]")
+      dir[i] <- Raylib.GetShaderLocation(shader, $"spotLightDir[{i}]")
+      color[i] <- Raylib.GetShaderLocation(shader, $"spotLightColor[{i}]")
+
+      intensity[i] <-
+        Raylib.GetShaderLocation(shader, $"spotLightIntensity[{i}]")
+
+      radius[i] <- Raylib.GetShaderLocation(shader, $"spotLightRadius[{i}]")
+
+      innerCutoff[i] <-
+        Raylib.GetShaderLocation(shader, $"spotLightInnerCutoff[{i}]")
+
+      outerCutoff[i] <-
+        Raylib.GetShaderLocation(shader, $"spotLightOuterCutoff[{i}]")
+
+    {
+      Count = Raylib.GetShaderLocation(shader, "spotLightCount")
+      Pos = pos
+      Dir = dir
+      Color = color
+      Intensity = intensity
+      Radius = radius
+      InnerCutoff = innerCutoff
+      OuterCutoff = outerCutoff
+    }
+
+  /// Cache shadow shader locations.
+  let cacheShadowLocs(shader: Shader, maxCasters: int) =
+    let viewProjs = Array.zeroCreate<int> maxCasters
+    let uvOffsets = Array.zeroCreate<int> maxCasters
+    let lightPositions = Array.zeroCreate<int> maxCasters
+    let biases = Array.zeroCreate<int> maxCasters
+    let types = Array.zeroCreate<int> maxCasters
+
+    let locs = {
+      Pass = Raylib.GetShaderLocation(shader, "shadowPass")
+      Atlas = Raylib.GetShaderLocation(shader, "shadowAtlas")
+      CasterCount = Raylib.GetShaderLocation(shader, "shadowCasterCount")
+      ViewProjs = viewProjs
+      UVOffsets = uvOffsets
+      LightPositions = lightPositions
+      Biases = biases
+      Types = types
+    }
+
+    rlSetUniformInt locs.Atlas 15
+
+    for i = 0 to maxCasters - 1 do
+      viewProjs[i] <- Raylib.GetShaderLocation(shader, $"shadowViewProjs[{i}]")
+      uvOffsets[i] <- Raylib.GetShaderLocation(shader, $"shadowUVOffsets[{i}]")
+
+      lightPositions[i] <-
+        Raylib.GetShaderLocation(shader, $"shadowLightPositions[{i}]")
+
+      biases[i] <- Raylib.GetShaderLocation(shader, $"shadowBiases[{i}]")
+      types[i] <- Raylib.GetShaderLocation(shader, $"shadowTypes[{i}]")
+
+    locs
+
+  /// Single parameterized location cache replacing 3x duplication.
+  let cacheLocations
+    (shader: Shader, maxPt: int, maxSp: int, maxCasters: int)
+    : ShaderLocations =
+    let matLocs = {
+      AlbedoColor = Raylib.GetShaderLocation(shader, "albedoColor")
+      Roughness = Raylib.GetShaderLocation(shader, "roughness")
+      Metallic = Raylib.GetShaderLocation(shader, "metallic")
+      EmissionColor = Raylib.GetShaderLocation(shader, "emissionColor")
+      Opacity = Raylib.GetShaderLocation(shader, "opacity")
+      Tiling = Raylib.GetShaderLocation(shader, "tiling")
+      UseNormalMap = Raylib.GetShaderLocation(shader, "useNormalMap")
+      NormalMatrix = Raylib.GetShaderLocation(shader, "normalMatrix")
+    }
+
+    let ambLocs = {
+      Color = Raylib.GetShaderLocation(shader, "ambientColor")
+      Intensity = Raylib.GetShaderLocation(shader, "ambientIntensity")
+    }
+
+    let dlLocs = {
+      Dir = Raylib.GetShaderLocation(shader, "dirLightDir")
+      Color = Raylib.GetShaderLocation(shader, "dirLightColor")
+      Intensity = Raylib.GetShaderLocation(shader, "dirLightIntensity")
+      CastsShadows = Raylib.GetShaderLocation(shader, "dirLightCastsShadows")
+    }
+
+    let ptLocs = cachePointLightLocs(shader, maxPt)
+    let spLocs = cacheSpotLightLocs(shader, maxSp)
+    let shadowLocs = cacheShadowLocs(shader, maxCasters)
+
+    {
+      Shader = shader
+      Cached = true
+      Material = matLocs
+      Ambient = ambLocs
+      DirLight = dlLocs
+      PointLights = ptLocs
+      SpotLights = spLocs
+      Shadow = shadowLocs
+      CameraPos = Raylib.GetShaderLocation(shader, "cameraPos")
+      ShadowNormalMatrix = Raylib.GetShaderLocation(shader, "normalMatrix")
+      Bones = Raylib.GetShaderLocation(shader, "boneMatrices[0]")
+    }
+
+  /// Single parameterized light upload replacing 3x duplication.
+  let uploadLights
+    (
+      shader: Shader,
+      variant: inref<ShaderVariant>,
+      lights: LightBuffers,
+      maxPt: int,
+      maxSp: int
+    ) =
+    let locs = variant.Locs
+
+    match lights.Ambient.Count with
+    | 0 ->
+      setShaderVec3 shader locs.Ambient.Color Vector3.Zero
+      setShaderFloat shader locs.Ambient.Intensity 0.0f
+    | _ ->
+      let a = lights.Ambient[0]
+      setShaderVec3 shader locs.Ambient.Color (colorToVec3 a.Color)
+      setShaderFloat shader locs.Ambient.Intensity a.Intensity
+
+    match lights.DirLights.Count with
+    | 0 ->
+      setShaderVec3 shader locs.DirLight.Dir Vector3.Zero
+      setShaderVec3 shader locs.DirLight.Color Vector3.Zero
+      setShaderFloat shader locs.DirLight.Intensity 0.0f
+      setShaderInt shader locs.DirLight.CastsShadows 0
+    | _ ->
+      let d = lights.DirLights[0]
+      setShaderVec3 shader locs.DirLight.Dir d.Direction
+      setShaderVec3 shader locs.DirLight.Color (colorToVec3 d.Color)
+      setShaderFloat shader locs.DirLight.Intensity d.Intensity
+
+      setShaderInt
+        shader
+        locs.DirLight.CastsShadows
+        (if d.CastsShadows then 1 else 0)
+
+    let ptCount = min lights.PointLights.Count maxPt
+    setShaderInt shader locs.PointLights.Count ptCount
+
+    for i = 0 to ptCount - 1 do
+      let l = lights.PointLights[i]
+      setShaderVec3 shader locs.PointLights.Pos[i] l.Position
+      setShaderVec3 shader locs.PointLights.Color[i] (colorToVec3 l.Color)
+      setShaderFloat shader locs.PointLights.Intensity[i] l.Intensity
+      setShaderFloat shader locs.PointLights.Radius[i] l.Radius
+      setShaderFloat shader locs.PointLights.Falloff[i] l.Falloff
+
+    let spCount = min lights.SpotLights.Count maxSp
+    setShaderInt shader locs.SpotLights.Count spCount
+
+    for i = 0 to spCount - 1 do
+      let s: SpotLight3D = lights.SpotLights[i]
+      setShaderVec3 shader locs.SpotLights.Pos[i] s.Position
+      setShaderVec3 shader locs.SpotLights.Dir[i] s.Direction
+      setShaderVec3 shader locs.SpotLights.Color[i] (colorToVec3 s.Color)
+      setShaderFloat shader locs.SpotLights.Intensity[i] s.Intensity
+      setShaderFloat shader locs.SpotLights.Radius[i] s.Radius
+      setShaderFloat shader locs.SpotLights.InnerCutoff[i] s.InnerCutoff
+      setShaderFloat shader locs.SpotLights.OuterCutoff[i] s.OuterCutoff
+
+  /// Single parameterized material uniform setter replacing 3x duplication.
+  let setMaterialUniforms
+    (
+      shader: Shader,
+      matLocs: inref<MaterialUniforms>,
+      mat3d: inref<Material3D>,
+      nm: Matrix4x4
+    ) =
+    setShaderVec4 shader matLocs.AlbedoColor (colorToVec4 mat3d.AlbedoColor)
+    setShaderFloat shader matLocs.Roughness mat3d.Roughness
+    setShaderFloat shader matLocs.Metallic mat3d.Metallic
+    setShaderVec4 shader matLocs.EmissionColor (colorToVec4 mat3d.EmissionColor)
+    setShaderFloat shader matLocs.Opacity mat3d.Opacity
+    setShaderVec2 shader matLocs.Tiling mat3d.Tiling
+
+    let useNormal =
+      match mat3d.NormalMap with
+      | ValueSome _ -> 1
+      | ValueNone -> 0
+
+    setShaderInt shader matLocs.UseNormalMap useNormal
+    Raylib.SetShaderValueMatrix(shader, matLocs.NormalMatrix, nm)
+
+  /// Single parameterized material cache lookup/creation replacing 3x duplication.
+  let getOrCreate
+    (
+      variant: byref<ShaderVariant>,
+      shader: Shader,
+      mat3d: inref<Material3D>,
+      key: inref<MaterialKey>
+    ) : Material =
+    let mc = variant.MaterialCache
+
+    if mc.HasLast && key = mc.LastKey then
+      mc.LastMaterial
+    else
+      match mc.cache.TryGetValue key with
+      | true, mat ->
+        variant.MaterialCache.LastKey <- key
+        variant.MaterialCache.LastMaterial <- mat
+        variant.MaterialCache.HasLast <- true
+        mat
+      | false, _ ->
+        let mutable mat = Raylib.LoadMaterialDefault()
+        mat.Shader <- shader
+
+        match mat3d.AlbedoMap with
+        | ValueSome t ->
+          Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Albedo, t)
+        | ValueNone -> ()
+
+        match mat3d.RoughnessMap with
+        | ValueSome t ->
+          Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Roughness, t)
+        | ValueNone -> ()
+
+        match mat3d.MetallicMap with
+        | ValueSome t ->
+          Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Metalness, t)
+        | ValueNone -> ()
+
+        match mat3d.NormalMap with
+        | ValueSome t ->
+          Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Normal, t)
+        | ValueNone -> ()
+
+        match mat3d.EmissionMap with
+        | ValueSome t ->
+          Raylib.SetMaterialTexture(&mat, MaterialMapIndex.Emission, t)
+        | ValueNone -> ()
+
+        variant.MaterialCache.cache[key] <- mat
+        variant.MaterialCache.LastKey <- key
+        variant.MaterialCache.LastMaterial <- mat
+        variant.MaterialCache.HasLast <- true
+        mat
+
+  /// Upload shadow atlas uniforms to a single shader.
+  let uploadShadowUniformsForShader
+    (
+      shader: Shader,
+      shadowLocs: inref<ShadowUniforms>,
+      cameraLoc: int,
+      atlas: ShadowAtlas,
+      cameraPos: Vector3
+    ) =
+    if atlas.Fbo.Depth.Id <> 0u then
+      Rlgl.EnableShader shader.Id
+      Rlgl.ActiveTextureSlot 15
+      Rlgl.EnableTexture atlas.Fbo.Depth.Id
+      rlSetUniformInt shadowLocs.Atlas 15
+      Rlgl.ActiveTextureSlot 0
+
+    let count = min atlas.ActiveCasterCount shadowLocs.CasterCount
+
+    for i = 0 to count - 1 do
+      Raylib.SetShaderValueMatrix(
+        shader,
+        shadowLocs.ViewProjs[i],
+        atlas.ViewProjs[i]
+      )
+
+      setShaderVec4 shader shadowLocs.UVOffsets[i] atlas.UVOffsets[i]
+      setShaderVec3 shader shadowLocs.LightPositions[i] atlas.LightPositions[i]
+      setShaderFloat shader shadowLocs.Biases[i] atlas.Biases[i]
+      setShaderInt shader shadowLocs.Types[i] atlas.CasterTypes[i]
+
+    setShaderInt shader shadowLocs.CasterCount atlas.ActiveCasterCount
+    setShaderVec3 shader cameraLoc cameraPos
+    setShaderInt shader shadowLocs.Pass 0
+
+  /// Upload shadow atlas uniforms to all three shader variants.
+  let uploadShadowUniforms
+    (
+      hasCasters: bool,
+      forward: inref<ShaderVariant>,
+      instanced: inref<ShaderVariant>,
+      skinned: inref<ShaderVariant>,
+      atlas: ShadowAtlas,
+      cameraPos: Vector3
+    ) =
+    if hasCasters && cameraPos <> Unchecked.defaultof<Vector3> then
+      atlas.PrepareUniforms()
+      let fwd = forward.Locs
+      let inst = instanced.Locs
+      let sk = skinned.Locs
+
+      uploadShadowUniformsForShader(
+        fwd.Shader,
+        &fwd.Shadow,
+        fwd.CameraPos,
+        atlas,
+        cameraPos
+      )
+
+      uploadShadowUniformsForShader(
+        inst.Shader,
+        &inst.Shadow,
+        inst.CameraPos,
+        atlas,
+        cameraPos
+      )
+
+      uploadShadowUniformsForShader(
+        sk.Shader,
+        &sk.Shadow,
+        sk.CameraPos,
+        atlas,
+        cameraPos
+      )
+
+  /// Upload bone matrices to skinned shader — uses ReadOnlySpan for no-copy.
+  let inline uploadBoneMatrices
+    (shader: Shader, boneLoc: int, bones: ReadOnlySpan<Matrix4x4>)
+    =
+    let count = min bones.Length 128
+
+    for i = 0 to count - 1 do
+      Raylib.SetShaderValueMatrix(shader, boneLoc + i, bones[i])
+
+  /// Clear all light buffers.
+  let inline clearLights(lights: LightBuffers) =
+    lights.Ambient.Clear()
+    lights.DirLights.Clear()
+    lights.PointLights.Clear()
+    lights.SpotLights.Clear()
+
+  /// Warm material caches for a single material using the appropriate variant.
+  let inline warmMaterial
+    (
+      forward: byref<ShaderVariant>,
+      instanced: byref<ShaderVariant>,
+      skinned: byref<ShaderVariant>,
+      forwardShader: Shader,
+      instancedShader: Shader,
+      skinnedShader: Shader,
+      mat: inref<Material3D>,
+      variant: int
+    ) =
+    let key = MaterialKey.fromMaterial3D &mat
+
+    match variant with
+    | 1 -> getOrCreate(&forward, forwardShader, &mat, &key) |> ignore
+    | 2 -> getOrCreate(&instanced, instancedShader, &mat, &key) |> ignore
+    | 3 -> getOrCreate(&skinned, skinnedShader, &mat, &key) |> ignore
+    | _ -> ()
+
+  /// Apply camera config: viewport and clear color.
+  let applyCameraConfig(cfg: inref<Camera3DConfig>, gameCtx: GameContext) =
+    match cfg.Viewport with
+    | ValueSome vp ->
+      let x = int(vp.X * float32 gameCtx.WindowWidth)
+      let y = int(vp.Y * float32 gameCtx.WindowHeight)
+      let w = int(vp.Width * float32 gameCtx.WindowWidth)
+      let h = int(vp.Height * float32 gameCtx.WindowHeight)
+
+      match cfg.ClearColor with
+      | ValueSome color ->
+        Rlgl.EnableScissorTest()
+        Rlgl.Scissor(x, y, w, h)
+        Raylib.ClearBackground color
+        Rlgl.DisableScissorTest()
+      | ValueNone -> ()
+
+      Rlgl.Viewport(x, y, w, h)
+    | ValueNone ->
+      match cfg.ClearColor with
+      | ValueSome color -> Raylib.ClearBackground color
+      | ValueNone -> ()
+
+  /// Handle a single forward draw: begin shader, upload lights, set material, draw, end shader.
+  let inline handleDrawMesh
+    (
+      shader: Shader,
+      variant: byref<ShaderVariant>,
+      lights: LightBuffers,
+      maxPt: int,
+      maxSp: int,
+      lightsDirty: bool,
+      mesh: Mesh,
+      transform: Matrix4x4,
+      material: Material3D
+    ) =
+    Raylib.BeginShaderMode shader
+
+    if lightsDirty || variant.LightsDirty then
+      uploadLights(shader, &variant, lights, maxPt, maxSp)
+      variant.LightsDirty <- false
+
+    let nm = computeNormalMatrix transform
+    setMaterialUniforms(shader, &variant.Locs.Material, &material, nm)
+    let key = MaterialKey.fromMaterial3D &material
+    let mat = getOrCreate(&variant, shader, &material, &key)
+    Raylib.DrawMesh(mesh, mat, transform)
+    Raylib.EndShaderMode()
+
+  /// Handle model draw: iterate meshes, upload lights once, draw each.
+  let handleDrawModel
+    (
+      shader: Shader,
+      variant: byref<ShaderVariant>,
+      lights: LightBuffers,
+      maxPt: int,
+      maxSp: int,
+      lightsDirty: bool,
+      model: Model,
+      transform: Matrix4x4
+    ) =
+    Raylib.BeginShaderMode shader
+
+    if lightsDirty || variant.LightsDirty then
+      uploadLights(shader, &variant, lights, maxPt, maxSp)
+      variant.LightsDirty <- false
+
+    let nm = computeNormalMatrix transform
+
+    for mi = 0 to model.MeshCount - 1 do
+      let mesh = NativePtr.get model.Meshes mi
+      let matIdx = NativePtr.get model.MeshMaterial mi
+      let raylibMat = NativePtr.get model.Materials matIdx
+      let mat3d = Material3D.fromRaylibMaterial raylibMat
+      setMaterialUniforms(shader, &variant.Locs.Material, &mat3d, nm)
+      let key = MaterialKey.fromMaterial3D &mat3d
+      let mat = getOrCreate(&variant, shader, &mat3d, &key)
+      Raylib.DrawMesh(mesh, mat, transform)
+
+    Raylib.EndShaderMode()
+
+  /// Handle skinned mesh draw: shader switch, lights, bones, material, draw.
+  let inline handleDrawSkinnedMesh
+    (
+      shader: Shader,
+      variant: byref<ShaderVariant>,
+      lights: LightBuffers,
+      maxPt: int,
+      maxSp: int,
+      lightsDirty: bool,
+      currentCamera: Camera3D,
+      mesh: Mesh,
+      transform: Matrix4x4,
+      material: Material3D,
+      bones: Matrix4x4[]
+    ) =
+    Raylib.BeginShaderMode shader
+
+    if lightsDirty || variant.LightsDirty then
+      uploadLights(shader, &variant, lights, maxPt, maxSp)
+      variant.LightsDirty <- false
+
+    setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
+    setShaderInt shader variant.Locs.Shadow.Pass 0
+    let nm = computeNormalMatrix transform
+    setMaterialUniforms(shader, &variant.Locs.Material, &material, nm)
+    uploadBoneMatrices(shader, variant.Locs.Bones, ReadOnlySpan bones)
+    let key = MaterialKey.fromMaterial3D &material
+    let mat = getOrCreate(&variant, shader, &material, &key)
+    Raylib.DrawMesh(mesh, mat, transform)
+    Raylib.EndShaderMode()
+
+  /// Handle instanced mesh draw: shader switch, lights, material, draw.
+  let handleDrawMeshInstanced
+    (
+      shader: Shader,
+      variant: byref<ShaderVariant>,
+      lights: LightBuffers,
+      maxPt: int,
+      maxSp: int,
+      lightsDirty: bool,
+      currentCamera: Camera3D,
+      mesh: Mesh,
+      transforms: Matrix4x4[],
+      material: Material3D,
+      instanceCount: int
+    ) =
+    Raylib.BeginShaderMode shader
+
+    if lightsDirty || variant.LightsDirty then
+      uploadLights(shader, &variant, lights, maxPt, maxSp)
+      variant.LightsDirty <- false
+
+    setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
+    setShaderInt shader variant.Locs.Shadow.Pass 0
+
+    setMaterialUniforms(
+      shader,
+      &variant.Locs.Material,
+      &material,
+      Matrix4x4.Identity
+    )
+
+    let key = MaterialKey.fromMaterial3D &material
+    let mat = getOrCreate(&variant, shader, &material, &key)
+    Raylib.DrawMeshInstanced(mesh, mat, transforms, instanceCount)
+    Raylib.EndShaderMode()
+
+  /// Handle billboard draw using default shader.
+  let inline handleDrawBillboard
+    (
+      currentCamera: Camera3D,
+      texture: Texture2D,
+      position: Vector3,
+      size: Vector2,
+      color: Color
+    ) =
+    Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
+
+    let source =
+      Rectangle(0.0f, 0.0f, float32 texture.Width, float32 texture.Height)
+
+    Raylib.DrawBillboardRec(
+      currentCamera,
+      texture,
+      source,
+      position,
+      size,
+      color
+    )
+
+  /// Handle billboard batch draw using default shader.
+  let inline handleDrawBillboardBatch
+    (
+      currentCamera: Camera3D,
+      textures: Texture2D[],
+      positions: Vector3[],
+      sizes: Vector2[],
+      colors: Color[],
+      count: int
+    ) =
+    Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
+
+    for bi = 0 to count - 1 do
+      let source =
+        Rectangle(
+          0.0f,
+          0.0f,
+          float32 textures[bi].Width,
+          float32 textures[bi].Height
+        )
+
+      Raylib.DrawBillboardRec(
+        currentCamera,
+        textures[bi],
+        source,
+        positions[bi],
+        sizes[bi],
+        colors[bi]
+      )
+
+  /// Handle light command: add or set light, mark dirty.
+  let inline handleLightCommand
+    (lights: LightBuffers, command: Command3D, lightsDirty: byref<bool>)
+    =
+    match command with
+    | Command3D.SetAmbientLight l ->
+      lights.Ambient.Clear()
+      lights.Ambient.Add l
+      lightsDirty <- true
+    | Command3D.AddDirectionalLight l ->
+      lights.DirLights.Add l
+      lightsDirty <- true
+    | Command3D.AddPointLight l ->
+      lights.PointLights.Add l
+      lightsDirty <- true
+    | Command3D.AddSpotLight l ->
+      lights.SpotLights.Add l
+      lightsDirty <- true
+    | _ -> ()
+
+  /// Pre-scan buffer: collect camera, lights, shadow origin, and warm material caches.
+  /// Returns the frame state for shadow pass.
+  let preScan
+    (
+      buffer: RenderBuffer3D,
+      lights: LightBuffers,
+      forward: byref<ShaderVariant>,
+      instanced: byref<ShaderVariant>,
+      skinned: byref<ShaderVariant>,
+      forwardShader: Shader,
+      instancedShader: Shader,
+      skinnedShader: Shader
+    ) : FrameState =
+    let mutable frameState = {
+      Camera = ValueNone
+      ShadowOrigin = ValueNone
+    }
+
+    for i = 0 to buffer.Count - 1 do
+      match buffer[i] with
+      | Command3D.BeginCamera cam ->
+        match frameState.Camera with
+        | ValueNone ->
+          frameState <- {
+            frameState with
+                Camera = ValueSome cam
+          }
+        | ValueSome _ -> ()
+      | Command3D.BeginCameraConfig cfg ->
+        match frameState.Camera with
+        | ValueNone ->
+          frameState <- {
+            frameState with
+                Camera = ValueSome cfg.Camera
+          }
+        | ValueSome _ -> ()
+      | Command3D.SetShadowOrigin origin ->
+        frameState <- {
+          frameState with
+              ShadowOrigin = ValueSome origin
+        }
+      | Command3D.SetAmbientLight l ->
+        lights.Ambient.Clear()
+        lights.Ambient.Add l
+      | Command3D.AddDirectionalLight l -> lights.DirLights.Add l
+      | Command3D.AddPointLight l -> lights.PointLights.Add l
+      | Command3D.AddSpotLight l -> lights.SpotLights.Add l
+      | Command3D.DrawMesh(_, _, mat) ->
+        warmMaterial(
+          &forward,
+          &instanced,
+          &skinned,
+          forwardShader,
+          instancedShader,
+          skinnedShader,
+          &mat,
+          1
+        )
+      | Command3D.DrawModel(model, transform) ->
+        for mi = 0 to model.MeshCount - 1 do
+          let matIdx = NativePtr.get model.MeshMaterial mi
+          let raylibMat = NativePtr.get model.Materials matIdx
+          let mat3d = Material3D.fromRaylibMaterial raylibMat
+
+          warmMaterial(
+            &forward,
+            &instanced,
+            &skinned,
+            forwardShader,
+            instancedShader,
+            skinnedShader,
+            &mat3d,
+            1
+          )
+      | Command3D.DrawSkinnedMesh(_, _, mat, _) ->
+        warmMaterial(
+          &forward,
+          &instanced,
+          &skinned,
+          forwardShader,
+          instancedShader,
+          skinnedShader,
+          &mat,
+          3
+        )
+      | Command3D.DrawMeshInstanced(_, _, mat, _) ->
+        warmMaterial(
+          &forward,
+          &instanced,
+          &skinned,
+          forwardShader,
+          instancedShader,
+          skinnedShader,
+          &mat,
+          2
+        )
+      | _ -> ()
+
+    frameState
+
+  /// Render all mesh draws into a single shadow atlas region.
+  let renderShadowRegion
+    (
+      shadowAtlas: ShadowAtlas,
+      regionIndex: int,
+      camera: Camera3D,
+      resources: inref<ShadowDepthResources>,
+      meshDraws: MeshDraw[],
+      meshDrawCount: int
+    ) =
+    shadowAtlas.GetRegionViewport(regionIndex)
+    Raylib.BeginMode3D(camera)
+
+    let vp =
+      Raymath.MatrixMultiply(
+        Rlgl.GetMatrixModelview(),
+        Rlgl.GetMatrixProjection()
+      )
+
+    shadowAtlas.SetRegionViewProj(regionIndex, vp)
+
+    for i = 0 to meshDrawCount - 1 do
+      let draw = meshDraws[i]
+      let nm = computeNormalMatrix draw.Transform
+
+      match draw.Bones with
+      | ValueSome bones ->
+        Raylib.BeginShaderMode resources.SkinnedShader
+
+        Raylib.SetShaderValueMatrix(
+          resources.SkinnedShader,
+          resources.NormalMatrixLoc,
+          nm
+        )
+
+        uploadBoneMatrices(
+          resources.SkinnedShader,
+          resources.BoneLoc,
+          ReadOnlySpan bones
+        )
+
+        Raylib.DrawMesh(draw.Mesh, resources.SkinnedMaterial, draw.Transform)
+
+        Raylib.EndShaderMode()
+      | ValueNone ->
+        Raylib.SetShaderValueMatrix(
+          resources.Shader,
+          resources.NormalMatrixLoc,
+          nm
+        )
+
+        Raylib.DrawMesh(draw.Mesh, resources.Material, draw.Transform)
+
+    Raylib.EndMode3D()
+
+  /// Render the shadow pass — collect casters, render regions to atlas.
+  let runShadowPass
+    (
+      shadowAtlas: ShadowAtlas,
+      atlasCfg: ShadowAtlasConfig,
+      resources: inref<ShadowDepthResources>,
+      lights: LightBuffers,
+      meshDraws: MeshDraw[],
+      meshDrawCount: int,
+      frameState: inref<FrameState>,
+      gameCtx: GameContext
+    ) =
+    shadowAtlas.Clear()
+
+    let mutable hasCasters = false
+
+    match frameState.Camera with
+    | ValueNone -> ()
+    | ValueSome activeCamera ->
+      if meshDrawCount > 0 then
+        hasCasters <- collectShadowCasters(lights, shadowAtlas)
+
+        if shadowAtlas.Count > 0 then
+          Raylib.BeginTextureMode(shadowAtlas.Fbo)
+          Raylib.ClearBackground(Color.White)
+
+          for caster in shadowAtlas.Casters do
+            if caster.Enabled then
+              let lightPos =
+                if caster.Type = ShadowCasterType.Directional then
+                  activeCamera.Position
+                else
+                  caster.LightPosition
+
+              let distToCamera =
+                (lightPos - activeCamera.Position).LengthSquared()
+
+              let maxShadowDist = 2500.0f // 50^2
+
+              if distToCamera <= maxShadowDist then
+                match caster.Type with
+                | ShadowCasterType.Point ->
+                  let downTarget = caster.LightPosition - Vector3.UnitY
+
+                  let ptCamera =
+                    Camera3D(
+                      Position = caster.LightPosition,
+                      Target = downTarget,
+                      Up = Vector3.UnitZ,
+                      FovY = 90.0f,
+                      Projection = CameraProjection.Perspective
+                    )
+
+                  renderShadowRegion(
+                    shadowAtlas,
+                    caster.AtlasRegion,
+                    ptCamera,
+                    &resources,
+                    meshDraws,
+                    meshDrawCount
+                  )
+
+                | ShadowCasterType.Spot ->
+                  let spotCamera =
+                    Camera3D(
+                      Position = caster.LightPosition,
+                      Target = caster.LightPosition + caster.LightDirection,
+                      Up = Vector3.UnitY,
+                      FovY = 90.0f,
+                      Projection = CameraProjection.Perspective
+                    )
+
+                  renderShadowRegion(
+                    shadowAtlas,
+                    caster.AtlasRegion,
+                    spotCamera,
+                    &resources,
+                    meshDraws,
+                    meshDrawCount
+                  )
+
+                | _ ->
+                  let prevNear = Rlgl.GetCullDistanceNear()
+                  let prevFar = Rlgl.GetCullDistanceFar()
+
+                  let dirCamera =
+                    createDirectionalShadowCamera(
+                      caster,
+                      &frameState,
+                      atlasCfg,
+                      activeCamera
+                    )
+
+                  renderShadowRegion(
+                    shadowAtlas,
+                    caster.AtlasRegion,
+                    dirCamera,
+                    &resources,
+                    meshDraws,
+                    meshDrawCount
+                  )
+
+                  Rlgl.SetClipPlanes(prevNear, prevFar)
+
+          Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
+          Raylib.EndTextureMode()
+
+    hasCasters
+
+// ------------------------------------------------------------------
+// ForwardPbrPipeline — closure-over-object-expression factory
 // ------------------------------------------------------------------
 
 /// <summary>
-/// Reference implementation of <see cref="T:Mibo.Elmish.Graphics3D.IRenderPipeline3D"/>.
-/// A Forward PBR pipeline with shadow atlas mapping, PBR lighting,
-/// material caching, and optional post-processing.
+/// Refactored <see cref="T:Mibo.Elmish.Graphics3D.IRenderPipeline3D"/> implementation.
+/// Eliminates 3x shader variant duplication by using parameterized ShaderVariant structs.
+/// No PipelineContext class — all mutable state lives in the create closure.
+/// </summary>
+/// <summary>
+/// Refactored Forward PBR pipeline. Eliminates 3x shader variant duplication
+/// by using parameterized ShaderVariant structs. No PipelineContext class —
+/// all mutable state lives in the object-expression closure.
 /// </summary>
 /// <remarks>
-/// This is the <b>reference implementation</b>, not the engine core.
-/// It demonstrates how to build a complete forward renderer on top of
-/// raylib's low-level primitives while keeping geometry universal.
-///
-/// Features:
-/// <list type="bullet">
-///   <item><description>Shadow atlas mapping for multiple shadow-casting lights (directional, point, spot)</description></item>
-///   <item><description>Accumulated point and directional lights (configurable max point lights via uniform arrays, default 8)</description></item>
-///   <item><description>Material caching: converts <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/> to raylib <c>Material</c> on first use</description></item>
-///   <item><description>Post-process via ping-pong render targets</description></item>
-///   <item><description>GPU skeletal animation via <c>DrawSkinnedMesh</c> with bone matrix uniforms</description></item>
-/// </list>
+/// Implements the same <see cref="T:Mibo.Elmish.Graphics3D.IRenderPipeline3D"/> interface.
+/// Swap by changing one line:
+/// <code>
+/// Renderer3D.create (ForwardPbrPipeline()) view
+/// </code>
 /// </remarks>
 type ForwardPbrPipeline
   (
-    ?postProcess: PostProcessConfig3D,
-    ?maxPointLights: int,
-    ?maxSpotLights: int,
-    ?shadowAtlasConfig: ShadowAtlasConfig,
-    ?shadowBiasConfig: ShadowBiasConfig
+    [<Struct>] ?postProcess: PostProcessConfig3D,
+    [<Struct>] ?maxPointLights: int,
+    [<Struct>] ?maxSpotLights: int,
+    [<Struct>] ?shadowAtlasConfig: ShadowAtlasConfig,
+    [<Struct>] ?shadowBiasConfig: ShadowBiasConfig
   ) =
 
-  let ppConfig = defaultArg postProcess PostProcessConfig3D.none
-  let maxPt = defaultArg maxPointLights 8
-  let maxSp = defaultArg maxSpotLights 4
-  let atlasCfg = defaultArg shadowAtlasConfig ShadowAtlasConfig.defaults
-  let biasCfg = defaultArg shadowBiasConfig ShadowBiasConfig.defaults
+  let ppConfig = ValueOption.defaultValue PostProcessConfig3D.none postProcess
+  let maxPt = ValueOption.defaultValue 8 maxPointLights
+  let maxSp = ValueOption.defaultValue 4 maxSpotLights
 
+  let atlasCfg =
+    ValueOption.defaultValue ShadowAtlasConfig.defaults shadowAtlasConfig
+
+  let biasCfg =
+    ValueOption.defaultValue ShadowBiasConfig.defaults shadowBiasConfig
+
+  // ── Mutable state ─────────────────────────────────────────
   let mutable forwardShader: Shader = Unchecked.defaultof<Shader>
   let mutable instancedShader: Shader = Unchecked.defaultof<Shader>
   let mutable skinnedShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowSkinnedShader: Shader = Unchecked.defaultof<Shader>
   let mutable postProcessShader: Shader = Unchecked.defaultof<Shader>
-  let materialCache = Dictionary<MaterialKey, Material>()
+
   let mutable depthShadowMaterial: Material = Unchecked.defaultof<Material>
 
   let mutable depthShadowSkinnedMaterial: Material =
     Unchecked.defaultof<Material>
 
+  let mutable forward: ShaderVariant = Unchecked.defaultof<ShaderVariant>
+  let mutable instanced: ShaderVariant = Unchecked.defaultof<ShaderVariant>
+  let mutable skinned: ShaderVariant = Unchecked.defaultof<ShaderVariant>
+
   let mutable shadowAtlas: ShadowAtlas = Unchecked.defaultof<ShadowAtlas>
 
-  let mutable context: PipelineContext = Unchecked.defaultof<PipelineContext>
+  let lights: LightBuffers = {
+    Ambient = ResizeArray<AmbientLight3D> 1
+    DirLights = ResizeArray<DirectionalLight3D> 1
+    PointLights = ResizeArray<PointLight3D> maxPt
+    SpotLights = ResizeArray<SpotLight3D> maxSp
+  }
+
+  let mutable lightsDirty = true
 
   let ppPasses: PostProcessPass3D[] =
     match ppConfig.Passes with
@@ -1624,9 +1515,7 @@ type ForwardPbrPipeline
         src <- target
       | ValueNone -> ()
 
-  // ------------------------------------------------------------------
-  // IRenderPipeline3D
-  // ------------------------------------------------------------------
+  // ── IRenderPipeline3D ────────────────────────────────────────
 
   interface IRenderPipeline3D with
     member _.Initialize() =
@@ -1638,9 +1527,6 @@ type ForwardPbrPipeline
       skinnedShader <-
         Shaders.loadForwardSkinnedShader maxPt maxSp atlasCfg.MaxCasters
 
-      // Tell raylib that the per-instance model transform lives at the
-      // `instanceTransform` vertex attribute.  When DrawMeshInstanced is
-      // called, raylib uploads the transforms array to this attribute.
       let instanceTransformLoc =
         Raylib.GetShaderLocationAttrib(instancedShader, "instanceTransform")
 
@@ -1662,21 +1548,29 @@ type ForwardPbrPipeline
       shadowAtlas <- ShadowAtlas(atlasCfg, biasCfg)
       shadowAtlas.Initialize()
 
-      context <-
-        PipelineContext(
-          forwardShader,
-          instancedShader,
-          skinnedShader,
-          materialCache,
-          maxPt,
-          maxSp,
-          atlasCfg.MaxCasters
-        )
+      let fwdLocs =
+        cacheLocations(forwardShader, maxPt, maxSp, atlasCfg.MaxCasters)
 
-      context.CacheShadowLocations(depthShadowShader)
+      let instLocs =
+        cacheLocations(instancedShader, maxPt, maxSp, atlasCfg.MaxCasters)
+
+      let skLocs =
+        cacheLocations(skinnedShader, maxPt, maxSp, atlasCfg.MaxCasters)
+
+      forward <- ShaderVariant(fwdLocs, MaterialCache 16)
+      instanced <- ShaderVariant(instLocs, MaterialCache 16)
+      skinned <- ShaderVariant(skLocs, MaterialCache 16)
 
     member _.Shutdown() =
-      context.UnloadInstancedMaterialCache()
+      for KeyValue(_, mat) in instanced.MaterialCache.cache do
+        Raylib.UnloadMaterial mat
+
+      instanced.MaterialCache.cache.Clear()
+
+      for KeyValue(_, mat) in skinned.MaterialCache.cache do
+        Raylib.UnloadMaterial mat
+
+      skinned.MaterialCache.cache.Clear()
 
       Raylib.UnloadShader forwardShader
       Raylib.UnloadShader instancedShader
@@ -1688,478 +1582,267 @@ type ForwardPbrPipeline
       Raylib.UnloadMaterial depthShadowMaterial
       Raylib.UnloadMaterial depthShadowSkinnedMaterial
 
-      for KeyValue(_, mat) in materialCache do
+      for KeyValue(_, mat) in forward.MaterialCache.cache do
         Raylib.UnloadMaterial mat
 
-      materialCache.Clear()
+      forward.MaterialCache.cache.Clear()
 
       if shadowAtlas <> Unchecked.defaultof<ShadowAtlas> then
         shadowAtlas.Shutdown()
 
     member _.Execute gameCtx buffer rtPool =
-      // ------------------------------------------------------------------
-      // Pre-pass: collect camera, lights, shadow origin, and mesh draws
-      // ------------------------------------------------------------------
-      let mutable activeCamera = Unchecked.defaultof<Camera3D>
-      let mutable cameraFound = false
-      let mutable explicitShadowOrigin = ValueNone
+      // ── Step 1: Pre-scan buffer (camera, lights, shadow origin, warm caches) ──
+      clearLights lights
 
-      context.ClearLights()
+      let frameState =
+        preScan(
+          buffer,
+          lights,
+          &forward,
+          &instanced,
+          &skinned,
+          forwardShader,
+          instancedShader,
+          skinnedShader
+        )
 
-      for i = 0 to buffer.Count - 1 do
-        match buffer[i] with
-        | Command3D.BeginCamera cam ->
-          if not cameraFound then
-            activeCamera <- cam
-            cameraFound <- true
-        | Command3D.BeginCameraConfig cfg ->
-          if not cameraFound then
-            activeCamera <- cfg.Camera
-            cameraFound <- true
-        | Command3D.SetShadowOrigin origin ->
-          explicitShadowOrigin <- ValueSome origin
-        | Command3D.AddDirectionalLight light -> context.DirLights.Add light
-        | Command3D.AddPointLight light -> context.PointLights.Add light
-        | Command3D.AddSpotLight light -> context.SpotLights.Add light
-        | Command3D.DrawMesh(_, _, mat) -> context.WarmMaterial(mat)
-        | Command3D.DrawSkinnedMesh(_, _, mat, _) -> context.WarmMaterial(mat)
-        | Command3D.DrawMeshInstanced(_, _, mat, _) -> context.WarmMaterial(mat)
-        | Command3D.DrawModel(model, transform) ->
-          let m = model
+      lightsDirty <- true
+      forward.LightsDirty <- true
+      instanced.LightsDirty <- true
+      skinned.LightsDirty <- true
 
-          for mi = 0 to m.MeshCount - 1 do
-            let matIdx = NativePtr.get m.MeshMaterial mi
-            let raylibMat = NativePtr.get m.Materials matIdx
-            let mat3d = Material3D.fromRaylibMaterial raylibMat
-            context.WarmMaterial(mat3d)
-        | _ -> ()
+      // ── Step 2: Shadow pass (render all casters to atlas) ──
+      let struct (meshDraws, meshDrawCount) = collectMeshDraws buffer
 
-      let struct (meshDraws, meshDrawCount) =
-        ShadowPassHelpers.collectMeshDraws buffer
+      let shadowResources = {
+        Shader = depthShadowShader
+        SkinnedShader = depthShadowSkinnedShader
+        Material = depthShadowMaterial
+        SkinnedMaterial = depthShadowSkinnedMaterial
+        NormalMatrixLoc = skinned.Locs.ShadowNormalMatrix
+        BoneLoc = skinned.Locs.Bones
+      }
 
       let mutable hasShadowCasters = false
 
       try
-        // ------------------------------------------------------------------
-        // Shadow pass - render all shadow casters to atlas
-        // ------------------------------------------------------------------
+        hasShadowCasters <-
+          runShadowPass(
+            shadowAtlas,
+            atlasCfg,
+            &shadowResources,
+            lights,
+            meshDraws,
+            meshDrawCount,
+            &frameState,
+            gameCtx
+          )
+      finally
+        ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
 
-        // Clear previous frame's casters
-        shadowAtlas.Clear()
+      // ── Step 3: Upload shadow atlas uniforms to all shaders ──
+      match frameState.Camera with
+      | ValueSome cam ->
+        uploadShadowUniforms(
+          hasShadowCasters,
+          &forward,
+          &instanced,
+          &skinned,
+          shadowAtlas,
+          cam.Position
+        )
+      | ValueNone -> ()
 
-        if cameraFound && meshDrawCount > 0 then
-          // Register shadow casters
-          for dir in context.DirLights do
-            if dir.CastsShadows then
-              hasShadowCasters <- true
+      // ── Step 4: Clear lights for forward pass (dispatch will re-add them) ──
+      clearLights lights
+      lightsDirty <- true
+      forward.LightsDirty <- true
+      instanced.LightsDirty <- true
+      skinned.LightsDirty <- true
 
-              // Register caster with atlas
-              shadowAtlas.AddCaster(
-                ShadowCasterType.Directional,
-                Vector3.Zero,
-                dir.Direction,
-                Vector3.Zero,
-                true,
-                ValueNone
-              )
-              |> ignore
+      // ── Step 5: Forward pass (dispatch all commands) ──
+      let mutable cameraActive = false
+      let mutable currentCamera = Unchecked.defaultof<Camera3D>
+      let mutable shaderActive = false
 
-          // TODO: Register point light casters
-          for pt in context.PointLights do
-            if pt.CastsShadows then
-              hasShadowCasters <- true
-
-              shadowAtlas.AddCaster(
-                ShadowCasterType.Point,
-                pt.Position,
-                Vector3.Zero,
-                Vector3.Zero,
-                true,
-                pt.ShadowBias
-              )
-              |> ignore
-
-          for sp in context.SpotLights do
-            if sp.CastsShadows then
-              hasShadowCasters <- true
-
-              shadowAtlas.AddCaster(
-                ShadowCasterType.Spot,
-                sp.Position,
-                sp.Direction,
-                sp.Position + sp.Direction,
-                true,
-                sp.ShadowBias
-              )
-              |> ignore
-
-          // Render shadow passes
-          if shadowAtlas.Count > 0 then
-            // Set shadowPass = 1 for the shadow pass shader
-            setShaderInt forwardShader context.LocShadowPass 1
-
-            // Bind atlas FBO once for all casters. Viewport clips rasterization
-            // to each caster's region, so they never interfere.
-            Raylib.BeginTextureMode(shadowAtlas.Fbo)
-            Raylib.ClearBackground(Color.White)
-
-            // Render each caster to its atlas region
-            let inline renderShadowRegion
-              (regionIndex: int)
-              (camera: Camera3D)
-              =
-              shadowAtlas.GetRegionViewport(regionIndex)
-              Raylib.BeginMode3D(camera)
-
-              let vp =
-                Raymath.MatrixMultiply(
-                  Rlgl.GetMatrixModelview(),
-                  Rlgl.GetMatrixProjection()
-                )
-
-              shadowAtlas.SetRegionViewProj(regionIndex, vp)
-
-              for i = 0 to meshDrawCount - 1 do
-                let draw = meshDraws[i]
-                let nm = computeNormalMatrix draw.Transform
-
-                match draw.Bones with
-                | ValueSome bones ->
-                  Raylib.BeginShaderMode depthShadowSkinnedShader
-
-                  Raylib.SetShaderValueMatrix(
-                    depthShadowSkinnedShader,
-                    context.LocShadowNormalMatrix,
-                    nm
-                  )
-
-                  let shadowBoneLoc =
-                    Raylib.GetShaderLocation(
-                      depthShadowSkinnedShader,
-                      "boneMatrices[0]"
-                    )
-
-                  let shadowBoneCount = min bones.Length 128
-
-                  for bi = 0 to shadowBoneCount - 1 do
-                    Raylib.SetShaderValueMatrix(
-                      depthShadowSkinnedShader,
-                      shadowBoneLoc + bi,
-                      bones[bi]
-                    )
-
-                  Raylib.DrawMesh(
-                    draw.Mesh,
-                    depthShadowSkinnedMaterial,
-                    draw.Transform
-                  )
-
-                  Raylib.EndShaderMode()
-                | ValueNone ->
-                  Raylib.SetShaderValueMatrix(
-                    depthShadowShader,
-                    context.LocShadowNormalMatrix,
-                    nm
-                  )
-
-                  Raylib.DrawMesh(
-                    draw.Mesh,
-                    depthShadowMaterial,
-                    draw.Transform
-                  )
+      let dispatchForwardPass() =
+        for i = 0 to buffer.Count - 1 do
+          match buffer[i] with
+          // ── Camera management (inline — simple state toggles) ──
+          | Command3D.BeginCamera cam ->
+            if cameraActive then
+              if shaderActive then
+                Raylib.EndShaderMode()
+                shaderActive <- false
 
               Raylib.EndMode3D()
 
-            for caster in shadowAtlas.Casters do
-              if caster.Enabled then
-                // Per-caster distance culling: skip shadow if light is too far from camera
-                let lightPos =
-                  if caster.Type = ShadowCasterType.Directional then
-                    activeCamera.Position // directional follows camera
-                  else
-                    caster.LightPosition
+            Raylib.BeginMode3D cam
+            cameraActive <- true
+            currentCamera <- cam
 
-                let distToCamera =
-                  (lightPos - activeCamera.Position).LengthSquared()
+          | Command3D.BeginCameraConfig cfg ->
+            if cameraActive then
+              if shaderActive then
+                Raylib.EndShaderMode()
+                shaderActive <- false
 
-                let maxShadowDist = 2500.0f // 50^2
+              Raylib.EndMode3D()
 
-                if distToCamera <= maxShadowDist then
-                  match caster.Type with
-                  | ShadowCasterType.Point ->
-                    // Point light: single forward-facing shadow map
-                    let downTarget = caster.LightPosition - Vector3.UnitY
+            applyCameraConfig(&cfg, gameCtx)
+            Raylib.BeginMode3D cfg.Camera
+            cameraActive <- true
+            currentCamera <- cfg.Camera
 
-                    let ptCamera =
-                      Camera3D(
-                        Position = caster.LightPosition,
-                        Target = downTarget,
-                        Up = Vector3.UnitZ,
-                        FovY = 90.0f,
-                        Projection = CameraProjection.Perspective
-                      )
+          | Command3D.EndCamera ->
+            if cameraActive then
+              if shaderActive then
+                Raylib.EndShaderMode()
+                shaderActive <- false
 
-                    renderShadowRegion caster.AtlasRegion ptCamera
+              Raylib.EndMode3D()
+              cameraActive <- false
 
-                  | ShadowCasterType.Spot ->
-                    // Spot light: render once with perspective projection
-                    let spotCamera =
-                      Camera3D(
-                        Position = caster.LightPosition,
-                        Target = caster.LightPosition + caster.LightDirection,
-                        Up = Vector3.UnitY,
-                        FovY = 90.0f,
-                        Projection = CameraProjection.Perspective
-                      )
-
-                    renderShadowRegion caster.AtlasRegion spotCamera
-
-                  | _ ->
-                    // Directional light: render once with orthographic projection
-                    let lightFromDir = Vector3.Normalize(-caster.LightDirection)
-
-                    let rawOrigin =
-                      match explicitShadowOrigin with
-                      | ValueSome origin -> origin
-                      | ValueNone ->
-                        match atlasCfg.OriginStrategy with
-                        | ShadowOriginStrategy.CameraTarget ->
-                          activeCamera.Target
-                        | ShadowOriginStrategy.SceneCenter -> Vector3.Zero
-                        | ShadowOriginStrategy.Custom f -> f activeCamera
-
-                    let gridSize = atlasCfg.GridSnapSize
-
-                    let snappedX =
-                      if gridSize > 0.0f then
-                        MathF.Round(rawOrigin.X / gridSize) * gridSize
-                      else
-                        rawOrigin.X
-
-                    let snappedZ =
-                      if gridSize > 0.0f then
-                        MathF.Round(rawOrigin.Z / gridSize) * gridSize
-                      else
-                        rawOrigin.Z
-
-                    let shadowOrigin = Vector3(snappedX, rawOrigin.Y, snappedZ)
-
-                    let lightDistance =
-                      match atlasCfg.DirectionalLightDistance with
-                      | ValueSome d -> d
-                      | ValueNone -> 100.0f
-
-                    let lightPos = shadowOrigin + lightFromDir * lightDistance
-
-                    let safeUp =
-                      if abs caster.LightDirection.Y > 0.99f then
-                        Vector3.UnitZ
-                      else
-                        Vector3.UnitY
-
-                    let orthoSize =
-                      match atlasCfg.DirectionalLightSize with
-                      | ValueSome s -> s
-                      | ValueNone -> 50.0f
-
-                    // Derive near/far from scene geometry instead of using
-                    // raylib's default 0.05/4000 which wastes depth precision.
-                    // near: small value to capture geometry close to the light
-                    // far: light distance + ortho half-size to cover the entire shadow volume
-                    let shadowNear = 1.0f
-                    let shadowFar = lightDistance + orthoSize * 2.0f
-
-                    let prevNear = Rlgl.GetCullDistanceNear()
-                    let prevFar = Rlgl.GetCullDistanceFar()
-                    Rlgl.SetClipPlanes(float shadowNear, float shadowFar)
-
-                    let dirCamera =
-                      Camera3D(
-                        Position = lightPos,
-                        Target = shadowOrigin,
-                        Up = safeUp,
-                        FovY = orthoSize,
-                        Projection = CameraProjection.Orthographic
-                      )
-
-                    renderShadowRegion caster.AtlasRegion dirCamera
-
-                    Rlgl.SetClipPlanes(prevNear, prevFar)
-
-            // Reset viewport to window size
             Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
-            Raylib.EndTextureMode()
 
-            // Set shadowPass = 0 for the main pass
-            setShaderInt forwardShader context.LocShadowPass 0
-      finally
-        System.Buffers.ArrayPool<ShadowPassHelpers.MeshDraw>.Shared
-          .Return(meshDraws, false)
+          // ── Drawing commands (delegated to handlers) ──
+          | Command3D.DrawMesh(mesh, transform, material) ->
+            if cameraActive then
+              handleDrawMesh(
+                forwardShader,
+                &forward,
+                lights,
+                maxPt,
+                maxSp,
+                lightsDirty,
+                mesh,
+                transform,
+                material
+              )
 
-      // ------------------------------------------------------------------
-      // Forward pass — context is reset each frame, populated by commands
-      // ------------------------------------------------------------------
-      context.Reset(gameCtx, shadowAtlas.Fbo, Matrix4x4.Identity)
+          | Command3D.DrawModel(model, transform) ->
+            if cameraActive then
+              handleDrawModel(
+                forwardShader,
+                &forward,
+                lights,
+                maxPt,
+                maxSp,
+                lightsDirty,
+                model,
+                transform
+              )
 
-      // Upload shadow atlas uniforms
-      if hasShadowCasters && cameraFound then
-        shadowAtlas.PrepareUniforms()
+          | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
+            if cameraActive then
+              handleDrawSkinnedMesh(
+                skinnedShader,
+                &skinned,
+                lights,
+                maxPt,
+                maxSp,
+                lightsDirty,
+                currentCamera,
+                mesh,
+                transform,
+                material,
+                bones
+              )
 
-        // Upload atlas texture
-        if shadowAtlas.Fbo.Depth.Id <> 0u then
-          Rlgl.EnableShader(forwardShader.Id)
-          Rlgl.ActiveTextureSlot(15)
-          Rlgl.EnableTexture(shadowAtlas.Fbo.Depth.Id)
-          rlSetUniformInt context.LocShadowAtlas 15
-          Rlgl.ActiveTextureSlot(0)
+          | Command3D.DrawMeshInstanced(mesh,
+                                        transforms,
+                                        material,
+                                        instanceCount) ->
+            if cameraActive then
+              handleDrawMeshInstanced(
+                instancedShader,
+                &instanced,
+                lights,
+                maxPt,
+                maxSp,
+                lightsDirty,
+                currentCamera,
+                mesh,
+                transforms,
+                material,
+                instanceCount
+              )
 
-        // Upload per-caster uniforms
-        let count = min shadowAtlas.ActiveCasterCount atlasCfg.MaxCasters
+          | Command3D.DrawBillboard(tex, pos, size, color) ->
+            if cameraActive then
+              handleDrawBillboard(currentCamera, tex, pos, size, color)
 
-        for i = 0 to count - 1 do
-          Raylib.SetShaderValueMatrix(
-            forwardShader,
-            context.LocShadowViewProjs[i],
-            shadowAtlas.ViewProjs[i]
-          )
+          | Command3D.DrawBillboardBatch(tex, pos, sizes, colors, count) ->
+            if cameraActive then
+              handleDrawBillboardBatch(
+                currentCamera,
+                tex,
+                pos,
+                sizes,
+                colors,
+                count
+              )
 
-          setShaderVec4
-            forwardShader
-            context.LocShadowUVOffsets[i]
-            shadowAtlas.UVOffsets[i]
+          | Command3D.DrawLine3D(start, finish, color) ->
+            if cameraActive then
+              Raylib.DrawLine3D(start, finish, color)
 
-          setShaderVec3
-            forwardShader
-            context.LocShadowLightPositions[i]
-            shadowAtlas.LightPositions[i]
+          // ── Light commands (delegated) ──
+          | Command3D.SetAmbientLight _
+          | Command3D.AddDirectionalLight _
+          | Command3D.AddPointLight _
+          | Command3D.AddSpotLight _ as cmd ->
+            handleLightCommand(lights, cmd, &lightsDirty)
 
-          setShaderFloat
-            forwardShader
-            context.LocShadowBiases[i]
-            shadowAtlas.Biases[i]
+          // ── Immediate mode (inline — unique save/restore pattern) ──
+          | Command3D.DrawImmediate action ->
+            let savedCam = cameraActive
+            let savedShader = shaderActive
 
-          setShaderInt
-            forwardShader
-            context.LocShadowTypes[i]
-            shadowAtlas.CasterTypes[i]
+            if shaderActive then
+              Raylib.EndShaderMode()
+              shaderActive <- false
 
-        setShaderInt
-          forwardShader
-          context.LocShadowCasterCount
-          shadowAtlas.ActiveCasterCount
+            if cameraActive then
+              Raylib.EndMode3D()
+              cameraActive <- false
 
-        setShaderVec3 forwardShader context.LocCameraPos activeCamera.Position
-        setShaderInt forwardShader context.LocShadowPass 0
+            try
+              action()
+            finally
+              if savedCam then
+                Raylib.BeginMode3D currentCamera
+                cameraActive <- true
 
-        // ---- Upload the same shadow data to the instanced shader ----
-        context.CacheInstancedShadowLocations()
+              if savedShader then
+                Raylib.BeginShaderMode forwardShader
+                shaderActive <- true
 
-        if shadowAtlas.Fbo.Depth.Id <> 0u then
-          Rlgl.EnableShader(instancedShader.Id)
-          Rlgl.ActiveTextureSlot(15)
-          Rlgl.EnableTexture(shadowAtlas.Fbo.Depth.Id)
-          rlSetUniformInt context.ILocShadowAtlas 15
-          Rlgl.ActiveTextureSlot(0)
+          // ── State toggles (inline — no-ops) ──
+          | Command3D.SetShadowOrigin _ -> ()
+          | Command3D.EnableShadows -> ()
+          | Command3D.DisableShadows -> ()
 
-        for i = 0 to count - 1 do
-          Raylib.SetShaderValueMatrix(
-            instancedShader,
-            context.ILocShadowViewProjs[i],
-            shadowAtlas.ViewProjs[i]
-          )
+        // End remaining shader/camera state after dispatch
+        if shaderActive then
+          Raylib.EndShaderMode()
 
-          setShaderVec4
-            instancedShader
-            context.ILocShadowUVOffsets[i]
-            shadowAtlas.UVOffsets[i]
+        if cameraActive then
+          Raylib.EndMode3D()
 
-          setShaderVec3
-            instancedShader
-            context.ILocShadowLightPositions[i]
-            shadowAtlas.LightPositions[i]
-
-          setShaderFloat
-            instancedShader
-            context.ILocShadowBiases[i]
-            shadowAtlas.Biases[i]
-
-          setShaderInt
-            instancedShader
-            context.ILocShadowTypes[i]
-            shadowAtlas.CasterTypes[i]
-
-        setShaderInt
-          instancedShader
-          context.ILocShadowCasterCount
-          shadowAtlas.ActiveCasterCount
-
-        setShaderVec3
-          instancedShader
-          context.ILocCameraPos
-          activeCamera.Position
-
-        setShaderInt instancedShader context.ILocShadowPass 0
-
-      // Render
-      let dispatch(cmd: Command3D) =
-        match cmd with
-        | Command3D.DrawMesh(mesh, transform, material) ->
-          context.DrawMesh(mesh, transform, material)
-        | Command3D.DrawModel(model, transform) ->
-          for mi = 0 to model.MeshCount - 1 do
-            let mesh = NativePtr.get model.Meshes mi
-            let matIdx = NativePtr.get model.MeshMaterial mi
-            let mat = NativePtr.get model.Materials matIdx
-            let mat3d = Material3D.fromRaylibMaterial mat
-            context.DrawMesh(mesh, transform, mat3d)
-        | Command3D.DrawBillboard(texture, position, size, color) ->
-          context.DrawBillboard(texture, position, size, color)
-        | Command3D.DrawLine3D(start, finish, color) ->
-          context.DrawLine3D(start, finish, color)
-        | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
-          context.DrawSkinnedMesh(mesh, transform, material, bones)
-        | Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount) ->
-          context.DrawMeshInstanced(mesh, transforms, material, instanceCount)
-        | Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count) ->
-          context.DrawBillboardBatch(textures, positions, sizes, colors, count)
-        | Command3D.BeginCamera cam -> context.BeginCamera(cam)
-        | Command3D.BeginCameraConfig cfg ->
-          context.BeginCameraConfig(
-            cfg,
-            gameCtx.WindowWidth,
-            gameCtx.WindowHeight
-          )
-        | Command3D.EndCamera -> context.EndCamera()
-        | Command3D.SetShadowOrigin _ -> () // handled in pre-pass
-        | Command3D.EnableShadows -> () // handled in shadow collection
-        | Command3D.DisableShadows -> () // handled in shadow collection
-        | Command3D.SetAmbientLight light -> context.SetAmbientLight(light)
-        | Command3D.AddDirectionalLight light ->
-          context.AddDirectionalLight(light)
-        | Command3D.AddPointLight light -> context.AddPointLight(light)
-        | Command3D.AddSpotLight light -> context.AddSpotLight(light)
-        | Command3D.DrawImmediate action -> context.DrawImmediate(action)
-
+      // ── Step 5b: Dispatch (direct or via scene RT for post-process) ──
       match ppConfig.Passes with
       | ValueNone
-      | ValueSome [||] ->
-        for i = 0 to buffer.Count - 1 do
-          dispatch buffer[i]
-
-        context.EndAll()
+      | ValueSome [||] -> dispatchForwardPass()
       | _ ->
         let sceneRT = rtPool.Acquire(gameCtx.WindowWidth, gameCtx.WindowHeight)
-        Raylib.BeginTextureMode(sceneRT)
-        Raylib.ClearBackground(Color.Black)
-
-        for i = 0 to buffer.Count - 1 do
-          dispatch buffer[i]
-
-        context.EndAll()
+        Raylib.BeginTextureMode sceneRT
+        Raylib.ClearBackground Color.Black
+        dispatchForwardPass()
         Raylib.EndTextureMode()
         applyPostProcess gameCtx sceneRT rtPool
 
-      // DEBUG: Render shadow atlas as overlay in bottom-right corner
+      // ── Step 6: Debug overlay (optional) ──
       if atlasCfg.ShowDebugOverlay then
         shadowAtlas.RenderDebugOverlay(
           gameCtx.WindowWidth,

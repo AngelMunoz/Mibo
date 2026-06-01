@@ -4,9 +4,8 @@
 
 ### Added
 
-- `ForwardPbrPipelineV2`: refactored forward PBR pipeline eliminating 3× shader variant duplication. Uses parameterized `ShaderVariant` structs, single `cacheLocations`/`uploadLights`/`setMaterialUniforms`/`getOrCreate` functions, and self-contained command handlers. Implements `IRenderPipeline3D` for swap-in/swap-out testing alongside the original pipeline.
 - `ShadowDepthResources` struct bundling shadow shader + material + uniform locations.
-- `ShadowPassHelpersV2` module with `collectShadowCasters`, `createDirectionalShadowCamera`, `renderShadowRegion`, `collectMeshDraws` helpers.
+- `ShadowPassHelpers` module with `collectShadowCasters`, `createDirectionalShadowCamera`, `renderShadowRegion`, `collectMeshDraws` helpers.
 - `PipelineFunctions` module with `preScan`, `clearLights`, `warmMaterial`, `handleDrawMesh`, `handleDrawModel`, `handleDrawSkinnedMesh`, `handleDrawMeshInstanced`, `handleDrawBillboard`, `handleDrawBillboardBatch`, `handleLightCommand`, `applyCameraConfig` helpers.
 - 2D normal map support: `SpriteState.NormalMap` field for per-pixel lighting on lit sprites. `LightContext2D` manages two shader variants (standard and normal-mapped) and switches between them via `BeginShaderMode`. The normal-map shader uses a 2D-compatible Half-Lambert lighting model (`NdotL = max(1.0 + dot(normal.xy, L), 0)`) for correct visual results with 2D light directions.
 - `LightDraw.litAnimatedSprite` helper for animated sprites with automatic flip handling.
@@ -22,6 +21,7 @@
 
 ### Changed
 
+- **Breaking:** `ForwardPbrPipeline` refactored — original monolithic class (2167 LOC, 3× duplicated shader variants) replaced with parameterized implementation using `ShaderVariant` structs, self-contained command handlers, and decomposed helpers. Internal `PipelineContext` class eliminated. `MaterialKey.fromMaterial3D` now computed once per draw instead of 3×. Public API (`ForwardPbrPipeline` constructor and `IRenderPipeline3D` interface) is unchanged; consumers using the pipeline via `Renderer3D.create (ForwardPbrPipeline()) view` should see no behavioral difference. Consumers referencing internal types from the old implementation (e.g., `PipelineContext`) will need to update.
 - **Breaking:** `LitSprite` command signature changed — now carries `LightContext2D * SpriteState` instead of 8 individual fields. Consumers must update pattern matches and `LightDraw.litSprite` call sites to use the new `SpriteState` type.
 - `SpriteState` moved from `Command2D` module to top-level `Mibo.Elmish.Graphics2D` namespace.
 
