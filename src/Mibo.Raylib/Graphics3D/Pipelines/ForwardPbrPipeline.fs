@@ -1598,7 +1598,7 @@ type ForwardPbrPipeline
       if shadowAtlas <> Unchecked.defaultof<ShadowAtlas> then
         shadowAtlas.Shutdown()
 
-    member _.Execute gameCtx buffer rtPool =
+    member _.Execute(gameCtx, buffer, rtPool) =
       // ── Step 1: Pre-scan buffer (camera, lights, shadow origin, warm caches) ──
       clearLights lights
 
