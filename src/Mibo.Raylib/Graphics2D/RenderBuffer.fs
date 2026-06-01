@@ -2,7 +2,6 @@ namespace Mibo.Elmish.Graphics2D
 
 open System
 open System.Buffers
-open System.Collections.Generic
 
 /// <summary>
 /// An allocation-free buffer for 2D render commands, sorted by layer.
@@ -22,8 +21,9 @@ type RenderBuffer2D
   /// <summary>Initial capacity. Defaults to 1024 if not specified.</summary>
   ?capacity: int) =
 
-  let mutable items = ArrayPool<Command2D>.Shared.Rent(defaultArg capacity 1024)
-
+  let initialCapacity = defaultArg capacity 1024
+  let mutable items = ArrayPool<Command2D>.Shared.Rent(initialCapacity)
+  let mutable keys = ArrayPool<int64>.Shared.Rent(initialCapacity)
   let mutable count = 0
 
   let getLayer(cmd: Command2D) =
@@ -76,20 +76,19 @@ type RenderBuffer2D
     | Command2D.DisableShadows(_, layer) -> layer
     | Command2D.Particle(_, _, _, layer) -> layer
 
-  let layerComparer =
-    { new IComparer<Command2D> with
-        member _.Compare(a, b) = int(getLayer a) - int(getLayer b)
-    }
-
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
       let newSize = max (items.Length * 2) (count + needed)
 
-      let newArr = ArrayPool<Command2D>.Shared.Rent(newSize)
+      let newItems = ArrayPool<Command2D>.Shared.Rent(newSize)
+      let newKeys = ArrayPool<int64>.Shared.Rent(newSize)
 
-      Array.Copy(items, newArr, count)
-      ArrayPool<Command2D>.Shared.Return(items)
-      items <- newArr
+      Array.Copy(items, newItems, count)
+      Array.Copy(keys, newKeys, count)
+      ArrayPool<Command2D>.Shared.Return(items, true)
+      ArrayPool<int64>.Shared.Return(keys)
+      items <- newItems
+      keys <- newKeys
 
   /// <summary>The number of commands currently in the buffer.</summary>
   member _.Count = count
@@ -101,6 +100,7 @@ type RenderBuffer2D
   member _.Add(cmd: Command2D) =
     ensureCapacity 1
     items[count] <- cmd
+    keys[count] <- (int64(int(getLayer cmd)) <<< 32) ||| int64 count
     count <- count + 1
 
   /// <summary>
@@ -110,9 +110,10 @@ type RenderBuffer2D
   member _.Clear() = count <- 0
 
   /// <summary>
-  /// Sorts commands by layer in ascending order.
+  /// Sorts commands by layer in ascending order, preserving insertion order for same-layer commands.
+  /// Uses precomputed int64 keys (layer in high 32 bits, insertion index in low 32 bits) to avoid
+  /// repeated pattern matching during comparisons and guarantee stable sort.
   /// Must be called after <see cref="M:Mibo.Elmish.Graphics2D.RenderBuffer2D.Clear"/>
   /// and population, before iteration.
   /// </summary>
-  member _.Sort() =
-    Array.Sort(items, 0, count, layerComparer)
+  member _.Sort() = Array.Sort(keys, items, 0, count)

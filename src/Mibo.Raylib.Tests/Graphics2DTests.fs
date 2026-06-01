@@ -840,34 +840,26 @@ let renderBuffer2DTests =
     test "Sort preserves insertion order for same layer" {
       let buf = RenderBuffer2D()
 
-      let cmdA =
-        Command2D.fillCircle
-          (5<RenderLayer>, Color.Red)
-          (Vector2(1.0f, 0.0f), 10.0f)
+      // Use enough items on the same layer that an unstable sort would
+      // reorder them — 3 items is too few to trigger swaps in most algorithms.
+      let colors = [|
+        for i in 0..19 -> Color(byte i, byte(i * 10), 0uy, 255uy)
+      |]
 
-      let cmdB =
-        Command2D.fillCircle
-          (5<RenderLayer>, Color.Blue)
-          (Vector2(2.0f, 0.0f), 10.0f)
+      for c in colors do
+        buf.Add(
+          Command2D.fillCircle
+            (5<RenderLayer>, c)
+            (Vector2(float32 c.R, 0.0f), 10.0f)
+        )
 
-      let cmdC =
-        Command2D.fillCircle
-          (5<RenderLayer>, Color.Green)
-          (Vector2(3.0f, 0.0f), 10.0f)
-
-      buf.Add(cmdA)
-      buf.Add(cmdB)
-      buf.Add(cmdC)
       buf.Sort()
 
-      match buf.Item 0, buf.Item 1, buf.Item 2 with
-      | Command2D.FillCircle(_, _, c1, _),
-        Command2D.FillCircle(_, _, c2, _),
-        Command2D.FillCircle(_, _, c3, _) ->
-        Expect.equal c1 Color.Red "First should be Red"
-        Expect.equal c2 Color.Blue "Second should be Blue"
-        Expect.equal c3 Color.Green "Third should be Green"
-      | _ -> Tests.failtest "Expected FillCircle commands"
+      for i = 0 to colors.Length - 1 do
+        match buf.Item i with
+        | Command2D.FillCircle(_, _, c, _) ->
+          Expect.equal c colors[i] $"Item {i} should match insertion order"
+        | _ -> Tests.failtest "Expected FillCircle"
     }
 
     test "Buffer expands capacity when full" {
