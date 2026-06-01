@@ -220,7 +220,6 @@ type private ShaderLocations = {
   SpotLights: SpotLightUniforms
   Shadow: ShadowUniforms
   CameraPos: int
-  NormalMatrix: int
   ShadowNormalMatrix: int
   Bones: int // -1 for non-skinned variants
 }
@@ -524,7 +523,6 @@ module private PipelineFunctions =
       SpotLights = spLocs
       Shadow = shadowLocs
       CameraPos = cameraPosLoc
-      NormalMatrix = matLocs.NormalMatrix
       ShadowNormalMatrix = shadowNormalMatrixLoc
       Bones = bonesLoc
     }
@@ -615,9 +613,12 @@ module private PipelineFunctions =
 
   /// Single parameterized material cache lookup/creation replacing 3x duplication.
   let getOrCreate
-    (variant: byref<ShaderVariant>, shader: Shader, mat3d: inref<Material3D>)
-    : Material =
-    let key = MaterialKeyV2.fromMaterial3D &mat3d
+    (
+      variant: byref<ShaderVariant>,
+      shader: Shader,
+      mat3d: inref<Material3D>,
+      key: inref<MaterialKeyV2>
+    ) : Material =
     let mc = variant.MaterialCache
 
     if mc.HasLast && key = mc.LastKey then
@@ -740,7 +741,9 @@ module private PipelineFunctions =
       )
 
   /// Upload bone matrices to skinned shader — uses ReadOnlySpan for no-copy.
-  let uploadBoneMatrices(shader: Shader, boneLoc: int, bones: Matrix4x4[]) =
+  let uploadBoneMatrices
+    (shader: Shader, boneLoc: int, bones: ReadOnlySpan<Matrix4x4>)
+    =
     let count = min bones.Length 128
 
     for i = 0 to count - 1 do
@@ -1004,18 +1007,22 @@ module private PipelineFunctions =
 /// </remarks>
 type ForwardPbrPipelineV2
   (
-    ?postProcess: PostProcessConfig3D,
-    ?maxPointLights: int,
-    ?maxSpotLights: int,
-    ?shadowAtlasConfig: ShadowAtlasConfig,
-    ?shadowBiasConfig: ShadowBiasConfig
+    [<Struct>] ?postProcess: PostProcessConfig3D,
+    [<Struct>] ?maxPointLights: int,
+    [<Struct>] ?maxSpotLights: int,
+    [<Struct>] ?shadowAtlasConfig: ShadowAtlasConfig,
+    [<Struct>] ?shadowBiasConfig: ShadowBiasConfig
   ) =
 
-  let ppConfig = defaultArg postProcess PostProcessConfig3D.none
-  let maxPt = defaultArg maxPointLights 8
-  let maxSp = defaultArg maxSpotLights 4
-  let atlasCfg = defaultArg shadowAtlasConfig ShadowAtlasConfig.defaults
-  let biasCfg = defaultArg shadowBiasConfig ShadowBiasConfig.defaults
+  let ppConfig = ValueOption.defaultValue PostProcessConfig3D.none postProcess
+  let maxPt = ValueOption.defaultValue 8 maxPointLights
+  let maxSp = ValueOption.defaultValue 4 maxSpotLights
+
+  let atlasCfg =
+    ValueOption.defaultValue ShadowAtlasConfig.defaults shadowAtlasConfig
+
+  let biasCfg =
+    ValueOption.defaultValue ShadowBiasConfig.defaults shadowBiasConfig
 
   // ── Mutable state ─────────────────────────────────────────
   let mutable forwardShader: Shader = Unchecked.defaultof<Shader>
@@ -1219,13 +1226,13 @@ type ForwardPbrPipelineV2
           lights.Ambient.Add l
         | Command3D.DrawMesh(_, _, mat) ->
           let key = MaterialKeyV2.fromMaterial3D &mat
-          getOrCreate(&forward, forwardShader, &mat) |> ignore
+          getOrCreate(&forward, forwardShader, &mat, &key) |> ignore
         | Command3D.DrawSkinnedMesh(_, _, mat, _) ->
           let key = MaterialKeyV2.fromMaterial3D &mat
-          getOrCreate(&skinned, skinnedShader, &mat) |> ignore
+          getOrCreate(&skinned, skinnedShader, &mat, &key) |> ignore
         | Command3D.DrawMeshInstanced(_, _, mat, _) ->
           let key = MaterialKeyV2.fromMaterial3D &mat
-          getOrCreate(&instanced, instancedShader, &mat) |> ignore
+          getOrCreate(&instanced, instancedShader, &mat, &key) |> ignore
         | _ -> ()
 
       // Mark all variants dirty so lights get uploaded on first use
@@ -1289,290 +1296,306 @@ type ForwardPbrPipelineV2
       let mutable shaderActive = false
       let mutable activeVariant = 0 // 0=none, 1=forward, 2=instanced
 
-      let inline ensureShaderActive (targetShader: Shader) (variantId: int) =
+      let ensureShaderActive (targetShader: Shader) (variantId: int) =
         if not shaderActive then
           Raylib.BeginShaderMode targetShader
           shaderActive <- true
           activeVariant <- variantId
 
-      let inline ensureShaderInactive() =
+      let ensureShaderInactive() =
         if shaderActive then
           Raylib.EndShaderMode()
           shaderActive <- false
           activeVariant <- 0
 
-      for i = 0 to buffer.Count - 1 do
-        match buffer[i] with
-        | Command3D.BeginCamera cam ->
-          if cameraActive then
-            ensureShaderInactive()
-            Raylib.EndMode3D()
+      let dispatchForwardPass() =
+        for i = 0 to buffer.Count - 1 do
+          match buffer[i] with
+          | Command3D.BeginCamera cam ->
+            if cameraActive then
+              ensureShaderInactive()
+              Raylib.EndMode3D()
 
-          Raylib.BeginMode3D cam
-          cameraActive <- true
-          currentCamera <- cam
+            Raylib.BeginMode3D cam
+            cameraActive <- true
+            currentCamera <- cam
 
-        | Command3D.BeginCameraConfig cfg ->
-          if cameraActive then
-            ensureShaderInactive()
-            Raylib.EndMode3D()
+          | Command3D.BeginCameraConfig cfg ->
+            if cameraActive then
+              ensureShaderInactive()
+              Raylib.EndMode3D()
 
-          match cfg.Viewport with
-          | ValueSome vp ->
-            let x = int(vp.X * float32 gameCtx.WindowWidth)
-            let y = int(vp.Y * float32 gameCtx.WindowHeight)
-            let w = int(vp.Width * float32 gameCtx.WindowWidth)
-            let h = int(vp.Height * float32 gameCtx.WindowHeight)
+            match cfg.Viewport with
+            | ValueSome vp ->
+              let x = int(vp.X * float32 gameCtx.WindowWidth)
+              let y = int(vp.Y * float32 gameCtx.WindowHeight)
+              let w = int(vp.Width * float32 gameCtx.WindowWidth)
+              let h = int(vp.Height * float32 gameCtx.WindowHeight)
 
-            match cfg.ClearColor with
-            | ValueSome color ->
-              Rlgl.EnableScissorTest()
-              Rlgl.Scissor(x, y, w, h)
-              Raylib.ClearBackground(color)
-              Rlgl.DisableScissorTest()
-            | ValueNone -> ()
+              match cfg.ClearColor with
+              | ValueSome color ->
+                Rlgl.EnableScissorTest()
+                Rlgl.Scissor(x, y, w, h)
+                Raylib.ClearBackground(color)
+                Rlgl.DisableScissorTest()
+              | ValueNone -> ()
 
-            Rlgl.Viewport(x, y, w, h)
-          | ValueNone ->
-            match cfg.ClearColor with
-            | ValueSome color -> Raylib.ClearBackground(color)
-            | ValueNone -> ()
+              Rlgl.Viewport(x, y, w, h)
+            | ValueNone ->
+              match cfg.ClearColor with
+              | ValueSome color -> Raylib.ClearBackground(color)
+              | ValueNone -> ()
 
-          Raylib.BeginMode3D cfg.Camera
-          cameraActive <- true
-          currentCamera <- cfg.Camera
+            Raylib.BeginMode3D cfg.Camera
+            cameraActive <- true
+            currentCamera <- cfg.Camera
 
-        | Command3D.EndCamera ->
-          if cameraActive then
-            ensureShaderInactive()
-            Raylib.EndMode3D()
-            cameraActive <- false
+          | Command3D.EndCamera ->
+            if cameraActive then
+              ensureShaderInactive()
+              Raylib.EndMode3D()
+              cameraActive <- false
 
-          Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
+            Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
 
-        | Command3D.DrawMesh(mesh, transform, material) ->
-          if cameraActive then
-            ensureShaderActive forwardShader 1
+          | Command3D.DrawMesh(mesh, transform, material) ->
+            if cameraActive then
+              ensureShaderActive forwardShader 1
 
-            if lightsDirty || forward.LightsDirty then
-              uploadLights(forwardShader, &forward, lights, maxPt, maxSp)
-              forward.LightsDirty <- false
+              if lightsDirty || forward.LightsDirty then
+                uploadLights(forwardShader, &forward, lights, maxPt, maxSp)
+                forward.LightsDirty <- false
 
-            let nm = computeNormalMatrix transform
-
-            setMaterialUniforms(
-              forwardShader,
-              &forward.Locs.Material,
-              &material,
-              nm
-            )
-
-            let mat = getOrCreate(&forward, forwardShader, &material)
-            Raylib.DrawMesh(mesh, mat, transform)
-
-        | Command3D.DrawModel(model, transform) ->
-          if cameraActive then
-            ensureShaderActive forwardShader 1
-
-            if lightsDirty || forward.LightsDirty then
-              uploadLights(forwardShader, &forward, lights, maxPt, maxSp)
-              forward.LightsDirty <- false
-
-            let nm = computeNormalMatrix transform
-
-            for mi = 0 to model.MeshCount - 1 do
-              let mesh = NativePtr.get model.Meshes mi
-              let matIdx = NativePtr.get model.MeshMaterial mi
-              let raylibMat = NativePtr.get model.Materials matIdx
-              let mat3d = Material3D.fromRaylibMaterial raylibMat
+              let nm = computeNormalMatrix transform
 
               setMaterialUniforms(
                 forwardShader,
                 &forward.Locs.Material,
-                &mat3d,
+                &material,
                 nm
               )
 
-              let mat = getOrCreate(&forward, forwardShader, &mat3d)
+              let key = MaterialKeyV2.fromMaterial3D &material
+              let mat = getOrCreate(&forward, forwardShader, &material, &key)
               Raylib.DrawMesh(mesh, mat, transform)
 
-        | Command3D.DrawBillboard(texture, position, size, color) ->
-          if cameraActive then
-            ensureShaderInactive()
-            Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
+          | Command3D.DrawModel(model, transform) ->
+            if cameraActive then
+              ensureShaderActive forwardShader 1
 
-            let source =
-              Rectangle(
-                0.0f,
-                0.0f,
-                float32 texture.Width,
-                float32 texture.Height
-              )
+              if lightsDirty || forward.LightsDirty then
+                uploadLights(forwardShader, &forward, lights, maxPt, maxSp)
+                forward.LightsDirty <- false
 
-            Raylib.DrawBillboardRec(
-              currentCamera,
-              texture,
-              source,
-              position,
-              size,
-              color
-            )
+              let nm = computeNormalMatrix transform
 
-        | Command3D.DrawLine3D(start, finish, color) ->
-          if cameraActive then
-            Raylib.DrawLine3D(start, finish, color)
+              for mi = 0 to model.MeshCount - 1 do
+                let mesh = NativePtr.get model.Meshes mi
+                let matIdx = NativePtr.get model.MeshMaterial mi
+                let raylibMat = NativePtr.get model.Materials matIdx
+                let mat3d = Material3D.fromRaylibMaterial raylibMat
 
-        | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
-          if cameraActive then
-            ensureShaderInactive()
-            Raylib.BeginShaderMode skinnedShader
-            shaderActive <- true
-            activeVariant <- 0
+                setMaterialUniforms(
+                  forwardShader,
+                  &forward.Locs.Material,
+                  &mat3d,
+                  nm
+                )
 
-            if lightsDirty || skinned.LightsDirty then
-              uploadLights(skinnedShader, &skinned, lights, maxPt, maxSp)
-              skinned.LightsDirty <- false
+                let key = MaterialKeyV2.fromMaterial3D &mat3d
+                let mat = getOrCreate(&forward, forwardShader, &mat3d, &key)
+                Raylib.DrawMesh(mesh, mat, transform)
 
-            setShaderVec3
-              skinnedShader
-              skinned.Locs.CameraPos
-              currentCamera.Position
+          | Command3D.DrawBillboard(texture, position, size, color) ->
+            if cameraActive then
+              ensureShaderInactive()
+              Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
 
-            setShaderInt skinnedShader skinned.Locs.Shadow.Pass 0
-
-            let nm = computeNormalMatrix transform
-
-            setMaterialUniforms(
-              skinnedShader,
-              &skinned.Locs.Material,
-              &material,
-              nm
-            )
-
-            uploadBoneMatrices(skinnedShader, skinned.Locs.Bones, bones)
-            let mat = getOrCreate(&skinned, skinnedShader, &material)
-            Raylib.DrawMesh(mesh, mat, transform)
-            ensureShaderInactive()
-
-        | Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount) ->
-          if cameraActive then
-            ensureShaderInactive()
-            Raylib.BeginShaderMode instancedShader
-            shaderActive <- true
-            activeVariant <- 2
-
-            if lightsDirty || instanced.LightsDirty then
-              uploadLights(instancedShader, &instanced, lights, maxPt, maxSp)
-              instanced.LightsDirty <- false
-
-            setShaderVec3
-              instancedShader
-              instanced.Locs.CameraPos
-              currentCamera.Position
-
-            setShaderInt instancedShader instanced.Locs.Shadow.Pass 0
-
-            setMaterialUniforms(
-              instancedShader,
-              &instanced.Locs.Material,
-              &material,
-              Matrix4x4.Identity
-            )
-
-            let mat = getOrCreate(&instanced, instancedShader, &material)
-            Raylib.DrawMeshInstanced(mesh, mat, transforms, instanceCount)
-            ensureShaderInactive()
-
-        | Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count) ->
-          if cameraActive then
-            ensureShaderInactive()
-            Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
-
-            for bi = 0 to count - 1 do
               let source =
                 Rectangle(
                   0.0f,
                   0.0f,
-                  float32 textures[bi].Width,
-                  float32 textures[bi].Height
+                  float32 texture.Width,
+                  float32 texture.Height
                 )
 
               Raylib.DrawBillboardRec(
                 currentCamera,
-                textures[bi],
+                texture,
                 source,
-                positions[bi],
-                sizes[bi],
-                colors[bi]
+                position,
+                size,
+                color
               )
 
-        | Command3D.SetAmbientLight light ->
-          lights.Ambient.Clear()
-          lights.Ambient.Add light
-          lightsDirty <- true
+          | Command3D.DrawLine3D(start, finish, color) ->
+            if cameraActive then
+              Raylib.DrawLine3D(start, finish, color)
 
-        | Command3D.AddDirectionalLight light ->
-          lights.DirLights.Add light
-          lightsDirty <- true
-
-        | Command3D.AddPointLight light ->
-          lights.PointLights.Add light
-          lightsDirty <- true
-
-        | Command3D.AddSpotLight light ->
-          lights.SpotLights.Add light
-          lightsDirty <- true
-
-        | Command3D.DrawImmediate action ->
-          let savedCam = cameraActive
-          let savedShader = shaderActive
-
-          if shaderActive then
-            Raylib.EndShaderMode()
-            shaderActive <- false
-
-          if cameraActive then
-            Raylib.EndMode3D()
-            cameraActive <- false
-
-          try
-            action()
-          finally
-            if savedCam then
-              Raylib.BeginMode3D currentCamera
-              cameraActive <- true
-
-            if savedShader then
-              Raylib.BeginShaderMode forwardShader
+          | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
+            if cameraActive then
+              ensureShaderInactive()
+              Raylib.BeginShaderMode skinnedShader
               shaderActive <- true
+              activeVariant <- 0
 
-        | Command3D.SetShadowOrigin _ -> ()
-        | Command3D.EnableShadows -> ()
-        | Command3D.DisableShadows -> ()
+              if lightsDirty || skinned.LightsDirty then
+                uploadLights(skinnedShader, &skinned, lights, maxPt, maxSp)
+                skinned.LightsDirty <- false
 
-      // ── End all ──
-      if shaderActive then
-        Raylib.EndShaderMode()
+              setShaderVec3
+                skinnedShader
+                skinned.Locs.CameraPos
+                currentCamera.Position
 
-      if cameraActive then
-        Raylib.EndMode3D()
+              setShaderInt skinnedShader skinned.Locs.Shadow.Pass 0
 
-      // ── Post-process ──
+              let nm = computeNormalMatrix transform
+
+              setMaterialUniforms(
+                skinnedShader,
+                &skinned.Locs.Material,
+                &material,
+                nm
+              )
+
+              uploadBoneMatrices(
+                skinnedShader,
+                skinned.Locs.Bones,
+                ReadOnlySpan bones
+              )
+
+              let key = MaterialKeyV2.fromMaterial3D &material
+              let mat = getOrCreate(&skinned, skinnedShader, &material, &key)
+              Raylib.DrawMesh(mesh, mat, transform)
+              ensureShaderInactive()
+
+          | Command3D.DrawMeshInstanced(mesh,
+                                        transforms,
+                                        material,
+                                        instanceCount) ->
+            if cameraActive then
+              ensureShaderInactive()
+              Raylib.BeginShaderMode instancedShader
+              shaderActive <- true
+              activeVariant <- 2
+
+              if lightsDirty || instanced.LightsDirty then
+                uploadLights(instancedShader, &instanced, lights, maxPt, maxSp)
+                instanced.LightsDirty <- false
+
+              setShaderVec3
+                instancedShader
+                instanced.Locs.CameraPos
+                currentCamera.Position
+
+              setShaderInt instancedShader instanced.Locs.Shadow.Pass 0
+
+              setMaterialUniforms(
+                instancedShader,
+                &instanced.Locs.Material,
+                &material,
+                Matrix4x4.Identity
+              )
+
+              let key = MaterialKeyV2.fromMaterial3D &material
+
+              let mat =
+                getOrCreate(&instanced, instancedShader, &material, &key)
+
+              Raylib.DrawMeshInstanced(mesh, mat, transforms, instanceCount)
+              ensureShaderInactive()
+
+          | Command3D.DrawBillboardBatch(textures,
+                                         positions,
+                                         sizes,
+                                         colors,
+                                         count) ->
+            if cameraActive then
+              ensureShaderInactive()
+              Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
+
+              for bi = 0 to count - 1 do
+                let source =
+                  Rectangle(
+                    0.0f,
+                    0.0f,
+                    float32 textures[bi].Width,
+                    float32 textures[bi].Height
+                  )
+
+                Raylib.DrawBillboardRec(
+                  currentCamera,
+                  textures[bi],
+                  source,
+                  positions[bi],
+                  sizes[bi],
+                  colors[bi]
+                )
+
+          | Command3D.SetAmbientLight light ->
+            lights.Ambient.Clear()
+            lights.Ambient.Add light
+            lightsDirty <- true
+
+          | Command3D.AddDirectionalLight light ->
+            lights.DirLights.Add light
+            lightsDirty <- true
+
+          | Command3D.AddPointLight light ->
+            lights.PointLights.Add light
+            lightsDirty <- true
+
+          | Command3D.AddSpotLight light ->
+            lights.SpotLights.Add light
+            lightsDirty <- true
+
+          | Command3D.DrawImmediate action ->
+            let savedCam = cameraActive
+            let savedShader = shaderActive
+
+            if shaderActive then
+              Raylib.EndShaderMode()
+              shaderActive <- false
+
+            if cameraActive then
+              Raylib.EndMode3D()
+              cameraActive <- false
+
+            try
+              action()
+            finally
+              if savedCam then
+                Raylib.BeginMode3D currentCamera
+                cameraActive <- true
+
+              if savedShader then
+                Raylib.BeginShaderMode forwardShader
+                shaderActive <- true
+
+          | Command3D.SetShadowOrigin _ -> ()
+          | Command3D.EnableShadows -> ()
+          | Command3D.DisableShadows -> ()
+
+        // End remaining shader/camera state after dispatch
+        if shaderActive then
+          Raylib.EndShaderMode()
+
+        if cameraActive then
+          Raylib.EndMode3D()
+
+      // ── Dispatch: direct or via scene RT for post-process ──
       match ppConfig.Passes with
       | ValueNone
-      | ValueSome [||] -> ()
+      | ValueSome [||] ->
+        // No post-process — dispatch directly to default framebuffer
+        dispatchForwardPass()
       | _ ->
+        // Post-process enabled — render into scene RT first
         let sceneRT = rtPool.Acquire(gameCtx.WindowWidth, gameCtx.WindowHeight)
         Raylib.BeginTextureMode sceneRT
         Raylib.ClearBackground Color.Black
-
-        for i = 0 to buffer.Count - 1 do
-          // Re-dispatch into the scene RT — same dispatch logic
-          // This is a simplified path; the original handles this
-          // by rendering to sceneRT first then post-processing.
-          // For now we apply post-process on the captured scene.
-          ()
-
+        dispatchForwardPass()
         Raylib.EndTextureMode()
         applyPostProcess gameCtx sceneRT rtPool
 
