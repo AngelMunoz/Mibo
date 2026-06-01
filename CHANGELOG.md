@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [1.1.0] - 2026.06.01
+## [1.1.0] - 2026-06-01
 
 ### Added
 
@@ -44,7 +44,7 @@
 - Duplicate `<summary>` XML doc block on `ForwardPbrPipeline` type.
 - `preScan` test cases used `let` instead of `use` for `RenderBuffer3D`, leaking rented arrays from `ArrayPool`.
 
-## [1.0.0] - 2026.05.30
+## [1.0.0] - 2026-05-30
 
 ### Added
 
