@@ -7,6 +7,7 @@ open System.Numerics
 open Raylib_cs
 open Mibo.Elmish
 open Mibo.Elmish.Graphics3D
+open Mibo.Animation
 open Mibo.Input
 
 [<Struct>]
@@ -201,6 +202,11 @@ type GameModel() =
   member val Actions: ActionState<GameAction> = ActionState.empty with get, set
   member val InputMap: InputMap<GameAction> = InputMap.empty with get, set
   member val PlayerModel = Unchecked.defaultof<Model> with get, set
+
+  member val PlayerAnimClips =
+    Unchecked.defaultof<Animation3DClips> with get, set
+
+  member val PlayerAnim = Unchecked.defaultof<Animation3DState> with get, set
   member val ModelCache = Dictionary<string, Model>() with get, set
 
   member val Chunks =

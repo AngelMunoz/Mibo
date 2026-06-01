@@ -17,6 +17,7 @@
     <Compile Include="Graphics2DTests.fs" />
     <Compile Include="Graphics3DTests.fs" />
     <Compile Include="AnimationTests.fs" />
+    <Compile Include="Animation3DTests.fs" />
     <Compile Include="MathTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>

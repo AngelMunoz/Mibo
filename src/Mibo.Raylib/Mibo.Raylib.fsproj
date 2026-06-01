@@ -39,6 +39,7 @@
     <Compile Include="Graphics2D/Lighting/LightCommands.fs" />
     <Compile Include="Graphics2D/Lighting/Particle.fs" />
     <Compile Include="Animation.fs" />
+    <Compile Include="Animation3D.fs" />
     <Compile Include="Graphics3D/Light3D.fs" />
     <Compile Include="Graphics3D/Material3D.fs" />
     <Compile Include="Graphics3D/Primitive3D.fs" />
