@@ -18,7 +18,7 @@ open Mibo.Elmish.Graphics3D
 // explicit fixed + NativePtr.toVoidPtr.
 // ------------------------------------------------------------------
 [<AutoOpen>]
-module private NativeHelpers =
+module internal NativeHelpers =
 
   let inline setShaderInt (shader: Shader) (loc: int) (value: int) =
     use p = fixed &value
@@ -85,9 +85,9 @@ module private NativeHelpers =
 // ------------------------------------------------------------------
 
 [<AutoOpen>]
-module private NormalMatrixHelpers =
+module internal NormalMatrixHelpers =
 
-  let inline computeNormalMatrix(model: Matrix4x4) =
+  let computeNormalMatrix(model: Matrix4x4) =
     let mutable inv = Matrix4x4.Identity
     Matrix4x4.Invert(model, &inv) |> ignore
     Matrix4x4.Transpose inv
@@ -97,7 +97,7 @@ module private NormalMatrixHelpers =
 // ------------------------------------------------------------------
 
 [<Struct>]
-type private MaterialKey = {
+type internal MaterialKey = {
   AlbedoMapId: uint
   RoughnessMapId: uint
   MetallicMapId: uint
@@ -112,9 +112,9 @@ type private MaterialKey = {
   TilingY: float32
 }
 
-module private MaterialKey =
+module internal MaterialKey =
 
-  let inline fromMaterial3D(mat: inref<Material3D>) : MaterialKey = {
+  let fromMaterial3D(mat: inref<Material3D>) : MaterialKey = {
     AlbedoMapId =
       match mat.AlbedoMap with
       | ValueSome t -> t.Id
@@ -149,7 +149,7 @@ module private MaterialKey =
 // ------------------------------------------------------------------
 
 [<IsReadOnly; Struct>]
-type private MaterialUniforms = {
+type internal MaterialUniforms = {
   AlbedoColor: int
   Roughness: int
   Metallic: int
@@ -161,10 +161,10 @@ type private MaterialUniforms = {
 }
 
 [<IsReadOnly; Struct>]
-type private AmbientUniforms = { Color: int; Intensity: int }
+type internal AmbientUniforms = { Color: int; Intensity: int }
 
 [<IsReadOnly; Struct>]
-type private DirLightUniforms = {
+type internal DirLightUniforms = {
   Dir: int
   Color: int
   Intensity: int
@@ -172,7 +172,7 @@ type private DirLightUniforms = {
 }
 
 [<IsReadOnly; Struct>]
-type private PointLightUniforms = {
+type internal PointLightUniforms = {
   Count: int
   Pos: int[]
   Color: int[]
@@ -182,7 +182,7 @@ type private PointLightUniforms = {
 }
 
 [<IsReadOnly; Struct>]
-type private SpotLightUniforms = {
+type internal SpotLightUniforms = {
   Count: int
   Pos: int[]
   Dir: int[]
@@ -194,7 +194,7 @@ type private SpotLightUniforms = {
 }
 
 [<IsReadOnly; Struct>]
-type private ShadowUniforms = {
+type internal ShadowUniforms = {
   Pass: int
   Atlas: int
   CasterCount: int
@@ -210,7 +210,7 @@ type private ShadowUniforms = {
 // ------------------------------------------------------------------
 
 [<IsReadOnly; Struct>]
-type private ShaderLocations = {
+type internal ShaderLocations = {
   Shader: Shader
   Cached: bool
   Material: MaterialUniforms
@@ -229,7 +229,7 @@ type private ShaderLocations = {
 // ------------------------------------------------------------------
 
 [<Struct>]
-type private MaterialCache =
+type internal MaterialCache =
   val mutable cache: Dictionary<MaterialKey, Material>
   val mutable LastKey: MaterialKey
   val mutable HasLast: bool
@@ -248,7 +248,7 @@ type private MaterialCache =
 // ------------------------------------------------------------------
 
 [<Struct>]
-type private ShaderVariant =
+type internal ShaderVariant =
   val Locs: ShaderLocations
   val mutable MaterialCache: MaterialCache
   val mutable LightsDirty: bool
@@ -265,7 +265,7 @@ type private ShaderVariant =
 // ------------------------------------------------------------------
 
 [<IsReadOnly; Struct>]
-type private ShadowDepthResources = {
+type internal ShadowDepthResources = {
   Shader: Shader
   SkinnedShader: Shader
   Material: Material
@@ -278,7 +278,7 @@ type private ShadowDepthResources = {
 // Light Buffers (reference type)
 // ------------------------------------------------------------------
 
-type private LightBuffers = {
+type internal LightBuffers = {
   Ambient: ResizeArray<AmbientLight3D>
   DirLights: ResizeArray<DirectionalLight3D>
   PointLights: ResizeArray<PointLight3D>
@@ -290,7 +290,7 @@ type private LightBuffers = {
 // ------------------------------------------------------------------
 
 [<IsReadOnly; Struct>]
-type private FrameState = {
+type internal FrameState = {
   Camera: Camera3D voption
   ShadowOrigin: Vector3 voption
 }
@@ -300,7 +300,7 @@ type private FrameState = {
 // ------------------------------------------------------------------
 
 [<AutoOpen>]
-module private ShadowPassHelpers =
+module internal ShadowPassHelpers =
 
   [<Struct>]
   type MeshDraw = {
@@ -503,12 +503,20 @@ module private ShadowPassHelpers =
 // ------------------------------------------------------------------
 
 [<AutoOpen>]
-module private PipelineFunctions =
+module internal PipelineFunctions =
 
-  let inline colorToVec3(c: Color) =
+  /// Create an empty LightBuffers instance.
+  let createLightBuffers(maxPt: int, maxSp: int) : LightBuffers = {
+    Ambient = ResizeArray<AmbientLight3D> 1
+    DirLights = ResizeArray<DirectionalLight3D> 1
+    PointLights = ResizeArray<PointLight3D> maxPt
+    SpotLights = ResizeArray<SpotLight3D> maxSp
+  }
+
+  let colorToVec3(c: Color) =
     Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
 
-  let inline colorToVec4(c: Color) =
+  let colorToVec4(c: Color) =
     Vector4(
       float32 c.R / 255.0f,
       float32 c.G / 255.0f,
@@ -880,7 +888,7 @@ module private PipelineFunctions =
       Raylib.SetShaderValueMatrix(shader, boneLoc + i, bones[i])
 
   /// Clear all light buffers.
-  let inline clearLights(lights: LightBuffers) =
+  let clearLights(lights: LightBuffers) =
     lights.Ambient.Clear()
     lights.DirLights.Clear()
     lights.PointLights.Clear()
@@ -1108,7 +1116,7 @@ module private PipelineFunctions =
       )
 
   /// Handle light command: add or set light, mark dirty.
-  let inline handleLightCommand
+  let handleLightCommand
     (lights: LightBuffers, command: Command3D, lightsDirty: byref<bool>)
     =
     match command with
