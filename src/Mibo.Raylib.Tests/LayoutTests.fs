@@ -443,4 +443,69 @@ let tests =
           ValueNone
           "Layer 1 doesn't have layer 0 content"
     ]
+
+    testList "Non-square" [
+      testCase "border fills correct edges with non-square dimensions"
+      <| fun _ ->
+        let grid = CellGrid2D.create 10 8 (Vector2(32f, 32f)) Vector2.Zero
+
+        let result = grid |> Layout.run(fun s -> s |> Layout.border 1 1 4 5 42)
+
+        for x in 0..9 do
+          for y in 0..7 do
+            let isInside = x >= 1 && x <= 4 && y >= 1 && y <= 5
+
+            let isEdge = isInside && (x = 1 || x = 4 || y = 1 || y = 5)
+
+            match CellGrid2D.get x y result with
+            | ValueSome v when v = 42 ->
+              if not isEdge then
+                failwith $"Cell {x} {y} should NOT be filled"
+            | ValueSome v -> failwith $"Cell {x} {y} has unexpected value {v}"
+            | ValueNone ->
+              if isEdge then
+                failwith $"Cell {x} {y} should be filled"
+
+      testCase "corners fills correct corners with non-square dimensions"
+      <| fun _ ->
+        let grid = CellGrid2D.create 10 8 (Vector2(32f, 32f)) Vector2.Zero
+
+        let result = grid |> Layout.run(fun s -> s |> Layout.corners 1 1 4 5 42)
+
+        let expectedCorners = [ (1, 1); (4, 1); (1, 5); (4, 5) ]
+
+        for x in 0..9 do
+          for y in 0..7 do
+            let isCorner = expectedCorners |> List.contains(x, y)
+
+            match CellGrid2D.get x y result with
+            | ValueSome v when v = 42 ->
+              if not isCorner then
+                failwith $"Cell {x} {y} should NOT be filled"
+            | ValueSome v -> failwith $"Cell {x} {y} has unexpected value {v}"
+            | ValueNone ->
+              if isCorner then
+                failwith $"Cell {x} {y} should be filled"
+
+      testCase
+        "scatterBorder scatters on correct edges with non-square dimensions"
+      <| fun _ ->
+        let grid = CellGrid2D.create 10 8 (Vector2(32f, 32f)) Vector2.Zero
+
+        let result =
+          grid
+          |> Layout.run(fun s -> s |> Layout.scatterBorder 1 1 4 5 100 42 99)
+
+        for x in 0..9 do
+          for y in 0..7 do
+            match CellGrid2D.get x y result with
+            | ValueSome v when v = 99 ->
+              let isOnEdge =
+                (x >= 1 && x <= 4 && (y = 1 || y = 5))
+                || ((x = 1 || x = 4) && y >= 1 && y <= 5)
+
+              if not isOnEdge then
+                failwith $"Cell {x} {y} should NOT be scattered"
+            | _ -> ()
+    ]
   ]

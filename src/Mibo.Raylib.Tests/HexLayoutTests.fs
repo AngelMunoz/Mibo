@@ -758,4 +758,99 @@ let tests =
           (ValueSome 42)
           "Nested section offset"
     ]
+
+    testList "Non-square" [
+      testCase
+        "border fills correct edges with non-square dimensions - PointyTop"
+      <| fun _ ->
+        let grid = HexGrid.create 10 8 32f Vector2.Zero HexOrientation.PointyTop
+
+        let result =
+          grid |> HexLayout.run(fun s -> s |> HexLayout.border 1 1 4 5 42)
+
+        for col in 0..9 do
+          for row in 0..7 do
+            let isInside = col >= 1 && col <= 4 && row >= 1 && row <= 5
+
+            let isEdge = isInside && (col = 1 || col = 4 || row = 1 || row = 5)
+
+            match HexGrid.get col row result with
+            | ValueSome v when v = 42 ->
+              if not isEdge then
+                failwith $"Cell {col} {row} should NOT be filled"
+            | ValueSome v ->
+              failwith $"Cell {col} {row} has unexpected value {v}"
+            | ValueNone ->
+              if isEdge then
+                failwith $"Cell {col} {row} should be filled"
+
+      testCase "border fills correct edges with non-square dimensions - FlatTop"
+      <| fun _ ->
+        let grid = HexGrid.create 10 8 32f Vector2.Zero HexOrientation.FlatTop
+
+        let result =
+          grid |> HexLayout.run(fun s -> s |> HexLayout.border 1 1 4 5 42)
+
+        for col in 0..9 do
+          for row in 0..7 do
+            let isInside = col >= 1 && col <= 4 && row >= 1 && row <= 5
+
+            let isEdge = isInside && (col = 1 || col = 4 || row = 1 || row = 5)
+
+            match HexGrid.get col row result with
+            | ValueSome v when v = 42 ->
+              if not isEdge then
+                failwith $"Cell {col} {row} should NOT be filled"
+            | ValueSome v ->
+              failwith $"Cell {col} {row} has unexpected value {v}"
+            | ValueNone ->
+              if isEdge then
+                failwith $"Cell {col} {row} should be filled"
+
+      testCase
+        "corners fills correct corners with non-square dimensions - PointyTop"
+      <| fun _ ->
+        let grid = HexGrid.create 10 8 32f Vector2.Zero HexOrientation.PointyTop
+
+        let result =
+          grid |> HexLayout.run(fun s -> s |> HexLayout.corners 1 1 4 5 42)
+
+        let expectedCorners = [ (1, 1); (4, 1); (1, 5); (4, 5) ]
+
+        for col in 0..9 do
+          for row in 0..7 do
+            let isCorner = expectedCorners |> List.contains(col, row)
+
+            match HexGrid.get col row result with
+            | ValueSome v when v = 42 ->
+              if not isCorner then
+                failwith $"Cell {col} {row} should NOT be filled"
+            | ValueSome v ->
+              failwith $"Cell {col} {row} has unexpected value {v}"
+            | ValueNone ->
+              if isCorner then
+                failwith $"Cell {col} {row} should be filled"
+
+      testCase
+        "scatterBorder scatters on correct edges with non-square dimensions - PointyTop"
+      <| fun _ ->
+        let grid = HexGrid.create 10 8 32f Vector2.Zero HexOrientation.PointyTop
+
+        let result =
+          grid
+          |> HexLayout.run(fun s ->
+            s |> HexLayout.scatterBorder 1 1 4 5 100 42 99)
+
+        for col in 0..9 do
+          for row in 0..7 do
+            match HexGrid.get col row result with
+            | ValueSome v when v = 99 ->
+              let isOnEdge =
+                (col >= 1 && col <= 4 && (row = 1 || row = 5))
+                || ((col = 1 || col = 4) && row >= 1 && row <= 5)
+
+              if not isOnEdge then
+                failwith $"Cell {col} {row} should NOT be scattered"
+            | _ -> ()
+    ]
   ]

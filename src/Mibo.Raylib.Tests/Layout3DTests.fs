@@ -1018,4 +1018,58 @@ let tests =
         Expect.equal capturedZ 4 "Z coordinate"
         Expect.equal capturedPos (Vector3(64f, 96f, 128f)) "World position"
     ]
+
+    testList "Non-cubic" [
+      testCase "shell fills correct faces with non-cubic dimensions"
+      <| fun _ ->
+        let grid =
+          CellGrid3D.create 10 3 8 (Vector3(32f, 32f, 32f)) Vector3.Zero
+
+        let result =
+          grid |> Layout3D.run(fun s -> s |> Layout3D.shell 1 1 1 4 2 5 42)
+
+        for x in 0..9 do
+          for y in 0..2 do
+            for z in 0..7 do
+              let isInside =
+                x >= 1 && x <= 4 && y >= 1 && y <= 2 && z >= 1 && z <= 5
+
+              let isFace =
+                isInside && (y = 1 || y = 2 || z = 1 || z = 5 || x = 1 || x = 4)
+
+              match CellGrid3D.get x y z result with
+              | ValueSome v when v = 42 ->
+                if not isFace then
+                  failwith $"Cell {x} {y} {z} should NOT be filled"
+              | ValueSome v ->
+                failwith $"Cell {x} {y} {z} has unexpected value {v}"
+              | ValueNone ->
+                if isFace then
+                  failwith $"Cell {x} {y} {z} should be filled"
+
+      testCase
+        "scatterShell scatters on correct faces with non-cubic dimensions"
+      <| fun _ ->
+        let grid =
+          CellGrid3D.create 10 3 8 (Vector3(32f, 32f, 32f)) Vector3.Zero
+
+        let result =
+          grid
+          |> Layout3D.run(fun s ->
+            s |> Layout3D.scatterShell 1 1 1 4 2 5 100 42 99)
+
+        for x in 0..9 do
+          for y in 0..2 do
+            for z in 0..7 do
+              match CellGrid3D.get x y z result with
+              | ValueSome v when v = 99 ->
+                let isOnFace =
+                  (x >= 1 && x <= 4 && z >= 1 && z <= 5 && (y = 1 || y = 2))
+                  || (x >= 1 && x <= 4 && (z = 1 || z = 5) && y >= 1 && y <= 2)
+                  || ((x = 1 || x = 4) && z >= 1 && z <= 5 && y >= 1 && y <= 2)
+
+                if not isOnFace then
+                  failwith $"Cell {x} {y} {z} should NOT be scattered"
+              | _ -> ()
+    ]
   ]
