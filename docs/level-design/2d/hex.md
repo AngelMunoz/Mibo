@@ -419,6 +419,8 @@ let walkableNeighbors col row grid =
 ### Movement Range
 
 ```fsharp
+open System.Collections.Generic
+
 /// Find all hexes within N movement steps
 let movementRange startCol startRow steps (grid: HexGrid<Tile>) =
     let visited = HashSet<int * int>()

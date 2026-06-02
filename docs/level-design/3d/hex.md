@@ -47,6 +47,7 @@ Like 2D hex grids, 3D hex supports both orientations via `HexOrientation`:
 ```fsharp
 open Mibo.Layout3D
 open Mibo.Layout
+open System.Numerics
 
 // Strategy map with pointy-top hex columns
 let grid = HexGrid3D.create 20 10 15 32f 2f Vector3.Zero PointyTop
@@ -361,7 +362,7 @@ let house width height depth floor wall roof (section: HexGrid3DSection<Cell>) =
     section
     |> HexLayout3D.floorHex 0 0 0 width depth floor
     |> HexLayout3D.shell 0 0 0 width height depth wall
-    |> HexLayout3D.floorHex 0 (height - 1) 0 width depth roof
+    |> HexLayout3D.floorHex 0 0 (height - 1) width depth roof
     |> HexLayout3D.clear 1 0 1 (width - 2) (height - 1) (depth - 2)  // Interior
 ```
 
@@ -402,7 +403,7 @@ module StrategyGame =
 
 ```fsharp
 /// Create terrain from a height function
-let terrainFromHeightmap heightFn surfaceContent subsurfaceContent subsurfaceDepth =
+let terrainFromHeightmap maxHeight heightFn surfaceContent subsurfaceContent subsurfaceDepth =
     HexLayout3D.generateHexLayer 0 (fun col row ->
         let height = heightFn col row
         // Surface tile at the top
@@ -417,7 +418,7 @@ let terrainFromHeightmap heightFn surfaceContent subsurfaceContent subsurfaceDep
                     subsurfaceContent
                 else
                     surfaceContent
-            )
+            ) |> ignore
         section
 ```
 
@@ -427,8 +428,8 @@ let terrainFromHeightmap heightFn surfaceContent subsurfaceContent subsurfaceDep
 /// A raised plateau
 let plateau width depth height surface side (section: HexGrid3DSection<Cell>) =
     section
-    |> HexLayout3D.fill 0 0 0 width height depth sideCell     // Sides
-    |> HexLayout3D.floorHex 0 (height - 1) 0 width depth surfaceCell  // Top
+    |> HexLayout3D.fill 0 0 0 width height depth side      // Sides
+    |> HexLayout3D.floorHex 0 0 (height - 1) width depth surface  // Top
 
 /// A pit/crater
 let pit width depth drop (section: HexGrid3DSection<Cell>) =
@@ -443,7 +444,7 @@ let pit width depth drop (section: HexGrid3DSection<Cell>) =
 let rampX length width rise (section: HexGrid3DSection<Cell>) =
     for i in 0 .. length - 1 do
         let layerHeight = int (float rise * float i / float length)
-        section |> HexLayout3D.floorHex i layerHeight 0 1 width RampCell
+        section |> HexLayout3D.floorHex i 0 layerHeight 1 width RampCell
     section
 ```
 
@@ -602,7 +603,7 @@ let civMap =
         // Mountain range (barrier)
         |> HexLayout3D.section 15 0 10 (fun s ->
             s |> HexLayout3D.fill 0 0 0 8 5 3 MountainCell
-              |> HexLayout3D.floorHex 0 4 0 8 3 SnowCell
+              |> HexLayout3D.floorHex 0 0 4 8 3 SnowCell
         )
         
         // River (winding)
@@ -632,7 +633,7 @@ let civMap =
         // Cities
         |> HexLayout3D.section 5 0 5 (fun s ->
             s |> HexLayout3D.fill 0 0 0 2 2 2 CityCell
-              |> HexLayout3D.hexRing 0 0 0 3 WallCell  // Defensive wall
+              |> HexLayout3D.border 0 0 0 3 3 3 WallCell  // Defensive wall
         )
         |> HexLayout3D.section 20 0 15 (fun s ->
             s |> HexLayout3D.fill 0 0 0 3 2 3 CityCell
