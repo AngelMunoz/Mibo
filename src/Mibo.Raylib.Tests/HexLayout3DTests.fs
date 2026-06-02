@@ -341,7 +341,7 @@ let tests =
     ]
 
     testList "Non-cubic" [
-      testCase "shell fills correct cells with non-cubic dimensions"
+      testCase "shell fills correct faces with non-cubic dimensions"
       <| fun _ ->
         let grid =
           HexGrid3D.create 10 3 8 32f 16f Vector3.Zero HexOrientation.PointyTop
@@ -350,29 +350,71 @@ let tests =
           grid
           |> HexLayout3D.run(fun s -> s |> HexLayout3D.shell 1 1 1 4 2 5 42)
 
-        for col in 1..4 do
-          for row in 1..5 do
-            for layer in 1..2 do
-              match HexGrid3D.get col row layer result with
-              | ValueSome v -> Expect.equal v 42 "Shell cell should be filled"
-              | ValueNone ->
-                failwith $"Cell {col} {row} {layer} should be filled"
+        for col in 0..9 do
+          for row in 0..7 do
+            for layer in 0..2 do
+              let isInside =
+                col >= 1
+                && col <= 4
+                && row >= 1
+                && row <= 5
+                && layer >= 1
+                && layer <= 2
 
-      testCase "border fills correct cells with non-cubic dimensions"
+              let isFace =
+                isInside
+                && (layer = 1
+                    || layer = 2
+                    || row = 1
+                    || row = 5
+                    || col = 1
+                    || col = 4)
+
+              match HexGrid3D.get col row layer result with
+              | ValueSome v when v = 42 ->
+                if not isFace then
+                  failwith $"Cell {col} {row} {layer} should NOT be filled"
+              | ValueSome v ->
+                failwith $"Cell {col} {row} {layer} has unexpected value {v}"
+              | ValueNone ->
+                if isFace then
+                  failwith $"Cell {col} {row} {layer} should be filled"
+
+      testCase
+        "scatterShell scatters on correct faces with non-cubic dimensions"
       <| fun _ ->
         let grid =
           HexGrid3D.create 10 3 8 32f 16f Vector3.Zero HexOrientation.PointyTop
 
         let result =
           grid
-          |> HexLayout3D.run(fun s -> s |> HexLayout3D.border 1 1 1 4 2 5 42)
+          |> HexLayout3D.run(fun s ->
+            s |> HexLayout3D.scatterShell 1 1 1 4 2 5 100 42 99)
 
-        for col in 1..4 do
-          for row in 1..5 do
-            for layer in 1..2 do
+        for col in 0..9 do
+          for row in 0..7 do
+            for layer in 0..2 do
               match HexGrid3D.get col row layer result with
-              | ValueSome v -> Expect.equal v 42 "Border cell should be filled"
-              | ValueNone ->
-                failwith $"Cell {col} {row} {layer} should be filled"
+              | ValueSome v when v = 99 ->
+                let isOnFace =
+                  (col >= 1
+                   && col <= 4
+                   && row >= 1
+                   && row <= 5
+                   && (layer = 1 || layer = 2))
+                  || (col >= 1
+                      && col <= 4
+                      && (row = 1 || row = 5)
+                      && layer >= 1
+                      && layer <= 2)
+                  || ((col = 1 || col = 4)
+                      && row >= 1
+                      && row <= 5
+                      && layer >= 1
+                      && layer <= 2)
+
+                if not isOnFace then
+                  failwith $"Cell {col} {row} {layer} should NOT be scattered"
+              | _ -> ()
     ]
   ]
