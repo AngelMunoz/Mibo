@@ -9,7 +9,8 @@ General setup and usage instructions can be found in the [README.md](README.md) 
 ## Imperatives
 
 1. **NEVER PUSH WITHOUT PERMISSION.** Always ask before pushing to the remote.
-2. **Always run `dotnet fantomas .` before committing code.** Format all F# files before staging.
+2. **NEVER FORCE PUSH.** Tell the user they have to force push instead of you.
+3. **Always run `dotnet fantomas .` before committing code.** Format all F# files before staging.
 
 ## Project Structure
 
