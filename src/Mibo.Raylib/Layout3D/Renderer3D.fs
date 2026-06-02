@@ -154,3 +154,93 @@ module CellGridRenderer3D =
         groups[key] <- struct (list, content))
 
     ctx.EmitInstanced buffer
+
+module HexGrid3DRenderer =
+
+  let inline render
+    (grid: HexGrid3D<'T>)
+    ([<InlineIfLambda>] renderCell: Vector3 -> 'T -> unit)
+    : unit =
+    grid
+    |> HexGrid3D.iter(fun col row layer content ->
+      let worldPos = HexGrid3D.getWorldPos col row layer grid
+      renderCell worldPos content)
+
+  let inline renderVolume
+    (bounds: BoundingBox)
+    (grid: HexGrid3D<'T>)
+    ([<InlineIfLambda>] renderCell: Vector3 -> 'T -> unit)
+    : unit =
+    grid
+    |> HexGrid3D.iterVolume bounds (fun col row layer content ->
+      let worldPos = HexGrid3D.getWorldPos col row layer grid
+      renderCell worldPos content)
+
+  let inline renderWithIndices
+    (grid: HexGrid3D<'T>)
+    ([<InlineIfLambda>] renderCell: int -> int -> int -> Vector3 -> 'T -> unit)
+    : unit =
+    grid
+    |> HexGrid3D.iter(fun col row layer content ->
+      let worldPos = HexGrid3D.getWorldPos col row layer grid
+      renderCell col row layer worldPos content)
+
+  /// <summary>
+  /// Renders a hex grid using GPU instancing. Cells are grouped by a key function,
+  /// and each group emits one <c>DrawMeshInstanced</c> per sub-mesh.
+  /// </summary>
+  let renderInstanced
+    (ctx: InstancedRenderContext<'T, 'K>)
+    (grid: HexGrid3D<'T>)
+    (buffer: RenderBuffer3D)
+    : unit =
+    let groups = ctx.Storage
+
+    for kvp in groups do
+      let struct (transforms, _) = kvp.Value
+      transforms.Clear()
+
+    grid
+    |> HexGrid3D.iter(fun col row layer content ->
+      let worldPos = HexGrid3D.getWorldPos col row layer grid
+      let key = ctx.GetKey content
+      let transform = ctx.GetTransform worldPos content
+
+      match groups.TryGetValue key with
+      | true, struct (transforms, _) -> transforms.Add transform
+      | false, _ ->
+        let list = ResizeArray<Matrix4x4>()
+        list.Add transform
+        groups[key] <- struct (list, content))
+
+    ctx.EmitInstanced buffer
+
+  /// <summary>
+  /// Like <c>renderInstanced</c> but restricted to a bounding volume.
+  /// </summary>
+  let renderVolumeInstanced
+    (ctx: InstancedRenderContext<'T, 'K>)
+    (bounds: BoundingBox)
+    (grid: HexGrid3D<'T>)
+    (buffer: RenderBuffer3D)
+    : unit =
+    let groups = ctx.Storage
+
+    for kvp in groups do
+      let struct (transforms, _) = kvp.Value
+      transforms.Clear()
+
+    grid
+    |> HexGrid3D.iterVolume bounds (fun col row layer content ->
+      let worldPos = HexGrid3D.getWorldPos col row layer grid
+      let key = ctx.GetKey content
+      let transform = ctx.GetTransform worldPos content
+
+      match groups.TryGetValue key with
+      | true, struct (transforms, _) -> transforms.Add transform
+      | false, _ ->
+        let list = ResizeArray<Matrix4x4>()
+        list.Add transform
+        groups[key] <- struct (list, content))
+
+    ctx.EmitInstanced buffer

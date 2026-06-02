@@ -58,7 +58,10 @@
     <Compile Include="Graphics3D/Pipelines/Shaders.fs" />
     <Compile Include="Graphics3D/Pipelines/ForwardPbrPipeline.fs" />
     <Compile Include="Layout3D/Grid3D.fs" />
+    <Compile Include="Layout3D/HexGrid3D.fs" />
     <Compile Include="Layout3D/Layout3D.fs" />
+    <Compile Include="Layout3D/HexLayout3D.fs" />
+    <Compile Include="Layout3D/LayeredHex3D.fs" />
     <Compile Include="Layout3D/Interior.fs" />
     <Compile Include="Layout3D/Terrain.fs" />
     <Compile Include="Layout3D/Renderer3D.fs" />
