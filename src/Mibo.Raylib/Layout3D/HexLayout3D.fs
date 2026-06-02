@@ -1151,43 +1151,43 @@ module HexLayout3D =
       | 0 ->
         setHex3DLocal
           (col + rng.Next(0, w))
-          row
-          (layer + rng.Next(0, d))
+          (row + rng.Next(0, d))
+          layer
           content
           section
       | 1 ->
         setHex3DLocal
           (col + rng.Next(0, w))
-          (row + h - 1)
-          (layer + rng.Next(0, d))
+          (row + rng.Next(0, d))
+          (layer + h - 1)
           content
           section
       | 2 ->
         setHex3DLocal
           col
-          (row + rng.Next(0, h))
-          (layer + rng.Next(0, d))
+          (row + rng.Next(0, d))
+          (layer + rng.Next(0, h))
           content
           section
       | 3 ->
         setHex3DLocal
           (col + w - 1)
-          (row + rng.Next(0, h))
-          (layer + rng.Next(0, d))
+          (row + rng.Next(0, d))
+          (layer + rng.Next(0, h))
           content
           section
       | 4 ->
         setHex3DLocal
           (col + rng.Next(0, w))
-          (row + rng.Next(0, h))
-          layer
+          row
+          (layer + rng.Next(0, h))
           content
           section
       | 5 ->
         setHex3DLocal
           (col + rng.Next(0, w))
-          (row + rng.Next(0, h))
-          (layer + d - 1)
+          (row + d - 1)
+          (layer + rng.Next(0, h))
           content
           section
       | _ -> ()
@@ -1332,7 +1332,7 @@ module HexLayout3D =
 
       section |> wallXY col row layer w h content |> ignore
 
-      section |> wallXY col row (layer + d - 1) w h content |> ignore
+      section |> wallXY col (row + d - 1) layer w h content |> ignore
 
       section |> wallYZ col row layer h d content |> ignore
 
@@ -1397,43 +1397,43 @@ module HexLayout3D =
         | 0 ->
           setHex3DLocal
             (col + rng.Next(0, w))
-            row
-            (layer + rng.Next(0, d))
+            (row + rng.Next(0, d))
+            layer
             content
             section
         | 1 ->
           setHex3DLocal
             (col + rng.Next(0, w))
-            (row + h - 1)
-            (layer + rng.Next(0, d))
+            (row + rng.Next(0, d))
+            (layer + h - 1)
             content
             section
         | 2 ->
           setHex3DLocal
             col
-            (row + rng.Next(0, h))
-            (layer + rng.Next(0, d))
+            (row + rng.Next(0, d))
+            (layer + rng.Next(0, h))
             content
             section
         | 3 ->
           setHex3DLocal
             (col + w - 1)
-            (row + rng.Next(0, h))
-            (layer + rng.Next(0, d))
+            (row + rng.Next(0, d))
+            (layer + rng.Next(0, h))
             content
             section
         | 4 ->
           setHex3DLocal
             (col + rng.Next(0, w))
-            (row + rng.Next(0, h))
-            layer
+            row
+            (layer + rng.Next(0, h))
             content
             section
         | 5 ->
           setHex3DLocal
             (col + rng.Next(0, w))
-            (row + rng.Next(0, h))
-            (layer + d - 1)
+            (row + d - 1)
+            (layer + rng.Next(0, h))
             content
             section
         | _ -> ()

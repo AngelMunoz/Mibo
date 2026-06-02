@@ -339,4 +339,40 @@ let tests =
 
         Expect.equal (HexGrid3D.get 10 0 0 result) (ValueSome 3) "Third stamp"
     ]
+
+    testList "Non-cubic" [
+      testCase "shell fills correct cells with non-cubic dimensions"
+      <| fun _ ->
+        let grid =
+          HexGrid3D.create 10 3 8 32f 16f Vector3.Zero HexOrientation.PointyTop
+
+        let result =
+          grid
+          |> HexLayout3D.run(fun s -> s |> HexLayout3D.shell 1 1 1 4 2 5 42)
+
+        for col in 1..4 do
+          for row in 1..5 do
+            for layer in 1..2 do
+              match HexGrid3D.get col row layer result with
+              | ValueSome v -> Expect.equal v 42 "Shell cell should be filled"
+              | ValueNone ->
+                failwith $"Cell {col} {row} {layer} should be filled"
+
+      testCase "border fills correct cells with non-cubic dimensions"
+      <| fun _ ->
+        let grid =
+          HexGrid3D.create 10 3 8 32f 16f Vector3.Zero HexOrientation.PointyTop
+
+        let result =
+          grid
+          |> HexLayout3D.run(fun s -> s |> HexLayout3D.border 1 1 1 4 2 5 42)
+
+        for col in 1..4 do
+          for row in 1..5 do
+            for layer in 1..2 do
+              match HexGrid3D.get col row layer result with
+              | ValueSome v -> Expect.equal v 42 "Border cell should be filled"
+              | ValueNone ->
+                failwith $"Cell {col} {row} {layer} should be filled"
+    ]
   ]
