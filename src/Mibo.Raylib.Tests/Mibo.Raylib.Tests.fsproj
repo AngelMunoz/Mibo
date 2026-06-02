@@ -17,6 +17,8 @@
     <Compile Include="HexGrid3DTests.fs" />
     <Compile Include="HexLayout3DTests.fs" />
     <Compile Include="LayeredHex3DTests.fs" />
+    <Compile Include="Spatial2DTests.fs" />
+    <Compile Include="Spatial3DTests.fs" />
     <Compile Include="HexGridTests.fs" />
     <Compile Include="HexLayoutTests.fs" />
     <Compile Include="LayeredHexTests.fs" />

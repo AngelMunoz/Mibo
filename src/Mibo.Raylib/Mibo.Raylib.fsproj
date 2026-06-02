@@ -9,6 +9,7 @@
     <Compile Include="Properties/AssemblyInfo.fs" />
     <Compile Include="Layout/Grid2D.fs" />
     <Compile Include="Layout/HexGrid.fs" />
+    <Compile Include="Layout/Spatial2D.fs" />
     <Compile Include="Layout/HexLayout.fs" />
     <Compile Include="Layout/LayeredHex.fs" />
     <Compile Include="Layout/Layout.fs" />
@@ -59,6 +60,7 @@
     <Compile Include="Graphics3D/Pipelines/ForwardPbrPipeline.fs" />
     <Compile Include="Layout3D/Grid3D.fs" />
     <Compile Include="Layout3D/HexGrid3D.fs" />
+    <Compile Include="Layout3D/Spatial3D.fs" />
     <Compile Include="Layout3D/Layout3D.fs" />
     <Compile Include="Layout3D/HexLayout3D.fs" />
     <Compile Include="Layout3D/LayeredHex3D.fs" />
