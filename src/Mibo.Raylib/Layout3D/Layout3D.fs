@@ -425,28 +425,29 @@ module Layout3D =
     content
     (section: GridSection3D<'T>)
     : GridSection3D<'T> =
-    let rng = System.Random(seed)
+    if w > 0 && h > 0 && d > 0 then
+      let rng = System.Random(seed)
 
-    for _ in 1..count do
-      let edge = rng.Next(0, 12)
+      for _ in 1..count do
+        let edge = rng.Next(0, 12)
 
-      match edge with
-      | 0 -> setLocal (x + rng.Next(0, w)) y z content section
-      | 1 -> setLocal (x + rng.Next(0, w)) (y + h - 1) z content section
-      | 2 -> setLocal (x + rng.Next(0, w)) y (z + d - 1) content section
-      | 3 ->
-        setLocal (x + rng.Next(0, w)) (y + h - 1) (z + d - 1) content section
-      | 4 -> setLocal x (y + rng.Next(0, h)) z content section
-      | 5 -> setLocal (x + w - 1) (y + rng.Next(0, h)) z content section
-      | 6 -> setLocal x (y + rng.Next(0, h)) (z + d - 1) content section
-      | 7 ->
-        setLocal (x + w - 1) (y + rng.Next(0, h)) (z + d - 1) content section
-      | 8 -> setLocal x y (z + rng.Next(0, d)) content section
-      | 9 -> setLocal (x + w - 1) y (z + rng.Next(0, d)) content section
-      | 10 -> setLocal x (y + h - 1) (z + rng.Next(0, d)) content section
-      | 11 ->
-        setLocal (x + w - 1) (y + h - 1) (z + rng.Next(0, d)) content section
-      | _ -> ()
+        match edge with
+        | 0 -> setLocal (x + rng.Next(0, w)) y z content section
+        | 1 -> setLocal (x + rng.Next(0, w)) (y + h - 1) z content section
+        | 2 -> setLocal (x + rng.Next(0, w)) y (z + d - 1) content section
+        | 3 ->
+          setLocal (x + rng.Next(0, w)) (y + h - 1) (z + d - 1) content section
+        | 4 -> setLocal x (y + rng.Next(0, h)) z content section
+        | 5 -> setLocal (x + w - 1) (y + rng.Next(0, h)) z content section
+        | 6 -> setLocal x (y + rng.Next(0, h)) (z + d - 1) content section
+        | 7 ->
+          setLocal (x + w - 1) (y + rng.Next(0, h)) (z + d - 1) content section
+        | 8 -> setLocal x y (z + rng.Next(0, d)) content section
+        | 9 -> setLocal (x + w - 1) y (z + rng.Next(0, d)) content section
+        | 10 -> setLocal x (y + h - 1) (z + rng.Next(0, d)) content section
+        | 11 ->
+          setLocal (x + w - 1) (y + h - 1) (z + rng.Next(0, d)) content section
+        | _ -> ()
 
     section
 

@@ -39,6 +39,11 @@ module CellGrid2D =
     else
       ValueNone
 
+  let inline clear x y (grid: CellGrid2D<'T>) : unit =
+    if x >= 0 && x < grid.Width && y >= 0 && y < grid.Height then
+      let idx = toIndex x y grid.Width
+      grid.Cells.[idx] <- ValueNone
+
   let inline getWorldPos x y (grid: CellGrid2D<'T>) : Vector2 =
     Vector2(
       grid.Origin.X + float32 x * grid.CellSize.X,

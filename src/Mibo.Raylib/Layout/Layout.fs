@@ -294,17 +294,20 @@ module Layout =
     content
     (section: GridSection2D<'T>)
     : GridSection2D<'T> =
-    let rng = System.Random(seed)
+    if width > 0 && height > 0 then
+      let rng = System.Random(seed)
 
-    for _ in 1..count do
-      let side = rng.Next(0, 4)
+      for _ in 1..count do
+        let side = rng.Next(0, 4)
 
-      match side with
-      | 0 -> setLocal (x + rng.Next(0, width)) y content section
-      | 1 -> setLocal (x + rng.Next(0, width)) (y + height - 1) content section
-      | 2 -> setLocal x (y + rng.Next(0, height)) content section
-      | 3 -> setLocal (x + width - 1) (y + rng.Next(0, height)) content section
-      | _ -> ()
+        match side with
+        | 0 -> setLocal (x + rng.Next(0, width)) y content section
+        | 1 ->
+          setLocal (x + rng.Next(0, width)) (y + height - 1) content section
+        | 2 -> setLocal x (y + rng.Next(0, height)) content section
+        | 3 ->
+          setLocal (x + width - 1) (y + rng.Next(0, height)) content section
+        | _ -> ()
 
     section
 

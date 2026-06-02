@@ -67,6 +67,25 @@ let tests =
         Expect.equal pos.X 196f "X = 100 + 3*32"
         Expect.equal pos.Y 114f "Y = 50 + 2*32"
 
+      testCase "clear removes cell content"
+      <| fun _ ->
+        let grid = CellGrid2D.create 5 5 (Vector2(32f, 32f)) Vector2.Zero
+
+        CellGrid2D.set 2 2 42 grid
+        Expect.equal (CellGrid2D.get 2 2 grid) (ValueSome 42) "Should be set"
+
+        CellGrid2D.clear 2 2 grid
+        Expect.equal (CellGrid2D.get 2 2 grid) ValueNone "Should be cleared"
+
+      testCase "clear out of bounds is ignored"
+      <| fun _ ->
+        let grid = CellGrid2D.create 5 5 (Vector2(32f, 32f)) Vector2.Zero
+
+        CellGrid2D.clear -1 0 grid
+        CellGrid2D.clear 0 -1 grid
+        CellGrid2D.clear 5 0 grid
+        CellGrid2D.clear 0 5 grid
+
       testCase "iter visits all populated cells"
       <| fun _ ->
         let grid = CellGrid2D.create 5 5 (Vector2(32f, 32f)) Vector2.Zero
@@ -279,6 +298,26 @@ let tests =
         Expect.equal (CellGrid2D.get 1 0 grid) (ValueSome 1) "(1,0) = even"
         Expect.equal (CellGrid2D.get 0 1 grid) (ValueSome 1) "(0,1) = even"
         Expect.equal (CellGrid2D.get 1 1 grid) (ValueSome 0) "(1,1) = odd"
+
+      testCase "scatterBorder with zero width does not throw"
+      <| fun _ ->
+        let grid =
+          CellGrid2D.create 5 5 (Vector2(32f, 32f)) Vector2.Zero
+          |> Layout.run(Layout.scatterBorder 0 0 0 5 10 42 1)
+
+        let mutable count = 0
+        grid |> CellGrid2D.iter(fun _ _ _ -> count <- count + 1)
+        Expect.equal count 0 "Should place no items"
+
+      testCase "scatterBorder with zero height does not throw"
+      <| fun _ ->
+        let grid =
+          CellGrid2D.create 5 5 (Vector2(32f, 32f)) Vector2.Zero
+          |> Layout.run(Layout.scatterBorder 0 0 5 0 10 42 1)
+
+        let mutable count = 0
+        grid |> CellGrid2D.iter(fun _ _ _ -> count <- count + 1)
+        Expect.equal count 0 "Should place no items"
     ]
 
     testList "Platformer" [
