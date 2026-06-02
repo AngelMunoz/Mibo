@@ -8,6 +8,9 @@
   <ItemGroup>
     <Compile Include="Properties/AssemblyInfo.fs" />
     <Compile Include="Layout/Grid2D.fs" />
+    <Compile Include="Layout/HexGrid.fs" />
+    <Compile Include="Layout/HexLayout.fs" />
+    <Compile Include="Layout/LayeredHex.fs" />
     <Compile Include="Layout/Layout.fs" />
     <Compile Include="Layout/Platformer.fs" />
     <Compile Include="Layout/TopDown.fs" />

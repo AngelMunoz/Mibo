@@ -67,6 +67,25 @@ let tests =
         Expect.equal pos.X 196f "X = 100 + 3*32"
         Expect.equal pos.Y 114f "Y = 50 + 2*32"
 
+      testCase "clear removes cell content"
+      <| fun _ ->
+        let grid = CellGrid2D.create 5 5 (Vector2(32f, 32f)) Vector2.Zero
+
+        CellGrid2D.set 2 2 42 grid
+        Expect.equal (CellGrid2D.get 2 2 grid) (ValueSome 42) "Should be set"
+
+        CellGrid2D.clear 2 2 grid
+        Expect.equal (CellGrid2D.get 2 2 grid) ValueNone "Should be cleared"
+
+      testCase "clear out of bounds is ignored"
+      <| fun _ ->
+        let grid = CellGrid2D.create 5 5 (Vector2(32f, 32f)) Vector2.Zero
+
+        CellGrid2D.clear -1 0 grid
+        CellGrid2D.clear 0 -1 grid
+        CellGrid2D.clear 5 0 grid
+        CellGrid2D.clear 0 5 grid
+
       testCase "iter visits all populated cells"
       <| fun _ ->
         let grid = CellGrid2D.create 5 5 (Vector2(32f, 32f)) Vector2.Zero
