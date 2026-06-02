@@ -336,6 +336,26 @@ let tests =
         Expect.equal (HexGrid.get 1 0 grid) (ValueSome 1) "(1,0) = even"
         Expect.equal (HexGrid.get 0 1 grid) (ValueSome 1) "(0,1) = even"
         Expect.equal (HexGrid.get 1 1 grid) (ValueSome 0) "(1,1) = odd"
+
+      testCase "scatterBorder with zero width does not throw"
+      <| fun _ ->
+        let grid =
+          HexGrid.create 5 5 32f Vector2.Zero HexOrientation.PointyTop
+          |> HexLayout.run(HexLayout.scatterBorder 0 0 0 5 10 42 1)
+
+        let mutable count = 0
+        grid |> HexGrid.iter(fun _ _ _ -> count <- count + 1)
+        Expect.equal count 0 "Should place no items"
+
+      testCase "scatterBorder with zero height does not throw"
+      <| fun _ ->
+        let grid =
+          HexGrid.create 5 5 32f Vector2.Zero HexOrientation.PointyTop
+          |> HexLayout.run(HexLayout.scatterBorder 0 0 5 0 10 42 1)
+
+        let mutable count = 0
+        grid |> HexGrid.iter(fun _ _ _ -> count <- count + 1)
+        Expect.equal count 0 "Should place no items"
     ]
 
     testList "Geometry - FlatTop" [

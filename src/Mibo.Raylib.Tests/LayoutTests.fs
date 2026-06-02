@@ -298,6 +298,26 @@ let tests =
         Expect.equal (CellGrid2D.get 1 0 grid) (ValueSome 1) "(1,0) = even"
         Expect.equal (CellGrid2D.get 0 1 grid) (ValueSome 1) "(0,1) = even"
         Expect.equal (CellGrid2D.get 1 1 grid) (ValueSome 0) "(1,1) = odd"
+
+      testCase "scatterBorder with zero width does not throw"
+      <| fun _ ->
+        let grid =
+          CellGrid2D.create 5 5 (Vector2(32f, 32f)) Vector2.Zero
+          |> Layout.run(Layout.scatterBorder 0 0 0 5 10 42 1)
+
+        let mutable count = 0
+        grid |> CellGrid2D.iter(fun _ _ _ -> count <- count + 1)
+        Expect.equal count 0 "Should place no items"
+
+      testCase "scatterBorder with zero height does not throw"
+      <| fun _ ->
+        let grid =
+          CellGrid2D.create 5 5 (Vector2(32f, 32f)) Vector2.Zero
+          |> Layout.run(Layout.scatterBorder 0 0 5 0 10 42 1)
+
+        let mutable count = 0
+        grid |> CellGrid2D.iter(fun _ _ _ -> count <- count + 1)
+        Expect.equal count 0 "Should place no items"
     ]
 
     testList "Platformer" [

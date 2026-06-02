@@ -294,27 +294,28 @@ module HexLayout =
     content
     (section: HexGridSection<'T>)
     : HexGridSection<'T> =
-    let rng = System.Random(seed)
+    if width > 0 && height > 0 then
+      let rng = System.Random(seed)
 
-    for _ in 1..count do
-      let side = rng.Next(0, 4)
+      for _ in 1..count do
+        let side = rng.Next(0, 4)
 
-      match side with
-      | 0 -> setHexLocal (col + rng.Next(0, width)) row content section
-      | 1 ->
-        setHexLocal
-          (col + rng.Next(0, width))
-          (row + height - 1)
-          content
-          section
-      | 2 -> setHexLocal col (row + rng.Next(0, height)) content section
-      | 3 ->
-        setHexLocal
-          (col + width - 1)
-          (row + rng.Next(0, height))
-          content
-          section
-      | _ -> ()
+        match side with
+        | 0 -> setHexLocal (col + rng.Next(0, width)) row content section
+        | 1 ->
+          setHexLocal
+            (col + rng.Next(0, width))
+            (row + height - 1)
+            content
+            section
+        | 2 -> setHexLocal col (row + rng.Next(0, height)) content section
+        | 3 ->
+          setHexLocal
+            (col + width - 1)
+            (row + rng.Next(0, height))
+            content
+            section
+        | _ -> ()
 
     section
 

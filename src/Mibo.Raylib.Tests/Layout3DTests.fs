@@ -332,6 +332,36 @@ let tests =
         Expect.equal (CellGrid3D.get 2 1 1 grid) (ValueSome 1) "Edge along X"
         Expect.equal (CellGrid3D.get 1 2 1 grid) (ValueSome 1) "Edge along Y"
         Expect.equal (CellGrid3D.get 1 1 2 grid) (ValueSome 1) "Edge along Z"
+
+      testCase "scatterEdges with zero width does not throw"
+      <| fun _ ->
+        let grid =
+          CellGrid3D.create 5 5 5 (Vector3(32f, 32f, 32f)) Vector3.Zero
+          |> Layout3D.run(Layout3D.scatterEdges 0 0 0 0 5 5 10 42 1)
+
+        let mutable count = 0
+        grid |> CellGrid3D.iter(fun _ _ _ _ -> count <- count + 1)
+        Expect.equal count 0 "Should place no items"
+
+      testCase "scatterEdges with zero height does not throw"
+      <| fun _ ->
+        let grid =
+          CellGrid3D.create 5 5 5 (Vector3(32f, 32f, 32f)) Vector3.Zero
+          |> Layout3D.run(Layout3D.scatterEdges 0 0 0 5 0 5 10 42 1)
+
+        let mutable count = 0
+        grid |> CellGrid3D.iter(fun _ _ _ _ -> count <- count + 1)
+        Expect.equal count 0 "Should place no items"
+
+      testCase "scatterEdges with zero depth does not throw"
+      <| fun _ ->
+        let grid =
+          CellGrid3D.create 5 5 5 (Vector3(32f, 32f, 32f)) Vector3.Zero
+          |> Layout3D.run(Layout3D.scatterEdges 0 0 0 5 5 0 10 42 1)
+
+        let mutable count = 0
+        grid |> CellGrid3D.iter(fun _ _ _ _ -> count <- count + 1)
+        Expect.equal count 0 "Should place no items"
     ]
 
     testList "Layout3D Repetition" [
