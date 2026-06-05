@@ -3,15 +3,12 @@ module SpaceBattle.Program
 open System
 open System.Numerics
 open Mibo.Animation
-open Raylib_cs
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open Mibo.Input
 open Mibo.Layout
 open Phase
 open AnimState
-open SpaceBattle.Map
-open SpaceBattle.Types
 open SpaceBattle.Units
 
 // ─────────────────────────────────────────────────────────────
@@ -46,9 +43,9 @@ type Model() =
 
 [<Struct>]
 type Msg =
+  | InputMsg of input: InputMsg
+  | MapMsg of mapMsg: MapMsg
   | Tick of tick: GameTime
-  | InputChanged of inputs: ActionState<GameAction>
-  | MouseAction of mouse: MouseAction
   | PhaseMsg of phase: PhaseMsg
   | AnimationMsg of animation: AnimationMsg
 
@@ -130,7 +127,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       }
     ]
 
-  let turnOrder = Phase.createTurnOrder [| Federation; Pirates |]
+  let turnOrder = Phase.createTurnOrder [| Pirates; Federation |]
 
   let model =
     Model(
@@ -159,26 +156,46 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
 
 let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   match msg with
-  | InputChanged input ->
-    model.Input <- { model.Input with State = input }
-    model, Cmd.none
-
-  | MouseAction action ->
-    match action with
-    | MouseAction.Zoom z ->
+  | InputMsg inputMsg ->
+    match inputMsg with
+    | MouseAction(Zoom z) ->
       let cam = Camera.applyZoom z model.Cam
       let mutable c = cam.Camera
       Camera.clampToMapBounds model.Map.Grid &c
-
       model.Cam <- { Camera = c }
-      model, Cmd.none
-    | MouseAction.MovedTo pos ->
-      model.Input <-
-        Input.updateHover pos model.Cam.Camera model.Map.Grid model.Input
+    | _ -> ()
 
-      model, Cmd.none
-    | MouseAction.Select _
-    | MouseAction.GetInfo _ -> model, Cmd.none
+    let struct (input, cmd) =
+      Input.update
+        inputMsg
+        model.Input
+        model.Cam.Camera
+        model.Map.Grid
+        model.Units
+        model.Turn.CurrentFaction
+
+
+    let cmd =
+      cmd
+      |> Cmd.map(fun msg ->
+        match msg with
+        | CalculateRange -> MapMsg RecalculateRange
+        | other -> InputMsg other)
+
+    model.Input <- input
+    model, cmd
+
+  | MapMsg mapMsg ->
+    model.Map <-
+      Map.update
+        mapMsg
+        model.Map
+        model.Input.Selection
+        model.Input.HoveredOver
+        model.Units
+        model.Turn.CurrentFaction
+
+    model, Cmd.none
 
   | Tick gt ->
     let mutable model = model
@@ -253,7 +270,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     ctx
     model.Decorations
     model.Cam.Camera
-    model.Map.Grid
+    model.Map
     model.Input.HoveredOver
   |> Draw.drop
 
@@ -273,11 +290,19 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
 // ─────────────────────────────────────────────────────────────
 
 let subscriptions (ctx: GameContext) (model: Model) : Sub<Msg> =
-  let zoomSub = Mouse.onScroll (fun scroll -> MouseAction(Zoom scroll)) ctx
-  let clickSub = Mouse.onRightClick (fun pos -> MouseAction(Select pos)) ctx
-  let infoSub = Mouse.onLeftClick (fun pos -> MouseAction(GetInfo pos)) ctx
-  let posSub = Mouse.onMove (fun pos -> MouseAction(MovedTo pos)) ctx
-  let inputSub = InputMapper.subscribeStatic Input.inputMap InputChanged ctx
+  let zoomSub =
+    Mouse.onScroll (fun scroll -> InputMsg(MouseAction(Zoom scroll))) ctx
+
+  let clickSub =
+    Mouse.onRightClick (fun pos -> InputMsg(MouseAction(GetInfo pos))) ctx
+
+  let infoSub =
+    Mouse.onLeftClick (fun pos -> InputMsg(MouseAction(Select pos))) ctx
+
+  let posSub = Mouse.onMove (fun pos -> InputMsg(MouseAction(MovedTo pos))) ctx
+
+  let inputSub =
+    InputMapper.subscribeStatic Input.inputMap (InputChanged >> InputMsg) ctx
 
   Sub.batch [ zoomSub; clickSub; infoSub; posSub; inputSub ]
 

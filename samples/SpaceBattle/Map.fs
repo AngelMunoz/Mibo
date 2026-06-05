@@ -7,8 +7,17 @@ open Mibo.Elmish.Graphics2D
 open Mibo.Layout
 open Raylib_cs
 open SpaceBattle.Types
+open SpaceBattle.Units
 
-type MapModel = { Grid: HexGrid<Tile>; Seed: int }
+type MapModel = {
+  Grid: HexGrid<Tile>
+  Seed: int
+  Reachable: Set<struct (int * int)>
+  Path: struct (int * int)[]
+}
+
+[<Struct>]
+type MapMsg = | RecalculateRange
 
 module Map =
   open System.Numerics
@@ -42,16 +51,101 @@ module Map =
 
   let init(seed: int) : MapModel =
     let grid = createMap Vector2.Zero 12 12 |> fillMap(Random seed)
-    { Grid = grid; Seed = seed }
+    let w, h = grid.Width, grid.Height
+
+    let corners = [|
+      struct (0, 0)
+      struct (1, 0)
+      struct (0, 1)
+      struct (w - 1, h - 1)
+      struct (w - 1, h - 2)
+      struct (w - 2, h - 1)
+      struct (w - 1, 0)
+      struct (w - 2, 0)
+      struct (w - 1, 1)
+      struct (0, h - 1)
+      struct (1, h - 1)
+      struct (0, h - 2)
+    |]
+
+    for struct (c, r) in corners do
+      HexGrid.set c r DeepSpace grid
+
+    {
+      Grid = grid
+      Seed = seed
+      Reachable = Set.empty
+      Path = [||]
+    }
+
+  let private pathIndexMap
+    (path: struct (int * int)[])
+    : Map<struct (int * int), int> =
+    path |> Array.mapi(fun i cell -> cell, i) |> Map.ofArray
+
+  let private pathGradientColor (pathLen: int) (idx: int) =
+    let t = float32 idx / float32(pathLen - 1)
+    let alpha = 80uy + byte(t * 160f)
+    Color(100uy, 200uy, 255uy, alpha)
+
+  let update
+    (msg: MapMsg)
+    (model: MapModel)
+    (selection: SelectionState)
+    (hovered: struct (int * int) voption)
+    (units: Map<struct (int * int), SBUnit>)
+    (currentFaction: Faction)
+    : MapModel =
+    match msg with
+    | RecalculateRange ->
+      match selection with
+      | NoSelection -> {
+          model with
+              Reachable = Set.empty
+              Path = [||]
+        }
+      | Selected cell ->
+        let struct (col, row) = cell
+
+        match units |> Map.tryFind cell with
+        | None -> {
+            model with
+                Reachable = Set.empty
+                Path = [||]
+          }
+        | Some unit ->
+          let reachable =
+            Selection.computeMoveRange
+              col
+              row
+              unit.MoveRange
+              model.Grid
+              units
+              currentFaction
+
+          let path =
+            match hovered with
+            | ValueSome dest when reachable.Contains dest ->
+              Selection.computePath cell dest model.Grid units currentFaction
+            | _ -> [||]
+
+          {
+            model with
+                Reachable = reachable
+                Path = path
+          }
 
   let view
     (ctx: GameContext)
     (sprites: Map<struct (int * int), AnimatedSprite>)
     (camera: Camera2D)
-    (model: HexGrid<Tile>)
+    (mapModel: MapModel)
     (hoveredOver: struct (int * int) voption)
     buffer
     =
+    let model = mapModel.Grid
+    let reachable = mapModel.Reachable
+    let path = mapModel.Path
     let topLeft = Raylib.GetScreenToWorld2D(Vector2.Zero, camera)
 
     let bottomRight =
@@ -59,6 +153,8 @@ module Map =
         Vector2(Constants.VPWidth, Constants.VPHeight),
         camera
       )
+
+    let pathIdx = pathIndexMap path
 
     model
     |> HexGrid.iterVisible
@@ -98,14 +194,31 @@ module Map =
             (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
           |> Draw.drop
 
+        if reachable.Contains(struct (col, row)) then
+          buffer
+          |> Draw.fillPoly
+            (0<RenderLayer>, Color(100uy, 180uy, 255uy, 100uy))
+            (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
+          |> Draw.drop
+
+        match pathIdx |> Map.tryFind struct (col, row) with
+        | Some idx when path.Length > 1 ->
+          buffer
+          |> Draw.fillPoly
+            (0<RenderLayer>, pathGradientColor path.Length idx)
+            (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
+          |> Draw.drop
+        | Some _
+        | None -> ()
+
         match hoveredOver with
-        | ValueSome struct (col, row) ->
-          let worldPos = model |> HexGrid.getWorldPos col row
+        | ValueSome struct (hCol, hRow) ->
+          let hWorldPos = model |> HexGrid.getWorldPos hCol hRow
 
           buffer
           |> Draw.polyOutline
             (0<RenderLayer>, Color.Yellow, 2.5f)
-            (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
+            (Vector2(hWorldPos.X, hWorldPos.Y), 6, Constants.CellSize, 0f)
           |> Draw.drop
         | ValueNone -> ())
 

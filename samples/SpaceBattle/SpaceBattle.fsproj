@@ -7,8 +7,9 @@
   <ItemGroup>
     <Compile Include="Constants.fs" />
     <Compile Include="Types.fs" />
-    <Compile Include="Input.fs" />
     <Compile Include="Units.fs" />
+    <Compile Include="Selection.fs" />
+    <Compile Include="Input.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Map.fs" />
     <Compile Include="Phase.fs" />
