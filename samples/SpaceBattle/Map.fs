@@ -8,6 +8,8 @@ open Mibo.Layout
 open Raylib_cs
 open SpaceBattle.Types
 
+type MapModel = { Grid: HexGrid<Tile>; Seed: int }
+
 module Map =
   open System.Numerics
 
@@ -37,6 +39,10 @@ module Map =
       >> HexLayout.center map.Width map.Height (asteroids 0 0)
 
     map |> HexLayout.run filledMap
+
+  let init(seed: int) : MapModel =
+    let grid = createMap Vector2.Zero 12 12 |> fillMap(Random seed)
+    { Grid = grid; Seed = seed }
 
   let view
     (ctx: GameContext)

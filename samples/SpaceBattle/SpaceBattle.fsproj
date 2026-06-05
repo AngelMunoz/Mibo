@@ -7,12 +7,15 @@
   <ItemGroup>
     <Compile Include="Constants.fs" />
     <Compile Include="Types.fs" />
+    <Compile Include="Input.fs" />
     <Compile Include="Units.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Map.fs" />
     <Compile Include="Phase.fs" />
     <Compile Include="AnimState.fs" />
     <Compile Include="Shaders.fs" />
+    <Compile Include="Camera.fs" />
+    <Compile Include="AnimatedDecorations.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

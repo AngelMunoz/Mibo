@@ -204,3 +204,20 @@ module SBAssets =
           Crate, loadDecorationAssets Crate assets
         ]
     }
+
+  let initUnitSprites
+    (assets: GameAssets)
+    : Map<struct (Faction * UnitClass), SpriteSheet> =
+    let mutable sprites = Map.empty
+
+    for faction in [| Federation; Pirates |] do
+      for unitClass in [| Fighter; Cruiser; Battleship |] do
+        let sprite =
+          match unitClass with
+          | Fighter -> assets.FactionAssets[faction].Fighter
+          | Cruiser -> assets.FactionAssets[faction].Cruiser
+          | Battleship -> assets.FactionAssets[faction].BattleShip
+
+        sprites <- Map.add struct (faction, unitClass) sprite sprites
+
+    sprites
