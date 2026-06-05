@@ -10,7 +10,7 @@ open Mibo.Elmish
 /// </summary>
 type Trigger =
   | Key of KeyboardKey
-  | MouseBut of int
+  | MouseBut of MouseButton
   | GamepadBut of player: int * button: GamepadButton
 
 /// <summary>
@@ -45,7 +45,7 @@ module InputMap =
   let key (action: 'Action) (k: KeyboardKey) (map: InputMap<'Action>) =
     bind action (Key k) map
 
-  let mouse (action: 'Action) (btn: int) (map: InputMap<'Action>) =
+  let mouse (action: 'Action) (btn: MouseButton) (map: InputMap<'Action>) =
     bind action (MouseBut btn) map
 
   let gamepadButton
@@ -176,8 +176,7 @@ module InputMapper =
           let isDown =
             match kv.Key with
             | Key k -> Raylib.IsKeyDown(k).AsBool()
-            | MouseBut b ->
-              Raylib.IsMouseButtonDown(enum<MouseButton>(b)).AsBool()
+            | MouseBut b -> Raylib.IsMouseButtonDown(b).AsBool()
             | GamepadBut(p, b) -> Raylib.IsGamepadButtonDown(p, b).AsBool()
 
           if isDown then
@@ -224,8 +223,8 @@ module InputMapper =
       let subMouse: IDisposable =
         input.MouseDelta.Subscribe(fun (d: MouseDelta) ->
           buildActions
-            (d.Buttons.Pressed |> Array.map(fun b -> MouseBut(int b)))
-            (d.Buttons.Released |> Array.map(fun b -> MouseBut(int b)))
+            (d.Buttons.Pressed |> Array.map MouseBut)
+            (d.Buttons.Released |> Array.map MouseBut)
           |> toMsg
           |> dispatch)
 
@@ -290,8 +289,7 @@ module InputMapper =
                 Raylib.IsKeyPressed(k).AsBool(),
                 Raylib.IsKeyReleased(k).AsBool(),
                 Raylib.IsKeyDown(k).AsBool()
-              | MouseBut b ->
-                let btn = enum<MouseButton>(b)
+              | MouseBut btn ->
 
                 Raylib.IsMouseButtonPressed(btn).AsBool(),
                 Raylib.IsMouseButtonReleased(btn).AsBool(),
