@@ -261,6 +261,51 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
   model, Cmd.none
 
 // ─────────────────────────────────────────────────────────────
+// Camera bounds
+// ─────────────────────────────────────────────────────────────
+
+/// Clamp the camera target so the viewport never shows more than
+/// BorderMargin (30 %) of the viewport beyond the map edges.
+let clampToMapBounds (map: HexGrid<Tile>) (camera: byref<Camera2D>) =
+  let hexW = Constants.CellSize * 2.0f
+  let hexH = Constants.CellSize * sqrt 3.0f
+
+  // World-space bounding rectangle of the hex grid
+  let mapLeft = map.Origin.X
+  let mapTop = map.Origin.Y
+  let mapRight = map.Origin.X + float32(map.Width - 1) * hexW * 0.75f + hexW
+  let mapBottom = map.Origin.Y + float32(map.Height - 1) * hexH + hexH * 1.5f
+
+  // Visible viewport size at the current zoom level
+  let vw = Constants.VPWidth / camera.Zoom
+  let vh = Constants.VPHeight / camera.Zoom
+
+  // Allow up to 30 % of the viewport beyond each map edge.
+  // At the left edge the camera target can be at:  mapLeft + 0.2 * vw
+  // (viewport left = target - vw/2 = mapLeft - 0.3 * vw  →  30 % outside)
+  let marginX = Constants.BorderMargin * vw
+  let marginY = Constants.BorderMargin * vh
+  let minX = mapLeft + vw * 0.5f - marginX
+  let maxX = mapRight - vw * 0.5f + marginX
+  let minY = mapTop + vh * 0.5f - marginY
+  let maxY = mapBottom - vh * 0.5f + marginY
+
+  // When the map is smaller than the usable viewport area, center it
+  let clampMinX, clampMaxX =
+    if minX <= maxX then
+      (minX, maxX)
+    else
+      ((mapLeft + mapRight) * 0.5f, (mapLeft + mapRight) * 0.5f)
+
+  let clampMinY, clampMaxY =
+    if minY <= maxY then
+      (minY, maxY)
+    else
+      ((mapTop + mapBottom) * 0.5f, (mapTop + mapBottom) * 0.5f)
+
+  Camera2D.clampTarget &camera clampMinX clampMinY clampMaxX clampMaxY
+
+// ─────────────────────────────────────────────────────────────
 // Update
 // ─────────────────────────────────────────────────────────────
 
@@ -272,7 +317,13 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     match mouseAction with
     | Zoom zoom ->
       let mutable camera = model.Camera
-      camera.Zoom <- max 0.1f (camera.Zoom + zoom * 0.1f)
+
+      camera.Zoom <-
+        camera.Zoom + zoom * 0.1f
+        |> max Constants.MinZoom
+        |> min Constants.MaxZoom
+
+      clampToMapBounds model.Map &camera
       { model with Camera = camera }, Cmd.none
     | Select pos
     | GetInfo pos ->
@@ -303,6 +354,8 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     if model.Input.Held.Contains MoveDown then
       cam.Target <- cam.Target + Vector2(0f, speed)
+
+    clampToMapBounds model.Map &cam
 
     let dt = float32 gt.ElapsedGameTime.TotalSeconds
     let topLeft = Raylib.GetScreenToWorld2D(Vector2.Zero, model.Camera)
