@@ -34,6 +34,7 @@ type MouseAction =
   | Zoom of zoom: float32
   | Select of Vector2
   | GetInfo of Vector2
+  | MovedTo of Vector2
 
 let inputMap =
   InputMap.empty
@@ -64,6 +65,8 @@ type Model = {
   TurnOrder: TurnOrder
   Anim: AnimationState
   GameAssets: GameAssets
+  Skybox: Shaders.SkyboxModel
+  HoveredOver: struct (int * int) voption
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -157,75 +160,77 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       animatedSprites <- Map.add struct (col, row) animated animatedSprites
     | DeepSpace -> ())
 
+  let skybox = Shaders.Skybox.init(Constants.VPWidth, Constants.VPHeight)
+
   let units =
     Map.ofList [
-      (struct (0, 0),
-       {
-         Faction = Pirates
-         Class = Fighter
-         Direction = SE
-         HP = 100
-         MaxHP = 100
-         Defense = 10
-         MoveRange = 7
-         AttackRange = 4
-       })
-      (struct (1, 0),
-       {
-         Faction = Pirates
-         Class = Cruiser
-         Direction = SE
-         HP = 150
-         MaxHP = 150
-         Defense = 15
-         MoveRange = 5
-         AttackRange = 6
-       })
-      (struct (0, 1),
-       {
-         Faction = Pirates
-         Class = Battleship
-         Direction = SE
-         HP = 200
-         MaxHP = 200
-         Defense = 30
-         MoveRange = 3
-         AttackRange = 2
-       })
+      struct (0, 0),
+      {
+        Faction = Pirates
+        Class = Fighter
+        Direction = SE
+        HP = 100
+        MaxHP = 100
+        Defense = 10
+        MoveRange = 7
+        AttackRange = 4
+      }
+      struct (1, 0),
+      {
+        Faction = Pirates
+        Class = Cruiser
+        Direction = SE
+        HP = 150
+        MaxHP = 150
+        Defense = 15
+        MoveRange = 5
+        AttackRange = 6
+      }
+      struct (0, 1),
+      {
+        Faction = Pirates
+        Class = Battleship
+        Direction = SE
+        HP = 200
+        MaxHP = 200
+        Defense = 30
+        MoveRange = 3
+        AttackRange = 2
+      }
 
-      (struct (map.Width - 1, map.Height - 1),
-       {
-         Faction = Federation
-         Class = Fighter
-         Direction = NW
-         HP = 100
-         MaxHP = 100
-         Defense = 10
-         MoveRange = 7
-         AttackRange = 4
-       })
-      (struct (map.Width - 1, map.Height - 2),
-       {
-         Faction = Federation
-         Class = Cruiser
-         Direction = NW
-         HP = 150
-         MaxHP = 150
-         Defense = 15
-         MoveRange = 5
-         AttackRange = 6
-       })
-      (struct (map.Width - 2, map.Height - 1),
-       {
-         Faction = Federation
-         Class = Battleship
-         Direction = NW
-         HP = 200
-         MaxHP = 200
-         Defense = 30
-         MoveRange = 3
-         AttackRange = 2
-       })
+      struct (map.Width - 1, map.Height - 1),
+      {
+        Faction = Federation
+        Class = Fighter
+        Direction = NW
+        HP = 100
+        MaxHP = 100
+        Defense = 10
+        MoveRange = 7
+        AttackRange = 4
+      }
+      struct (map.Width - 1, map.Height - 2),
+      {
+        Faction = Federation
+        Class = Cruiser
+        Direction = NW
+        HP = 150
+        MaxHP = 150
+        Defense = 15
+        MoveRange = 5
+        AttackRange = 6
+      }
+      struct (map.Width - 2, map.Height - 1),
+      {
+        Faction = Federation
+        Class = Battleship
+        Direction = NW
+        HP = 200
+        MaxHP = 200
+        Defense = 30
+        MoveRange = 3
+        AttackRange = 2
+      }
     ]
 
   let model = {
@@ -249,6 +254,8 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
     AnimatedSprites = animatedSprites
     UnitSprites = unitSprites
     GameAssets = assets
+    Skybox = skybox
+    HoveredOver = ValueNone
   }
 
   model, Cmd.none
@@ -269,8 +276,14 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       { model with Camera = camera }, Cmd.none
     | Select pos
     | GetInfo pos ->
-      let cell = model.Map |> Mibo.Layout.Hex2DSpatial.worldToCell pos
+      let worldPos = Raylib.GetScreenToWorld2D(pos, model.Camera)
+      let cell = model.Map |> Mibo.Layout.Hex2DSpatial.worldToCell worldPos
       model, Cmd.none
+    | MovedTo pos ->
+      let worldPos = Raylib.GetScreenToWorld2D(pos, model.Camera)
+      let cell = model.Map |> Mibo.Layout.Hex2DSpatial.worldToCell worldPos
+
+      { model with HoveredOver = cell }, Cmd.none
 
   | Tick gt ->
     let mutable model = model
@@ -341,8 +354,8 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       | Resolving ->
         // Placeholder: start a move animation. Real positions come from unit data.
         AnimState.startMove
-          (struct (0, 0))
-          (struct (1, 0))
+          struct (0, 0)
+          struct (1, 0)
           Vector2.Zero
           Vector2.UnitX
           model.Anim
@@ -385,11 +398,24 @@ module Layer0 =
   let brownCircle = Draw.fillCircle(0<RenderLayer>, Color.Brown)
 
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
+  buffer
+  |> Shaders.Skybox.render
+    (model.Camera.Target, Constants.VPWidth, Constants.VPHeight)
+    model.Skybox
+  |> Draw.drop
+
   Layer0.camera model.Camera buffer
   |> Layer0.brownCircle(Vector2.Zero, 64f)
   |> Draw.drop
 
-  Map.view ctx model.AnimatedSprites model.Camera model.Map buffer |> Draw.drop
+  Map.view
+    ctx
+    model.AnimatedSprites
+    model.Camera
+    model.Map
+    model.HoveredOver
+    buffer
+  |> Draw.drop
 
   Units.view ctx model.Units model.UnitSprites model.Map model.Camera buffer
   |> Draw.drop
@@ -402,9 +428,10 @@ let subscriptions (ctx: GameContext) (model: Model) : Sub<Msg> =
 
   let clickSub = Mouse.onRightClick (fun pos -> MouseAction(Select pos)) ctx
   let infoSub = Mouse.onLeftClick (fun pos -> MouseAction(GetInfo pos)) ctx
+  let posSub = Mouse.onMove (fun pos -> MouseAction(MovedTo pos)) ctx
   let inputSub = InputMapper.subscribeStatic inputMap InputChanged ctx
 
-  Sub.batch [ zoomSub; clickSub; infoSub; inputSub ]
+  Sub.batch [ zoomSub; clickSub; infoSub; posSub; inputSub ]
 
 // ─────────────────────────────────────────────────────────────
 // Program

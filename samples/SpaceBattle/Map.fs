@@ -43,6 +43,7 @@ module Map =
     (sprites: Map<struct (int * int), AnimatedSprite>)
     (camera: Camera2D)
     (model: HexGrid<Tile>)
+    (hoveredOver: struct (int * int) voption)
     buffer
     =
     let topLeft = Raylib.GetScreenToWorld2D(Vector2.Zero, camera)
@@ -74,9 +75,9 @@ module Map =
           | Crate1 -> Color.Blue
           | Crate2 -> Color.DarkBlue
           | Station -> Color.Green
-          | DeepSpace -> Color.White
+          | DeepSpace -> Color.DarkGray
 
-        match sprites |> Map.tryFind(struct (col, row)) with
+        match sprites |> Map.tryFind struct (col, row) with
         | Some animated ->
           let source = AnimatedSprite.currentSource animated
           let texture = animated.Sheet.Texture
@@ -89,6 +90,17 @@ module Map =
           |> Draw.polyOutline
             (0<RenderLayer>, color, 1f)
             (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
-          |> Draw.drop)
+          |> Draw.drop
+
+        match hoveredOver with
+        | ValueSome struct (col, row) ->
+          let worldPos = model |> HexGrid.getWorldPos col row
+
+          buffer
+          |> Draw.polyOutline
+            (0<RenderLayer>, Color.Yellow, 2.5f)
+            (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
+          |> Draw.drop
+        | ValueNone -> ())
 
     buffer

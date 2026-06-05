@@ -12,6 +12,7 @@
     <Compile Include="Map.fs" />
     <Compile Include="Phase.fs" />
     <Compile Include="AnimState.fs" />
+    <Compile Include="Shaders.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>
