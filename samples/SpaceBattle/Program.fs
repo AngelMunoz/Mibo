@@ -7,7 +7,6 @@ open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open Mibo.Input
 open Mibo.Layout
-open Phase
 open AnimState
 open SpaceBattle.Units
 
@@ -31,8 +30,8 @@ type Model() =
   member val Decorations: Map<struct (int * int), AnimatedSprite> =
     Unchecked.defaultof<_> with get, set
 
-  member val Turn: Turn = Unchecked.defaultof<_> with get, set
-  member val TurnOrder: TurnOrder = Unchecked.defaultof<_> with get, set
+  member val Turn: Phase.Turn = Unchecked.defaultof<_> with get, set
+  member val TurnOrder: Phase.TurnOrder = Unchecked.defaultof<_> with get, set
   member val Anim: AnimationState = Unchecked.defaultof<_> with get, set
   member val GameAssets: GameAssets = Unchecked.defaultof<_> with get, set
   member val Skybox: Shaders.SkyboxModel = Unchecked.defaultof<_> with get, set
@@ -46,7 +45,7 @@ type Msg =
   | InputMsg of input: InputMsg
   | MapMsg of mapMsg: MapMsg
   | Tick of tick: GameTime
-  | PhaseMsg of phase: PhaseMsg
+  | PhaseMsg of phase: Phase.PhaseMsg
   | AnimationMsg of animation: AnimationMsg
 
 // ─────────────────────────────────────────────────────────────
@@ -183,6 +182,13 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         | other -> InputMsg other)
 
     model.Input <- input
+
+    let cmd =
+      match inputMsg with
+      | CellClicked cell ->
+        Cmd.batch [ cmd; Cmd.ofMsg(PhaseMsg(Phase.PhaseMsg.CellClicked cell)) ]
+      | _ -> cmd
+
     model, cmd
 
   | MapMsg mapMsg ->
@@ -214,7 +220,8 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     let cmd =
       match event with
-      | ValueSome AnimationEvent.MoveComplete -> Cmd.ofMsg(PhaseMsg Resolution)
+      | ValueSome AnimationEvent.MoveComplete ->
+        Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.Resolution)
       | _ -> Cmd.none
 
     model.Cam <- { Camera = c }
@@ -223,26 +230,38 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     model, cmd
 
-  | PhaseMsg phase ->
-    let struct (turn, turnOrder) =
-      Phase.System.update phase model.Turn model.TurnOrder
+  | PhaseMsg phaseMsg ->
+    let result =
+      Phase.System.apply
+        phaseMsg
+        model.Input.Selection
+        model.Units
+        model.Map
+        model.Input.HoveredOver
+        model.Turn
+        model.TurnOrder
+        model.Anim
 
-    let anim =
-      match turn.Phase with
-      | Resolving ->
-        AnimState.startMove
-          struct (0, 0)
-          struct (1, 0)
-          Vector2.Zero
-          Vector2.UnitX
-          model.Anim
-      | Active -> model.Anim
+    model.Input <- {
+      model.Input with
+          Selection = result.Selection
+    }
 
-    model.Turn <- turn
-    model.TurnOrder <- turnOrder
-    model.Anim <- anim
+    model.Units <- result.Units
+    model.Map <- result.MapModel
+    model.Turn <- result.Turn
+    model.TurnOrder <- result.TurnOrder
+    model.Anim <- result.Anim
 
-    model, Cmd.none
+    let cmd =
+      match result.Intent with
+      | Phase.Intent.SwitchSelection _
+      | Phase.Intent.ClearSelection -> Cmd.ofMsg(MapMsg RecalculateRange)
+      | Phase.Intent.PerformMove _
+      | Phase.Intent.PerformAttack _
+      | Phase.Intent.NoIntent -> Cmd.none
+
+    model, cmd
 
   | AnimationMsg msg ->
     match msg with

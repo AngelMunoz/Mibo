@@ -12,8 +12,8 @@
     <Compile Include="Input.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Map.fs" />
-    <Compile Include="Phase.fs" />
     <Compile Include="AnimState.fs" />
+    <Compile Include="Phase.fs" />
     <Compile Include="Shaders.fs" />
     <Compile Include="Camera.fs" />
     <Compile Include="AnimatedDecorations.fs" />

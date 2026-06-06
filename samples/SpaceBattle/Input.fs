@@ -27,6 +27,7 @@ type InputMsg =
   | InputChanged of inputs: ActionState<GameAction>
   | MouseAction of mouse: MouseAction
   | CalculateRange
+  | CellClicked of cell: struct (int * int)
 
 [<Struct>]
 type SelectionAction =
@@ -72,23 +73,22 @@ module Input =
     (units: Map<struct (int * int), Units.SBUnit>)
     (currentFaction: Units.Faction)
     : struct (InputModel * Cmd<InputMsg>) =
-    match model.Selection with
-    | Selected cell ->
-      newlySelected
-      |> ValueOption.map(fun newlySelected ->
-        if newlySelected = cell then
-          struct (model, Cmd.none)
-        else
-          clearSelection model, Cmd.ofMsg CalculateRange)
-      |> ValueOption.defaultValue(clearSelection model, Cmd.none)
-    | NoSelection ->
-      match newlySelected with
-      | ValueSome cell ->
-        let selection =
-          Selection.trySelect cell currentFaction units model.Selection
+    match model.Selection, newlySelected with
+    | Selected _src, ValueSome clicked ->
+      // Has selection — do NOT touch selection, let Phase decide intent
+      model, Cmd.ofMsg(CellClicked clicked)
+    | Selected cell, ValueNone ->
+      // Clicked empty space — notify Phase with original selection cell
+      model, Cmd.ofMsg(CellClicked cell)
+    | NoSelection, ValueSome cell ->
+      let selection =
+        Selection.trySelect cell currentFaction units model.Selection
 
+      match selection with
+      | Selected _ ->
         { model with Selection = selection }, Cmd.ofMsg CalculateRange
-      | ValueNone -> model, Cmd.none
+      | NoSelection -> model, Cmd.none
+    | NoSelection, ValueNone -> model, Cmd.none
 
   let cellFromMouse (pos: Vector2) (camera: Camera2D) (grid: HexGrid<Tile>) =
     let worldPos = Raylib.GetScreenToWorld2D(pos, camera)
@@ -105,6 +105,7 @@ module Input =
     : struct (InputModel * Cmd<InputMsg>) =
     match msg with
     | CalculateRange -> model, Cmd.none
+    | CellClicked _ -> model, Cmd.none
     | InputChanged input ->
       let model = { model with State = input }
 

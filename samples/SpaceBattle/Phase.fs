@@ -1,6 +1,8 @@
 namespace SpaceBattle
 
+open System.Numerics
 open SpaceBattle.Units
+open SpaceBattle.AnimState
 
 module Phase =
 
@@ -28,6 +30,26 @@ module Phase =
     | EndTurn
     | PerformAction of action: Action * cell: struct (int * int)
     | Resolution
+    | CellClicked of cell: struct (int * int)
+
+  [<Struct>]
+  type Intent =
+    | SwitchSelection of cell: struct (int * int)
+    | PerformMove of from: struct (int * int) * dest: struct (int * int)
+    | PerformAttack of attacker: struct (int * int) * target: struct (int * int)
+    | ClearSelection
+    | NoIntent
+
+  [<Struct>]
+  type PhaseResult = {
+    Selection: SelectionState
+    Units: Map<struct (int * int), SBUnit>
+    MapModel: MapModel
+    Intent: Intent
+    Turn: Turn
+    TurnOrder: TurnOrder
+    Anim: AnimationState
+  }
 
   let inline createTurnOrder(factions: Faction[]) : TurnOrder = {
     Factions = factions
@@ -85,6 +107,49 @@ module Phase =
 
 
   module System =
+
+    open SpaceBattle.Types
+    open Mibo.Layout
+
+    let determineIntent
+      (cell: struct (int * int))
+      (selection: SelectionState)
+      (units: Map<struct (int * int), SBUnit>)
+      (reachable: Set<struct (int * int)>)
+      (currentFaction: Faction)
+      (turn: Turn)
+      : Intent =
+      if turn.Phase <> Active then
+        NoIntent
+      else
+        match selection with
+        | Selected src ->
+          let hasUnitAt cell = units |> Map.tryFind cell
+
+          let isFriendly =
+            function
+            | Some(u: SBUnit) -> u.Faction = currentFaction
+            | None -> false
+
+          let isReachable = reachable.Contains cell
+
+          let canMoveHere =
+            Option.isNone(hasUnitAt cell) && isReachable && canMove src turn
+
+          match
+            hasUnitAt cell, isFriendly(hasUnitAt cell), isReachable, canMoveHere
+          with
+          | Some _, true, _, _ ->
+            if cell = src then ClearSelection else SwitchSelection cell
+          | Some _, false, true, _ -> PerformAttack(src, cell)
+          | Some _, false, false, _ -> ClearSelection
+          | None, _, _, true -> PerformMove(src, cell)
+          | None, _, _, false -> ClearSelection
+        | NoSelection ->
+          match units |> Map.tryFind cell with
+          | Some u when u.Faction = currentFaction -> SwitchSelection cell
+          | _ -> NoIntent
+
     let update msg turn turnOrder : struct (Turn * TurnOrder) =
       match msg with
       | PerformAction(Move, cell) ->
@@ -93,7 +158,7 @@ module Phase =
               Phase = Resolving
         },
         turnOrder
-      | PerformAction(kind, cell) ->
+      | PerformAction(_, cell) ->
         {
           markActed cell turn with
               Phase = Resolving
@@ -101,3 +166,114 @@ module Phase =
         turnOrder
       | Resolution -> { turn with Phase = Active }, turnOrder
       | EndTurn -> advanceTurn turn turnOrder
+      | CellClicked _cell -> turn, turnOrder
+
+    let apply
+      (phaseMsg: PhaseMsg)
+      (selection: SelectionState)
+      (units: Map<struct (int * int), SBUnit>)
+      (mapModel: MapModel)
+      (hovered: struct (int * int) voption)
+      (turn: Turn)
+      (turnOrder: TurnOrder)
+      (anim: AnimationState)
+      : PhaseResult =
+
+      let intent =
+        match phaseMsg with
+        | CellClicked cell ->
+          determineIntent
+            cell
+            selection
+            units
+            mapModel.Reachable
+            turn.CurrentFaction
+            turn
+        | _ -> NoIntent
+
+      let struct (turn, turnOrder) =
+        match intent with
+        | PerformMove(src, _) ->
+          update (PerformAction(Move, src)) turn turnOrder
+        | PerformAttack(src, _) ->
+          update (PerformAction(Attack, src)) turn turnOrder
+        | _ -> update phaseMsg turn turnOrder
+
+      let selection, units, mapModel =
+        match intent with
+        | SwitchSelection cell ->
+          let sel = Selected cell
+
+          sel,
+          units,
+          Map.update
+            RecalculateRange
+            mapModel
+            sel
+            hovered
+            units
+            turn.CurrentFaction
+        | PerformMove(src, dest) ->
+          let units =
+            match units |> Map.tryFind src with
+            | Some unit -> units |> Map.remove src |> Map.add dest unit
+            | None -> units
+
+          NoSelection,
+          units,
+          Map.update
+            RecalculateRange
+            mapModel
+            NoSelection
+            ValueNone
+            units
+            turn.CurrentFaction
+        | PerformAttack(_src, _target) ->
+          // TODO: apply damage
+          NoSelection,
+          units,
+          Map.update
+            RecalculateRange
+            mapModel
+            NoSelection
+            ValueNone
+            units
+            turn.CurrentFaction
+        | ClearSelection ->
+          NoSelection,
+          units,
+          Map.update
+            RecalculateRange
+            mapModel
+            NoSelection
+            ValueNone
+            units
+            turn.CurrentFaction
+        | NoIntent -> selection, units, mapModel
+
+      let anim =
+        match turn.Phase with
+        | Resolving ->
+          match intent with
+          | PerformMove(src, dest) ->
+            let struct (sc, sr) = src
+            let struct (dc, dr) = dest
+            let fromPos = mapModel.Grid |> HexGrid.getWorldPos sc sr
+            let toPos = mapModel.Grid |> HexGrid.getWorldPos dc dr
+            AnimState.startMove src dest fromPos toPos anim
+          | SwitchSelection _
+          | PerformAttack _
+          | ClearSelection
+          | NoIntent -> anim
+
+        | Active -> anim
+
+      {
+        Selection = selection
+        Units = units
+        MapModel = mapModel
+        Intent = intent
+        Turn = turn
+        TurnOrder = turnOrder
+        Anim = anim
+      }
