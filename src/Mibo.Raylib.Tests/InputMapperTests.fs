@@ -233,8 +233,6 @@ let tests =
           Map.empty
           [| Key KeyboardKey.LeftControl |]
           [||]
-          (Set.singleton KeyboardKey.LeftControl)
-          Set.empty
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown
@@ -256,8 +254,6 @@ let tests =
           comboStates1
           [| Key KeyboardKey.S |]
           [||]
-          (Set.singleton KeyboardKey.S)
-          Set.empty
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown
@@ -295,8 +291,6 @@ let tests =
           initialComboStates
           [||]
           [| Key KeyboardKey.S |]
-          Set.empty
-          (Set.singleton KeyboardKey.S)
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown
@@ -330,8 +324,6 @@ let tests =
           Map.empty
           [| MouseBut 0 |]
           [||]
-          Set.empty
-          Set.empty
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown
@@ -369,8 +361,6 @@ let tests =
           Map.empty
           [| Key KeyboardKey.LeftControl |]
           [||]
-          (Set.singleton KeyboardKey.LeftControl)
-          Set.empty
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown
@@ -388,8 +378,6 @@ let tests =
           cs1
           [| Key KeyboardKey.G |]
           [||]
-          (Set.singleton KeyboardKey.G)
-          Set.empty
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown
@@ -408,8 +396,6 @@ let tests =
           cs2
           [| Key KeyboardKey.D |]
           [||]
-          (Set.singleton KeyboardKey.D)
-          Set.empty
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown
@@ -425,8 +411,6 @@ let tests =
           cs3
           [||]
           [| Key KeyboardKey.G |]
-          Set.empty
-          (Set.singleton KeyboardKey.G)
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown
@@ -449,8 +433,6 @@ let tests =
           cs4
           [||]
           [| Key KeyboardKey.D |]
-          Set.empty
-          (Set.singleton KeyboardKey.D)
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown

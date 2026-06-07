@@ -157,43 +157,6 @@ type IInputMapper<'Action when 'Action: comparison> =
   abstract Update: unit -> unit
 
 // ─────────────────────────────────────────────────────────────────────────────
-// KeyCombo index for O(1) lookup when keys change
-// ─────────────────────────────────────────────────────────────────────────────
-
-[<Struct>]
-type internal KeyComboIndex = {
-  KeyToCombos: Map<KeyboardKey, Set<Set<KeyboardKey>>>
-}
-
-module internal KeyComboIndex =
-  let build(map: InputMap<'Action>) : KeyComboIndex =
-    let mutable index = Map.empty<KeyboardKey, Set<Set<KeyboardKey>>>
-
-    for kv in map.TriggerToActions do
-      match kv.Key with
-      | KeyCombo keys ->
-        for k in keys do
-          let existing = index |> Map.tryFind k |> Option.defaultValue Set.empty
-
-          index <- index |> Map.add k (existing |> Set.add keys)
-      | _ -> ()
-
-    { KeyToCombos = index }
-
-  let findAffectedCombos
-    (index: KeyComboIndex)
-    (keys: Set<KeyboardKey>)
-    : Set<Set<KeyboardKey>> =
-    let mutable combos = Set.empty
-
-    for k in keys do
-      match index.KeyToCombos |> Map.tryFind k with
-      | Some ks -> combos <- combos + ks
-      | None -> ()
-
-    combos
-
-// ─────────────────────────────────────────────────────────────────────────────
 // IInputMapper service (registered via Program.withInputMapper)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -204,8 +167,6 @@ module InputMapper =
     (prevComboStates: Map<Set<KeyboardKey>, bool>)
     (pressed: Trigger[])
     (released: Trigger[])
-    (pressedKeys: Set<KeyboardKey>)
-    (releasedKeys: Set<KeyboardKey>)
     (isKeyDown: KeyboardKey -> bool)
     (isMouseButtonDown: int -> bool)
     (isGamepadButtonDown: int -> GamepadButton -> bool)
@@ -218,13 +179,11 @@ module InputMapper =
     let mutable values = Map.empty
     let mutable comboStates = prevComboStates
 
-    let index = KeyComboIndex.build map
-
     for kv in map.TriggerToActions do
       let isDown =
         match kv.Key with
         | Key k -> isKeyDown k
-        | KeyCombo keys -> keys |> Set.forall(fun k -> isKeyDown k)
+        | KeyCombo keys -> keys |> Set.forall isKeyDown
         | MouseBut b -> isMouseButtonDown b
         | GamepadBut(p, b) -> isGamepadButtonDown p b
 
@@ -235,55 +194,35 @@ module InputMapper =
           held <- held |> Set.add a
           values <- values |> Map.add a 1.0f
 
-    // Process pressed triggers (keys, mouse, gamepad)
+      match kv.Key with
+      | KeyCombo keys ->
+        let wasHeld =
+          comboStates |> Map.tryFind keys |> Option.defaultValue false
+
+        comboStates <- comboStates |> Map.add keys isDown
+
+        if isDown && not wasHeld then
+          for a in kv.Value do
+            started <- started |> Set.add a
+        elif not isDown && wasHeld then
+          for a in kv.Value do
+            releasedSet <- releasedSet |> Set.add a
+      | _ -> ()
+
     for t in pressed do
-      match t with
-      | KeyCombo _ -> () // handled via combo index below
-      | _ ->
-        map.TriggerToActions
-        |> Map.tryFind t
-        |> Option.iter(fun actions ->
-          for a in actions do
-            started <- started |> Set.add a)
+      map.TriggerToActions
+      |> Map.tryFind t
+      |> Option.iter(fun actions ->
+        for a in actions do
+          started <- started |> Set.add a)
 
-    // Process released triggers (keys, mouse, gamepad)
     for t in released do
-      match t with
-      | KeyCombo _ -> () // handled via combo index below
-      | _ ->
-        map.TriggerToActions
-        |> Map.tryFind t
-        |> Option.iter(fun actions ->
-          for a in actions do
-            releasedSet <- releasedSet |> Set.add a)
+      map.TriggerToActions
+      |> Map.tryFind t
+      |> Option.iter(fun actions ->
+        for a in actions do
+          releasedSet <- releasedSet |> Set.add a)
 
-    // Find combos affected by pressed/released keys
-    let affectedCombos =
-      KeyComboIndex.findAffectedCombos index (pressedKeys + releasedKeys)
-
-    for combo in affectedCombos do
-      let allHeld = combo |> Set.forall isKeyDown
-
-      let wasHeld =
-        comboStates |> Map.tryFind combo |> Option.defaultValue false
-
-      comboStates <- comboStates |> Map.add combo allHeld
-
-      if allHeld && not wasHeld then
-        map.TriggerToActions
-        |> Map.tryFind(KeyCombo combo)
-        |> Option.iter(fun actions ->
-          for a in actions do
-            started <- started |> Set.add a)
-
-      if not allHeld && wasHeld then
-        map.TriggerToActions
-        |> Map.tryFind(KeyCombo combo)
-        |> Option.iter(fun actions ->
-          for a in actions do
-            releasedSet <- releasedSet |> Set.add a)
-
-    // Only release actions that are actually no longer held by any trigger
     releasedSet <- releasedSet |> Set.filter(fun a -> not(held.Contains a))
 
     ({
@@ -306,20 +245,13 @@ module InputMapper =
       let input = Input.getService ctx
       let mutable prevComboStates = Map.empty<Set<KeyboardKey>, bool>
 
-      let doBuild
-        (pressed: Trigger[])
-        (released: Trigger[])
-        (pressedKeys: Set<KeyboardKey>)
-        (releasedKeys: Set<KeyboardKey>)
-        =
+      let doBuild (pressed: Trigger[]) (released: Trigger[]) =
         let state, newComboStates =
           buildActions
             getMap
             prevComboStates
             pressed
             released
-            pressedKeys
-            releasedKeys
             (fun k -> Raylib.IsKeyDown(k).AsBool())
             (fun b -> Raylib.IsMouseButtonDown(enum<MouseButton>(b)).AsBool())
             (fun p b -> Raylib.IsGamepadButtonDown(p, b).AsBool())
@@ -329,14 +261,9 @@ module InputMapper =
 
       let subKey: IDisposable =
         input.KeyboardDelta.Subscribe(fun (d: KeyboardDelta) ->
-          let pressedKeys = d.Pressed |> Set.ofArray
-          let releasedKeys = d.Released |> Set.ofArray
           let pressed = d.Pressed |> Array.map Key
           let released = d.Released |> Array.map Key
-
-          doBuild pressed released pressedKeys releasedKeys
-          |> toMsg
-          |> dispatch)
+          doBuild pressed released |> toMsg |> dispatch)
 
       let subMouse: IDisposable =
         input.MouseDelta.Subscribe(fun (d: MouseDelta) ->
@@ -346,7 +273,7 @@ module InputMapper =
           let released =
             d.Buttons.Released |> Array.map(fun b -> MouseBut(int b))
 
-          doBuild pressed released Set.empty Set.empty |> toMsg |> dispatch)
+          doBuild pressed released |> toMsg |> dispatch)
 
       let subGamepad: IDisposable =
         input.GamepadDelta.Subscribe(fun (d: GamepadDelta) ->
@@ -358,7 +285,7 @@ module InputMapper =
             d.Buttons.Released
             |> Array.map(fun b -> GamepadBut(d.PlayerIndex, b))
 
-          doBuild pressed released Set.empty Set.empty |> toMsg |> dispatch)
+          doBuild pressed released |> toMsg |> dispatch)
 
       { new IDisposable with
           member _.Dispose() =
