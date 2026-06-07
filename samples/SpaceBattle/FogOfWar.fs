@@ -84,25 +84,39 @@ float fbm(vec2 x) {
 // ── Main ───────────────────────────────────────────────────────
 
 void main() {
-  // Space dust: animated FBM noise
-  vec2 noiseCoord = fragWorldPos * 0.008 + time * 0.02;
-  float n = fbm(noiseCoord);
+  float t = time * 0.5;
 
-  vec2 noiseCoord2 = fragWorldPos * 0.015 + time * 0.01 + vec2(50.0);
-  float n2 = fbm(noiseCoord2);
+  // Layer 1: base cloud, slow drift
+  vec2 coord1 = fragWorldPos * 0.006 + vec2(t * 0.7, t * 0.3);
+  float n1 = fbm(coord1);
+
+  // Layer 2: offset by layer 1 → organic swirling, not linear flow
+  vec2 swirl = vec2(n1, n1 * 0.8) * 40.0;
+  vec2 coord2 = fragWorldPos * 0.01 + swirl + vec2(-t * 0.4, t * 0.6) + vec2(37.0, 91.0);
+  float n2 = fbm(coord2);
+
+  // Layer 3: fine detail, offset by layer 2
+  vec2 swirl2 = vec2(n2, n2 * 1.2) * 25.0;
+  vec2 coord3 = fragWorldPos * 0.02 + swirl2 + vec2(t * 0.3, -t * 0.5) + vec2(73.0, 17.0);
+  float n3 = fbm(coord3);
 
   // Deep space base
   vec3 baseColor = vec3(0.01, 0.01, 0.03);
 
-  // Purple nebula
+  // Purple nebula — driven by layer 1
   vec3 nebula1 = vec3(0.15, 0.02, 0.2);
-  float mask1 = smoothstep(0.3, 0.7, n);
-  baseColor += nebula1 * mask1 * 0.6;
+  float mask1 = smoothstep(0.3, 0.65, n1);
+  baseColor += nebula1 * mask1 * 0.5;
 
-  // Blue dust
+  // Blue dust — driven by layer 2 (swirling)
   vec3 nebula2 = vec3(0.02, 0.08, 0.2);
-  float mask2 = smoothstep(0.4, 0.8, n2);
-  baseColor += nebula2 * mask2 * 0.4;
+  float mask2 = smoothstep(0.35, 0.7, n2);
+  baseColor += nebula2 * mask2 * 0.35;
+
+  // Warm highlight — driven by layer 3 (fine detail)
+  vec3 nebula3 = vec3(0.12, 0.05, 0.02);
+  float mask3 = smoothstep(0.5, 0.8, n3);
+  baseColor += nebula3 * mask3 * 0.2;
 
   finalColor = vec4(baseColor, 1.0);
 }
