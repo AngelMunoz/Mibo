@@ -20,6 +20,7 @@
     <Compile Include="AnimatedDecorations.fs" />
     <Compile Include="Effects.fs" />
     <Compile Include="FogOfWar.fs" />
+    <Compile Include="UI.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

@@ -922,13 +922,39 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     |> Draw.drop
 
   buffer
-  |> Map.viewOverlays
+  |> UI.drawHpBars
     model.VPWidth
     model.VPHeight
+    model.Units
+    model.Map.Grid
+    model.Map.Visible
+    movingUnit
+    model.Turn
     model.Cam.Camera
-    model.Map
-    model.Input.HoveredOver
   |> Draw.drop
+
+  let infoMode = model.Input.State.Held.Contains InfoMode
+
+  if infoMode then
+    buffer
+    |> UI.drawInfoOverlays
+      model.VPWidth
+      model.VPHeight
+      model.Units
+      model.Map.Grid
+      model.Map.Visible
+      model.Input.HoveredOver
+      model.Cam.Camera
+    |> Draw.drop
+  else
+    buffer
+    |> Map.viewOverlays
+      model.VPWidth
+      model.VPHeight
+      model.Cam.Camera
+      model.Map
+      model.Input.HoveredOver
+    |> Draw.drop
 
   match model.Anim with
   | AnimState.Transitioning transition ->
@@ -961,6 +987,14 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
   | _ -> ()
 
   Camera.endView buffer |> Draw.drop
+
+  buffer
+  |> UI.drawTurnIndicator
+    model.Turn
+    model.TurnOrder
+    model.GameAssets.MonoFont
+    model.VPWidth
+  |> Draw.drop
 
   ModelDebugoverlay.view model buffer |> Draw.drop
 

@@ -16,6 +16,7 @@ type GameAction =
   | Deselect
   | EndTurn
   | Restart
+  | InfoMode
   | ToggleFullScreen
 
 [<Struct>]
@@ -62,6 +63,8 @@ module Input =
     |> InputMap.key Deselect KeyboardKey.Escape
     |> InputMap.key EndTurn KeyboardKey.Enter
     |> InputMap.key Restart KeyboardKey.R
+    |> InputMap.key InfoMode KeyboardKey.LeftShift
+    |> InputMap.key InfoMode KeyboardKey.RightShift
     |> InputMap.key ToggleFullScreen KeyboardKey.F11
 
   let init = {
