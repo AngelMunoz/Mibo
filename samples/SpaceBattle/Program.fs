@@ -44,6 +44,7 @@ type Model() =
 type Msg =
   | InputMsg of input: InputMsg
   | MapMsg of mapMsg: MapMsg
+  | UnitsMsg of unitsMsg: UnitsMsg
   | Tick of tick: GameTime
   | PhaseMsg of phase: Phase.PhaseMsg
   | AnimationMsg of animation: AnimationMsg
@@ -237,34 +238,59 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     model, cmd
 
   | PhaseMsg phaseMsg ->
-    let struct (result, phaseCmd) =
-      Phase.System.update {
-        Msg = phaseMsg
-        Selection = model.Input.Selection
-        Units = model.Units
-        Grid = model.Map.Grid
-        Reachable = model.Map.Reachable
-        Turn = model.Turn
-        TurnOrder = model.TurnOrder
-        Anim = model.Anim
-      }
-
-    model.Input <- {
-      model.Input with
-          Selection = result.Selection
+    let query: Phase.PhaseQuery = {
+      Selection = model.Input.Selection
+      UnitAt =
+        fun cell ->
+          match model.Units |> Map.tryFind cell with
+          | Some u -> ValueSome u
+          | None -> ValueNone
+      IsReachable = fun cell -> model.Map.Reachable.Contains cell
+      CurrentFaction = model.Turn.CurrentFaction
     }
 
-    model.Units <- result.Units
+    let struct (result, phaseCmd) =
+      Phase.System.update(
+        {
+          Msg = phaseMsg
+          Query = query
+          Turn = model.Turn
+          TurnOrder = model.TurnOrder
+        }
+      )
+
     model.Turn <- result.Turn
     model.TurnOrder <- result.TurnOrder
-    model.Anim <- result.Anim
 
-    let mapCmd =
+    let intentCmd =
       match result.Intent with
-      | Phase.Intent.NoIntent -> Cmd.none
-      | _ -> Cmd.ofMsg(MapMsg RecalculateRange)
+      | Phase.Intent.PerformMove move ->
+        let struct (fc, fr) = move.From
+        let struct (dc, dr) = move.Dest
+        let fromPos = model.Map.Grid |> HexGrid.getWorldPos fc fr
+        let toPos = model.Map.Grid |> HexGrid.getWorldPos dc dr
 
-    model, Cmd.batch [ phaseCmd |> Cmd.map PhaseMsg; mapCmd ]
+        Cmd.batch [
+          Cmd.ofMsg(
+            AnimationMsg(
+              AnimationMsg.StartMove(move.From, move.Dest, fromPos, toPos)
+            )
+          )
+          Cmd.ofMsg(InputMsg ClearSelection)
+        ]
+      | Phase.Intent.SwitchSelection cell ->
+        Cmd.ofMsg(InputMsg(SelectCell cell))
+      | Phase.Intent.ClearSelection -> Cmd.ofMsg(InputMsg ClearSelection)
+      | Phase.Intent.MoveResolved resolved ->
+        Cmd.batch [
+          Cmd.ofMsg(UnitsMsg(MoveUnit(resolved.Source, resolved.Dest)))
+          Cmd.ofMsg(MapMsg RecalculateRange)
+        ]
+      | Phase.Intent.AttackResolved _resolved -> Cmd.none // future: apply damage via UnitsMsg
+      | Phase.Intent.PerformAttack _ -> Cmd.none // future: start attack animation
+      | Phase.Intent.NoIntent -> Cmd.none
+
+    model, Cmd.batch [ phaseCmd |> Cmd.map PhaseMsg; intentCmd ]
 
   | AnimationMsg msg ->
     match msg with
@@ -275,6 +301,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       model.Anim <- AnimState.showBanner message duration model.Anim
       model, Cmd.none
     | AnimationMsg.Tick _ -> model, Cmd.none
+
+  | UnitsMsg unitsMsg ->
+    model.Units <- Units.update unitsMsg model.Units
+    model, Cmd.none
 
 
 module ModelDebugoverlay =
@@ -343,12 +373,22 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     model.Input.HoveredOver
   |> Draw.drop
 
+  let movingUnit =
+    match model.Anim with
+    | AnimState.Moving tween ->
+      let struct (tc, tr) = tween.From
+
+      ValueSome
+        struct (tc, tr, Vector2.Lerp(tween.FromPos, tween.ToPos, tween.Progress))
+    | _ -> ValueNone
+
   buffer
   |> Units.view
     ctx
     model.Units
     model.UnitSprites
     model.Map.Grid
+    movingUnit
     model.Cam.Camera
   |> Draw.drop
 

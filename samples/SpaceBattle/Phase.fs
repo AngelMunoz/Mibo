@@ -3,7 +3,6 @@ namespace SpaceBattle
 open System.Numerics
 open SpaceBattle.Types
 open SpaceBattle.Units
-open SpaceBattle.AnimState
 
 module Phase =
 
@@ -32,6 +31,8 @@ module Phase =
     TurnNumber: int
     Moved: ActionEntry list
     Acted: ActionEntry list
+    PendingMove: struct (int * int) voption
+    PendingAttack: (struct (int * int) * struct (int * int)) voption
   }
 
   type PhaseMsg =
@@ -40,47 +41,69 @@ module Phase =
     | CellClicked of cell: struct (int * int)
 
   [<Struct>]
+  type MoveIntent = {
+    UnitId: int<UnitId>
+    From: struct (int * int)
+    Dest: struct (int * int)
+  }
+
+  [<Struct>]
+  type AttackIntent = {
+    AttackerId: int<UnitId>
+    AttackerCell: struct (int * int)
+    Target: struct (int * int)
+  }
+
+  [<Struct>]
+  type MoveResolvedIntent = {
+    Source: struct (int * int)
+    Dest: struct (int * int)
+  }
+
+  [<Struct>]
+  type AttackResolvedIntent = {
+    Attacker: struct (int * int)
+    Target: struct (int * int)
+  }
+
+  [<Struct>]
   type Intent =
     | SwitchSelection of cell: struct (int * int)
-    | PerformMove of
-      unitId: int<UnitId> *
-      from: struct (int * int) *
-      dest: struct (int * int)
-    | PerformAttack of
-      attacker: struct (int<UnitId> * int * int) *
-      target: struct (int * int)
+    | PerformMove of move: MoveIntent
+    | PerformAttack of attack: AttackIntent
+    | MoveResolved of moveResolved: MoveResolvedIntent
+    | AttackResolved of attackResolved: AttackResolvedIntent
     | ClearSelection
     | NoIntent
 
   [<Struct>]
   type PhaseResult = {
-    Selection: SelectionState
-    Units: Map<struct (int * int), SBUnit>
     Intent: Intent
     Turn: Turn
     TurnOrder: TurnOrder
-    Anim: AnimationState
+  }
+
+  // TODO: Revisit PhaseQuery as an interface once the shape stabilizes
+  [<Struct>]
+  type PhaseQuery = {
+    Selection: SelectionState
+    UnitAt: struct (int * int) -> SBUnit voption
+    IsReachable: struct (int * int) -> bool
+    CurrentFaction: Faction
   }
 
   [<Struct>]
   type PhaseInput = {
     Msg: PhaseMsg
-    Selection: SelectionState
-    Units: Map<struct (int * int), SBUnit>
-    Grid: Mibo.Layout.HexGrid<Tile>
-    Reachable: Set<struct (int * int)>
+    Query: PhaseQuery
     Turn: Turn
     TurnOrder: TurnOrder
-    Anim: AnimationState
   }
 
   [<Struct>]
   type IntentInput = {
     Cell: struct (int * int)
-    Selection: SelectionState
-    Units: Map<struct (int * int), SBUnit>
-    Reachable: Set<struct (int * int)>
-    CurrentFaction: Faction
+    Query: PhaseQuery
     Turn: Turn
   }
 
@@ -95,6 +118,8 @@ module Phase =
     TurnNumber = 0
     Moved = []
     Acted = []
+    PendingMove = ValueNone
+    PendingAttack = ValueNone
   }
 
   let inline private hasEntry id (lst: ActionEntry list) =
@@ -133,6 +158,8 @@ module Phase =
           TurnNumber = turn.TurnNumber + 1
           Moved = []
           Acted = []
+          PendingMove = ValueNone
+          PendingAttack = ValueNone
     },
     {
       order with
@@ -144,53 +171,62 @@ module Phase =
 
     open SpaceBattle.Types
     open Mibo.Elmish
-    open Mibo.Layout
 
     let private determineIntent(input: IntentInput) : Intent =
       if input.Turn.Phase <> TurnPhase.Active then
         NoIntent
       else
 
-        match input.Selection with
+        match input.Query.Selection with
         | Selected src ->
           let struct (col, row) = src
-          let actingUnit = input.Units |> Map.tryFind src
-          let targetUnit = input.Units |> Map.tryFind input.Cell
+          let actingUnit = input.Query.UnitAt src
+          let targetUnit = input.Query.UnitAt input.Cell
 
           match actingUnit, targetUnit with
-          | Some { id = id; Faction = actingFaction }, None ->
+          | ValueSome { id = id; Faction = actingFaction }, ValueNone ->
             if
-              input.CurrentFaction = actingFaction
-              && input.Reachable.Contains input.Cell
+              input.Query.CurrentFaction = actingFaction
+              && input.Query.IsReachable input.Cell
               && canMove id input.Turn
             then
-              PerformMove(id, src, input.Cell)
+              PerformMove {
+                UnitId = id
+                From = src
+                Dest = input.Cell
+              }
             else
               ClearSelection
-          | Some { id = id; Faction = actingFaction },
-            Some { Faction = targetFaction } ->
+          | ValueSome { id = id; Faction = actingFaction },
+            ValueSome { Faction = targetFaction } ->
             if
-              input.CurrentFaction = actingFaction
+              input.Query.CurrentFaction = actingFaction
               && actingFaction <> targetFaction
               && canPerformAction id input.Turn
-              && input.Reachable.Contains input.Cell
+              && input.Query.IsReachable input.Cell
             then
-              PerformAttack((id, col, row), input.Cell)
-            elif input.CurrentFaction = actingFaction && input.Cell <> src then
+              PerformAttack {
+                AttackerId = id
+                AttackerCell = struct (col, row)
+                Target = input.Cell
+              }
+            elif
+              input.Query.CurrentFaction = actingFaction && input.Cell <> src
+            then
               SwitchSelection input.Cell
             else
               ClearSelection
-          | None, _ -> ClearSelection
+          | ValueNone, _ -> ClearSelection
         | NoSelection ->
-          let isSomethingThere = input.Units |> Map.tryFind input.Cell
+          let isSomethingThere = input.Query.UnitAt input.Cell
 
           match isSomethingThere with
-          | Some { Faction = faction } ->
-            if faction = input.CurrentFaction then
+          | ValueSome { Faction = faction } ->
+            if faction = input.Query.CurrentFaction then
               SwitchSelection input.Cell
             else
               NoIntent
-          | None -> NoIntent
+          | ValueNone -> NoIntent
 
     let update(input: PhaseInput) : struct (PhaseResult * Cmd<PhaseMsg>) =
       match input.Msg with
@@ -198,118 +234,107 @@ module Phase =
         let intent =
           determineIntent {
             Cell = cell
-            Selection = input.Selection
-            Units = input.Units
-            Reachable = input.Reachable
-            CurrentFaction = input.Turn.CurrentFaction
+            Query = input.Query
             Turn = input.Turn
           }
 
         match intent with
-        | PerformMove(id, src, dest) ->
+        | PerformMove move ->
           let entry = {
-            UnitId = id
-            Source = src
-            Target = dest
+            UnitId = move.UnitId
+            Source = move.From
+            Target = move.Dest
           }
 
           let turn = {
             markMoved entry input.Turn with
                 Phase = Resolving
+                PendingMove = ValueSome move.Dest
           }
 
-          let units =
-            match input.Units |> Map.tryFind src with
-            | Some unit -> input.Units |> Map.remove src |> Map.add dest unit
-            | None -> input.Units
-
-          let struct (sc, sr) = src
-          let struct (dc, dr) = dest
-
-          let fromPos = input.Grid |> HexGrid.getWorldPos sc sr
-
-          let toPos = input.Grid |> HexGrid.getWorldPos dc dr
-
-          let anim = AnimState.startMove src dest fromPos toPos input.Anim
-
           {
-            Selection = NoSelection
-            Units = units
-            Intent = intent
+            Intent = PerformMove move
             Turn = turn
             TurnOrder = input.TurnOrder
-            Anim = anim
           },
           Cmd.none
 
-        | PerformAttack(src, target) ->
-          let struct (id, col, row) = src
-
+        | PerformAttack attack ->
           let entry = {
-            UnitId = id
-            Source = struct (col, row)
-            Target = target
+            UnitId = attack.AttackerId
+            Source = attack.AttackerCell
+            Target = attack.Target
           }
 
           let turn = {
             markActed entry input.Turn with
                 Phase = Resolving
+                PendingAttack = ValueSome(attack.AttackerCell, attack.Target)
           }
 
           {
-            Selection = NoSelection
-            Units = input.Units
-            Intent = intent
+            Intent = PerformAttack attack
             Turn = turn
             TurnOrder = input.TurnOrder
-            Anim = input.Anim
           },
           Cmd.none
 
         | SwitchSelection _ ->
           {
-            Selection = Selected cell
-            Units = input.Units
-            Intent = intent
+            Intent = SwitchSelection cell
             Turn = input.Turn
             TurnOrder = input.TurnOrder
-            Anim = input.Anim
           },
           Cmd.none
 
         | ClearSelection ->
           {
-            Selection = NoSelection
-            Units = input.Units
-            Intent = intent
+            Intent = ClearSelection
             Turn = input.Turn
             TurnOrder = input.TurnOrder
-            Anim = input.Anim
           },
           Cmd.none
 
         | NoIntent ->
           {
-            Selection = input.Selection
-            Units = input.Units
+            Intent = NoIntent
+            Turn = input.Turn
+            TurnOrder = input.TurnOrder
+          },
+          Cmd.none
+
+        | _ ->
+          {
             Intent = intent
             Turn = input.Turn
             TurnOrder = input.TurnOrder
-            Anim = input.Anim
           },
           Cmd.none
 
       | Resolution ->
+        let intent =
+          match input.Turn.PendingMove with
+          | ValueSome dest ->
+            match input.Turn.Moved with
+            | entry :: _ -> MoveResolved { Source = entry.Source; Dest = dest }
+            | [] -> NoIntent
+          | ValueNone ->
+            match input.Turn.PendingAttack with
+            | ValueSome(src, target) ->
+              AttackResolved { Attacker = src; Target = target }
+            | ValueNone -> NoIntent
+
+        let turn = {
+          input.Turn with
+              Phase = TurnPhase.Active
+              PendingMove = ValueNone
+              PendingAttack = ValueNone
+        }
+
         {
-          Selection = input.Selection
-          Units = input.Units
-          Intent = NoIntent
-          Turn = {
-            input.Turn with
-                Phase = TurnPhase.Active
-          }
+          Intent = intent
+          Turn = turn
           TurnOrder = input.TurnOrder
-          Anim = input.Anim
         },
         Cmd.none
 
@@ -317,12 +342,9 @@ module Phase =
         let struct (turn, order) = advanceTurn input.Turn input.TurnOrder
 
         {
-          Selection = input.Selection
-          Units = input.Units
           Intent = NoIntent
           Turn = turn
           TurnOrder = order
-          Anim = input.Anim
         },
         Cmd.none
 

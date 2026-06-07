@@ -28,6 +28,8 @@ type InputMsg =
   | MouseAction of mouse: MouseAction
   | CalculateRange
   | CellClicked of cell: struct (int * int)
+  | ClearSelection
+  | SelectCell of cell: struct (int * int)
 
 [<Struct>]
 type SelectionAction =
@@ -90,7 +92,11 @@ module Input =
       | NoSelection -> model, Cmd.none
     | NoSelection, ValueNone -> model, Cmd.none
 
-  let cellFromMouse (pos: Vector2) (camera: Camera2D) (grid: HexGrid<Tile>) =
+  let inline cellFromMouse
+    (pos: Vector2)
+    (camera: Camera2D)
+    (grid: HexGrid<Tile>)
+    =
     let worldPos = Raylib.GetScreenToWorld2D(pos, camera)
     grid |> Hex2DSpatial.worldToCell worldPos
 
@@ -106,6 +112,9 @@ module Input =
     match msg with
     | CalculateRange -> model, Cmd.none
     | CellClicked _ -> model, Cmd.none
+    | ClearSelection -> { model with Selection = NoSelection }, Cmd.none
+    | SelectCell cell ->
+      { model with Selection = Selected cell }, Cmd.ofMsg CalculateRange
     | InputChanged input ->
       let model = { model with State = input }
 

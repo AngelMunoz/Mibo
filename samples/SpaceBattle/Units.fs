@@ -43,6 +43,32 @@ module Units =
     AttackRange: int
   }
 
+  type UnitsMsg =
+    | MoveUnit of src: struct (int * int) * dest: struct (int * int)
+    | ApplyDamage of target: struct (int * int) * damage: int
+    | RemoveUnit of cell: struct (int * int)
+
+  let update
+    (msg: UnitsMsg)
+    (units: Map<struct (int * int), SBUnit>)
+    : Map<struct (int * int), SBUnit> =
+    match msg with
+    | MoveUnit(src, dest) ->
+      match units |> Map.tryFind src with
+      | Some unit -> units |> Map.remove src |> Map.add dest unit
+      | None -> units
+    | ApplyDamage(target, damage) ->
+      match units |> Map.tryFind target with
+      | Some unit ->
+        let hp = unit.HP - damage
+
+        if hp <= 0 then
+          units |> Map.remove target
+        else
+          units |> Map.add target { unit with HP = hp }
+      | None -> units
+    | RemoveUnit cell -> units |> Map.remove cell
+
   let private directionFrame =
     function
     | N -> 0
@@ -57,6 +83,7 @@ module Units =
     (units: Map<struct (int * int), SBUnit>)
     (unitSprites: Map<struct (Faction * UnitClass), SpriteSheet>)
     (map: HexGrid<Tile>)
+    (movingUnit: struct (int * int * Vector2) voption)
     camera
     buffer
     =
@@ -77,7 +104,11 @@ module Units =
       (fun col row tile ->
         match units |> Map.tryFind struct (col, row) with
         | Some unit ->
-          let worldPos = map |> HexGrid.getWorldPos col row
+          let worldPos =
+            match movingUnit with
+            | ValueSome struct (mc, mr, pos) when mc = col && mr = row -> pos
+            | _ -> map |> HexGrid.getWorldPos col row
+
           let hexW = Constants.CellSize * 2.0f
           let hexH = Constants.CellSize * sqrt 3.0f
 
