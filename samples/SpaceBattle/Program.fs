@@ -181,12 +181,20 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         if enabledCount >= 2 then
           let model = startGame(model.PreStartState, model)
 
-          model,
-          Cmd.ofMsg(
-            MapMsg(
-              RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex)
+          if model.Turn.PlayerControl = Units.AI then
+            model,
+            Cmd.ofMsg(
+              AnimationMsg(
+                AnimationMsg.StartTransition(model.Turn.CurrentFaction, 2.0f)
+              )
             )
-          )
+          else
+            model,
+            Cmd.ofMsg(
+              MapMsg(
+                RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex)
+              )
+            )
         else
           model, Cmd.none
       | _ ->
@@ -240,13 +248,16 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     let inputCmd =
       match inputMsg with
-      | CellClicked cell ->
+      | CellClicked cell when model.Turn.PlayerControl = Units.Human ->
         Cmd.batch [
           inputCmd
           Cmd.ofMsg(PhaseMsg(Phase.PhaseMsg.CellClicked cell))
         ]
+      | CellClicked _ -> inputCmd
       | InputChanged inputs when
-        inputs.Started.Contains EndTurn && model.Turn.Phase = Phase.Active
+        inputs.Started.Contains EndTurn
+        && model.Turn.Phase = Phase.Active
+        && model.Turn.PlayerControl = Units.Human
         ->
         Cmd.batch [ inputCmd; Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.EndTurn) ]
       | _ -> inputCmd
@@ -366,7 +377,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     let visibilityCmd =
       match phaseMsg with
-      | Phase.TransitionDone ->
+      | Phase.TransitionDone when model.Turn.PlayerControl = Units.Human ->
         Cmd.ofMsg(
           MapMsg(RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex))
         )
@@ -828,6 +839,8 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
       model.Input.HoveredOver
     |> Draw.drop
 
+  Camera.endView buffer |> Draw.drop
+
   match model.Anim with
   | AnimState.Transitioning transition ->
     let alpha = byte(int(transition.Timer / transition.Duration * 180.0f))
@@ -857,8 +870,6 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     )
     |> Draw.drop
   | _ -> ()
-
-  Camera.endView buffer |> Draw.drop
 
   buffer
   |> UI.drawTurnIndicator

@@ -213,7 +213,10 @@ module Phase =
     open Mibo.Elmish
 
     let private determineIntent(input: IntentInput) : Intent =
-      if input.Turn.Phase <> TurnPhase.Active then
+      if
+        input.Turn.Phase <> TurnPhase.Active
+        || input.Turn.PlayerControl = Units.AI
+      then
         NoIntent
       else
 
