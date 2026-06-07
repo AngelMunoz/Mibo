@@ -359,19 +359,20 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       | Phase.Intent.AttackResolved resolved ->
         Cmd.ofMsg(UnitsMsg(AttackUnit(resolved.Attacker, resolved.Target)))
       | Phase.Intent.PerformAttack attack ->
-        let dirOpt = Units.directionFromCells attack.AttackerCell attack.Target
-
-        let dirCmd =
-          match dirOpt with
-          | Some dir ->
-            Cmd.ofMsg(UnitsMsg(UpdateDirection(attack.AttackerCell, dir)))
-          | None -> Cmd.none
-
         let struct (ac, ar) = attack.AttackerCell
         let struct (tc, tr) = attack.Target
         let attackerPos = model.Map.Grid |> HexGrid.getWorldPos ac ar
         let targetPos = model.Map.Grid |> HexGrid.getWorldPos tc tr
-        let dir = dirOpt |> Option.defaultValue N
+
+        let shipDir = Units.directionFromCells attack.AttackerCell attack.Target
+
+        let dirCmd =
+          match shipDir with
+          | Some dir ->
+            Cmd.ofMsg(UnitsMsg(UpdateDirection(attack.AttackerCell, dir)))
+          | None -> Cmd.none
+
+        let laserDir = Units.directionFromWorldPositions attackerPos targetPos
 
         Cmd.batch [
           dirCmd
@@ -380,7 +381,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
               AnimationMsg.StartAttack(
                 attackerPos,
                 targetPos,
-                dir,
+                laserDir,
                 attack.AttackerCell,
                 attack.Target,
                 0.4f

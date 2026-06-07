@@ -107,6 +107,23 @@ module Units =
       else
         Some NE
 
+  let directionFromWorldPositions
+    (from: System.Numerics.Vector2)
+    (target: System.Numerics.Vector2)
+    : Direction =
+    let dx = target.X - from.X
+    let dy = target.Y - from.Y
+    let angle = atan2 dy dx
+
+    let deg = angle * 180.0f / float32 System.Math.PI
+
+    if deg >= -60.0f && deg < 0.0f then NE
+    elif deg >= 0.0f && deg < 60.0f then SE
+    elif deg >= 60.0f && deg < 120.0f then S
+    elif deg >= 120.0f || deg < -150.0f then SW
+    elif deg >= -150.0f && deg < -90.0f then NW
+    else N
+
   let private baseDamage =
     function
     | Fighter -> 30
