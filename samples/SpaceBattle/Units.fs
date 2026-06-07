@@ -47,6 +47,7 @@ module Units =
     | MoveUnit of src: struct (int * int) * dest: struct (int * int)
     | UpdateDirection of cell: struct (int * int) * direction: Direction
     | ApplyDamage of target: struct (int * int) * damage: int
+    | AttackUnit of attacker: struct (int * int) * target: struct (int * int)
     | RemoveUnit of cell: struct (int * int)
 
   let directionFromDelta (dc: int) (dr: int) (srcCol: int) : Direction option =
@@ -106,6 +107,11 @@ module Units =
       else
         Some NE
 
+  let private baseDamage = function
+    | Fighter -> 30
+    | Cruiser -> 20
+    | Battleship -> 15
+
   let update
     (msg: UnitsMsg)
     (units: Map<struct (int * int), SBUnit>)
@@ -129,6 +135,17 @@ module Units =
         else
           units |> Map.add target { unit with HP = hp }
       | None -> units
+    | AttackUnit(attacker, target) ->
+      match units |> Map.tryFind attacker, units |> Map.tryFind target with
+      | Some atk, Some tgt ->
+        let damage = max 1 (baseDamage atk.Class - tgt.Defense)
+        let hp = tgt.HP - damage
+
+        if hp <= 0 then
+          units |> Map.remove target
+        else
+          units |> Map.add target { tgt with HP = hp }
+      | _ -> units
     | RemoveUnit cell -> units |> Map.remove cell
 
   let private directionFrame =

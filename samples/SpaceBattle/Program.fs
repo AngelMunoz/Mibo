@@ -246,6 +246,8 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       match event with
       | ValueSome AnimationEvent.MoveComplete ->
         Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.Resolution)
+      | ValueSome AnimationEvent.AttackComplete ->
+        Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.Resolution)
       | ValueSome(AnimationEvent.SegmentChanged dir) ->
         match model.Anim with
         | AnimState.Moving tween ->
@@ -350,8 +352,39 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       | Phase.Intent.ClearSelection -> Cmd.ofMsg(InputMsg ClearSelection)
       | Phase.Intent.MoveResolved resolved ->
         Cmd.ofMsg(UnitsMsg(MoveUnit(resolved.Source, resolved.Dest)))
-      | Phase.Intent.AttackResolved _resolved -> Cmd.none // future: apply damage via UnitsMsg
-      | Phase.Intent.PerformAttack _ -> Cmd.none // future: start attack animation
+      | Phase.Intent.AttackResolved resolved ->
+        Cmd.ofMsg(UnitsMsg(AttackUnit(resolved.Attacker, resolved.Target)))
+      | Phase.Intent.PerformAttack attack ->
+        let dirOpt = Units.directionFromCells attack.AttackerCell attack.Target
+
+        let dirCmd =
+          match dirOpt with
+          | Some dir ->
+            Cmd.ofMsg(UnitsMsg(UpdateDirection(attack.AttackerCell, dir)))
+          | None -> Cmd.none
+
+        let struct (ac, ar) = attack.AttackerCell
+        let struct (tc, tr) = attack.Target
+        let attackerPos = model.Map.Grid |> HexGrid.getWorldPos ac ar
+        let targetPos = model.Map.Grid |> HexGrid.getWorldPos tc tr
+        let dir = dirOpt |> Option.defaultValue N
+
+        Cmd.batch [
+          dirCmd
+          Cmd.ofMsg(
+            AnimationMsg(
+              AnimationMsg.StartAttack(
+                attackerPos,
+                targetPos,
+                dir,
+                attack.AttackerCell,
+                attack.Target,
+                0.4f
+              )
+            )
+          )
+          Cmd.ofMsg(InputMsg ClearSelection)
+        ]
       | Phase.Intent.NoIntent -> Cmd.none
 
     model, Cmd.batch [ phaseCmd |> Cmd.map PhaseMsg; intentCmd ]
@@ -377,6 +410,11 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       model, Cmd.none
     | AnimationMsg.ShowBanner(message, duration) ->
       model.Anim <- AnimState.showBanner message duration model.Anim
+      model, Cmd.none
+    | AnimationMsg.StartAttack(from, target, dir, attackerCell, targetCell, duration) ->
+      model.Anim <-
+        AnimState.startAttack from target dir attackerCell targetCell duration model.Anim
+
       model, Cmd.none
     | AnimationMsg.Tick _ -> model, Cmd.none
 
