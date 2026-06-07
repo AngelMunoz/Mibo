@@ -302,7 +302,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         let directions =
           simplified
           |> Array.pairwise
-          |> Array.map(fun (a, b) -> Units.directionFromCells a b |> Option.get)
+          |> Array.choose(fun (a, b) -> Units.directionFromCells a b)
 
         let duration = AnimState.moveDuration unit.MoveRange (path.Length - 1)
 

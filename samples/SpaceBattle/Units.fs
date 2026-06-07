@@ -75,7 +75,36 @@ module Units =
     : Direction option =
     let struct (sc, sr) = src
     let struct (dc, dr) = dst
-    directionFromDelta (dc - sc) (dr - sr) sc
+    let dCol = dc - sc
+    let dRow = dr - sr
+
+    if dCol = 0 && dRow = 0 then
+      None
+    elif abs dCol <= 1 && abs dRow <= 1 then
+      directionFromDelta dCol dRow sc
+    else
+      let struct (sq, sr2, ss) =
+        Mibo.Layout.Hex2DSpatial.offsetToCube sc sr Mibo.Layout.FlatTop
+
+      let struct (dq, dr2, ds) =
+        Mibo.Layout.Hex2DSpatial.offsetToCube dc dr Mibo.Layout.FlatTop
+
+      let aq = dq - sq
+      let ar = dr2 - sr2
+      let ads = ds - ss
+
+      let absAq = abs aq
+      let absAr = abs ar
+      let absAds = abs ads
+
+      if absAq >= absAr && absAq >= absAds then
+        if aq > 0 then Some SE else Some NW
+      elif absAr >= absAq && absAr >= absAds then
+        if ar > 0 then Some S else Some N
+      else if ads > 0 then
+        Some SW
+      else
+        Some NE
 
   let update
     (msg: UnitsMsg)

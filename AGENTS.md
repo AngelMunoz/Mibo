@@ -11,6 +11,7 @@ General setup and usage instructions can be found in the [README.md](README.md) 
 1. **NEVER PUSH WITHOUT PERMISSION.** Always ask before pushing to the remote.
 2. **NEVER FORCE PUSH.** Tell the user they have to force push instead of you.
 3. **Always run `dotnet fantomas .` before committing code.** Format all F# files before staging.
+4. **Never use `Option.get` or `ValueOption.get`.** Always pattern match (`match`, `function`, `if ... then`) or use safe alternatives (`Option.defaultValue`, `Option.map`, `Array.choose`, etc.) to handle option values. Unchecked `.get` calls crash at runtime on `None`.
 
 ## Project Structure
 
