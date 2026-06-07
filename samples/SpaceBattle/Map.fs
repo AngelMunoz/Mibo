@@ -28,8 +28,7 @@ type RangeQuery = {
 }
 
 [<Struct>]
-type MapMsg =
-  | RecalculateRange of query: RangeQuery
+type MapMsg = RecalculateRange of query: RangeQuery
 
 module Map =
   open System.Numerics
@@ -135,7 +134,12 @@ module Map =
             let path =
               match query.Hovered with
               | ValueSome dest when reachable.Contains dest ->
-                Selection.computePath cell dest model.Grid query.Units query.CurrentFaction
+                Selection.computePath
+                  cell
+                  dest
+                  model.Grid
+                  query.Units
+                  query.CurrentFaction
               | _ -> [||]
 
             {

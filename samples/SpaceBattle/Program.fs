@@ -7,6 +7,7 @@ open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open Mibo.Input
 open Mibo.Layout
+open Raylib_cs
 open AnimState
 open SpaceBattle.Units
 
@@ -268,7 +269,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
           match model.Units |> Map.tryFind cell with
           | Some u -> ValueSome u
           | None -> ValueNone
-      IsReachable = fun cell -> model.Map.Reachable.Contains cell || model.Map.AttackTargets.Contains cell
+      IsReachable =
+        fun cell ->
+          model.Map.Reachable.Contains cell
+          || model.Map.AttackTargets.Contains cell
       CurrentFaction = model.Turn.CurrentFaction
     }
 
@@ -411,9 +415,21 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     | AnimationMsg.ShowBanner(message, duration) ->
       model.Anim <- AnimState.showBanner message duration model.Anim
       model, Cmd.none
-    | AnimationMsg.StartAttack(from, target, dir, attackerCell, targetCell, duration) ->
+    | AnimationMsg.StartAttack(from,
+                               target,
+                               dir,
+                               attackerCell,
+                               targetCell,
+                               duration) ->
       model.Anim <-
-        AnimState.startAttack from target dir attackerCell targetCell duration model.Anim
+        AnimState.startAttack
+          from
+          target
+          dir
+          attackerCell
+          targetCell
+          duration
+          model.Anim
 
       model, Cmd.none
     | AnimationMsg.Tick _ -> model, Cmd.none
@@ -544,6 +560,54 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     movingUnit
     model.Cam.Camera
   |> Draw.drop
+
+  match model.Anim with
+  | AnimState.Attacking tween ->
+    let pos = Vector2.Lerp(tween.From, tween.To, tween.Progress)
+
+    let struct (ac, ar) = tween.AttackerCell
+    let attackerUnit = model.Units |> Map.tryFind tween.AttackerCell
+
+    let laser =
+      match attackerUnit with
+      | Some u ->
+        match u.Class with
+        | Fighter -> model.GameAssets.Laser2
+        | Battleship -> model.GameAssets.Laser1
+        | Cruiser ->
+          if (ac + ar) % 2 = 0 then
+            model.GameAssets.Laser1
+          else
+            model.GameAssets.Laser2
+      | None -> model.GameAssets.Laser1
+
+    let frameIdx = Units.directionFrame tween.Direction
+    let cols = laser.Texture.Width / laser.FrameSize.X
+    let srcCol = frameIdx % cols
+    let srcRow = frameIdx / cols
+    let fw = laser.FrameSize.X
+    let fh = laser.FrameSize.Y
+
+    let source =
+      Rectangle(
+        float32(srcCol * fw),
+        float32(srcRow * fh),
+        float32 fw,
+        float32 fh
+      )
+
+    let targetRect =
+      Rectangle(
+        pos.X - float32 fw / 2f,
+        pos.Y - float32 fh / 2f,
+        float32 fw,
+        float32 fh
+      )
+
+    buffer
+    |> Draw.sprite(SpriteState.create(laser.Texture, targetRect, source))
+    |> Draw.drop
+  | _ -> ()
 
   Camera.endView buffer |> Draw.drop
 

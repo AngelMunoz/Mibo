@@ -107,7 +107,8 @@ module Units =
       else
         Some NE
 
-  let private baseDamage = function
+  let private baseDamage =
+    function
     | Fighter -> 30
     | Cruiser -> 20
     | Battleship -> 15
@@ -148,7 +149,7 @@ module Units =
       | _ -> units
     | RemoveUnit cell -> units |> Map.remove cell
 
-  let private directionFrame =
+  let directionFrame =
     function
     | N -> 0
     | NE -> 1
