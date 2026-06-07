@@ -14,6 +14,7 @@ type GameAction =
   | MoveUp
   | MoveDown
   | Deselect
+  | EndTurn
 
 [<Struct>]
 type MouseAction =
@@ -57,6 +58,7 @@ module Input =
     |> InputMap.key MoveDown KeyboardKey.Down
     |> InputMap.key MoveDown KeyboardKey.S
     |> InputMap.key Deselect KeyboardKey.Escape
+    |> InputMap.key EndTurn KeyboardKey.Enter
 
   let init = {
     State = ActionState.empty

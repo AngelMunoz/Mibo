@@ -196,6 +196,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
           inputCmd
           Cmd.ofMsg(PhaseMsg(Phase.PhaseMsg.CellClicked cell))
         ]
+      | InputChanged inputs when
+        inputs.Started.Contains EndTurn && model.Turn.Phase = Phase.Active
+        ->
+        Cmd.batch [ inputCmd; Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.EndTurn) ]
       | _ -> inputCmd
 
     model, Cmd.batch [ camCmd; inputCmd ]
