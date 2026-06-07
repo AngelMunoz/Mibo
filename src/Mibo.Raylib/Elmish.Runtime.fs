@@ -117,6 +117,15 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
     if config.TargetFPS > 0 then
       Raylib.SetTargetFPS(config.TargetFPS)
 
+    match config.MinWidth, config.MinHeight with
+    | ValueSome w, ValueSome h -> Raylib.SetWindowMinSize(w, h)
+    | ValueSome w, ValueNone -> Raylib.SetWindowMinSize(w, config.Height)
+    | ValueNone, ValueSome h -> Raylib.SetWindowMinSize(config.Width, h)
+    | ValueNone, ValueNone -> ()
+
+    if config.MinWidth.IsSome || config.MinHeight.IsSome then
+      Raylib.SetWindowState(ConfigFlags.ResizableWindow)
+
     for f in program.Renderers do
       renderers.Add(f())
 
@@ -152,6 +161,10 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
 
       // Poll hardware input before processing messages
       inputServiceOpt |> ValueOption.iter(fun svc -> svc.Poll())
+
+      // Check for window resize and update context dimensions
+      if Raylib.IsWindowResized().AsBool() then
+        ctx.UpdateDimensions(Raylib.GetScreenWidth(), Raylib.GetScreenHeight())
 
       if deferredEffs.Count <> 0 then
         deferredEffsRun.Clear()

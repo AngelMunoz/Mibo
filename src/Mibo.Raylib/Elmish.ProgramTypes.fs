@@ -19,6 +19,10 @@ type GameConfig = {
   Title: string
   /// Target frames per second. 0 = unlimited.
   TargetFPS: int
+  /// Minimum window width in pixels. When set, enables resizable window.
+  MinWidth: int voption
+  /// Minimum window height in pixels. When set, enables resizable window.
+  MinHeight: int voption
 }
 
 module GameConfig =
@@ -27,7 +31,25 @@ module GameConfig =
     Height = 600
     Title = "Mibo Raylib"
     TargetFPS = 60
+    MinWidth = ValueNone
+    MinHeight = ValueNone
   }
+
+  let withWidth width config = { config with Width = width }
+  let withHeight height config = { config with Height = height }
+
+  let withMinWidth width config = {
+    config with
+        MinWidth = ValueSome width
+  }
+
+  let withMinHeight height config = {
+    config with
+        MinHeight = ValueSome height
+  }
+
+  let withTitle title config = { config with Title = title }
+  let withTargetFPS fps config = { config with TargetFPS = fps }
 
 /// <summary>
 /// The Elmish program record that defines the complete game architecture.
