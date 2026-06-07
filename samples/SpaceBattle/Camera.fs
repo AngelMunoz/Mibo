@@ -11,6 +11,11 @@ open SpaceBattle.Types
 
 type CameraModel = { Camera: Camera2D }
 
+type CameraMsg =
+  | ApplyZoom of zoom: float32
+  | ApplyMovement of held: Set<GameAction> * dt: float32
+  | ClampToMap of grid: HexGrid<Tile>
+
 module Camera =
 
   let init() = {
@@ -85,6 +90,31 @@ module Camera =
       cam.Target <- cam.Target + Vector2(0f, speed)
 
     { Camera = cam }
+
+  let update (msg: CameraMsg) (model: CameraModel) : CameraModel =
+    match msg with
+    | ApplyZoom z -> applyZoom z model
+    | ApplyMovement(held, dt) ->
+      let speed = 300f * dt
+      let mutable cam = model.Camera
+
+      if held.Contains MoveLeft then
+        cam.Target <- cam.Target + Vector2(-speed, 0f)
+
+      if held.Contains MoveRight then
+        cam.Target <- cam.Target + Vector2(speed, 0f)
+
+      if held.Contains MoveUp then
+        cam.Target <- cam.Target + Vector2(0f, -speed)
+
+      if held.Contains MoveDown then
+        cam.Target <- cam.Target + Vector2(0f, speed)
+
+      { Camera = cam }
+    | ClampToMap grid ->
+      let mutable c = model.Camera
+      clampToMapBounds grid &c
+      { Camera = c }
 
   let inline beginView (model: CameraModel) (buffer: RenderBuffer2D) =
     Draw.beginCamera 0<RenderLayer> model.Camera buffer

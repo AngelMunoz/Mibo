@@ -45,6 +45,7 @@ type Msg =
   | InputMsg of input: InputMsg
   | MapMsg of mapMsg: MapMsg
   | UnitsMsg of unitsMsg: UnitsMsg
+  | CameraMsg of cameraMsg: CameraMsg
   | Tick of tick: GameTime
   | PhaseMsg of phase: Phase.PhaseMsg
   | AnimationMsg of animation: AnimationMsg
@@ -163,20 +164,16 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
 let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   match msg with
   | InputMsg inputMsg ->
-    match inputMsg with
-    | MouseAction(Zoom z) ->
-      let cam = Camera.applyZoom z model.Cam
-      let mutable c = cam.Camera
-      Camera.clampToMapBounds model.Map.Grid &c
-      model.Cam <- { Camera = c }
-    | _ -> ()
+    let camCmd =
+      match inputMsg with
+      | MouseAction(Zoom z) -> Cmd.ofMsg(CameraMsg(CameraMsg.ApplyZoom z))
+      | _ -> Cmd.none
 
-    let struct (input, cmd) =
+    let struct (input, inputCmd) =
       Input.update inputMsg model.Input model.Units model.Turn.CurrentFaction
 
-
-    let cmd =
-      cmd
+    let inputCmd =
+      inputCmd
       |> Cmd.map(fun msg ->
         match msg with
         | CalculateRange ->
@@ -192,13 +189,16 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     model.Input <- input
 
-    let cmd =
+    let inputCmd =
       match inputMsg with
       | CellClicked cell ->
-        Cmd.batch [ cmd; Cmd.ofMsg(PhaseMsg(Phase.PhaseMsg.CellClicked cell)) ]
-      | _ -> cmd
+        Cmd.batch [
+          inputCmd
+          Cmd.ofMsg(PhaseMsg(Phase.PhaseMsg.CellClicked cell))
+        ]
+      | _ -> inputCmd
 
-    model, cmd
+    model, Cmd.batch [ camCmd; inputCmd ]
 
   | MapMsg mapMsg ->
     model.Map <- Map.update mapMsg model.Map
@@ -208,14 +208,21 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     let mutable model = model
     model.Time <- gt
 
-    let cam = Camera.applyMovement model.Input.State gt model.Cam
-    let mutable c = cam.Camera
-    Camera.clampToMapBounds model.Map.Grid &c
-
     let dt = float32 gt.ElapsedGameTime.TotalSeconds
 
+    let cam =
+      Camera.update
+        (CameraMsg.ApplyMovement(model.Input.State.Held, dt))
+        model.Cam
+
+    model.Cam <- Camera.update (CameraMsg.ClampToMap model.Map.Grid) cam
+
     let decorations =
-      AnimatedDecorations.update dt model.Map.Grid c model.Decorations
+      AnimatedDecorations.update
+        dt
+        model.Map.Grid
+        model.Cam.Camera
+        model.Decorations
 
     let struct (anim, event) = AnimState.update dt model.Anim
 
@@ -225,7 +232,6 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.Resolution)
       | _ -> Cmd.none
 
-    model.Cam <- { Camera = c }
     model.Decorations <- decorations
     model.Anim <- anim
 
@@ -312,6 +318,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       | _ -> Cmd.none
 
     model, cmd
+
+  | CameraMsg cameraMsg ->
+    model.Cam <- Camera.update cameraMsg model.Cam
+    model, Cmd.none
 
 
 module ModelDebugoverlay =
