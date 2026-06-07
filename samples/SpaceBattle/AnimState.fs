@@ -7,8 +7,8 @@ module AnimState =
   type MoveTween = {
     From: struct (int * int)
     To: struct (int * int)
-    FromPos: Vector2
-    ToPos: Vector2
+    Waypoints: Vector2[]
+    SegmentDists: float32[]
     Progress: float32
     Duration: float32
   }
@@ -34,16 +34,39 @@ module AnimState =
     | StartMove of
       from: struct (int * int) *
       dest: struct (int * int) *
-      fromPos: Vector2 *
-      toPos: Vector2
+      waypoints: Vector2[] *
+      segmentDists: float32[] *
+      duration: float32
     | ShowBanner of message: string * duration: float32
     | Tick of dt: float32
+
+  let moveDuration (unitMoveRange: int) (totalHexSteps: int) : float32 =
+    float32 totalHexSteps * 0.5f / float32 unitMoveRange
+
+  let interpolatePosition
+    (waypoints: Vector2[])
+    (segmentDists: float32[])
+    (t: float32)
+    : Vector2 =
+    if waypoints.Length = 1 then
+      waypoints[0]
+    else
+      let mutable i = 0
+
+      while i < segmentDists.Length - 2 && segmentDists[i + 1] < t do
+        i <- i + 1
+
+      let lo = segmentDists[i]
+      let hi = segmentDists[i + 1]
+      let localT = if hi - lo < 1e-6f then 0f else (t - lo) / (hi - lo)
+      Vector2.Lerp(waypoints[i], waypoints[i + 1], localT)
 
   let startMove
     (from: struct (int * int))
     (dest: struct (int * int))
-    (fromPos: Vector2)
-    (toPos: Vector2)
+    (waypoints: Vector2[])
+    (segmentDists: float32[])
+    (duration: float32)
     (state: AnimationState)
     : AnimationState =
     match state with
@@ -51,10 +74,10 @@ module AnimState =
       Moving {
         From = from
         To = dest
-        FromPos = fromPos
-        ToPos = toPos
+        Waypoints = waypoints
+        SegmentDists = segmentDists
         Progress = 0.0f
-        Duration = 0.3f
+        Duration = duration
       }
     | _ -> state
 
@@ -133,6 +156,16 @@ module AnimState =
             y
             "To"
             (DebugUtils.formatCell tween.To)
+            buffer
+
+        let struct (y, buffer) =
+          DebugUtils.kv
+            font
+            style
+            x
+            y
+            "Waypoints"
+            $"{tween.Waypoints.Length}"
             buffer
 
         DebugUtils.kv font style x y "Progress" $"{tween.Progress:F2}" buffer

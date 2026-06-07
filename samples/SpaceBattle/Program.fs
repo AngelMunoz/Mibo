@@ -265,15 +265,47 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     let intentCmd =
       match result.Intent with
       | Phase.Intent.PerformMove move ->
-        let struct (fc, fr) = move.From
-        let struct (dc, dr) = move.Dest
-        let fromPos = model.Map.Grid |> HexGrid.getWorldPos fc fr
-        let toPos = model.Map.Grid |> HexGrid.getWorldPos dc dr
+        let path = model.Map.Path
+        let unit = model.Units |> Map.find move.From
+
+        let simplified = Selection.simplifyPath path model.Map.Grid
+
+        let waypoints =
+          simplified
+          |> Array.map(fun struct (c, r) ->
+            model.Map.Grid |> HexGrid.getWorldPos c r)
+
+        let segDists = Array.zeroCreate simplified.Length
+        segDists[0] <- 0f
+
+        for i in 1 .. simplified.Length - 1 do
+          let struct (c1, r1) = simplified[i - 1]
+          let struct (c2, r2) = simplified[i]
+
+          segDists[i] <-
+            segDists[i - 1]
+            + float32(Hex2DSpatial.distance c1 r1 c2 r2 model.Map.Grid)
+
+        let totalDist = segDists[simplified.Length - 1]
+
+        if totalDist > 0f then
+          for i in 1 .. simplified.Length - 2 do
+            segDists[i] <- segDists[i] / totalDist
+
+        segDists[simplified.Length - 1] <- 1f
+
+        let duration = AnimState.moveDuration unit.MoveRange (path.Length - 1)
 
         Cmd.batch [
           Cmd.ofMsg(
             AnimationMsg(
-              AnimationMsg.StartMove(move.From, move.Dest, fromPos, toPos)
+              AnimationMsg.StartMove(
+                move.From,
+                move.Dest,
+                waypoints,
+                segDists,
+                duration
+              )
             )
           )
           Cmd.ofMsg(InputMsg ClearSelection)
@@ -291,8 +323,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
   | AnimationMsg msg ->
     match msg with
-    | AnimationMsg.StartMove(from, dest, fromPos, toPos) ->
-      model.Anim <- AnimState.startMove from dest fromPos toPos model.Anim
+    | AnimationMsg.StartMove(from, dest, waypoints, segDists, duration) ->
+      model.Anim <-
+        AnimState.startMove from dest waypoints segDists duration model.Anim
+
       model, Cmd.none
     | AnimationMsg.ShowBanner(message, duration) ->
       model.Anim <- AnimState.showBanner message duration model.Anim
@@ -395,8 +429,13 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     | AnimState.Moving tween ->
       let struct (tc, tr) = tween.From
 
-      ValueSome
-        struct (tc, tr, Vector2.Lerp(tween.FromPos, tween.ToPos, tween.Progress))
+      let pos =
+        AnimState.interpolatePosition
+          tween.Waypoints
+          tween.SegmentDists
+          tween.Progress
+
+      ValueSome struct (tc, tr, pos)
     | _ -> ValueNone
 
   buffer

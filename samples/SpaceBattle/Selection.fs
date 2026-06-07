@@ -58,12 +58,66 @@ module Selection =
          | Some u when u.Faction <> currentFaction -> false
          | _ ->
            match HexGrid.get c r grid with
-           | ValueSome Station -> false
+           | ValueSome Station
+           | ValueSome Asteroid1
+           | ValueSome Asteroid2 -> false
            | ValueSome _ -> true
            | ValueNone -> false
 
     Hex2DSpatial.findPath fc fr dc dr isPassable (fun _ _ _ _ -> 1f) grid
     |> ValueOption.defaultValue [||]
+
+  let simplifyPath
+    (path: struct (int * int)[])
+    (grid: HexGrid<'T>)
+    : struct (int * int)[] =
+    if path.Length <= 2 then
+      path
+    else
+      let result = ResizeArray<struct (int * int)>()
+      result.Add(path[0])
+
+      let struct (pq0, pr0, ps0) =
+        Hex2DSpatial.offsetToCube
+          (let struct (c, _) = path[0] in c)
+          (let struct (_, r) = path[0] in r)
+          grid.Orientation
+
+      let struct (pq1, pr1, ps1) =
+        Hex2DSpatial.offsetToCube
+          (let struct (c, _) = path[1] in c)
+          (let struct (_, r) = path[1] in r)
+          grid.Orientation
+
+      let mutable prevDq = pq1 - pq0
+      let mutable prevDr = pr1 - pr0
+      let mutable prevDs = ps1 - ps0
+
+      for i in 2 .. path.Length - 1 do
+        let struct (cq, cr, cs) =
+          Hex2DSpatial.offsetToCube
+            (let struct (c, _) = path[i] in c)
+            (let struct (_, r) = path[i] in r)
+            grid.Orientation
+
+        let struct (pq, pr, ps) =
+          Hex2DSpatial.offsetToCube
+            (let struct (c, _) = path[i - 1] in c)
+            (let struct (_, r) = path[i - 1] in r)
+            grid.Orientation
+
+        let dq = cq - pq
+        let dr = cr - pr
+        let ds = cs - ps
+
+        if dq <> prevDq || dr <> prevDr || ds <> prevDs then
+          result.Add(path[i - 1])
+          prevDq <- dq
+          prevDr <- dr
+          prevDs <- ds
+
+      result.Add(path[path.Length - 1])
+      result.ToArray()
 
   let trySelect
     (cell: struct (int * int))
