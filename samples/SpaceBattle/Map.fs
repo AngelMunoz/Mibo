@@ -16,6 +16,7 @@ type MapModel = {
   Path: struct (int * int)[]
 }
 
+[<Struct>]
 type MapMsg =
   | RecalculateRange of
     selection: SelectionState *
@@ -26,10 +27,10 @@ type MapMsg =
 module Map =
   open System.Numerics
 
-  let createMap origin width height : HexGrid<Tile> =
+  let inline createMap origin width height : HexGrid<Tile> =
     HexGrid.create width height Constants.CellSize origin FlatTop
 
-  let asteroidSection (rng: Random) col row =
+  let inline asteroidSection (rng: Random) col row =
     HexLayout.section col row (fun section ->
 
       section

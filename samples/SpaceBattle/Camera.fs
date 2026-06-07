@@ -11,6 +11,7 @@ open SpaceBattle.Types
 
 type CameraModel = { Camera: Camera2D }
 
+[<Struct>]
 type CameraMsg =
   | ApplyZoom of zoom: float32
   | ApplyMovement of held: Set<GameAction> * dt: float32
