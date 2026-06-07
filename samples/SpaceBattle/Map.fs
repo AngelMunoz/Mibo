@@ -13,16 +13,23 @@ type MapModel = {
   Grid: HexGrid<Tile>
   Seed: int
   Reachable: Set<struct (int * int)>
+  AttackTargets: Set<struct (int * int)>
   Path: struct (int * int)[]
 }
 
 [<Struct>]
+type RangeQuery = {
+  Selection: SelectionState
+  Hovered: struct (int * int) voption
+  Units: Map<struct (int * int), SBUnit>
+  CurrentFaction: Faction
+  CanMove: bool
+  CanAct: bool
+}
+
+[<Struct>]
 type MapMsg =
-  | RecalculateRange of
-    selection: SelectionState *
-    hovered: struct (int * int) voption *
-    units: Map<struct (int * int), SBUnit> *
-    currentFaction: Faction
+  | RecalculateRange of query: RangeQuery
 
 module Map =
   open System.Numerics
@@ -80,6 +87,7 @@ module Map =
       Grid = grid
       Seed = seed
       Reachable = Set.empty
+      AttackTargets = Set.empty
       Path = [||]
     }
 
@@ -95,43 +103,64 @@ module Map =
 
   let update (msg: MapMsg) (model: MapModel) : MapModel =
     match msg with
-    | RecalculateRange(selection, hovered, units, currentFaction) ->
-      match selection with
+    | RecalculateRange query ->
+      match query.Selection with
       | NoSelection -> {
           model with
               Reachable = Set.empty
+              AttackTargets = Set.empty
               Path = [||]
         }
       | Selected cell ->
         let struct (col, row) = cell
 
-        match units |> Map.tryFind cell with
+        match query.Units |> Map.tryFind cell with
         | None -> {
             model with
                 Reachable = Set.empty
+                AttackTargets = Set.empty
                 Path = [||]
           }
         | Some unit ->
-          let reachable =
-            Selection.computeMoveRange
-              col
-              row
-              unit.MoveRange
-              model.Grid
-              units
-              currentFaction
+          if query.CanMove then
+            let reachable =
+              Selection.computeMoveRange
+                col
+                row
+                unit.MoveRange
+                model.Grid
+                query.Units
+                query.CurrentFaction
 
-          let path =
-            match hovered with
-            | ValueSome dest when reachable.Contains dest ->
-              Selection.computePath cell dest model.Grid units currentFaction
-            | _ -> [||]
+            let path =
+              match query.Hovered with
+              | ValueSome dest when reachable.Contains dest ->
+                Selection.computePath cell dest model.Grid query.Units query.CurrentFaction
+              | _ -> [||]
 
-          {
-            model with
-                Reachable = reachable
-                Path = path
-          }
+            {
+              model with
+                  Reachable = reachable
+                  AttackTargets = Set.empty
+                  Path = path
+            }
+          elif query.CanAct then
+            let attackTargets =
+              Selection.computeAttackRange col row unit.AttackRange model.Grid
+
+            {
+              model with
+                  Reachable = Set.empty
+                  AttackTargets = attackTargets
+                  Path = [||]
+            }
+          else
+            {
+              model with
+                  Reachable = Set.empty
+                  AttackTargets = Set.empty
+                  Path = [||]
+            }
 
   let view
     (ctx: GameContext)
@@ -143,6 +172,7 @@ module Map =
     =
     let model = mapModel.Grid
     let reachable = mapModel.Reachable
+    let attackTargets = mapModel.AttackTargets
     let path = mapModel.Path
     let topLeft = Raylib.GetScreenToWorld2D(Vector2.Zero, camera)
 
@@ -196,6 +226,13 @@ module Map =
           buffer
           |> Draw.fillPoly
             (0<RenderLayer>, Color(100uy, 180uy, 255uy, 100uy))
+            (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
+          |> Draw.drop
+
+        if attackTargets.Contains(struct (col, row)) then
+          buffer
+          |> Draw.fillPoly
+            (0<RenderLayer>, Color(255uy, 80uy, 80uy, 120uy))
             (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
           |> Draw.drop
 

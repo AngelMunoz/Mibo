@@ -177,13 +177,25 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       |> Cmd.map(fun msg ->
         match msg with
         | CalculateRange ->
+          let canMove, canAct =
+            match input.Selection with
+            | Selected cell ->
+              match model.Units |> Map.tryFind cell with
+              | Some unit when unit.Faction = model.Turn.CurrentFaction ->
+                Phase.canMove unit.id model.Turn,
+                Phase.canPerformAction unit.id model.Turn
+              | _ -> false, false
+            | NoSelection -> false, false
+
           MapMsg(
-            RecalculateRange(
-              input.Selection,
-              input.HoveredOver,
-              model.Units,
-              model.Turn.CurrentFaction
-            )
+            RecalculateRange {
+              Selection = input.Selection
+              Hovered = input.HoveredOver
+              Units = model.Units
+              CurrentFaction = model.Turn.CurrentFaction
+              CanMove = canMove
+              CanAct = canAct
+            }
           )
         | other -> InputMsg other)
 
@@ -254,7 +266,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
           match model.Units |> Map.tryFind cell with
           | Some u -> ValueSome u
           | None -> ValueNone
-      IsReachable = fun cell -> model.Map.Reachable.Contains cell
+      IsReachable = fun cell -> model.Map.Reachable.Contains cell || model.Map.AttackTargets.Contains cell
       CurrentFaction = model.Turn.CurrentFaction
     }
 
@@ -374,14 +386,26 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     let cmd =
       match unitsMsg with
       | MoveUnit _ ->
+        let canMove, canAct =
+          match model.Input.Selection with
+          | Selected cell ->
+            match model.Units |> Map.tryFind cell with
+            | Some unit when unit.Faction = model.Turn.CurrentFaction ->
+              Phase.canMove unit.id model.Turn,
+              Phase.canPerformAction unit.id model.Turn
+            | _ -> false, false
+          | NoSelection -> false, false
+
         Cmd.ofMsg(
           MapMsg(
-            RecalculateRange(
-              model.Input.Selection,
-              model.Input.HoveredOver,
-              model.Units,
-              model.Turn.CurrentFaction
-            )
+            RecalculateRange {
+              Selection = model.Input.Selection
+              Hovered = model.Input.HoveredOver
+              Units = model.Units
+              CurrentFaction = model.Turn.CurrentFaction
+              CanMove = canMove
+              CanAct = canAct
+            }
           )
         )
       | _ -> Cmd.none

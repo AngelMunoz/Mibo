@@ -43,6 +43,19 @@ module Selection =
       isPassable cell && not(friendlyOccupied.Contains cell))
     |> Set.ofArray
 
+  let computeAttackRange
+    (col: int)
+    (row: int)
+    (attackRange: int)
+    (grid: HexGrid<Tile>)
+    : Set<struct (int * int)> =
+    Hex2DSpatial.inRange col row attackRange grid
+    |> Array.filter(fun struct (c, r) ->
+      match HexGrid.get c r grid with
+      | ValueSome _ -> true
+      | ValueNone -> false)
+    |> Set.ofArray
+
   let computePath
     (from: struct (int * int))
     (dest: struct (int * int))
