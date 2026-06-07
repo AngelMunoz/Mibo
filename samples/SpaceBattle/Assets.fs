@@ -19,6 +19,8 @@ type GameAssets = {
   Station: SpriteSheet
   FactionAssets: Map<Faction, FactionAssets>
   Decorations: Map<Decoration, SpriteSheet[]>
+  Laser1: SpriteSheet
+  Laser2: SpriteSheet
   MonoFont: Font
 }
 
@@ -205,6 +207,12 @@ module SBAssets =
           Asteroid, loadDecorationAssets Asteroid assets
           Crate, loadDecorationAssets Crate assets
         ]
+      Laser1 =
+        let tex = assets.Texture "assets/prerendered-spaceships/laser1.png"
+        SpriteSheet.fromGrid tex 60 60 3 [| yield! defaultPoses() |]
+      Laser2 =
+        let tex = assets.Texture "assets/prerendered-spaceships/laser2.png"
+        SpriteSheet.fromGrid tex 60 60 3 [| yield! defaultPoses() |]
       MonoFont = assets.Font "assets/Fonts/monogram.ttf"
     }
 
