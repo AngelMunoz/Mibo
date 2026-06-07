@@ -14,14 +14,20 @@ open System.Collections.Generic
 /// </remarks>
 type GameContext internal (width: int, height: int) =
   let services = Dictionary<Type, obj>()
+  let mutable windowWidth = width
+  let mutable windowHeight = height
 
   member val internal Services = services
 
   /// <summary>Current window width in pixels.</summary>
-  member _.WindowWidth = width
+  member _.WindowWidth = windowWidth
 
   /// <summary>Current window height in pixels.</summary>
-  member _.WindowHeight = height
+  member _.WindowHeight = windowHeight
+
+  member internal ctx.UpdateDimensions(w: int, h: int) =
+    windowWidth <- w
+    windowHeight <- h
 
 /// Functions for accessing and managing services in the GameContext.
 module GameContext =

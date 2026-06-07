@@ -10,6 +10,7 @@ open Mibo.Elmish
 /// </summary>
 type Trigger =
   | Key of KeyboardKey
+  | KeyCombo of Set<KeyboardKey>
   | MouseBut of int
   | GamepadBut of player: int * button: GamepadButton
 
@@ -44,6 +45,13 @@ module InputMap =
 
   let key (action: 'Action) (k: KeyboardKey) (map: InputMap<'Action>) =
     bind action (Key k) map
+
+  let keyCombo
+    (action: 'Action)
+    (keys: Set<KeyboardKey>)
+    (map: InputMap<'Action>)
+    =
+    bind action (KeyCombo keys) map
 
   let mouse (action: 'Action) (btn: int) (map: InputMap<'Action>) =
     bind action (MouseBut btn) map
@@ -163,6 +171,7 @@ module InputMapper =
 
     let subscribeFn(dispatch: Dispatch<'Msg>) =
       let input = Input.getService ctx
+      let mutable prevComboStates = Map.empty<Set<KeyboardKey>, bool>
 
       let buildActions (pressed: Trigger[]) (released: Trigger[]) =
         let map = getMap()
@@ -176,6 +185,8 @@ module InputMapper =
           let isDown =
             match kv.Key with
             | Key k -> Raylib.IsKeyDown(k).AsBool()
+            | KeyCombo keys ->
+              keys |> Set.forall(fun k -> Raylib.IsKeyDown(k).AsBool())
             | MouseBut b ->
               Raylib.IsMouseButtonDown(enum<MouseButton>(b)).AsBool()
             | GamepadBut(p, b) -> Raylib.IsGamepadButtonDown(p, b).AsBool()
@@ -188,18 +199,52 @@ module InputMapper =
               values <- values |> Map.add a 1.0f
 
         for t in pressed do
-          map.TriggerToActions
-          |> Map.tryFind t
-          |> Option.iter(fun actions ->
-            for a in actions do
-              started <- started |> Set.add a)
+          match t with
+          | KeyCombo keys ->
+            let allHeld =
+              keys |> Set.forall(fun k -> Raylib.IsKeyDown(k).AsBool())
+
+            let wasHeld =
+              prevComboStates |> Map.tryFind keys |> Option.defaultValue false
+
+            prevComboStates <- prevComboStates |> Map.add keys allHeld
+
+            if allHeld && not wasHeld then
+              map.TriggerToActions
+              |> Map.tryFind t
+              |> Option.iter(fun actions ->
+                for a in actions do
+                  started <- started |> Set.add a)
+          | _ ->
+            map.TriggerToActions
+            |> Map.tryFind t
+            |> Option.iter(fun actions ->
+              for a in actions do
+                started <- started |> Set.add a)
 
         for t in released do
-          map.TriggerToActions
-          |> Map.tryFind t
-          |> Option.iter(fun actions ->
-            for a in actions do
-              releasedSet <- releasedSet |> Set.add a)
+          match t with
+          | KeyCombo keys ->
+            let allHeld =
+              keys |> Set.forall(fun k -> Raylib.IsKeyDown(k).AsBool())
+
+            let wasHeld =
+              prevComboStates |> Map.tryFind keys |> Option.defaultValue false
+
+            prevComboStates <- prevComboStates |> Map.add keys allHeld
+
+            if not allHeld && wasHeld then
+              map.TriggerToActions
+              |> Map.tryFind t
+              |> Option.iter(fun actions ->
+                for a in actions do
+                  releasedSet <- releasedSet |> Set.add a)
+          | _ ->
+            map.TriggerToActions
+            |> Map.tryFind t
+            |> Option.iter(fun actions ->
+              for a in actions do
+                releasedSet <- releasedSet |> Set.add a)
 
         for a in releasedSet do
           held <- held |> Set.remove a
@@ -272,6 +317,7 @@ module InputMapper =
     : IInputMapper<'Action> =
     let mutable map = initialMap
     let mutable state = ActionState.empty
+    let mutable prevComboStates = Map.empty<Set<KeyboardKey>, bool>
 
     { new IInputMapper<'Action> with
         member _.CurrentState = state
@@ -290,6 +336,17 @@ module InputMapper =
                 Raylib.IsKeyPressed(k).AsBool(),
                 Raylib.IsKeyReleased(k).AsBool(),
                 Raylib.IsKeyDown(k).AsBool()
+              | KeyCombo keys ->
+                let allHeld =
+                  keys |> Set.forall(fun k -> Raylib.IsKeyDown(k).AsBool())
+
+                let wasHeld =
+                  prevComboStates
+                  |> Map.tryFind keys
+                  |> Option.defaultValue false
+
+                prevComboStates <- prevComboStates |> Map.add keys allHeld
+                (allHeld && not wasHeld), (not allHeld && wasHeld), allHeld
               | MouseBut b ->
                 let btn = enum<MouseButton>(b)
 
