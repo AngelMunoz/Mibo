@@ -32,7 +32,9 @@ module Selection =
          | Some u when u.Faction <> currentFaction -> false
          | _ ->
            match HexGrid.get c r grid with
-           | ValueSome Station -> false
+           | ValueSome Station
+           | ValueSome Asteroid1
+           | ValueSome Asteroid2 -> false
            | ValueSome _ -> true
            | ValueNone -> false
 
