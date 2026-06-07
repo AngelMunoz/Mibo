@@ -39,6 +39,8 @@ type Cmd<'Msg> =
   | DeferNextFrame of batch: Effect<'Msg>[]
   /// Combination of immediate and deferred effects
   | NowAndDeferNextFrame of now: Effect<'Msg>[] * next: Effect<'Msg>[]
+  /// Signals the runtime to exit after this frame
+  | Quit
 
 /// <summary>
 /// Functions for creating and composing Elmish commands.
@@ -50,6 +52,9 @@ type Cmd<'Msg> =
 module Cmd =
   /// <summary>An empty command that does nothing. Use when no side effects are needed.</summary>
   let none: Cmd<'Msg> = Empty
+
+  /// <summary>Signals the runtime to exit after the current frame completes.</summary>
+  let signalExit: Cmd<'Msg> = Quit
 
   /// <summary>Wraps a raw effect delegate into a command.</summary>
   let inline ofEffect(eff: Effect<'Msg>) = Single eff
@@ -82,6 +87,7 @@ module Cmd =
       Array.Copy(now, 0, combined, 0, now.Length)
       Array.Copy(next, 0, combined, now.Length, next.Length)
       DeferNextFrame combined
+    | Quit -> Quit
 
   let inline private split
     (cmd: Cmd<'Msg>)
@@ -92,6 +98,7 @@ module Cmd =
     | Batch effs -> struct (effs, [||])
     | DeferNextFrame effs -> struct ([||], effs)
     | NowAndDeferNextFrame(now, next) -> struct (now, next)
+    | Quit -> struct ([||], [||])
 
   /// <summary>
   /// Map a command producing messages of type 'A into a command producing messages of type 'Msg.
@@ -148,6 +155,7 @@ module Cmd =
         mapped
 
       NowAndDeferNextFrame(mapBatch now, mapBatch next)
+    | Quit -> Quit
 
   /// <summary>
   /// Combines multiple commands into a single command.
@@ -158,15 +166,21 @@ module Cmd =
   /// from a single update branch.
   /// </remarks>
   let batch(cmds: seq<Cmd<'Msg>>) : Cmd<'Msg> =
+    let mutable hasQuit = false
     let mutable nowCount = 0
     let mutable nextCount = 0
 
     for c in cmds do
-      let struct (now, next) = split c
-      nowCount <- nowCount + now.Length
-      nextCount <- nextCount + next.Length
+      match c with
+      | Quit -> hasQuit <- true
+      | _ ->
+        let struct (now, next) = split c
+        nowCount <- nowCount + now.Length
+        nextCount <- nextCount + next.Length
 
-    if nowCount = 0 && nextCount = 0 then
+    if hasQuit then
+      Quit
+    elif nowCount = 0 && nextCount = 0 then
       Empty
     elif nextCount = 0 then
       if nowCount = 1 then
@@ -224,6 +238,8 @@ module Cmd =
 
   let batch2(a: Cmd<'Msg>, b: Cmd<'Msg>) : Cmd<'Msg> =
     match a, b with
+    | Quit, _
+    | _, Quit -> Quit
     | Empty, x -> x
     | x, Empty -> x
     | _ ->

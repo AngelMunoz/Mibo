@@ -55,6 +55,7 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
   let deferredEffsRun = ResizeArray<Effect<'Msg>>(64)
   let mutable fixedAccSeconds = 0.0f
 
+  let mutable shouldQuit = false
   let mutable inputServiceOpt: IInput voption = ValueNone
 
   let dispatch(msg: 'Msg) = msgQueue.Dispatch(msg)
@@ -62,6 +63,7 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
   let execCmd(cmd: Cmd<'Msg>) =
     match cmd with
     | Empty -> ()
+    | Quit -> shouldQuit <- true
     | Single eff -> eff.Invoke(dispatch)
     | Batch effs ->
       for i = 0 to effs.Length - 1 do
@@ -112,10 +114,20 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
         (List.rev program.Config)
 
     Raylib.InitWindow(config.Width, config.Height, config.Title)
+    Raylib.SetExitKey(KeyboardKey.Null)
     Raylib.InitAudioDevice()
 
     if config.TargetFPS > 0 then
       Raylib.SetTargetFPS(config.TargetFPS)
+
+    match config.MinWidth, config.MinHeight with
+    | ValueSome w, ValueSome h -> Raylib.SetWindowMinSize(w, h)
+    | ValueSome w, ValueNone -> Raylib.SetWindowMinSize(w, config.Height)
+    | ValueNone, ValueSome h -> Raylib.SetWindowMinSize(config.Width, h)
+    | ValueNone, ValueNone -> ()
+
+    if config.MinWidth.IsSome || config.MinHeight.IsSome then
+      Raylib.SetWindowState(ConfigFlags.ResizableWindow)
 
     for f in program.Renderers do
       renderers.Add(f())
@@ -141,7 +153,7 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
     execCmd initialCmds
     updateSubs ctx
 
-    while not(RaylibHelpers.windowShouldClose()) do
+    while not(shouldQuit || RaylibHelpers.windowShouldClose()) do
       let dt = Raylib.GetFrameTime()
       let elapsed = TimeSpan.FromSeconds(float dt)
 
@@ -152,6 +164,10 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
 
       // Poll hardware input before processing messages
       inputServiceOpt |> ValueOption.iter(fun svc -> svc.Poll())
+
+      // Check for window resize and update context dimensions
+      if Raylib.IsWindowResized().AsBool() then
+        ctx.UpdateDimensions(Raylib.GetScreenWidth(), Raylib.GetScreenHeight())
 
       if deferredEffs.Count <> 0 then
         deferredEffsRun.Clear()

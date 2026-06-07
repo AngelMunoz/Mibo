@@ -54,6 +54,32 @@ let tests =
           e.Invoke(fun x -> result <- x)
           Expect.equal result 11 "Mapped effect should increment and add 10"
         | _ -> Tests.failtest "Expected a Single command"
+
+      testCase "Cmd.signalExit returns Quit"
+      <| fun _ ->
+        let cmd = Cmd.signalExit
+
+        match cmd with
+        | Quit -> ()
+        | _ -> Tests.failtest "Expected Quit command"
+
+      testCase "Cmd.map preserves Quit"
+      <| fun _ ->
+        let cmd = Cmd.signalExit
+        let mapped = Cmd.map (fun x -> x + 1) cmd
+
+        match mapped with
+        | Quit -> ()
+        | _ -> Tests.failtest "Expected Quit after map"
+
+      testCase "Cmd.batch with signalExit returns Quit"
+      <| fun _ ->
+        let eff = Effect(fun dispatch -> dispatch 1)
+        let batched = Cmd.batch [ Cmd.ofEffect eff; Cmd.signalExit ]
+
+        match batched with
+        | Quit -> ()
+        | _ -> Tests.failtest "Expected Quit (Quit takes precedence in batch)"
     ]
 
     testList "Sub" [
