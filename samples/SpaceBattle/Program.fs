@@ -587,7 +587,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
 
     let source = Rectangle(0f, 0f, fw, fh)
 
-    let targetRect = Rectangle(pos.X - fw / 2f, pos.Y - fh / 2f, fw, fh)
+    let targetRect = Rectangle(pos.X, pos.Y, fw, fh)
 
     let dx = tween.To.X - tween.From.X
     let dy = tween.To.Y - tween.From.Y
