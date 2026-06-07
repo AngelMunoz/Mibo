@@ -55,6 +55,7 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
   let deferredEffsRun = ResizeArray<Effect<'Msg>>(64)
   let mutable fixedAccSeconds = 0.0f
 
+  let mutable shouldQuit = false
   let mutable inputServiceOpt: IInput voption = ValueNone
 
   let dispatch(msg: 'Msg) = msgQueue.Dispatch(msg)
@@ -62,6 +63,7 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
   let execCmd(cmd: Cmd<'Msg>) =
     match cmd with
     | Empty -> ()
+    | Quit -> shouldQuit <- true
     | Single eff -> eff.Invoke(dispatch)
     | Batch effs ->
       for i = 0 to effs.Length - 1 do
@@ -112,6 +114,7 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
         (List.rev program.Config)
 
     Raylib.InitWindow(config.Width, config.Height, config.Title)
+    Raylib.SetExitKey(KeyboardKey.Null)
     Raylib.InitAudioDevice()
 
     if config.TargetFPS > 0 then
@@ -150,7 +153,7 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
     execCmd initialCmds
     updateSubs ctx
 
-    while not(RaylibHelpers.windowShouldClose()) do
+    while not(shouldQuit || RaylibHelpers.windowShouldClose()) do
       let dt = Raylib.GetFrameTime()
       let elapsed = TimeSpan.FromSeconds(float dt)
 
