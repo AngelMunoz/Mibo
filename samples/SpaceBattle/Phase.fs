@@ -38,6 +38,7 @@ module Phase =
   type PhaseMsg =
     | EndTurn
     | Resolution
+    | TransitionDone
     | CellClicked of cell: struct (int * int)
 
   [<Struct>]
@@ -73,6 +74,7 @@ module Phase =
     | PerformAttack of attack: AttackIntent
     | MoveResolved of moveResolved: MoveResolvedIntent
     | AttackResolved of attackResolved: AttackResolvedIntent
+    | StartTransition of newFaction: Faction
     | ClearSelection
     | NoIntent
 
@@ -89,6 +91,7 @@ module Phase =
     Selection: SelectionState
     UnitAt: struct (int * int) -> SBUnit voption
     IsReachable: struct (int * int) -> bool
+    IsVisible: struct (int * int) -> bool
     CurrentFaction: Faction
   }
 
@@ -204,6 +207,7 @@ module Phase =
               && actingFaction <> targetFaction
               && canPerformAction id input.Turn
               && input.Query.IsReachable input.Cell
+              && input.Query.IsVisible input.Cell
             then
               PerformAttack {
                 AttackerId = id
@@ -339,6 +343,19 @@ module Phase =
         Cmd.none
 
       | EndTurn ->
+        let nextIndex =
+          (input.TurnOrder.Index + 1) % input.TurnOrder.Factions.Length
+
+        let nextFaction = input.TurnOrder.Factions[nextIndex]
+
+        {
+          Intent = StartTransition nextFaction
+          Turn = input.Turn
+          TurnOrder = input.TurnOrder
+        },
+        Cmd.none
+
+      | TransitionDone ->
         let struct (turn, order) = advanceTurn input.Turn input.TurnOrder
 
         {

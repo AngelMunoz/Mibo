@@ -42,6 +42,7 @@ module Units =
     Defense: int
     MoveRange: int
     AttackRange: int
+    VisualRange: int
   }
 
   type UnitsMsg =
@@ -167,6 +168,21 @@ module Units =
       | _ -> units
     | RemoveUnit cell -> units |> Map.remove cell
 
+  let checkGameOver
+    (units: Map<struct (int * int), SBUnit>)
+    (factions: Faction[])
+    : Faction voption =
+    let alive =
+      units
+      |> Map.fold (fun acc _ (u: SBUnit) -> Set.add u.Faction acc) Set.empty
+
+    let remaining = factions |> Array.filter(fun f -> alive.Contains f)
+
+    if remaining.Length <= 1 then
+      remaining |> Array.tryHead |> ValueOption.ofOption
+    else
+      ValueNone
+
   let directionFrame =
     function
     | N -> 0
@@ -183,6 +199,7 @@ module Units =
     (unitSprites: Map<struct (Faction * UnitClass), SpriteSheet>)
     (map: HexGrid<Tile>)
     (movingUnit: struct (int * int * Vector2) voption)
+    (visibleCells: Set<struct (int * int)>)
     (lightCtx: LightContext2D)
     camera
     buffer
@@ -199,6 +216,10 @@ module Units =
       bottomRight.X
       bottomRight.Y
       (fun col row tile ->
+        if not(visibleCells.Contains(struct (col, row))) then
+          ()
+        else
+
         match units |> Map.tryFind struct (col, row) with
         | Some unit ->
           let worldPos =

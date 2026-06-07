@@ -14,6 +14,7 @@ type MapModel = {
   Grid: HexGrid<Tile>
   Seed: int
   Reachable: Set<struct (int * int)>
+  Visible: Set<struct (int * int)>
   AttackTargets: Set<struct (int * int)>
   Path: struct (int * int)[]
 }
@@ -88,6 +89,7 @@ module Map =
       Seed = seed
       Reachable = Set.empty
       AttackTargets = Set.empty
+      Visible = Set.empty
       Path = [||]
     }
 
@@ -100,6 +102,22 @@ module Map =
     let t = float32 idx / float32(pathLen - 1)
     let alpha = 80uy + byte(t * 160f)
     Color(100uy, 200uy, 255uy, alpha)
+
+  let computeVisibleUnits
+    (units: Map<struct (int * int), SBUnit>)
+    (faction: Faction)
+    (grid: HexGrid<Tile>)
+    : Set<struct (int * int)> =
+    let mutable visible = Set.empty
+
+    for KeyValue(struct (col, row), unit) in units do
+      if unit.Faction = faction then
+        let cells = Hex2DSpatial.inRange col row unit.VisualRange grid
+
+        for cell in cells do
+          visible <- visible |> Set.add cell
+
+    visible
 
   let update (msg: MapMsg) (model: MapModel) : MapModel =
     match msg with

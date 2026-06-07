@@ -35,6 +35,7 @@ type Msg =
   | PhaseMsg      of Phase.PhaseMsg
   | AnimationMsg  of AnimationMsg
   | Tick          of GameTime
+  | RestartGame
 ```
 
 ## Systems
@@ -43,7 +44,7 @@ type Msg =
 | --------------- | ------------------------ | ------------------------------------------ | ------------------------ | -------------------------------------------- |
 | **Input**       | `Input.fs`               | `InputModel` (selection, hover, held keys) | `InputMsg`               | Mouse/keyboard input, selection state        |
 | **Camera**      | `Camera.fs`              | `CameraModel` (Camera2D)                   | `CameraMsg`              | Zoom, movement, map clamping                 |
-| **Map**         | `Map.fs`                 | `MapModel` (grid, reachable, path)         | `MapMsg`                 | Hex grid, pathfinding, reachable cells       |
+| **Map**         | `Map.fs`                 | `MapModel` (grid, reachable, visible, path) | `MapMsg`                 | Hex grid, pathfinding, reachable cells, fog visibility |
 | **Units**       | `Units.fs`               | `Map<cell, SBUnit>`                        | `UnitsMsg`               | Unit data, move/damage/direction             |
 | **Phase**       | `Phase.fs`               | `Turn`, `TurnOrder`                        | `PhaseMsg` → `Intent`    | Turn management, action resolution           |
 | **AnimState**   | `AnimState.fs`           | `AnimationState`                           | `AnimationMsg` → `Event` | Movement/attack tween, banners               |
@@ -51,6 +52,7 @@ type Msg =
 | **Shaders**     | `Shaders.fs`             | `SkyboxModel`                              | —                        | Skybox rendering                             |
 | **Decorations** | `AnimatedDecorations.fs` | `Map<cell, AnimatedSprite>`                | —                        | Animated background sprites                  |
 | **Effects**     | `Effects.fs`             | `EffectState` (particles, lights, flashes) | —                        | Laser trail/impact particles, point lights   |
+| **FogOfWar**    | `FogOfWar.fs`            | `FogState` (shader, fog texture)           | —                        | Shader-based fog of war with space dust      |
 
 ## Cross-System Communication
 
@@ -65,6 +67,7 @@ Phase.Intent.PerformMove     ──▶  AnimationMsg.StartMove  +  InputMsg.Clea
 Phase.Intent.PerformAttack   ──▶  AnimationMsg.StartAttack + UnitsMsg.UpdateDirection + InputMsg.ClearSelection
 Phase.Intent.MoveResolved    ──▶  UnitsMsg.MoveUnit
 Phase.Intent.AttackResolved  ──▶  UnitsMsg.AttackUnit
+Phase.Intent.StartTransition ──▶  AnimationMsg.ShowBanner (turn transition)
 Phase.Intent.SwitchSelection ──▶  InputMsg.SelectCell
 Phase.Intent.ClearSelection  ──▶  InputMsg.ClearSelection
 ```
@@ -76,10 +79,11 @@ The Phase system **never knows** about animations or input — it just declares 
 `AnimState.update` returns an `AnimationEvent` when something significant happens. `Program.fs` translates events into commands:
 
 ```
-AnimationEvent.MoveComplete     ──▶  PhaseMsg.Resolution
-AnimationEvent.AttackComplete   ──▶  PhaseMsg.Resolution
-AnimationEvent.SegmentChanged   ──▶  UnitsMsg.UpdateDirection
-AnimationEvent.BannerComplete   ──▶  (currently unused)
+AnimationEvent.MoveComplete       ──▶  PhaseMsg.Resolution
+AnimationEvent.AttackComplete     ──▶  PhaseMsg.Resolution
+AnimationEvent.SegmentChanged     ──▶  UnitsMsg.UpdateDirection
+AnimationEvent.TransitionComplete ──▶  PhaseMsg.TransitionDone
+AnimationEvent.BannerComplete     ──▶  (currently unused)
 ```
 
 The animation system **never knows** about units or phases — it just emits events.
@@ -177,7 +181,73 @@ The attack lifecycle mirrors the move flow — Phase declares intent, animation 
 6. UnitsMsg(AttackUnit)
    │  Damage calculated (base class damage − target defense)
    │  Target HP reduced, or unit removed if HP ≤ 0
+   │  Program.fs checks win conditions via Units.checkGameOver
+   │  If one faction remains: sets GameOver, shows victory banner
 ```
+
+## Message Flow: Turn Transition
+
+When a player ends their turn, a 2-second transition plays before the next faction takes over:
+
+```
+1. User presses Enter (EndTurn key)
+   │
+   ▼
+2. PhaseMsg(EndTurn)
+   │  Phase returns Intent.StartTransition(nextFaction)
+   │  Program.fs starts transition animation:
+   │
+   └─▶ AnimationMsg(ShowBanner("Federation's Turn", 2.0f))
+   │
+   ▼
+3. Tick (every frame)
+   │  AnimState.update advances transition timer
+   │  View renders full-screen overlay with faction name
+   │  When timer expires:
+   │    ──▶ AnimationEvent.TransitionComplete(newFaction)
+   │    ──▶ Program.fs emits PhaseMsg(TransitionDone)
+   │
+   ▼
+4. PhaseMsg(TransitionDone)
+   │  Phase calls advanceTurn → cycles to next faction
+   │  Program.fs recomputes fog visibility for new faction
+```
+
+## Fog of War
+
+The fog of war system uses a **shader-based approach** with procedural space dust:
+
+### Visibility
+
+Each unit has a `VisualRange` (hex steps). `Map.computeVisibleUnits` unions all cells visible to the current faction's units using `Hex2DSpatial.inRange`. The result is stored in `MapModel.Visible`.
+
+### Rendering
+
+`FogOfWar.fs` contains a GLSL shader that:
+1. Receives a 12×12 fog texture (white = visible, black = fogged)
+2. For each pixel, calculates which hex cell it belongs to
+3. Samples the fog texture
+4. If fogged: renders animated FBM noise (purple/blue nebulae, dark space dust)
+5. If visible: discards the pixel (transparent)
+
+The fog texture is updated only when visibility changes (turn change, unit move, unit destroyed).
+
+### Integration
+
+- `PhaseQuery.IsVisible` — Phase uses this to prevent attacks on fogged targets
+- `Units.view` — Enemy units in fog are not rendered
+- `Map.viewTiles` — Tile sprites in fog are not rendered
+- Fog is rendered as a full-screen quad inside the camera transform, after particles and before overlays
+
+## Win Conditions
+
+Simple elimination: when a faction has no units remaining, the game ends.
+
+- `Units.checkGameOver(units, factions)` — returns `ValueSome winner` if only one faction has units
+- Called after every `AttackUnit` message
+- Sets `model.GameOver` which blocks all input except restart
+- Renders a victory overlay with the winning faction name
+- Press **R** to restart
 
 ## Key Patterns
 
@@ -272,6 +342,7 @@ SpaceBattle/
 ├── AnimState.fs         ← Movement tween animation, banners
 ├── AnimatedDecorations.fs ← Animated background sprites
 ├── Effects.fs           ← Laser trail/impact particles, point lights
+├── FogOfWar.fs          ← Shader-based fog of war with space dust
 ├── Shaders.fs           ← Skybox shader
 ├── Assets.fs            ← Sprite sheet loading
 ├── Constants.fs         ← Game constants (cell size, zoom, etc.)

@@ -15,6 +15,7 @@ type GameAction =
   | MoveDown
   | Deselect
   | EndTurn
+  | Restart
   | ToggleFullScreen
 
 [<Struct>]
@@ -60,6 +61,7 @@ module Input =
     |> InputMap.key MoveDown KeyboardKey.S
     |> InputMap.key Deselect KeyboardKey.Escape
     |> InputMap.key EndTurn KeyboardKey.Enter
+    |> InputMap.key Restart KeyboardKey.R
     |> InputMap.key ToggleFullScreen KeyboardKey.F11
 
   let init = {

@@ -38,6 +38,8 @@ type Model() =
   member val GameAssets: GameAssets = Unchecked.defaultof<_> with get, set
   member val Skybox: Shaders.SkyboxModel = Unchecked.defaultof<_> with get, set
   member val Effects: Effects.EffectState = Unchecked.defaultof<_> with get, set
+  member val Fog: FogOfWar.FogState = Unchecked.defaultof<_> with get, set
+  member val GameOver: Faction voption = ValueNone with get, set
   member val VPWidth: float32 = Unchecked.defaultof<_> with get, set
   member val VPHeight: float32 = Unchecked.defaultof<_> with get, set
 
@@ -54,6 +56,7 @@ type Msg =
   | Tick of tick: GameTime
   | PhaseMsg of phase: Phase.PhaseMsg
   | AnimationMsg of animation: AnimationMsg
+  | RestartGame
 
 // ─────────────────────────────────────────────────────────────
 // Init
@@ -76,6 +79,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
         Defense = 10
         MoveRange = 7
         AttackRange = 4
+        VisualRange = 3
       }
       struct (1, 0),
       {
@@ -88,6 +92,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
         Defense = 15
         MoveRange = 5
         AttackRange = 6
+        VisualRange = 5
       }
       struct (0, 1),
       {
@@ -100,6 +105,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
         Defense = 30
         MoveRange = 3
         AttackRange = 2
+        VisualRange = 6
       }
       struct (map.Grid.Width - 1, map.Grid.Height - 1),
       {
@@ -112,6 +118,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
         Defense = 10
         MoveRange = 7
         AttackRange = 4
+        VisualRange = 3
       }
       struct (map.Grid.Width - 1, map.Grid.Height - 2),
       {
@@ -124,6 +131,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
         Defense = 15
         MoveRange = 5
         AttackRange = 6
+        VisualRange = 5
       }
       struct (map.Grid.Width - 2, map.Grid.Height - 1),
       {
@@ -136,6 +144,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
         Defense = 30
         MoveRange = 3
         AttackRange = 2
+        VisualRange = 6
       }
     ]
 
@@ -162,11 +171,131 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       GameAssets = assets,
       Skybox = Shaders.Skybox.init(vpW, vpH),
       Effects = Effects.init(),
+      Fog = FogOfWar.init(),
       VPWidth = vpW,
       VPHeight = vpH
     )
 
+  model.Map <- {
+    model.Map with
+        Visible =
+          Map.computeVisibleUnits
+            model.Units
+            model.Turn.CurrentFaction
+            model.Map.Grid
+  }
+
   model, Cmd.none
+
+let private resetGameState(model: Model) =
+  let map = Map.init(Random.Shared.Next 10001)
+
+  let units =
+    Map.ofList [
+      struct (0, 0),
+      {
+        id = 1<UnitId>
+        Faction = Pirates
+        Class = Fighter
+        Direction = SE
+        HP = 100
+        MaxHP = 100
+        Defense = 10
+        MoveRange = 7
+        AttackRange = 4
+        VisualRange = 3
+      }
+      struct (1, 0),
+      {
+        id = 2<UnitId>
+        Faction = Pirates
+        Class = Cruiser
+        Direction = SE
+        HP = 150
+        MaxHP = 150
+        Defense = 15
+        MoveRange = 5
+        AttackRange = 6
+        VisualRange = 5
+      }
+      struct (0, 1),
+      {
+        id = 3<UnitId>
+        Faction = Pirates
+        Class = Battleship
+        Direction = SE
+        HP = 200
+        MaxHP = 200
+        Defense = 30
+        MoveRange = 3
+        AttackRange = 2
+        VisualRange = 6
+      }
+      struct (map.Grid.Width - 1, map.Grid.Height - 1),
+      {
+        id = 4<UnitId>
+        Faction = Federation
+        Class = Fighter
+        Direction = NW
+        HP = 100
+        MaxHP = 100
+        Defense = 10
+        MoveRange = 7
+        AttackRange = 4
+        VisualRange = 3
+      }
+      struct (map.Grid.Width - 1, map.Grid.Height - 2),
+      {
+        id = 5<UnitId>
+        Faction = Federation
+        Class = Cruiser
+        Direction = NW
+        HP = 150
+        MaxHP = 150
+        Defense = 15
+        MoveRange = 5
+        AttackRange = 6
+        VisualRange = 5
+      }
+      struct (map.Grid.Width - 2, map.Grid.Height - 1),
+      {
+        id = 6<UnitId>
+        Faction = Federation
+        Class = Battleship
+        Direction = NW
+        HP = 200
+        MaxHP = 200
+        Defense = 30
+        MoveRange = 3
+        AttackRange = 2
+        VisualRange = 6
+      }
+    ]
+
+  let turnOrder = Phase.createTurnOrder [| Pirates; Federation |]
+
+  model.Input <- Input.init
+  model.Map <- map
+  model.Units <- units
+  model.UnitSprites <- SBAssets.initUnitSprites model.GameAssets
+  model.Decorations <- AnimatedDecorations.init map.Grid model.GameAssets
+  model.Turn <- Phase.newTurn turnOrder
+  model.TurnOrder <- turnOrder
+  model.Anim <- Idle
+  model.Effects <- Effects.init()
+  model.Fog <- FogOfWar.init()
+  model.GameOver <- ValueNone
+
+  model.Map <- {
+    model.Map with
+        Visible =
+          Map.computeVisibleUnits
+            model.Units
+            model.Turn.CurrentFaction
+            model.Map.Grid
+  }
+
+  model
 
 // ─────────────────────────────────────────────────────────────
 // Update
@@ -175,6 +304,14 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
 let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   match msg with
   | InputMsg inputMsg ->
+    match model.GameOver with
+    | ValueSome _ ->
+      match inputMsg with
+      | InputChanged inputs when inputs.Started.Contains Restart ->
+        resetGameState model, Cmd.none
+      | _ -> model, Cmd.none
+    | ValueNone ->
+
     let camCmd =
       match inputMsg with
       | MouseAction(Zoom z) -> Cmd.ofMsg(CameraMsg(CameraMsg.ApplyZoom z))
@@ -311,7 +448,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         | AnimState.Moving tween ->
           Cmd.ofMsg(UnitsMsg(UpdateDirection(tween.From, dir)))
         | _ -> Cmd.none
-      | _ -> Cmd.none
+      | ValueSome(AnimationEvent.TransitionComplete _newFaction) ->
+        Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.TransitionDone)
+      | ValueSome AnimationEvent.BannerComplete -> Cmd.none
+      | ValueNone -> Cmd.none
 
     model.Decorations <- decorations
     model.Anim <- anim
@@ -330,6 +470,8 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         fun cell ->
           model.Map.Reachable.Contains cell
           || model.Map.AttackTargets.Contains cell
+      IsVisible = fun cell -> model.Map.Visible.Contains cell
+
       CurrentFaction = model.Turn.CurrentFaction
     }
 
@@ -345,6 +487,19 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     model.Turn <- result.Turn
     model.TurnOrder <- result.TurnOrder
+
+    match phaseMsg with
+    | Phase.TransitionDone ->
+      model.Map <- {
+        model.Map with
+            Visible =
+              Map.computeVisibleUnits
+                model.Units
+                model.Turn.CurrentFaction
+                model.Map.Grid
+      }
+
+    | _ -> ()
 
     let intentCmd =
       match result.Intent with
@@ -447,6 +602,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
           )
           Cmd.ofMsg(InputMsg ClearSelection)
         ]
+      | Phase.Intent.StartTransition newFaction ->
+        model.Anim <- AnimState.startTransition newFaction 2.0f model.Anim
+
+        Cmd.none
       | Phase.Intent.NoIntent -> Cmd.none
 
     model, Cmd.batch [ phaseCmd |> Cmd.map PhaseMsg; intentCmd ]
@@ -495,6 +654,25 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   | UnitsMsg unitsMsg ->
     model.Units <- Units.update unitsMsg model.Units
 
+    model.Map <- {
+      model.Map with
+          Visible =
+            Map.computeVisibleUnits
+              model.Units
+              model.Turn.CurrentFaction
+              model.Map.Grid
+    }
+
+    match unitsMsg with
+    | AttackUnit _ ->
+      match Units.checkGameOver model.Units model.TurnOrder.Factions with
+      | ValueSome winner ->
+        model.GameOver <- ValueSome winner
+
+        model.Anim <- AnimState.showBanner $"{winner} Wins!" 0.0f model.Anim
+      | ValueNone -> ()
+    | _ -> ()
+
     let cmd =
       match unitsMsg with
       | MoveUnit _ ->
@@ -527,6 +705,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   | CameraMsg cameraMsg ->
     model.Cam <- Camera.update cameraMsg model.Cam
     model, Cmd.none
+  | RestartGame -> failwith "Not Implemented"
 
 
 module ModelDebugoverlay =
@@ -649,6 +828,16 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     model.Effects.Lighting
   |> Draw.drop
 
+  FogOfWar.render
+    model.Fog
+    model.Map.Visible
+    model.Map.Grid
+    model.Cam.Camera
+    model.VPWidth
+    model.VPHeight
+    buffer
+  |> Draw.drop
+
   let movingUnit =
     match model.Anim with
     | AnimState.Moving tween ->
@@ -671,6 +860,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     model.UnitSprites
     model.Map.Grid
     movingUnit
+    model.Map.Visible
     model.Effects.Lighting
     model.Cam.Camera
   |> Draw.drop
@@ -740,9 +930,71 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     model.Input.HoveredOver
   |> Draw.drop
 
+  match model.Anim with
+  | AnimState.Transitioning transition ->
+    let alpha = byte(int(transition.Timer / transition.Duration * 180.0f))
+
+    let factionColor =
+      match transition.NewFaction with
+      | Federation -> Color(60uy, 120uy, 255uy, alpha)
+      | Empire -> Color(255uy, 60uy, 60uy, alpha)
+      | Pirates -> Color(60uy, 255uy, 120uy, alpha)
+
+    let cx = model.VPWidth / 2.0f
+    let cy = model.VPHeight / 2.0f
+
+    buffer
+    |> Draw.fillRect
+      (0<RenderLayer>, Color(0uy, 0uy, 0uy, alpha))
+      (Rectangle(0f, 0f, model.VPWidth, model.VPHeight))
+    |> Draw.text(
+      TextState.create(
+        model.GameAssets.MonoFont,
+        $"{transition.NewFaction}'s Turn",
+        Vector2(cx - 120.0f, cy - 30.0f)
+      )
+      |> TextState.withFontSize 48.0f
+      |> TextState.withSpacing 2.0f
+      |> TextState.withColor factionColor
+    )
+    |> Draw.drop
+  | _ -> ()
+
   Camera.endView buffer |> Draw.drop
 
   ModelDebugoverlay.view model buffer |> Draw.drop
+
+  match model.GameOver with
+  | ValueSome winner ->
+    let cx = model.VPWidth / 2.0f
+    let cy = model.VPHeight / 2.0f
+
+    buffer
+    |> Draw.fillRect
+      (0<RenderLayer>, Color(0uy, 0uy, 0uy, 180uy))
+      (Rectangle(0f, 0f, model.VPWidth, model.VPHeight))
+    |> Draw.text(
+      TextState.create(
+        model.GameAssets.MonoFont,
+        $"{winner} Wins!",
+        Vector2(cx - 140.0f, cy - 40.0f)
+      )
+      |> TextState.withFontSize 56.0f
+      |> TextState.withSpacing 2.0f
+      |> TextState.withColor Color.White
+    )
+    |> Draw.text(
+      TextState.create(
+        model.GameAssets.MonoFont,
+        "Press R to restart",
+        Vector2(cx - 100.0f, cy + 30.0f)
+      )
+      |> TextState.withFontSize 24.0f
+      |> TextState.withSpacing 1.0f
+      |> TextState.withColor Color.Gray
+    )
+    |> Draw.drop
+  | ValueNone -> ()
 
 // ─────────────────────────────────────────────────────────────
 // Subscriptions

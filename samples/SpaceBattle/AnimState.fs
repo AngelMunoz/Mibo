@@ -32,11 +32,18 @@ module AnimState =
     Duration: float32
   }
 
+  type TurnTransition = {
+    NewFaction: Faction
+    Timer: float32
+    Duration: float32
+  }
+
   type AnimationState =
     | Idle
     | Moving of MoveTween
     | Attacking of AttackTween
     | ShowingBanner of Banner
+    | Transitioning of TurnTransition
 
   [<RequireQualifiedAccess>]
   type AnimationEvent =
@@ -44,6 +51,7 @@ module AnimState =
     | AttackComplete
     | SegmentChanged of direction: Direction
     | BannerComplete
+    | TransitionComplete of newFaction: Faction
 
   [<RequireQualifiedAccess>]
   type AnimationMsg =
@@ -152,6 +160,20 @@ module AnimState =
       }
     | _ -> state
 
+  let startTransition
+    (newFaction: Faction)
+    (duration: float32)
+    (state: AnimationState)
+    : AnimationState =
+    match state with
+    | Idle ->
+      Transitioning {
+        NewFaction = newFaction
+        Timer = duration
+        Duration = duration
+      }
+    | _ -> state
+
   let inline update
     (dt: float32)
     (state: AnimationState)
@@ -192,6 +214,13 @@ module AnimState =
         Idle, ValueSome AnimationEvent.BannerComplete
       else
         ShowingBanner { banner with Timer = t }, ValueNone
+    | Transitioning transition ->
+      let t = transition.Timer - dt
+
+      if t <= 0.0f then
+        Idle, ValueSome(AnimationEvent.TransitionComplete transition.NewFaction)
+      else
+        Transitioning { transition with Timer = t }, ValueNone
 
   module Debug =
 
@@ -285,4 +314,26 @@ module AnimState =
           y
           "Timer"
           $"{banner.Timer:F2}/{banner.Duration:F2}"
+          buffer
+      | Transitioning transition ->
+        let struct (y, buffer) =
+          DebugUtils.kv font style x y "State" "Transitioning" buffer
+
+        let struct (y, buffer) =
+          DebugUtils.kv
+            font
+            style
+            x
+            y
+            "Faction"
+            (string transition.NewFaction)
+            buffer
+
+        DebugUtils.kv
+          font
+          style
+          x
+          y
+          "Timer"
+          $"{transition.Timer:F2}/{transition.Duration:F2}"
           buffer
