@@ -1,6 +1,7 @@
 namespace SpaceBattle
 
 open System.Numerics
+open SpaceBattle.Units
 
 module AnimState =
 
@@ -9,6 +10,8 @@ module AnimState =
     To: struct (int * int)
     Waypoints: Vector2[]
     SegmentDists: float32[]
+    Directions: Direction[]
+    SegmentIndex: int
     Progress: float32
     Duration: float32
   }
@@ -27,6 +30,7 @@ module AnimState =
   [<RequireQualifiedAccess>]
   type AnimationEvent =
     | MoveComplete
+    | SegmentChanged of direction: Direction
     | BannerComplete
 
   [<RequireQualifiedAccess>]
@@ -36,12 +40,21 @@ module AnimState =
       dest: struct (int * int) *
       waypoints: Vector2[] *
       segmentDists: float32[] *
+      directions: Direction[] *
       duration: float32
     | ShowBanner of message: string * duration: float32
     | Tick of dt: float32
 
   let moveDuration (unitMoveRange: int) (totalHexSteps: int) : float32 =
     float32 totalHexSteps * 0.5f / float32 unitMoveRange
+
+  let segmentIndex (segmentDists: float32[]) (t: float32) : int =
+    let mutable i = 0
+
+    while i < segmentDists.Length - 2 && segmentDists[i + 1] < t do
+      i <- i + 1
+
+    i
 
   let interpolatePosition
     (waypoints: Vector2[])
@@ -66,6 +79,7 @@ module AnimState =
     (dest: struct (int * int))
     (waypoints: Vector2[])
     (segmentDists: float32[])
+    (directions: Direction[])
     (duration: float32)
     (state: AnimationState)
     : AnimationState =
@@ -76,6 +90,8 @@ module AnimState =
         To = dest
         Waypoints = waypoints
         SegmentDists = segmentDists
+        Directions = directions
+        SegmentIndex = 0
         Progress = 0.0f
         Duration = duration
       }
@@ -107,7 +123,20 @@ module AnimState =
       if p >= 1.0f then
         Idle, ValueSome AnimationEvent.MoveComplete
       else
-        Moving { tween with Progress = p }, ValueNone
+        let newIdx = segmentIndex tween.SegmentDists p
+
+        let event =
+          if newIdx <> tween.SegmentIndex then
+            ValueSome(AnimationEvent.SegmentChanged tween.Directions[newIdx])
+          else
+            ValueNone
+
+        Moving {
+          tween with
+              Progress = p
+              SegmentIndex = newIdx
+        },
+        event
     | ShowingBanner banner ->
       let t = banner.Timer - dt
 

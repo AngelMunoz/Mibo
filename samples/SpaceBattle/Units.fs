@@ -45,8 +45,37 @@ module Units =
 
   type UnitsMsg =
     | MoveUnit of src: struct (int * int) * dest: struct (int * int)
+    | UpdateDirection of cell: struct (int * int) * direction: Direction
     | ApplyDamage of target: struct (int * int) * damage: int
     | RemoveUnit of cell: struct (int * int)
+
+  let directionFromDelta (dc: int) (dr: int) (srcCol: int) : Direction option =
+    if srcCol % 2 = 0 then
+      match dc, dr with
+      | -1, -1 -> Some NW
+      | 0, -1 -> Some N
+      | 1, -1 -> Some NE
+      | 1, 0 -> Some SE
+      | 0, 1 -> Some S
+      | -1, 0 -> Some SW
+      | _ -> None
+    else
+      match dc, dr with
+      | -1, 0 -> Some NW
+      | 0, -1 -> Some N
+      | 1, 0 -> Some NE
+      | 1, 1 -> Some SE
+      | 0, 1 -> Some S
+      | -1, 1 -> Some SW
+      | _ -> None
+
+  let directionFromCells
+    (src: struct (int * int))
+    (dst: struct (int * int))
+    : Direction option =
+    let struct (sc, sr) = src
+    let struct (dc, dr) = dst
+    directionFromDelta (dc - sc) (dr - sr) sc
 
   let update
     (msg: UnitsMsg)
@@ -56,6 +85,10 @@ module Units =
     | MoveUnit(src, dest) ->
       match units |> Map.tryFind src with
       | Some unit -> units |> Map.remove src |> Map.add dest unit
+      | None -> units
+    | UpdateDirection(cell, dir) ->
+      match units |> Map.tryFind cell with
+      | Some unit -> units |> Map.add cell { unit with Direction = dir }
       | None -> units
     | ApplyDamage(target, damage) ->
       match units |> Map.tryFind target with

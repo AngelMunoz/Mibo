@@ -230,6 +230,11 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       match event with
       | ValueSome AnimationEvent.MoveComplete ->
         Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.Resolution)
+      | ValueSome(AnimationEvent.SegmentChanged dir) ->
+        match model.Anim with
+        | AnimState.Moving tween ->
+          Cmd.ofMsg(UnitsMsg(UpdateDirection(tween.From, dir)))
+        | _ -> Cmd.none
       | _ -> Cmd.none
 
     model.Decorations <- decorations
@@ -294,9 +299,22 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
         segDists[simplified.Length - 1] <- 1f
 
+        let directions =
+          simplified
+          |> Array.pairwise
+          |> Array.map(fun (a, b) -> Units.directionFromCells a b |> Option.get)
+
         let duration = AnimState.moveDuration unit.MoveRange (path.Length - 1)
 
+        let firstDir = directions |> Array.tryHead
+
+        let dirCmd =
+          match firstDir with
+          | Some dir -> Cmd.ofMsg(UnitsMsg(UpdateDirection(move.From, dir)))
+          | None -> Cmd.none
+
         Cmd.batch [
+          dirCmd
           Cmd.ofMsg(
             AnimationMsg(
               AnimationMsg.StartMove(
@@ -304,6 +322,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
                 move.Dest,
                 waypoints,
                 segDists,
+                directions,
                 duration
               )
             )
@@ -323,9 +342,21 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
   | AnimationMsg msg ->
     match msg with
-    | AnimationMsg.StartMove(from, dest, waypoints, segDists, duration) ->
+    | AnimationMsg.StartMove(from,
+                             dest,
+                             waypoints,
+                             segDists,
+                             directions,
+                             duration) ->
       model.Anim <-
-        AnimState.startMove from dest waypoints segDists duration model.Anim
+        AnimState.startMove
+          from
+          dest
+          waypoints
+          segDists
+          directions
+          duration
+          model.Anim
 
       model, Cmd.none
     | AnimationMsg.ShowBanner(message, duration) ->
