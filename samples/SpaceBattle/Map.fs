@@ -4,6 +4,7 @@ open System
 open Mibo.Animation
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
+open Mibo.Elmish.Graphics2D.Lighting
 open Mibo.Layout
 open Raylib_cs
 open SpaceBattle.Types
@@ -166,25 +167,20 @@ module Map =
                   Path = [||]
             }
 
-  let view
+  let viewTiles
     (vpWidth: float32)
     (vpHeight: float32)
     (sprites: Map<struct (int * int), AnimatedSprite>)
     (camera: Camera2D)
     (mapModel: MapModel)
-    (hoveredOver: struct (int * int) voption)
+    (lightCtx: LightContext2D)
     buffer
     =
     let model = mapModel.Grid
-    let reachable = mapModel.Reachable
-    let attackTargets = mapModel.AttackTargets
-    let path = mapModel.Path
     let topLeft = Raylib.GetScreenToWorld2D(Vector2.Zero, camera)
 
     let bottomRight =
       Raylib.GetScreenToWorld2D(Vector2(vpWidth, vpHeight), camera)
-
-    let pathIdx = pathIndexMap path
 
     model
     |> HexGrid.iterVisible
@@ -215,14 +211,46 @@ module Map =
           let texture = animated.Sheet.Texture
 
           buffer
-          |> Draw.sprite(SpriteState.create(texture, targetRect, source))
+          |> LightDraw.litSprite
+            lightCtx
+            (SpriteState.create(texture, targetRect, source))
           |> Draw.drop
         | None ->
           buffer
           |> Draw.polyOutline
             (0<RenderLayer>, color, 1f)
             (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
-          |> Draw.drop
+          |> Draw.drop)
+
+    buffer
+
+  let viewOverlays
+    (vpWidth: float32)
+    (vpHeight: float32)
+    (camera: Camera2D)
+    (mapModel: MapModel)
+    (hoveredOver: struct (int * int) voption)
+    buffer
+    =
+    let model = mapModel.Grid
+    let reachable = mapModel.Reachable
+    let attackTargets = mapModel.AttackTargets
+    let path = mapModel.Path
+    let topLeft = Raylib.GetScreenToWorld2D(Vector2.Zero, camera)
+
+    let bottomRight =
+      Raylib.GetScreenToWorld2D(Vector2(vpWidth, vpHeight), camera)
+
+    let pathIdx = pathIndexMap path
+
+    model
+    |> HexGrid.iterVisible
+      topLeft.X
+      topLeft.Y
+      bottomRight.X
+      bottomRight.Y
+      (fun col row tile ->
+        let worldPos = model |> HexGrid.getWorldPos col row
 
         if reachable.Contains(struct (col, row)) then
           buffer

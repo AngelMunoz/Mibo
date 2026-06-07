@@ -5,6 +5,7 @@ open System.Numerics
 open Mibo.Animation
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
+open Mibo.Elmish.Graphics2D.Lighting
 open Mibo.Input
 open Mibo.Layout
 open Raylib_cs
@@ -36,6 +37,7 @@ type Model() =
   member val Anim: AnimationState = Unchecked.defaultof<_> with get, set
   member val GameAssets: GameAssets = Unchecked.defaultof<_> with get, set
   member val Skybox: Shaders.SkyboxModel = Unchecked.defaultof<_> with get, set
+  member val Effects: Effects.EffectState = Unchecked.defaultof<_> with get, set
   member val VPWidth: float32 = Unchecked.defaultof<_> with get, set
   member val VPHeight: float32 = Unchecked.defaultof<_> with get, set
 
@@ -159,6 +161,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       Anim = Idle,
       GameAssets = assets,
       Skybox = Shaders.Skybox.init(vpW, vpH),
+      Effects = Effects.init(),
       VPWidth = vpW,
       VPHeight = vpH
     )
@@ -259,7 +262,43 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         model.VPHeight
         model.Decorations
 
+    let attackTarget =
+      match model.Anim with
+      | AnimState.Attacking tween -> ValueSome tween.To
+      | _ -> ValueNone
+
+    let isLaser1 =
+      match model.Anim with
+      | AnimState.Attacking tween ->
+        let struct (ac, ar) = tween.AttackerCell
+
+        match model.Units |> Map.tryFind tween.AttackerCell with
+        | Some u ->
+          match u.Class with
+          | Fighter -> false
+          | Battleship -> true
+          | Cruiser -> (ac + ar) % 2 = 0
+        | None -> true
+      | _ -> true
+
     let struct (anim, event) = AnimState.update dt model.Anim
+
+    Effects.update model.Effects dt
+
+    match anim with
+    | AnimState.Attacking tween ->
+      let laserPos = Vector2.Lerp(tween.From, tween.To, tween.Progress)
+
+      let laserDir = Vector2.Normalize(tween.To - tween.From)
+      Effects.spawnTrail model.Effects laserPos laserDir isLaser1
+    | _ -> ()
+
+    match event with
+    | ValueSome AnimationEvent.AttackComplete ->
+      match attackTarget with
+      | ValueSome target -> Effects.spawnImpact model.Effects target isLaser1
+      | ValueNone -> ()
+    | _ -> ()
 
     let cmd =
       match event with
@@ -541,6 +580,8 @@ module ModelDebugoverlay =
 // ─────────────────────────────────────────────────────────────
 
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
+  model.Effects.Lighting.Reset()
+
   buffer
   |> Shaders.Skybox.render
     (model.Cam.Camera.Target, model.VPWidth, model.VPHeight)
@@ -548,13 +589,64 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
   |> Draw.drop
 
   Camera.beginView model.Cam buffer
-  |> Map.view
+  |> LightDraw.setAmbient
+    model.Effects.Lighting
+    (0<RenderLayer>, { Color = Effects.ambientColor })
+  |> Draw.drop
+
+  match model.Anim with
+  | AnimState.Attacking tween ->
+    let laserPos = Vector2.Lerp(tween.From, tween.To, tween.Progress)
+
+    let struct (ac, ar) = tween.AttackerCell
+
+    let isLaser1 =
+      match model.Units |> Map.tryFind tween.AttackerCell with
+      | Some u ->
+        match u.Class with
+        | Fighter -> false
+        | Battleship -> true
+        | Cruiser -> (ac + ar) % 2 = 0
+      | None -> true
+
+    let lightColor =
+      if isLaser1 then
+        Color(255uy, 100uy, 60uy)
+      else
+        Color(80uy, 255uy, 100uy)
+
+    buffer
+    |> LightDraw.addPointLight model.Effects.Lighting 0<RenderLayer> {
+      Position = laserPos
+      Color = lightColor
+      Intensity = 2.5f
+      Radius = 150.0f
+      Falloff = 1.5f
+      CastsShadows = false
+    }
+    |> Draw.drop
+  | _ -> ()
+
+  for flash in model.Effects.ImpactFlashes do
+    buffer
+    |> LightDraw.addPointLight model.Effects.Lighting 0<RenderLayer> {
+      Position = flash.Position
+      Color = Color(255uy, 255uy, 200uy)
+      Intensity = flash.Intensity
+      Radius = flash.Radius
+      Falloff = 2.0f
+      CastsShadows = false
+    }
+    |> Draw.drop
+
+  buffer
+  |> Map.viewTiles
     model.VPWidth
     model.VPHeight
     model.Decorations
     model.Cam.Camera
     model.Map
-    model.Input.HoveredOver
+    model.Effects.Lighting
   |> Draw.drop
 
   let movingUnit =
@@ -579,6 +671,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     model.UnitSprites
     model.Map.Grid
     movingUnit
+    model.Effects.Lighting
     model.Cam.Camera
   |> Draw.drop
 
@@ -615,13 +708,37 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     let origin = Vector2(fw / 2f, fh / 2f)
 
     buffer
-    |> Draw.sprite(
-      SpriteState.create(laser.Texture, targetRect, source)
-      |> SpriteState.withRotation angle
-      |> SpriteState.withOrigin origin
-    )
+    |> LightDraw.litSprite
+      model.Effects.Lighting
+      (SpriteState.create(laser.Texture, targetRect, source)
+       |> SpriteState.withRotation angle
+       |> SpriteState.withOrigin origin)
     |> Draw.drop
   | _ -> ()
+
+  buffer
+  |> LightDraw.endLighting model.Effects.Lighting 0<RenderLayer>
+  |> Draw.drop
+
+  if model.Effects.ParticleCount > 0 then
+    buffer
+    |> Draw.setBlend 0<RenderLayer> BlendMode.Additive
+    |> ParticleDraw.particles
+      model.Effects.ParticleTexture
+      model.Effects.Particles
+      model.Effects.ParticleCount
+      0<RenderLayer>
+    |> Draw.setBlend 0<RenderLayer> BlendMode.Alpha
+    |> Draw.drop
+
+  buffer
+  |> Map.viewOverlays
+    model.VPWidth
+    model.VPHeight
+    model.Cam.Camera
+    model.Map
+    model.Input.HoveredOver
+  |> Draw.drop
 
   Camera.endView buffer |> Draw.drop
 

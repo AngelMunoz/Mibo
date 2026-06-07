@@ -18,6 +18,7 @@
     <Compile Include="Shaders.fs" />
     <Compile Include="Camera.fs" />
     <Compile Include="AnimatedDecorations.fs" />
+    <Compile Include="Effects.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

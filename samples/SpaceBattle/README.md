@@ -15,8 +15,9 @@ The core Elmish loop is `init → update → view`, driven by messages. In Space
   │         ├──▶ Units.update     ──▶ model.Units  + Cmd<Units>  │
   │         ├──▶ Camera.update    ──▶ model.Cam                  │
   │         ├──▶ Phase.System     ──▶ model.Turn   + Intent      │
-  │         ├──▶ AnimState.update ──▶ model.Anim   + Event       │
-  │         └──▶ Tick (per frame) ──▶ camera, anim, decorations  │
+   │         ├──▶ AnimState.update ──▶ model.Anim   + Event       │
+   │         ├──▶ Effects.update  ──▶ model.Effects               │
+   │         └──▶ Tick (per frame) ──▶ camera, anim, decorations  │
   │                                                              │
   │   Intent ──▶ translate to Cmd<Msg> for other systems         │
   │   Event  ──▶ translate to Cmd<Msg> for other systems         │
@@ -49,6 +50,7 @@ type Msg =
 | **Selection**   | `Selection.fs`           | (pure functions)                           | —                        | Move range, path computation, simplification |
 | **Shaders**     | `Shaders.fs`             | `SkyboxModel`                              | —                        | Skybox rendering                             |
 | **Decorations** | `AnimatedDecorations.fs` | `Map<cell, AnimatedSprite>`                | —                        | Animated background sprites                  |
+| **Effects**     | `Effects.fs`             | `EffectState` (particles, lights, flashes) | —                        | Laser trail/impact particles, point lights   |
 
 ## Cross-System Communication
 
@@ -157,8 +159,11 @@ The attack lifecycle mirrors the move flow — Phase declares intent, animation 
    ▼
 4. Tick (every frame)
    │  AnimState.update advances Progress
+   │  Effects.update fades particles and impact flashes
+   │  If attacking: Effects.spawnTrail at laser position
    │  When Progress >= 1.0:
    │    ──▶ AnimationEvent.AttackComplete
+   │    ──▶ Effects.spawnImpact at target position
    │    ──▶ Program.fs emits PhaseMsg(Resolution)
    │
    ▼
@@ -266,6 +271,7 @@ SpaceBattle/
 ├── Selection.fs         ← Move range computation, path simplification
 ├── AnimState.fs         ← Movement tween animation, banners
 ├── AnimatedDecorations.fs ← Animated background sprites
+├── Effects.fs           ← Laser trail/impact particles, point lights
 ├── Shaders.fs           ← Skybox shader
 ├── Assets.fs            ← Sprite sheet loading
 ├── Constants.fs         ← Game constants (cell size, zoom, etc.)

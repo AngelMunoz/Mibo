@@ -4,6 +4,7 @@ open System.Numerics
 open Mibo.Animation
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
+open Mibo.Elmish.Graphics2D.Lighting
 open Mibo.Layout
 open Raylib_cs
 open SpaceBattle.Types
@@ -182,6 +183,7 @@ module Units =
     (unitSprites: Map<struct (Faction * UnitClass), SpriteSheet>)
     (map: HexGrid<Tile>)
     (movingUnit: struct (int * int * Vector2) voption)
+    (lightCtx: LightContext2D)
     camera
     buffer
     =
@@ -235,9 +237,9 @@ module Units =
               )
 
             buffer
-            |> Draw.sprite(
-              SpriteState.create(sheet.Texture, targetRect, source)
-            )
+            |> LightDraw.litSprite
+              lightCtx
+              (SpriteState.create(sheet.Texture, targetRect, source))
             |> Draw.drop
           | None -> ()
         | None -> ())
