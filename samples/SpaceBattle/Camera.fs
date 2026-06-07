@@ -15,16 +15,12 @@ type CameraModel = { Camera: Camera2D }
 type CameraMsg =
   | ApplyZoom of zoom: float32
   | ApplyMovement of held: Set<GameAction> * dt: float32
-  | ClampToMap of grid: HexGrid<Tile>
+  | ClampToMap of grid: HexGrid<Tile> * vpWidth: float32 * vpHeight: float32
 
 module Camera =
 
-  let init() = {
-    Camera =
-      Camera2D.create
-        Vector2.Zero
-        1f
-        (Vector2(Constants.VPWidth, Constants.VPHeight))
+  let init(vpWidth: float32, vpHeight: float32) = {
+    Camera = Camera2D.create Vector2.Zero 1f (Vector2(vpWidth, vpHeight))
   }
 
   let applyZoom (zoom: float32) (model: CameraModel) : CameraModel =
@@ -37,7 +33,12 @@ module Camera =
 
     { Camera = camera }
 
-  let clampToMapBounds (map: HexGrid<Tile>) (camera: byref<Camera2D>) =
+  let clampToMapBounds
+    (map: HexGrid<Tile>)
+    (vpWidth: float32)
+    (vpHeight: float32)
+    (camera: byref<Camera2D>)
+    =
     let hexW = Constants.CellSize * 2.0f
     let hexH = Constants.CellSize * sqrt 3.0f
 
@@ -46,8 +47,8 @@ module Camera =
     let mapRight = map.Origin.X + float32(map.Width - 1) * hexW * 0.75f + hexW
     let mapBottom = map.Origin.Y + float32(map.Height - 1) * hexH + hexH * 1.5f
 
-    let vw = Constants.VPWidth / camera.Zoom
-    let vh = Constants.VPHeight / camera.Zoom
+    let vw = vpWidth / camera.Zoom
+    let vh = vpHeight / camera.Zoom
 
     let marginX = Constants.BorderMargin * vw
     let marginY = Constants.BorderMargin * vh
@@ -112,9 +113,10 @@ module Camera =
         cam.Target <- cam.Target + Vector2(0f, speed)
 
       { Camera = cam }
-    | ClampToMap grid ->
+    | ClampToMap(grid, vpWidth, vpHeight) ->
       let mutable c = model.Camera
-      clampToMapBounds grid &c
+      c.Offset <- Vector2(vpWidth * 0.5f, vpHeight * 0.5f)
+      clampToMapBounds grid vpWidth vpHeight &c
       { Camera = c }
 
   let inline beginView (model: CameraModel) (buffer: RenderBuffer2D) =

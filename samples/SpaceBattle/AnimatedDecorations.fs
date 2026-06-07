@@ -66,6 +66,8 @@ module AnimatedDecorations =
     (dt: float32)
     (map: HexGrid<Tile>)
     (camera: Raylib_cs.Camera2D)
+    (vpWidth: float32)
+    (vpHeight: float32)
     (sprites: Map<struct (int * int), AnimatedSprite>)
     : Map<struct (int * int), AnimatedSprite> =
     let topLeft =
@@ -73,7 +75,7 @@ module AnimatedDecorations =
 
     let bottomRight =
       Raylib_cs.Raylib.GetScreenToWorld2D(
-        System.Numerics.Vector2(Constants.VPWidth, Constants.VPHeight),
+        System.Numerics.Vector2(vpWidth, vpHeight),
         camera
       )
 

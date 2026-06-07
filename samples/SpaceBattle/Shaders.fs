@@ -197,6 +197,7 @@ module Skybox =
       (float32 sky.Timer.Elapsed.TotalSeconds)
 
     Uniform.setVec2 sky.Shader sky.CamLoc cameraTarget
+    Uniform.setVec2 sky.Shader sky.ResLoc (Vector2(vpWidth, vpHeight))
 
     buffer
     |> Draw.beginShader -1000<RenderLayer> sky.Shader

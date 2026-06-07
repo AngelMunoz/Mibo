@@ -167,7 +167,8 @@ module Map =
             }
 
   let view
-    (ctx: GameContext)
+    (vpWidth: float32)
+    (vpHeight: float32)
     (sprites: Map<struct (int * int), AnimatedSprite>)
     (camera: Camera2D)
     (mapModel: MapModel)
@@ -181,10 +182,7 @@ module Map =
     let topLeft = Raylib.GetScreenToWorld2D(Vector2.Zero, camera)
 
     let bottomRight =
-      Raylib.GetScreenToWorld2D(
-        Vector2(Constants.VPWidth, Constants.VPHeight),
-        camera
-      )
+      Raylib.GetScreenToWorld2D(Vector2(vpWidth, vpHeight), camera)
 
     let pathIdx = pathIndexMap path
 

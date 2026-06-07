@@ -15,6 +15,7 @@ type GameAction =
   | MoveDown
   | Deselect
   | EndTurn
+  | ToggleFullScreen
 
 [<Struct>]
 type MouseAction =
@@ -59,6 +60,7 @@ module Input =
     |> InputMap.key MoveDown KeyboardKey.S
     |> InputMap.key Deselect KeyboardKey.Escape
     |> InputMap.key EndTurn KeyboardKey.Enter
+    |> InputMap.key ToggleFullScreen KeyboardKey.F11
 
   let init = {
     State = ActionState.empty
@@ -118,6 +120,9 @@ module Input =
       { model with Selection = Selected cell }, Cmd.ofMsg CalculateRange
     | InputChanged input ->
       let model = { model with State = input }
+
+      if input.Started.Contains ToggleFullScreen then
+        Raylib.ToggleBorderlessWindowed()
 
       if input.Started.Contains Deselect then
         { model with Selection = NoSelection }, Cmd.none

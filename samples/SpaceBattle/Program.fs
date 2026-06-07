@@ -36,6 +36,8 @@ type Model() =
   member val Anim: AnimationState = Unchecked.defaultof<_> with get, set
   member val GameAssets: GameAssets = Unchecked.defaultof<_> with get, set
   member val Skybox: Shaders.SkyboxModel = Unchecked.defaultof<_> with get, set
+  member val VPWidth: float32 = Unchecked.defaultof<_> with get, set
+  member val VPHeight: float32 = Unchecked.defaultof<_> with get, set
 
 // ─────────────────────────────────────────────────────────────
 // Messages
@@ -137,6 +139,9 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
 
   let turnOrder = Phase.createTurnOrder [| Pirates; Federation |]
 
+  let vpW = float32 ctx.WindowWidth
+  let vpH = float32 ctx.WindowHeight
+
   let model =
     Model(
       Time = {
@@ -144,7 +149,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
         TotalTime = TimeSpan.Zero
       },
       Input = Input.init,
-      Cam = Camera.init(),
+      Cam = Camera.init(vpW, vpH),
       Map = map,
       Units = units,
       UnitSprites = SBAssets.initUnitSprites assets,
@@ -153,7 +158,9 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       TurnOrder = turnOrder,
       Anim = Idle,
       GameAssets = assets,
-      Skybox = Shaders.Skybox.init(Constants.VPWidth, Constants.VPHeight)
+      Skybox = Shaders.Skybox.init(vpW, vpH),
+      VPWidth = vpW,
+      VPHeight = vpH
     )
 
   model, Cmd.none
@@ -202,6 +209,12 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     model.Input <- input
 
+    match inputMsg with
+    | InputChanged inputs when inputs.Started.Contains ToggleFullScreen ->
+      model.VPWidth <- float32(Raylib.GetScreenWidth())
+      model.VPHeight <- float32(Raylib.GetScreenHeight())
+    | _ -> ()
+
     let inputCmd =
       match inputMsg with
       | CellClicked cell ->
@@ -232,13 +245,18 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         (CameraMsg.ApplyMovement(model.Input.State.Held, dt))
         model.Cam
 
-    model.Cam <- Camera.update (CameraMsg.ClampToMap model.Map.Grid) cam
+    model.Cam <-
+      Camera.update
+        (CameraMsg.ClampToMap(model.Map.Grid, model.VPWidth, model.VPHeight))
+        cam
 
     let decorations =
       AnimatedDecorations.update
         dt
         model.Map.Grid
         model.Cam.Camera
+        model.VPWidth
+        model.VPHeight
         model.Decorations
 
     let struct (anim, event) = AnimState.update dt model.Anim
@@ -525,13 +543,14 @@ module ModelDebugoverlay =
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
   buffer
   |> Shaders.Skybox.render
-    (model.Cam.Camera.Target, Constants.VPWidth, Constants.VPHeight)
+    (model.Cam.Camera.Target, model.VPWidth, model.VPHeight)
     model.Skybox
   |> Draw.drop
 
   Camera.beginView model.Cam buffer
   |> Map.view
-    ctx
+    model.VPWidth
+    model.VPHeight
     model.Decorations
     model.Cam.Camera
     model.Map
@@ -554,7 +573,8 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
 
   buffer
   |> Units.view
-    ctx
+    model.VPWidth
+    model.VPHeight
     model.Units
     model.UnitSprites
     model.Map.Grid
@@ -651,8 +671,8 @@ let main _ =
     Program.mkProgram init update
     |> Program.withConfig(fun cfg -> {
       cfg with
-          Width = 1280
-          Height = 720
+          Width = int Constants.VPWidth
+          Height = int Constants.VPHeight
           Title = "Mibo Raylib 2D Game"
           TargetFPS = 60
     })

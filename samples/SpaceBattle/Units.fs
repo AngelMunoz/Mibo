@@ -176,7 +176,8 @@ module Units =
     | NW -> 5
 
   let view
-    (ctx: GameContext)
+    (vpWidth: float32)
+    (vpHeight: float32)
     (units: Map<struct (int * int), SBUnit>)
     (unitSprites: Map<struct (Faction * UnitClass), SpriteSheet>)
     (map: HexGrid<Tile>)
@@ -187,10 +188,7 @@ module Units =
     let topLeft = Raylib.GetScreenToWorld2D(Vector2.Zero, camera)
 
     let bottomRight =
-      Raylib.GetScreenToWorld2D(
-        Vector2(Constants.VPWidth, Constants.VPHeight),
-        camera
-      )
+      Raylib.GetScreenToWorld2D(Vector2(vpWidth, vpHeight), camera)
 
     map
     |> HexGrid.iterVisible
