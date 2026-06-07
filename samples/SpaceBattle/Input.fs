@@ -141,3 +141,42 @@ module Input =
             | ValueNone -> ValueNone, Cmd.none
 
         { model with HoveredOver = cell }, cmd
+
+  module Debug =
+
+    open Raylib_cs
+    open Mibo.Elmish.Graphics2D
+
+    let inline view
+      (font: Font)
+      (style: DebugUtils.DebugStyle)
+      (model: InputModel)
+      (x: int)
+      (y: int)
+      (buffer: RenderBuffer2D)
+      : struct (int * RenderBuffer2D) =
+      let struct (y, buffer) = DebugUtils.section font style x y "Input" buffer
+
+      let struct (y, buffer) =
+        DebugUtils.kv font style x y "Selection" (string model.Selection) buffer
+
+      let hovered =
+        DebugUtils.formatVopt DebugUtils.formatCell model.HoveredOver
+
+      let struct (y, buffer) =
+        DebugUtils.kv font style x y "Hovered" hovered buffer
+
+      let struct (y, buffer) =
+        DebugUtils.kv font style x y "Held" (string model.State.Held) buffer
+
+      let struct (y, buffer) =
+        DebugUtils.kv
+          font
+          style
+          x
+          y
+          "Started"
+          (string model.State.Started)
+          buffer
+
+      struct (y, buffer)

@@ -91,3 +91,34 @@ module Camera =
 
   let inline endView(buffer: RenderBuffer2D) =
     Draw.endCamera 0<RenderLayer> buffer
+
+  module Debug =
+
+    open Mibo.Elmish.Graphics2D
+
+    let inline view
+      (font: Raylib_cs.Font)
+      (style: DebugUtils.DebugStyle)
+      (cam: CameraModel)
+      (x: int)
+      (y: int)
+      (buffer: RenderBuffer2D)
+      : struct (int * RenderBuffer2D) =
+      let struct (y, buffer) = DebugUtils.section font style x y "Camera" buffer
+
+      let c = cam.Camera
+
+      let struct (y, buffer) =
+        DebugUtils.kv
+          font
+          style
+          x
+          y
+          "Pos"
+          $"({c.Target.X:F1}, {c.Target.Y:F1})"
+          buffer
+
+      let struct (y, buffer) =
+        DebugUtils.kv font style x y "Zoom" $"{c.Zoom:F2}" buffer
+
+      DebugUtils.kv font style x y "Rotation" $"{c.Rotation:F1}" buffer

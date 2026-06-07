@@ -2,6 +2,7 @@ namespace SpaceBattle
 
 open Mibo.Elmish
 open Mibo.Animation
+open Raylib_cs
 open SpaceBattle.Units
 
 type Decoration =
@@ -18,6 +19,7 @@ type GameAssets = {
   Station: SpriteSheet
   FactionAssets: Map<Faction, FactionAssets>
   Decorations: Map<Decoration, SpriteSheet[]>
+  MonoFont: Font
 }
 
 module SBAssets =
@@ -203,6 +205,7 @@ module SBAssets =
           Asteroid, loadDecorationAssets Asteroid assets
           Crate, loadDecorationAssets Crate assets
         ]
+      MonoFont = assets.Font "assets/Fonts/monogram.ttf"
     }
 
   let initUnitSprites

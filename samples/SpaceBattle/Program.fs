@@ -60,6 +60,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
     Map.ofList [
       struct (0, 0),
       {
+        id = 1<UnitId>
         Faction = Pirates
         Class = Fighter
         Direction = SE
@@ -71,6 +72,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       }
       struct (1, 0),
       {
+        id = 2<UnitId>
         Faction = Pirates
         Class = Cruiser
         Direction = SE
@@ -82,6 +84,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       }
       struct (0, 1),
       {
+        id = 3<UnitId>
         Faction = Pirates
         Class = Battleship
         Direction = SE
@@ -93,6 +96,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       }
       struct (map.Grid.Width - 1, map.Grid.Height - 1),
       {
+        id = 4<UnitId>
         Faction = Federation
         Class = Fighter
         Direction = NW
@@ -104,6 +108,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       }
       struct (map.Grid.Width - 1, map.Grid.Height - 2),
       {
+        id = 5<UnitId>
         Faction = Federation
         Class = Cruiser
         Direction = NW
@@ -115,6 +120,7 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       }
       struct (map.Grid.Width - 2, map.Grid.Height - 1),
       {
+        id = 6<UnitId>
         Faction = Federation
         Class = Battleship
         Direction = NW
@@ -231,16 +237,17 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     model, cmd
 
   | PhaseMsg phaseMsg ->
-    let result =
-      Phase.System.apply
-        phaseMsg
-        model.Input.Selection
-        model.Units
-        model.Map
-        model.Input.HoveredOver
-        model.Turn
-        model.TurnOrder
-        model.Anim
+    let struct (result, phaseCmd) =
+      Phase.System.update {
+        Msg = phaseMsg
+        Selection = model.Input.Selection
+        Units = model.Units
+        Grid = model.Map.Grid
+        Reachable = model.Map.Reachable
+        Turn = model.Turn
+        TurnOrder = model.TurnOrder
+        Anim = model.Anim
+      }
 
     model.Input <- {
       model.Input with
@@ -248,20 +255,16 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     }
 
     model.Units <- result.Units
-    model.Map <- result.MapModel
     model.Turn <- result.Turn
     model.TurnOrder <- result.TurnOrder
     model.Anim <- result.Anim
 
-    let cmd =
+    let mapCmd =
       match result.Intent with
-      | Phase.Intent.SwitchSelection _
-      | Phase.Intent.ClearSelection -> Cmd.ofMsg(MapMsg RecalculateRange)
-      | Phase.Intent.PerformMove _
-      | Phase.Intent.PerformAttack _
       | Phase.Intent.NoIntent -> Cmd.none
+      | _ -> Cmd.ofMsg(MapMsg RecalculateRange)
 
-    model, cmd
+    model, Cmd.batch [ phaseCmd |> Cmd.map PhaseMsg; mapCmd ]
 
   | AnimationMsg msg ->
     match msg with
@@ -272,6 +275,53 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       model.Anim <- AnimState.showBanner message duration model.Anim
       model, Cmd.none
     | AnimationMsg.Tick _ -> model, Cmd.none
+
+
+module ModelDebugoverlay =
+
+  open DebugUtils
+
+  [<Literal>]
+  let ShowDebug = true
+
+  [<Literal>]
+  let PanelWidth = 320
+
+  [<Literal>]
+  let PanelMargin = 10
+
+  let view (model: Model) (buffer: RenderBuffer2D) : RenderBuffer2D =
+    if not ShowDebug then
+      buffer
+    else
+      let font = model.GameAssets.MonoFont
+      let style = DebugUtils.defaultStyle
+      let x = PanelMargin
+      let startY = PanelMargin
+
+      let struct (y, buffer) =
+        Phase.Debug.view font style model.Turn model.TurnOrder x startY buffer
+
+      let struct (y, buffer) =
+        Input.Debug.view font style model.Input x y buffer
+
+      let struct (y, buffer) =
+        Units.Debug.view font style model.Units x y buffer
+
+      let struct (y, buffer) = Camera.Debug.view font style model.Cam x y buffer
+
+      let struct (y, buffer) =
+        AnimState.Debug.view font style model.Anim x y buffer
+
+      let totalHeight = y - startY + PanelMargin
+
+      buffer
+      |> DebugUtils.background
+        (x - PanelMargin)
+        (startY - PanelMargin)
+        (PanelWidth + PanelMargin * 2)
+        totalHeight
+        style
 
 // ─────────────────────────────────────────────────────────────
 // View
@@ -293,16 +343,18 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     model.Input.HoveredOver
   |> Draw.drop
 
-  Units.view
+  buffer
+  |> Units.view
     ctx
     model.Units
     model.UnitSprites
     model.Map.Grid
     model.Cam.Camera
-    buffer
   |> Draw.drop
 
   Camera.endView buffer |> Draw.drop
+
+  ModelDebugoverlay.view model buffer |> Draw.drop
 
 // ─────────────────────────────────────────────────────────────
 // Subscriptions

@@ -92,3 +92,62 @@ module AnimState =
         Idle, ValueSome AnimationEvent.BannerComplete
       else
         ShowingBanner { banner with Timer = t }, ValueNone
+
+  module Debug =
+
+    open Raylib_cs
+    open Mibo.Elmish.Graphics2D
+
+    let inline view
+      (font: Font)
+      (style: DebugUtils.DebugStyle)
+      (state: AnimationState)
+      (x: int)
+      (y: int)
+      (buffer: RenderBuffer2D)
+      : struct (int * RenderBuffer2D) =
+      let struct (y, buffer) =
+        DebugUtils.section font style x y "Animation" buffer
+
+      match state with
+      | Idle -> DebugUtils.kv font style x y "State" "Idle" buffer
+      | Moving tween ->
+        let struct (y, buffer) =
+          DebugUtils.kv font style x y "State" "Moving" buffer
+
+        let struct (y, buffer) =
+          DebugUtils.kv
+            font
+            style
+            x
+            y
+            "From"
+            (DebugUtils.formatCell tween.From)
+            buffer
+
+        let struct (y, buffer) =
+          DebugUtils.kv
+            font
+            style
+            x
+            y
+            "To"
+            (DebugUtils.formatCell tween.To)
+            buffer
+
+        DebugUtils.kv font style x y "Progress" $"{tween.Progress:F2}" buffer
+      | ShowingBanner banner ->
+        let struct (y, buffer) =
+          DebugUtils.kv font style x y "State" "Banner" buffer
+
+        let struct (y, buffer) =
+          DebugUtils.kv font style x y "Message" banner.Message buffer
+
+        DebugUtils.kv
+          font
+          style
+          x
+          y
+          "Timer"
+          $"{banner.Timer:F2}/{banner.Duration:F2}"
+          buffer

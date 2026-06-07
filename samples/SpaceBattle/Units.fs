@@ -28,8 +28,11 @@ module Units =
     | SW
     | NW
 
+  [<Measure>]
+  type UnitId
 
   type SBUnit = {
+    id: int<UnitId>
     Faction: Faction
     Class: UnitClass
     Direction: Direction
@@ -114,3 +117,25 @@ module Units =
         | None -> ())
 
     buffer
+
+  module Debug =
+
+    let inline view
+      (font: Raylib_cs.Font)
+      (style: DebugUtils.DebugStyle)
+      (units: Map<struct (int * int), SBUnit>)
+      (x: int)
+      (y: int)
+      (buffer: RenderBuffer2D)
+      : struct (int * RenderBuffer2D) =
+      let struct (y, buffer) =
+        DebugUtils.section font style x y $"Units ({units.Count})" buffer
+
+      (struct (y, buffer), units)
+      ||> Map.fold(fun (struct (y, buffer)) pos unit ->
+        let posStr = DebugUtils.formatCell pos
+
+        let msg =
+          $"{posStr} #{unit.id} {unit.Faction} {unit.Class} HP:{unit.HP}/{unit.MaxHP}"
+
+        DebugUtils.kv font style x y posStr msg buffer)
