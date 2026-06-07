@@ -32,8 +32,15 @@ module Units =
   [<Measure>]
   type UnitId
 
+  [<Struct>]
+  type UnitControl =
+    | Human
+    | AI
+
   type SBUnit = {
     id: int<UnitId>
+    PlayerIndex: int
+    Control: UnitControl
     Faction: Faction
     Class: UnitClass
     Direction: Direction
@@ -131,6 +138,20 @@ module Units =
     | Fighter -> 30
     | Cruiser -> 20
     | Battleship -> 15
+
+  let isLaser1
+    (units: Map<struct (int * int), SBUnit>)
+    (attackerCell: struct (int * int))
+    : bool =
+    let struct (ac, ar) = attackerCell
+
+    match units |> Map.tryFind attackerCell with
+    | Some u ->
+      match u.Class with
+      | Fighter -> false
+      | Battleship -> true
+      | Cruiser -> (ac + ar) % 2 = 0
+    | None -> true
 
   let update
     (msg: UnitsMsg)

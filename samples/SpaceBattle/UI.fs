@@ -146,7 +146,7 @@ module UI =
             hoveredUnit.MoveRange
             grid
             units
-            hoveredUnit.Faction
+            hoveredUnit.PlayerIndex
 
         // Attack ring (red border)
         let attackRing =

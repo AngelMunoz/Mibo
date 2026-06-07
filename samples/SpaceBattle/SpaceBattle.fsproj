@@ -21,6 +21,7 @@
     <Compile Include="Effects.fs" />
     <Compile Include="FogOfWar.fs" />
     <Compile Include="UI.fs" />
+    <Compile Include="PreStart.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

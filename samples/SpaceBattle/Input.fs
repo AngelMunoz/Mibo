@@ -82,7 +82,7 @@ module Input =
     (newlySelected: struct (int * int) voption)
     (model: InputModel)
     (units: Map<struct (int * int), Units.SBUnit>)
-    (currentFaction: Units.Faction)
+    (currentPlayerIndex: int)
     : struct (InputModel * Cmd<InputMsg>) =
     match model.Selection, newlySelected with
     | Selected _src, ValueSome clicked ->
@@ -93,7 +93,7 @@ module Input =
       model, Cmd.ofMsg(CellClicked cell)
     | NoSelection, ValueSome cell ->
       let selection =
-        Selection.trySelect cell currentFaction units model.Selection
+        Selection.trySelect cell currentPlayerIndex units model.Selection
 
       match selection with
       | Selected _ ->
@@ -114,7 +114,7 @@ module Input =
     msg
     (model: InputModel)
     (units: Map<struct (int * int), Units.SBUnit>)
-    (currentFaction: Units.Faction)
+    (currentPlayerIndex: int)
     : struct (InputModel * Cmd<InputMsg>) =
     match msg with
     | CalculateRange -> model, Cmd.none
@@ -138,10 +138,10 @@ module Input =
       match action with
       | MouseAction.Zoom _ -> model, Cmd.none
       | MouseAction.Select cell ->
-        handleCellClick cell model units currentFaction
+        handleCellClick cell model units currentPlayerIndex
 
       | MouseAction.GetInfo cell ->
-        handleCellClick cell model units currentFaction
+        handleCellClick cell model units currentPlayerIndex
       | MouseAction.Hover cell ->
         let cell, cmd =
           match model.HoveredOver with

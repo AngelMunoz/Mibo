@@ -221,7 +221,7 @@ module SBAssets =
     : Map<struct (Faction * UnitClass), SpriteSheet> =
     let mutable sprites = Map.empty
 
-    for faction in [| Federation; Pirates |] do
+    for faction in [| Federation; Empire; Pirates |] do
       for unitClass in [| Fighter; Cruiser; Battleship |] do
         let sprite =
           match unitClass with

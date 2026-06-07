@@ -24,13 +24,17 @@ type RangeQuery = {
   Selection: SelectionState
   Hovered: struct (int * int) voption
   Units: Map<struct (int * int), SBUnit>
-  CurrentFaction: Faction
+  CurrentPlayerIndex: int
   CanMove: bool
   CanAct: bool
 }
 
 [<Struct>]
-type MapMsg = RecalculateRange of query: RangeQuery
+type MapMsg =
+  | RecalculateRange of query: RangeQuery
+  | RefreshVisibility of
+    units: Map<struct (int * int), SBUnit> *
+    playerIndex: int
 
 module Map =
   open System.Numerics
@@ -62,8 +66,8 @@ module Map =
 
     map |> HexLayout.run filledMap
 
-  let init(seed: int) : MapModel =
-    let grid = createMap Vector2.Zero 12 12 |> fillMap(Random seed)
+  let init(seed: int, width: int, height: int) : MapModel =
+    let grid = createMap Vector2.Zero width height |> fillMap(Random seed)
     let w, h = grid.Width, grid.Height
 
     let corners = [|
@@ -105,13 +109,13 @@ module Map =
 
   let computeVisibleUnits
     (units: Map<struct (int * int), SBUnit>)
-    (faction: Faction)
+    (playerIndex: int)
     (grid: HexGrid<Tile>)
     : Set<struct (int * int)> =
     let mutable visible = Set.empty
 
     for KeyValue(struct (col, row), unit) in units do
-      if unit.Faction = faction then
+      if unit.PlayerIndex = playerIndex then
         let cells = Hex2DSpatial.inRange col row unit.VisualRange grid
 
         for cell in cells do
@@ -148,7 +152,7 @@ module Map =
                 unit.MoveRange
                 model.Grid
                 query.Units
-                query.CurrentFaction
+                query.CurrentPlayerIndex
 
             let path =
               match query.Hovered with
@@ -158,7 +162,7 @@ module Map =
                   dest
                   model.Grid
                   query.Units
-                  query.CurrentFaction
+                  query.CurrentPlayerIndex
               | _ -> [||]
 
             {
@@ -184,6 +188,12 @@ module Map =
                   AttackTargets = Set.empty
                   Path = [||]
             }
+
+    | RefreshVisibility(units, playerIndex) ->
+        {
+          model with
+              Visible = computeVisibleUnits units playerIndex model.Grid
+        }
 
   let viewTiles
     (vpWidth: float32)

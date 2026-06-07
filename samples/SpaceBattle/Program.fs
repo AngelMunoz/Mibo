@@ -11,6 +11,16 @@ open Mibo.Layout
 open Raylib_cs
 open AnimState
 open SpaceBattle.Units
+open SpaceBattle.Types
+
+// ─────────────────────────────────────────────────────────────
+// Game State
+// ─────────────────────────────────────────────────────────────
+
+[<Struct>]
+type GameState =
+  | PreStartScreen
+  | Playing
 
 // ─────────────────────────────────────────────────────────────
 // Model
@@ -18,6 +28,8 @@ open SpaceBattle.Units
 
 type Model() =
 
+  member val State: GameState = PreStartScreen with get, set
+  member val PreStartState: PreStartState = Unchecked.defaultof<_> with get, set
   member val Time: GameTime = Unchecked.defaultof<_> with get, set
   member val Input: InputModel = Unchecked.defaultof<_> with get, set
   member val Cam: CameraModel = Unchecked.defaultof<_> with get, set
@@ -56,6 +68,7 @@ type Msg =
   | Tick of tick: GameTime
   | PhaseMsg of phase: Phase.PhaseMsg
   | AnimationMsg of animation: AnimationMsg
+  | PreStartMsg of preStartMsg: PreStartMsg
   | RestartGame
 
 // ─────────────────────────────────────────────────────────────
@@ -63,110 +76,26 @@ type Msg =
 // ─────────────────────────────────────────────────────────────
 
 let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
-  let map = Map.init(Random.Shared.Next 10001)
   let assets = SBAssets.loadSpriteSheets ctx
-
-  let units =
-    Map.ofList [
-      struct (0, 0),
-      {
-        id = 1<UnitId>
-        Faction = Pirates
-        Class = Fighter
-        Direction = SE
-        HP = 100
-        MaxHP = 100
-        Defense = 10
-        MoveRange = 7
-        AttackRange = 4
-        VisualRange = 3
-      }
-      struct (1, 0),
-      {
-        id = 2<UnitId>
-        Faction = Pirates
-        Class = Cruiser
-        Direction = SE
-        HP = 150
-        MaxHP = 150
-        Defense = 15
-        MoveRange = 5
-        AttackRange = 6
-        VisualRange = 5
-      }
-      struct (0, 1),
-      {
-        id = 3<UnitId>
-        Faction = Pirates
-        Class = Battleship
-        Direction = SE
-        HP = 200
-        MaxHP = 200
-        Defense = 30
-        MoveRange = 3
-        AttackRange = 2
-        VisualRange = 6
-      }
-      struct (map.Grid.Width - 1, map.Grid.Height - 1),
-      {
-        id = 4<UnitId>
-        Faction = Federation
-        Class = Fighter
-        Direction = NW
-        HP = 100
-        MaxHP = 100
-        Defense = 10
-        MoveRange = 7
-        AttackRange = 4
-        VisualRange = 3
-      }
-      struct (map.Grid.Width - 1, map.Grid.Height - 2),
-      {
-        id = 5<UnitId>
-        Faction = Federation
-        Class = Cruiser
-        Direction = NW
-        HP = 150
-        MaxHP = 150
-        Defense = 15
-        MoveRange = 5
-        AttackRange = 6
-        VisualRange = 5
-      }
-      struct (map.Grid.Width - 2, map.Grid.Height - 1),
-      {
-        id = 6<UnitId>
-        Faction = Federation
-        Class = Battleship
-        Direction = NW
-        HP = 200
-        MaxHP = 200
-        Defense = 30
-        MoveRange = 3
-        AttackRange = 2
-        VisualRange = 6
-      }
-    ]
-
-  let turnOrder = Phase.createTurnOrder [| Pirates; Federation |]
-
   let vpW = float32 ctx.WindowWidth
   let vpH = float32 ctx.WindowHeight
 
   let model =
     Model(
+      State = PreStartScreen,
+      PreStartState = PreStart.init(),
       Time = {
         ElapsedGameTime = TimeSpan.Zero
         TotalTime = TimeSpan.Zero
       },
       Input = Input.init,
       Cam = Camera.init(vpW, vpH),
-      Map = map,
-      Units = units,
+      Map = Map.init(Random.Shared.Next 10001, 12, 12),
+      Units = Map.empty,
       UnitSprites = SBAssets.initUnitSprites assets,
-      Decorations = AnimatedDecorations.init map.Grid assets,
-      Turn = Phase.newTurn turnOrder,
-      TurnOrder = turnOrder,
+      Decorations = Map.empty,
+      Turn = Phase.newTurn(Phase.createTurnOrder [||] [||] [||]),
+      TurnOrder = Phase.createTurnOrder [||] [||] [||],
       Anim = Idle,
       GameAssets = assets,
       Skybox = Shaders.Skybox.init(vpW, vpH),
@@ -176,104 +105,18 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
       VPHeight = vpH
     )
 
-  model.Map <- {
-    model.Map with
-        Visible =
-          Map.computeVisibleUnits
-            model.Units
-            model.Turn.CurrentFaction
-            model.Map.Grid
-  }
-
   model, Cmd.none
 
-let private resetGameState(model: Model) =
-  let map = Map.init(Random.Shared.Next 10001)
+let private startGame(preStartState: PreStartState, model: Model) =
+  let enabledCount =
+    preStartState.Slots |> Array.filter(fun s -> s.Enabled) |> Array.length
 
-  let units =
-    Map.ofList [
-      struct (0, 0),
-      {
-        id = 1<UnitId>
-        Faction = Pirates
-        Class = Fighter
-        Direction = SE
-        HP = 100
-        MaxHP = 100
-        Defense = 10
-        MoveRange = 7
-        AttackRange = 4
-        VisualRange = 3
-      }
-      struct (1, 0),
-      {
-        id = 2<UnitId>
-        Faction = Pirates
-        Class = Cruiser
-        Direction = SE
-        HP = 150
-        MaxHP = 150
-        Defense = 15
-        MoveRange = 5
-        AttackRange = 6
-        VisualRange = 5
-      }
-      struct (0, 1),
-      {
-        id = 3<UnitId>
-        Faction = Pirates
-        Class = Battleship
-        Direction = SE
-        HP = 200
-        MaxHP = 200
-        Defense = 30
-        MoveRange = 3
-        AttackRange = 2
-        VisualRange = 6
-      }
-      struct (map.Grid.Width - 1, map.Grid.Height - 1),
-      {
-        id = 4<UnitId>
-        Faction = Federation
-        Class = Fighter
-        Direction = NW
-        HP = 100
-        MaxHP = 100
-        Defense = 10
-        MoveRange = 7
-        AttackRange = 4
-        VisualRange = 3
-      }
-      struct (map.Grid.Width - 1, map.Grid.Height - 2),
-      {
-        id = 5<UnitId>
-        Faction = Federation
-        Class = Cruiser
-        Direction = NW
-        HP = 150
-        MaxHP = 150
-        Defense = 15
-        MoveRange = 5
-        AttackRange = 6
-        VisualRange = 5
-      }
-      struct (map.Grid.Width - 2, map.Grid.Height - 1),
-      {
-        id = 6<UnitId>
-        Faction = Federation
-        Class = Battleship
-        Direction = NW
-        HP = 200
-        MaxHP = 200
-        Defense = 30
-        MoveRange = 3
-        AttackRange = 2
-        VisualRange = 6
-      }
-    ]
+  let struct (mapW, mapH) = PreStart.getMapSize enabledCount
+  let map = Map.init(Random.Shared.Next 10001, mapW, mapH)
+  let units = PreStart.createUnits preStartState mapW mapH
+  let turnOrder = PreStart.createTurnOrder preStartState
 
-  let turnOrder = Phase.createTurnOrder [| Pirates; Federation |]
-
+  model.State <- Playing
   model.Input <- Input.init
   model.Map <- map
   model.Units <- units
@@ -286,22 +129,78 @@ let private resetGameState(model: Model) =
   model.Fog <- FogOfWar.init()
   model.GameOver <- ValueNone
 
-  model.Map <- {
-    model.Map with
-        Visible =
-          Map.computeVisibleUnits
-            model.Units
-            model.Turn.CurrentFaction
-            model.Map.Grid
-  }
-
   model
+
+let private resetGameState(model: Model) =
+  model.State <- PreStartScreen
+  model.PreStartState <- PreStart.init()
+  model.Units <- Map.empty
+  model.Decorations <- Map.empty
+  model.Anim <- Idle
+  model.Effects <- Effects.init()
+  model.Fog <- FogOfWar.init()
+  model.GameOver <- ValueNone
+  model
+
+let private buildRangeQuery(model: Model) =
+  let canMove, canAct =
+    match model.Input.Selection with
+    | Selected cell ->
+      match model.Units |> Map.tryFind cell with
+      | Some unit when unit.PlayerIndex = model.Turn.CurrentPlayerIndex ->
+        Phase.canMove unit.id model.Turn,
+        Phase.canPerformAction unit.id model.Turn
+      | _ -> false, false
+    | NoSelection -> false, false
+
+  {
+    Selection = model.Input.Selection
+    Hovered = model.Input.HoveredOver
+    Units = model.Units
+    CurrentPlayerIndex = model.Turn.CurrentPlayerIndex
+    CanMove = canMove
+    CanAct = canAct
+  }
 
 // ─────────────────────────────────────────────────────────────
 // Update
 // ─────────────────────────────────────────────────────────────
 
 let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
+  match model.State with
+  | PreStartScreen ->
+    match msg with
+    | PreStartMsg preStartMsg ->
+      match preStartMsg with
+      | StartGame ->
+        let enabledCount =
+          model.PreStartState.Slots
+          |> Array.filter(fun s -> s.Enabled)
+          |> Array.length
+
+        if enabledCount >= 2 then
+          let model = startGame(model.PreStartState, model)
+
+          model,
+          Cmd.ofMsg(
+            MapMsg(
+              RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex)
+            )
+          )
+        else
+          model, Cmd.none
+      | _ ->
+        model.PreStartState <- PreStart.update preStartMsg model.PreStartState
+
+        model, Cmd.none
+    | InputMsg inputMsg ->
+      match PreStart.handleInput inputMsg model.PreStartState model.VPWidth with
+      | ValueSome preStartMsg -> model, Cmd.ofMsg(PreStartMsg preStartMsg)
+      | ValueNone -> model, Cmd.none
+    | _ -> model, Cmd.none
+
+  | Playing ->
+
   match msg with
   | InputMsg inputMsg ->
     match model.GameOver with
@@ -318,33 +217,17 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       | _ -> Cmd.none
 
     let struct (input, inputCmd) =
-      Input.update inputMsg model.Input model.Units model.Turn.CurrentFaction
+      Input.update
+        inputMsg
+        model.Input
+        model.Units
+        model.Turn.CurrentPlayerIndex
 
     let inputCmd =
       inputCmd
       |> Cmd.map(fun msg ->
         match msg with
-        | CalculateRange ->
-          let canMove, canAct =
-            match input.Selection with
-            | Selected cell ->
-              match model.Units |> Map.tryFind cell with
-              | Some unit when unit.Faction = model.Turn.CurrentFaction ->
-                Phase.canMove unit.id model.Turn,
-                Phase.canPerformAction unit.id model.Turn
-              | _ -> false, false
-            | NoSelection -> false, false
-
-          MapMsg(
-            RecalculateRange {
-              Selection = input.Selection
-              Hovered = input.HoveredOver
-              Units = model.Units
-              CurrentFaction = model.Turn.CurrentFaction
-              CanMove = canMove
-              CanAct = canAct
-            }
-          )
+        | CalculateRange -> MapMsg(RecalculateRange(buildRangeQuery model))
         | other -> InputMsg other)
 
     model.Input <- input
@@ -407,15 +290,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     let isLaser1 =
       match model.Anim with
       | AnimState.Attacking tween ->
-        let struct (ac, ar) = tween.AttackerCell
-
-        match model.Units |> Map.tryFind tween.AttackerCell with
-        | Some u ->
-          match u.Class with
-          | Fighter -> false
-          | Battleship -> true
-          | Cruiser -> (ac + ar) % 2 = 0
-        | None -> true
+        Units.isLaser1 model.Units tween.AttackerCell
       | _ -> true
 
     let struct (anim, event) = AnimState.update dt model.Anim
@@ -473,6 +348,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       IsVisible = fun cell -> model.Map.Visible.Contains cell
 
       CurrentFaction = model.Turn.CurrentFaction
+      CurrentPlayerIndex = model.Turn.CurrentPlayerIndex
     }
 
     let struct (result, phaseCmd) =
@@ -488,18 +364,13 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     model.Turn <- result.Turn
     model.TurnOrder <- result.TurnOrder
 
-    match phaseMsg with
-    | Phase.TransitionDone ->
-      model.Map <- {
-        model.Map with
-            Visible =
-              Map.computeVisibleUnits
-                model.Units
-                model.Turn.CurrentFaction
-                model.Map.Grid
-      }
-
-    | _ -> ()
+    let visibilityCmd =
+      match phaseMsg with
+      | Phase.TransitionDone ->
+        Cmd.ofMsg(
+          MapMsg(RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex))
+        )
+      | _ -> Cmd.none
 
     let intentCmd =
       match result.Intent with
@@ -603,12 +474,20 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
           Cmd.ofMsg(InputMsg ClearSelection)
         ]
       | Phase.Intent.StartTransition newFaction ->
-        model.Anim <- AnimState.startTransition newFaction 2.0f model.Anim
-
-        Cmd.none
+        Cmd.ofMsg(AnimationMsg(AnimationMsg.StartTransition(newFaction, 2.0f)))
       | Phase.Intent.NoIntent -> Cmd.none
 
-    model, Cmd.batch [ phaseCmd |> Cmd.map PhaseMsg; intentCmd ]
+    // Auto-end AI turns after transition
+    let aiCmd =
+      if
+        phaseMsg = Phase.TransitionDone && model.Turn.PlayerControl = Units.AI
+      then
+        Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.EndTurn)
+      else
+        Cmd.none
+
+    model,
+    Cmd.batch [ phaseCmd |> Cmd.map PhaseMsg; visibilityCmd; intentCmd; aiCmd ]
 
   | AnimationMsg msg ->
     match msg with
@@ -632,6 +511,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     | AnimationMsg.ShowBanner(message, duration) ->
       model.Anim <- AnimState.showBanner message duration model.Anim
       model, Cmd.none
+    | AnimationMsg.StartTransition(newFaction, duration) ->
+      model.Anim <- AnimState.startTransition newFaction duration model.Anim
+
+      model, Cmd.none
     | AnimationMsg.StartAttack(from,
                                target,
                                dir,
@@ -654,15 +537,6 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   | UnitsMsg unitsMsg ->
     model.Units <- Units.update unitsMsg model.Units
 
-    model.Map <- {
-      model.Map with
-          Visible =
-            Map.computeVisibleUnits
-              model.Units
-              model.Turn.CurrentFaction
-              model.Map.Grid
-    }
-
     match unitsMsg with
     | AttackUnit _ ->
       match Units.checkGameOver model.Units model.TurnOrder.Factions with
@@ -676,36 +550,26 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     let cmd =
       match unitsMsg with
       | MoveUnit _ ->
-        let canMove, canAct =
-          match model.Input.Selection with
-          | Selected cell ->
-            match model.Units |> Map.tryFind cell with
-            | Some unit when unit.Faction = model.Turn.CurrentFaction ->
-              Phase.canMove unit.id model.Turn,
-              Phase.canPerformAction unit.id model.Turn
-            | _ -> false, false
-          | NoSelection -> false, false
-
-        Cmd.ofMsg(
-          MapMsg(
-            RecalculateRange {
-              Selection = model.Input.Selection
-              Hovered = model.Input.HoveredOver
-              Units = model.Units
-              CurrentFaction = model.Turn.CurrentFaction
-              CanMove = canMove
-              CanAct = canAct
-            }
+        Cmd.batch [
+          Cmd.ofMsg(MapMsg(RecalculateRange(buildRangeQuery model)))
+          Cmd.ofMsg(
+            MapMsg(
+              RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex)
+            )
           )
+        ]
+      | _ ->
+        Cmd.ofMsg(
+          MapMsg(RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex))
         )
-      | _ -> Cmd.none
 
     model, cmd
 
   | CameraMsg cameraMsg ->
     model.Cam <- Camera.update cameraMsg model.Cam
     model, Cmd.none
-  | RestartGame -> failwith "Not Implemented"
+  | PreStartMsg _ -> model, Cmd.none
+  | RestartGame -> resetGameState model, Cmd.none
 
 
 module ModelDebugoverlay =
@@ -713,7 +577,7 @@ module ModelDebugoverlay =
   open DebugUtils
 
   [<Literal>]
-  let ShowDebug = true
+  let ShowDebug = false
 
   [<Literal>]
   let PanelWidth = 320
@@ -759,6 +623,23 @@ module ModelDebugoverlay =
 // ─────────────────────────────────────────────────────────────
 
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
+  match model.State with
+  | PreStartScreen ->
+    buffer
+    |> Shaders.Skybox.render
+      (model.Cam.Camera.Target, model.VPWidth, model.VPHeight)
+      model.Skybox
+    |> Draw.drop
+
+    PreStart.view
+      model.PreStartState
+      model.GameAssets.MonoFont
+      model.VPWidth
+      model.VPHeight
+      buffer
+    |> Draw.drop
+  | Playing ->
+
   model.Effects.Lighting.Reset()
 
   buffer
@@ -777,16 +658,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
   | AnimState.Attacking tween ->
     let laserPos = Vector2.Lerp(tween.From, tween.To, tween.Progress)
 
-    let struct (ac, ar) = tween.AttackerCell
-
-    let isLaser1 =
-      match model.Units |> Map.tryFind tween.AttackerCell with
-      | Some u ->
-        match u.Class with
-        | Fighter -> false
-        | Battleship -> true
-        | Cruiser -> (ac + ar) % 2 = 0
-      | None -> true
+    let isLaser1 = Units.isLaser1 model.Units tween.AttackerCell
 
     let lightColor =
       if isLaser1 then
@@ -996,7 +868,9 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     model.VPWidth
   |> Draw.drop
 
+#if DEBUG
   ModelDebugoverlay.view model buffer |> Draw.drop
+#endif
 
   match model.GameOver with
   | ValueSome winner ->

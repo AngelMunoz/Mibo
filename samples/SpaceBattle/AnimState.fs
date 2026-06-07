@@ -69,6 +69,7 @@ module AnimState =
       attackerCell: struct (int * int) *
       targetCell: struct (int * int) *
       duration: float32
+    | StartTransition of newFaction: Faction * duration: float32
     | ShowBanner of message: string * duration: float32
     | Tick of dt: float32
 

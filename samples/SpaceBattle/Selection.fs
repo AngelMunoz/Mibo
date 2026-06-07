@@ -11,32 +11,44 @@ type SelectionState =
 
 module Selection =
 
+  let private isTerrainPassable
+    (units: Map<struct (int * int), SBUnit>)
+    (currentPlayerIndex: int)
+    (grid: HexGrid<Tile>)
+    (c: int)
+    (r: int)
+    : bool =
+    match units |> Map.tryFind struct (c, r) with
+    | Some u when u.PlayerIndex <> currentPlayerIndex -> false
+    | _ ->
+      match HexGrid.get c r grid with
+      | ValueSome Station
+      | ValueSome Asteroid1
+      | ValueSome Asteroid2 -> false
+      | ValueSome _ -> true
+      | ValueNone -> false
+
   let computeMoveRange
     (col: int)
     (row: int)
     (moveRange: int)
     (grid: HexGrid<Tile>)
     (units: Map<struct (int * int), SBUnit>)
-    (currentFaction: Faction)
+    (currentPlayerIndex: int)
     : Set<struct (int * int)> =
     let friendlyOccupied =
       units
       |> Map.toSeq
       |> Seq.choose(fun (cell, u) ->
-        if u.Faction = currentFaction then Some cell else None)
+        if u.PlayerIndex = currentPlayerIndex then
+          Some cell
+        else
+          None)
       |> Set.ofSeq
 
     let inline isPassable struct (c, r) =
-      c = col && r = row
-      || match units |> Map.tryFind struct (c, r) with
-         | Some u when u.Faction <> currentFaction -> false
-         | _ ->
-           match HexGrid.get c r grid with
-           | ValueSome Station
-           | ValueSome Asteroid1
-           | ValueSome Asteroid2 -> false
-           | ValueSome _ -> true
-           | ValueNone -> false
+      (c = col && r = row)
+      || isTerrainPassable units currentPlayerIndex grid c r
 
     Hex2DSpatial.inRange col row moveRange grid
     |> Array.filter(fun cell ->
@@ -61,23 +73,15 @@ module Selection =
     (dest: struct (int * int))
     (grid: HexGrid<Tile>)
     (units: Map<struct (int * int), SBUnit>)
-    (currentFaction: Faction)
+    (currentPlayerIndex: int)
     : struct (int * int)[] =
     let struct (fc, fr) = from
     let struct (dc, dr) = dest
 
     let inline isPassable c r =
-      c = fc && r = fr
-      || c = dc && r = dr
-      || match units |> Map.tryFind struct (c, r) with
-         | Some u when u.Faction <> currentFaction -> false
-         | _ ->
-           match HexGrid.get c r grid with
-           | ValueSome Station
-           | ValueSome Asteroid1
-           | ValueSome Asteroid2 -> false
-           | ValueSome _ -> true
-           | ValueNone -> false
+      (c = fc && r = fr)
+      || (c = dc && r = dr)
+      || isTerrainPassable units currentPlayerIndex grid c r
 
     Hex2DSpatial.findPath fc fr dc dr isPassable (fun _ _ _ _ -> 1f) grid
     |> ValueOption.defaultValue [||]
@@ -136,14 +140,14 @@ module Selection =
 
   let trySelect
     (cell: struct (int * int))
-    (currentFaction: Faction)
+    (currentPlayerIndex: int)
     (units: Map<struct (int * int), SBUnit>)
     (state: SelectionState)
     : SelectionState =
     match state with
     | NoSelection ->
       match units |> Map.tryFind cell with
-      | Some unit when unit.Faction = currentFaction -> Selected cell
+      | Some unit when unit.PlayerIndex = currentPlayerIndex -> Selected cell
       | Some _
       | None -> state
     | Selected _ -> state

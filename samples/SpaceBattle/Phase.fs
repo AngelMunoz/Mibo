@@ -10,7 +10,12 @@ module Phase =
     | Active
     | Resolving
 
-  type TurnOrder = { Factions: Faction[]; Index: int }
+  type TurnOrder = {
+    Factions: Faction[]
+    PlayerIndices: int[]
+    PlayerControls: Units.UnitControl[]
+    Index: int
+  }
 
   type Action =
     | Move
@@ -28,6 +33,8 @@ module Phase =
   type Turn = {
     Phase: TurnPhase
     CurrentFaction: Faction
+    CurrentPlayerIndex: int
+    PlayerControl: Units.UnitControl
     TurnNumber: int
     Moved: ActionEntry list
     Acted: ActionEntry list
@@ -93,6 +100,7 @@ module Phase =
     IsReachable: struct (int * int) -> bool
     IsVisible: struct (int * int) -> bool
     CurrentFaction: Faction
+    CurrentPlayerIndex: int
   }
 
   [<Struct>]
@@ -110,20 +118,54 @@ module Phase =
     Turn: Turn
   }
 
-  let inline createTurnOrder(factions: Faction[]) : TurnOrder = {
-    Factions = factions
-    Index = 0
+  let inline createTurnOrder
+    (factions: Faction[])
+    (playerIndices: int[])
+    (playerControls: Units.UnitControl[])
+    : TurnOrder =
+    {
+      Factions = factions
+      PlayerIndices = playerIndices
+      PlayerControls = playerControls
+      Index = 0
+    }
+
+  let inline private resetPending(turn: Turn) : Turn = {
+    turn with
+        Moved = []
+        Acted = []
+        PendingMove = ValueNone
+        PendingAttack = ValueNone
   }
 
-  let inline newTurn(order: TurnOrder) : Turn = {
-    Phase = Active
-    CurrentFaction = order.Factions[order.Index]
-    TurnNumber = 0
-    Moved = []
-    Acted = []
-    PendingMove = ValueNone
-    PendingAttack = ValueNone
-  }
+  let emptyTurn: Turn =
+    resetPending {
+      Phase = Active
+      CurrentFaction = Federation
+      CurrentPlayerIndex = 0
+      PlayerControl = Units.Human
+      TurnNumber = 0
+      Moved = []
+      Acted = []
+      PendingMove = ValueNone
+      PendingAttack = ValueNone
+    }
+
+  let inline newTurn(order: TurnOrder) : Turn =
+    if order.Factions.Length = 0 then
+      emptyTurn
+    else
+      resetPending {
+        Phase = Active
+        CurrentFaction = order.Factions[order.Index]
+        CurrentPlayerIndex = order.PlayerIndices[order.Index]
+        PlayerControl = order.PlayerControls[order.Index]
+        TurnNumber = 0
+        Moved = []
+        Acted = []
+        PendingMove = ValueNone
+        PendingAttack = ValueNone
+      }
 
   let inline private hasEntry id (lst: ActionEntry list) =
     lst |> List.exists(fun e -> e.UnitId = id)
@@ -154,20 +196,15 @@ module Phase =
   let advanceTurn (turn: Turn) (order: TurnOrder) : struct (Turn * TurnOrder) =
     let newIndex = (order.Index + 1) % order.Factions.Length
 
-    {
+    resetPending {
       turn with
           Phase = Active
           CurrentFaction = order.Factions[newIndex]
+          CurrentPlayerIndex = order.PlayerIndices[newIndex]
+          PlayerControl = order.PlayerControls[newIndex]
           TurnNumber = turn.TurnNumber + 1
-          Moved = []
-          Acted = []
-          PendingMove = ValueNone
-          PendingAttack = ValueNone
     },
-    {
-      order with
-          Index = (order.Index + 1) % order.Factions.Length
-    }
+    { order with Index = newIndex }
 
 
   module System =
@@ -187,9 +224,9 @@ module Phase =
           let targetUnit = input.Query.UnitAt input.Cell
 
           match actingUnit, targetUnit with
-          | ValueSome { id = id; Faction = actingFaction }, ValueNone ->
+          | ValueSome { id = id; PlayerIndex = playerIdx }, ValueNone ->
             if
-              input.Query.CurrentFaction = actingFaction
+              input.Query.CurrentPlayerIndex = playerIdx
               && input.Query.IsReachable input.Cell
               && canMove id input.Turn
             then
@@ -200,11 +237,11 @@ module Phase =
               }
             else
               ClearSelection
-          | ValueSome { id = id; Faction = actingFaction },
-            ValueSome { Faction = targetFaction } ->
+          | ValueSome { id = id; PlayerIndex = playerIdx },
+            ValueSome { PlayerIndex = targetPlayerIdx } ->
             if
-              input.Query.CurrentFaction = actingFaction
-              && actingFaction <> targetFaction
+              input.Query.CurrentPlayerIndex = playerIdx
+              && playerIdx <> targetPlayerIdx
               && canPerformAction id input.Turn
               && input.Query.IsReachable input.Cell
               && input.Query.IsVisible input.Cell
@@ -215,7 +252,7 @@ module Phase =
                 Target = input.Cell
               }
             elif
-              input.Query.CurrentFaction = actingFaction && input.Cell <> src
+              input.Query.CurrentPlayerIndex = playerIdx && input.Cell <> src
             then
               SwitchSelection input.Cell
             else
@@ -225,8 +262,8 @@ module Phase =
           let isSomethingThere = input.Query.UnitAt input.Cell
 
           match isSomethingThere with
-          | ValueSome { Faction = faction } ->
-            if faction = input.Query.CurrentFaction then
+          | ValueSome { PlayerIndex = playerIdx } ->
+            if playerIdx = input.Query.CurrentPlayerIndex then
               SwitchSelection input.Cell
             else
               NoIntent
