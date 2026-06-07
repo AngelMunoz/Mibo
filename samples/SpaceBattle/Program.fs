@@ -172,20 +172,22 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     | _ -> ()
 
     let struct (input, cmd) =
-      Input.update
-        inputMsg
-        model.Input
-        model.Cam.Camera
-        model.Map.Grid
-        model.Units
-        model.Turn.CurrentFaction
+      Input.update inputMsg model.Input model.Units model.Turn.CurrentFaction
 
 
     let cmd =
       cmd
       |> Cmd.map(fun msg ->
         match msg with
-        | CalculateRange -> MapMsg RecalculateRange
+        | CalculateRange ->
+          MapMsg(
+            RecalculateRange(
+              input.Selection,
+              input.HoveredOver,
+              model.Units,
+              model.Turn.CurrentFaction
+            )
+          )
         | other -> InputMsg other)
 
     model.Input <- input
@@ -199,15 +201,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     model, cmd
 
   | MapMsg mapMsg ->
-    model.Map <-
-      Map.update
-        mapMsg
-        model.Map
-        model.Input.Selection
-        model.Input.HoveredOver
-        model.Units
-        model.Turn.CurrentFaction
-
+    model.Map <- Map.update mapMsg model.Map
     model, Cmd.none
 
   | Tick gt ->
@@ -282,10 +276,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         Cmd.ofMsg(InputMsg(SelectCell cell))
       | Phase.Intent.ClearSelection -> Cmd.ofMsg(InputMsg ClearSelection)
       | Phase.Intent.MoveResolved resolved ->
-        Cmd.batch [
-          Cmd.ofMsg(UnitsMsg(MoveUnit(resolved.Source, resolved.Dest)))
-          Cmd.ofMsg(MapMsg RecalculateRange)
-        ]
+        Cmd.ofMsg(UnitsMsg(MoveUnit(resolved.Source, resolved.Dest)))
       | Phase.Intent.AttackResolved _resolved -> Cmd.none // future: apply damage via UnitsMsg
       | Phase.Intent.PerformAttack _ -> Cmd.none // future: start attack animation
       | Phase.Intent.NoIntent -> Cmd.none
@@ -304,7 +295,23 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
   | UnitsMsg unitsMsg ->
     model.Units <- Units.update unitsMsg model.Units
-    model, Cmd.none
+
+    let cmd =
+      match unitsMsg with
+      | MoveUnit _ ->
+        Cmd.ofMsg(
+          MapMsg(
+            RecalculateRange(
+              model.Input.Selection,
+              model.Input.HoveredOver,
+              model.Units,
+              model.Turn.CurrentFaction
+            )
+          )
+        )
+      | _ -> Cmd.none
+
+    model, cmd
 
 
 module ModelDebugoverlay =
@@ -405,12 +412,25 @@ let subscriptions (ctx: GameContext) (model: Model) : Sub<Msg> =
     Mouse.onScroll (fun scroll -> InputMsg(MouseAction(Zoom scroll))) ctx
 
   let clickSub =
-    Mouse.onRightClick (fun pos -> InputMsg(MouseAction(GetInfo pos))) ctx
+    Mouse.onRightClick
+      (fun pos ->
+        let cell = Input.cellFromMouse pos model.Cam.Camera model.Map.Grid
+        InputMsg(MouseAction(GetInfo cell)))
+      ctx
 
   let infoSub =
-    Mouse.onLeftClick (fun pos -> InputMsg(MouseAction(Select pos))) ctx
+    Mouse.onLeftClick
+      (fun pos ->
+        let cell = Input.cellFromMouse pos model.Cam.Camera model.Map.Grid
+        InputMsg(MouseAction(Select cell)))
+      ctx
 
-  let posSub = Mouse.onMove (fun pos -> InputMsg(MouseAction(MovedTo pos))) ctx
+  let posSub =
+    Mouse.onMove
+      (fun pos ->
+        let cell = Input.cellFromMouse pos model.Cam.Camera model.Map.Grid
+        InputMsg(MouseAction(Hover cell)))
+      ctx
 
   let inputSub =
     InputMapper.subscribeStatic Input.inputMap (InputChanged >> InputMsg) ctx

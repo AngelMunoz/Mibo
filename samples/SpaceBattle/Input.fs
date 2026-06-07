@@ -18,9 +18,9 @@ type GameAction =
 [<Struct>]
 type MouseAction =
   | Zoom of zoom: float32
-  | Select of Vector2
-  | GetInfo of Vector2
-  | MovedTo of Vector2
+  | Select of cell: struct (int * int) voption
+  | GetInfo of cell: struct (int * int) voption
+  | Hover of cell: struct (int * int) voption
 
 [<Struct>]
 type InputMsg =
@@ -104,15 +104,14 @@ module Input =
   let update
     msg
     (model: InputModel)
-    (camera: Camera2D)
-    (grid: HexGrid<Tile>)
     (units: Map<struct (int * int), Units.SBUnit>)
     (currentFaction: Units.Faction)
     : struct (InputModel * Cmd<InputMsg>) =
     match msg with
     | CalculateRange -> model, Cmd.none
     | CellClicked _ -> model, Cmd.none
-    | ClearSelection -> { model with Selection = NoSelection }, Cmd.none
+    | ClearSelection ->
+      { model with Selection = NoSelection }, Cmd.ofMsg CalculateRange
     | SelectCell cell ->
       { model with Selection = Selected cell }, Cmd.ofMsg CalculateRange
     | InputChanged input ->
@@ -126,17 +125,12 @@ module Input =
     | MouseAction action ->
       match action with
       | MouseAction.Zoom _ -> model, Cmd.none
-      | MouseAction.Select pos ->
-        let newlySelected = cellFromMouse pos camera grid
-        handleCellClick newlySelected model units currentFaction
+      | MouseAction.Select cell ->
+        handleCellClick cell model units currentFaction
 
-      | MouseAction.GetInfo pos ->
-        let newlySelected = cellFromMouse pos camera grid
-        handleCellClick newlySelected model units currentFaction
-      | MouseAction.MovedTo pos ->
-        let worldPos = Raylib.GetScreenToWorld2D(pos, camera)
-        let cell = grid |> Hex2DSpatial.worldToCell worldPos
-
+      | MouseAction.GetInfo cell ->
+        handleCellClick cell model units currentFaction
+      | MouseAction.Hover cell ->
         let cell, cmd =
           match model.HoveredOver with
           | ValueNone -> cell, Cmd.ofMsg CalculateRange

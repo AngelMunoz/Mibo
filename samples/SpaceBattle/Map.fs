@@ -16,8 +16,12 @@ type MapModel = {
   Path: struct (int * int)[]
 }
 
-[<Struct>]
-type MapMsg = | RecalculateRange
+type MapMsg =
+  | RecalculateRange of
+    selection: SelectionState *
+    hovered: struct (int * int) voption *
+    units: Map<struct (int * int), SBUnit> *
+    currentFaction: Faction
 
 module Map =
   open System.Numerics
@@ -88,16 +92,9 @@ module Map =
     let alpha = 80uy + byte(t * 160f)
     Color(100uy, 200uy, 255uy, alpha)
 
-  let update
-    (msg: MapMsg)
-    (model: MapModel)
-    (selection: SelectionState)
-    (hovered: struct (int * int) voption)
-    (units: Map<struct (int * int), SBUnit>)
-    (currentFaction: Faction)
-    : MapModel =
+  let update (msg: MapMsg) (model: MapModel) : MapModel =
     match msg with
-    | RecalculateRange ->
+    | RecalculateRange(selection, hovered, units, currentFaction) ->
       match selection with
       | NoSelection -> {
           model with
