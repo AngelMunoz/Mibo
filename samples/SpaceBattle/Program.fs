@@ -582,31 +582,24 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
             model.GameAssets.Laser2
       | None -> model.GameAssets.Laser1
 
-    let frameIdx = Units.directionFrame tween.Direction
-    let cols = laser.Texture.Width / laser.FrameSize.X
-    let srcCol = frameIdx % cols
-    let srcRow = frameIdx / cols
-    let fw = laser.FrameSize.X
-    let fh = laser.FrameSize.Y
+    let fw = float32 laser.FrameSize.X
+    let fh = float32 laser.FrameSize.Y
 
-    let source =
-      Rectangle(
-        float32(srcCol * fw),
-        float32(srcRow * fh),
-        float32 fw,
-        float32 fh
-      )
+    let source = Rectangle(0f, 0f, fw, fh)
 
-    let targetRect =
-      Rectangle(
-        pos.X - float32 fw / 2f,
-        pos.Y - float32 fh / 2f,
-        float32 fw,
-        float32 fh
-      )
+    let targetRect = Rectangle(pos.X - fw / 2f, pos.Y - fh / 2f, fw, fh)
+
+    let dx = tween.To.X - tween.From.X
+    let dy = tween.To.Y - tween.From.Y
+    let angle = atan2 dy dx * 180f / float32 System.Math.PI + 90f
+    let origin = Vector2(fw / 2f, fh / 2f)
 
     buffer
-    |> Draw.sprite(SpriteState.create(laser.Texture, targetRect, source))
+    |> Draw.sprite(
+      SpriteState.create(laser.Texture, targetRect, source)
+      |> SpriteState.withRotation angle
+      |> SpriteState.withOrigin origin
+    )
     |> Draw.drop
   | _ -> ()
 
