@@ -16,6 +16,16 @@ module AnimState =
     Duration: float32
   }
 
+  type AttackTween = {
+    From: Vector2
+    To: Vector2
+    Direction: Direction
+    AttackerCell: struct (int * int)
+    TargetCell: struct (int * int)
+    Progress: float32
+    Duration: float32
+  }
+
   type Banner = {
     Message: string
     Timer: float32
@@ -25,11 +35,13 @@ module AnimState =
   type AnimationState =
     | Idle
     | Moving of MoveTween
+    | Attacking of AttackTween
     | ShowingBanner of Banner
 
   [<RequireQualifiedAccess>]
   type AnimationEvent =
     | MoveComplete
+    | AttackComplete
     | SegmentChanged of direction: Direction
     | BannerComplete
 
@@ -41,6 +53,13 @@ module AnimState =
       waypoints: Vector2[] *
       segmentDists: float32[] *
       directions: Direction[] *
+      duration: float32
+    | StartAttack of
+      from: Vector2 *
+      ``to``: Vector2 *
+      direction: Direction *
+      attackerCell: struct (int * int) *
+      targetCell: struct (int * int) *
       duration: float32
     | ShowBanner of message: string * duration: float32
     | Tick of dt: float32
@@ -97,6 +116,28 @@ module AnimState =
       }
     | _ -> state
 
+  let startAttack
+    (from: Vector2)
+    (target: Vector2)
+    (direction: Direction)
+    (attackerCell: struct (int * int))
+    (targetCell: struct (int * int))
+    (duration: float32)
+    (state: AnimationState)
+    : AnimationState =
+    match state with
+    | Idle ->
+      Attacking {
+        From = from
+        To = target
+        Direction = direction
+        AttackerCell = attackerCell
+        TargetCell = targetCell
+        Progress = 0.0f
+        Duration = duration
+      }
+    | _ -> state
+
   let showBanner
     (message: string)
     (duration: float32)
@@ -137,6 +178,13 @@ module AnimState =
               SegmentIndex = newIdx
         },
         event
+    | Attacking tween ->
+      let p = tween.Progress + dt / tween.Duration
+
+      if p >= 1.0f then
+        Idle, ValueSome AnimationEvent.AttackComplete
+      else
+        Attacking { tween with Progress = p }, ValueNone
     | ShowingBanner banner ->
       let t = banner.Timer - dt
 
@@ -195,6 +243,31 @@ module AnimState =
             y
             "Waypoints"
             $"{tween.Waypoints.Length}"
+            buffer
+
+        DebugUtils.kv font style x y "Progress" $"{tween.Progress:F2}" buffer
+      | Attacking tween ->
+        let struct (y, buffer) =
+          DebugUtils.kv font style x y "State" "Attacking" buffer
+
+        let struct (y, buffer) =
+          DebugUtils.kv
+            font
+            style
+            x
+            y
+            "From"
+            $"{tween.From.X:F0},{tween.From.Y:F0}"
+            buffer
+
+        let struct (y, buffer) =
+          DebugUtils.kv
+            font
+            style
+            x
+            y
+            "To"
+            $"{tween.To.X:F0},{tween.To.Y:F0}"
             buffer
 
         DebugUtils.kv font style x y "Progress" $"{tween.Progress:F2}" buffer
