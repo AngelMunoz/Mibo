@@ -164,6 +164,50 @@ inputCmd |> Cmd.map(fun msg -> match msg with CalculateRange -> MapMsg(...) | ot
 
 The `Model` class uses mutable properties for performance (avoiding large immutable copies), but all messages and sub-system data types are immutable structs/records.
 
+## Performance Considerations
+
+### Why a mutable class instead of an immutable record?
+
+The `Model` type is a **class with mutable properties**, not an immutable F# record:
+
+```fsharp
+type Model() =
+  member val Time: GameTime = Unchecked.defaultof<_> with get, set
+  member val Units: Map<struct (int * int), SBUnit> = Unchecked.defaultof<_> with get, set
+  // ...
+```
+
+This is a deliberate choice at **Level 2.5** of the [Scaling Mibo](../../docs/scaling.md) architecture. The Model has 13 properties — copying the entire object every frame via immutable updates would create significant GC pressure. With mutable properties, the `update` function returns the **same Model instance** with fields mutated in place. Zero allocation.
+
+Messages (`Msg`, `InputMsg`, `UnitsMsg`, etc.) are all `[<Struct>]` — value types that live on the stack. This means message dispatch is allocation-free, even at 60fps with dozens of messages per frame.
+
+### Mibo's adaptability: from turn-based to 60fps action
+
+Mibo.Raylib is built on the same Elmish foundation (`Program.mkProgram`) regardless of game type. What changes is how you use it. The framework gives you the **same building blocks** — `init`, `update`, `view`, `Tick`, `Cmd`, `Sub` — and lets you decide how much optimization and decomposition you need.
+
+**For high-performance games** (platformers, shooters, 3D explorers), the framework supports:
+- Mutable `Model` classes to avoid GC pressure from large immutable copies
+- `[<Struct>]` messages for zero-allocation dispatch
+- Pre-allocated arrays and `ResizeArray` buffers that are reused each frame
+- `System.pipeMutable` pipelines for sequencing physics, particles, and collision in a single pass
+- `ArrayPool` integration for temporary per-frame buffers
+- `Span`/`byref` for passing large structs without copying
+
+These patterns exist at Level 2.5+ of the scaling ladder. The `update` function can call multiple system functions in sequence, each mutating shared state in place. Performance-critical paths stay allocation-free.
+
+**For lower-intensity games** (turn-based strategy, card games, puzzle games), the same framework works with simpler patterns:
+- Immutable records for game state — correctness and clarity over throughput
+- A single `update` function with pattern matching — no need for system decomposition
+- `Cmd.batch` and `Cmd.map` for coordinating between sub-systems
+- Intent/Event patterns where systems return declarative data and `Program.fs` translates into cross-system messages
+- Fewer concerns about GC pressure since the game doesn't process thousands of entities at 60fps
+
+**SpaceBattle** demonstrates this simpler end of the spectrum. It prioritizes **architectural clarity** — sub-systems are fully independent, communicate only through the router, and don't know about each other. The tradeoff is more allocations per frame (immutable `Map`, `Set`, `Array` operations), which is perfectly fine for a turn-based game.
+
+The key insight is that **you scale the architecture, not the framework**. The same `Program.withTick`, `Program.withRenderer`, `Program.withSubscription` pipeline powers both a 60fps platformer with pre-allocated particle buffers and a turn-based hex strategy game with routed sub-systems. You apply performance patterns where profiling shows need, and keep everything else simple.
+
+For the full scaling ladder and when to apply each pattern, see [Scaling Mibo.Raylib](../../docs/scaling.md). For implementation details on the performance patterns, see [F# For Perf](../../docs/performance.md).
+
 ## File Map
 
 ```
