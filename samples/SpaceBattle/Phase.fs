@@ -101,6 +101,7 @@ module Phase =
     IsVisible: struct (int * int) -> bool
     CurrentFaction: Faction
     CurrentPlayerIndex: int
+    PlayerControl: Units.UnitControl
   }
 
   [<Struct>]
@@ -213,10 +214,7 @@ module Phase =
     open Mibo.Elmish
 
     let private determineIntent(input: IntentInput) : Intent =
-      if
-        input.Turn.Phase <> TurnPhase.Active
-        || input.Turn.PlayerControl = Units.AI
-      then
+      if input.Turn.Phase <> TurnPhase.Active then
         NoIntent
       else
 
@@ -247,7 +245,8 @@ module Phase =
               && playerIdx <> targetPlayerIdx
               && canPerformAction id input.Turn
               && input.Query.IsReachable input.Cell
-              && input.Query.IsVisible input.Cell
+              && (input.Query.PlayerControl = Units.AI
+                  || input.Query.IsVisible input.Cell)
             then
               PerformAttack {
                 AttackerId = id

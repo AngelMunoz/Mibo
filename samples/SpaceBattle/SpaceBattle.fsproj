@@ -15,6 +15,7 @@
     <Compile Include="Map.fs" />
     <Compile Include="AnimState.fs" />
     <Compile Include="Phase.fs" />
+    <Compile Include="AI.fs" />
     <Compile Include="Shaders.fs" />
     <Compile Include="Camera.fs" />
     <Compile Include="AnimatedDecorations.fs" />

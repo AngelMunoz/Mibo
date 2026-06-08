@@ -135,9 +135,9 @@ module Units =
 
   let private baseDamage =
     function
-    | Fighter -> 30
-    | Cruiser -> 20
-    | Battleship -> 15
+    | Fighter -> 25
+    | Cruiser -> 18
+    | Battleship -> 12
 
   let isLaser1
     (units: Map<struct (int * int), SBUnit>)
@@ -179,7 +179,7 @@ module Units =
     | AttackUnit(attacker, target) ->
       match units |> Map.tryFind attacker, units |> Map.tryFind target with
       | Some atk, Some tgt ->
-        let damage = max 1 (baseDamage atk.Class - tgt.Defense)
+        let damage = max 1 (baseDamage atk.Class * 10 / (10 + tgt.Defense))
         let hp = tgt.HP - damage
 
         if hp <= 0 then

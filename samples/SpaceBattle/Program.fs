@@ -52,6 +52,8 @@ type Model() =
   member val Effects: Effects.EffectState = Unchecked.defaultof<_> with get, set
   member val Fog: FogOfWar.FogState = Unchecked.defaultof<_> with get, set
   member val GameOver: Faction voption = ValueNone with get, set
+  member val HumanCount: int = 0 with get, set
+  member val HumanPlayerIndex: int voption = ValueNone with get, set
   member val VPWidth: float32 = Unchecked.defaultof<_> with get, set
   member val VPHeight: float32 = Unchecked.defaultof<_> with get, set
 
@@ -70,6 +72,7 @@ type Msg =
   | AnimationMsg of animation: AnimationMsg
   | PreStartMsg of preStartMsg: PreStartMsg
   | RestartGame
+  | EvaluateAI
 
 // ─────────────────────────────────────────────────────────────
 // Init
@@ -116,6 +119,19 @@ let private startGame(preStartState: PreStartState, model: Model) =
   let units = PreStart.createUnits preStartState mapW mapH
   let turnOrder = PreStart.createTurnOrder preStartState
 
+  let humanSlots =
+    preStartState.Slots
+    |> Array.mapi(fun i s -> (i, s))
+    |> Array.filter(fun (_, s) -> s.Enabled && s.Control = Units.Human)
+
+  model.HumanCount <- humanSlots.Length
+
+  model.HumanPlayerIndex <-
+    if humanSlots.Length = 1 then
+      ValueSome(fst humanSlots[0])
+    else
+      ValueNone
+
   model.State <- Playing
   model.Input <- Input.init
   model.Map <- map
@@ -129,7 +145,31 @@ let private startGame(preStartState: PreStartState, model: Model) =
   model.Fog <- FogOfWar.init()
   model.GameOver <- ValueNone
 
+  if model.HumanCount = 0 then
+    let allCells =
+      seq {
+        for r in 0 .. map.Grid.Height - 1 do
+          for c in 0 .. map.Grid.Width - 1 do
+            match HexGrid.get c r map.Grid with
+            | ValueSome _ -> yield struct (c, r)
+            | ValueNone -> ()
+      }
+      |> Set.ofSeq
+
+    model.Map <- { model.Map with Visible = allCells }
+  elif model.HumanCount = 1 then
+    match model.HumanPlayerIndex with
+    | ValueSome visIndex ->
+      model.Map <-
+        Map.update (MapMsg.RefreshVisibility(units, visIndex)) model.Map
+    | ValueNone -> ()
+
   model
+
+let private getVisibilityIndex(model: Model) : int =
+  match model.HumanPlayerIndex with
+  | ValueSome idx -> idx
+  | ValueNone -> model.Turn.CurrentPlayerIndex
 
 let private resetGameState(model: Model) =
   model.State <- PreStartScreen
@@ -191,9 +231,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
           else
             model,
             Cmd.ofMsg(
-              MapMsg(
-                RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex)
-              )
+              MapMsg(RefreshVisibility(model.Units, getVisibilityIndex model))
             )
         else
           model, Cmd.none
@@ -224,12 +262,22 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       | MouseAction(Zoom z) -> Cmd.ofMsg(CameraMsg(CameraMsg.ApplyZoom z))
       | _ -> Cmd.none
 
+    let isGameplayInput =
+      match inputMsg with
+      | MouseAction(Select _)
+      | MouseAction(GetInfo _)
+      | MouseAction(Hover _) -> true
+      | _ -> false
+
     let struct (input, inputCmd) =
-      Input.update
-        inputMsg
-        model.Input
-        model.Units
-        model.Turn.CurrentPlayerIndex
+      if model.Turn.PlayerControl = Units.AI && isGameplayInput then
+        model.Input, Cmd.none
+      else
+        Input.update
+          inputMsg
+          model.Input
+          model.Units
+          model.Turn.CurrentPlayerIndex
 
     let inputCmd =
       inputCmd
@@ -360,6 +408,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
       CurrentFaction = model.Turn.CurrentFaction
       CurrentPlayerIndex = model.Turn.CurrentPlayerIndex
+      PlayerControl = model.Turn.PlayerControl
     }
 
     let struct (result, phaseCmd) =
@@ -377,6 +426,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     let visibilityCmd =
       match phaseMsg with
+      | Phase.TransitionDone when model.HumanCount = 1 ->
+        Cmd.ofMsg(
+          MapMsg(RefreshVisibility(model.Units, getVisibilityIndex model))
+        )
       | Phase.TransitionDone when model.Turn.PlayerControl = Units.Human ->
         Cmd.ofMsg(
           MapMsg(RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex))
@@ -386,10 +439,24 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     let intentCmd =
       match result.Intent with
       | Phase.Intent.PerformMove move ->
-        let path = model.Map.Path
+        let path =
+          if model.Turn.PlayerControl = Units.AI then
+            Selection.computePath
+              move.From
+              move.Dest
+              model.Map.Grid
+              model.Units
+              model.Turn.CurrentPlayerIndex
+          else
+            model.Map.Path
+
         let unit = model.Units |> Map.find move.From
 
         let simplified = Selection.simplifyPath path model.Map.Grid
+
+        if simplified.Length = 0 then
+          Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.Resolution)
+        else
 
         let waypoints =
           simplified
@@ -446,7 +513,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
           Cmd.ofMsg(InputMsg ClearSelection)
         ]
       | Phase.Intent.SwitchSelection cell ->
-        Cmd.ofMsg(InputMsg(SelectCell cell))
+        Cmd.batch [
+          Cmd.ofMsg(InputMsg(SelectCell cell))
+          Cmd.ofMsg(MapMsg(RecalculateRange(buildRangeQuery model)))
+        ]
       | Phase.Intent.ClearSelection -> Cmd.ofMsg(InputMsg ClearSelection)
       | Phase.Intent.MoveResolved resolved ->
         Cmd.ofMsg(UnitsMsg(MoveUnit(resolved.Source, resolved.Dest)))
@@ -488,17 +558,74 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         Cmd.ofMsg(AnimationMsg(AnimationMsg.StartTransition(newFaction, 2.0f)))
       | Phase.Intent.NoIntent -> Cmd.none
 
-    // Auto-end AI turns after transition
     let aiCmd =
-      if
-        phaseMsg = Phase.TransitionDone && model.Turn.PlayerControl = Units.AI
-      then
-        Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.EndTurn)
-      else
+      if model.Turn.PlayerControl <> Units.AI then
         Cmd.none
+      else
+        match phaseMsg with
+        | Phase.TransitionDone -> Cmd.ofMsg EvaluateAI
+        | Phase.Resolution -> Cmd.ofMsg EvaluateAI
+        | _ ->
+          match result.Intent with
+          | Phase.Intent.NoIntent
+          | Phase.Intent.ClearSelection ->
+            Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.EndTurn)
+          | _ -> Cmd.none
 
     model,
     Cmd.batch [ phaseCmd |> Cmd.map PhaseMsg; visibilityCmd; intentCmd; aiCmd ]
+  | EvaluateAI ->
+    let gameOver = Units.checkGameOver model.Units model.TurnOrder.Factions
+
+    match gameOver with
+    | ValueSome winner ->
+      model.GameOver <- ValueSome winner
+      model.Anim <- AnimState.showBanner $"{winner} Wins!" 0.0f model.Anim
+      model, Cmd.none
+    | ValueNone ->
+
+      let unitCell, _selectMsg, actionMsg =
+        AI.evaluateNextAction model.Units model.Turn model.Map.Grid
+
+      if actionMsg = Phase.PhaseMsg.EndTurn then
+        model, Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.EndTurn)
+      else
+        match unitCell with
+        | ValueSome cell ->
+          match model.Units |> Map.tryFind cell with
+          | Some unit ->
+            let struct (col, row) = cell
+
+            let reachable =
+              Selection.computeMoveRange
+                col
+                row
+                unit.MoveRange
+                model.Map.Grid
+                model.Units
+                model.Turn.CurrentPlayerIndex
+
+            let attackTargets =
+              Selection.computeAttackRange
+                col
+                row
+                unit.AttackRange
+                model.Map.Grid
+
+            model.Map <- {
+              model.Map with
+                  Reachable = reachable
+                  AttackTargets = attackTargets
+            }
+
+            model.Input <- {
+              model.Input with
+                  Selection = Selected cell
+            }
+          | None -> ()
+        | ValueNone -> ()
+
+        model, Cmd.ofMsg(PhaseMsg actionMsg)
 
   | AnimationMsg msg ->
     match msg with
@@ -524,6 +651,9 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       model, Cmd.none
     | AnimationMsg.StartTransition(newFaction, duration) ->
       model.Anim <- AnimState.startTransition newFaction duration model.Anim
+
+      if model.HumanCount >= 2 then
+        model.Map <- { model.Map with Visible = Set.empty }
 
       model, Cmd.none
     | AnimationMsg.StartAttack(from,
@@ -560,7 +690,20 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     let cmd =
       match unitsMsg with
-      | MoveUnit _ ->
+      | MoveUnit _ when
+        model.HumanCount = 1 && model.Turn.PlayerControl = Units.Human
+        ->
+        Cmd.batch [
+          Cmd.ofMsg(MapMsg(RecalculateRange(buildRangeQuery model)))
+          Cmd.ofMsg(
+            MapMsg(RefreshVisibility(model.Units, getVisibilityIndex model))
+          )
+        ]
+      | MoveUnit _ when model.HumanCount = 1 ->
+        Cmd.ofMsg(
+          MapMsg(RefreshVisibility(model.Units, getVisibilityIndex model))
+        )
+      | MoveUnit _ when model.Turn.PlayerControl = Units.Human ->
         Cmd.batch [
           Cmd.ofMsg(MapMsg(RecalculateRange(buildRangeQuery model)))
           Cmd.ofMsg(
@@ -569,10 +712,16 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
             )
           )
         ]
-      | _ ->
+      | MoveUnit _ -> Cmd.none
+      | _ when model.HumanCount = 1 ->
+        Cmd.ofMsg(
+          MapMsg(RefreshVisibility(model.Units, getVisibilityIndex model))
+        )
+      | _ when model.Turn.PlayerControl = Units.Human ->
         Cmd.ofMsg(
           MapMsg(RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex))
         )
+      | _ -> Cmd.none
 
     model, cmd
 

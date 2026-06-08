@@ -204,9 +204,9 @@ module PreStart =
 
           let hp, defense, moveRange, attackRange, visualRange =
             match unitClass with
-            | Fighter -> 10, 10, 7, 2, 1
-            | Cruiser -> 15, 15, 5, 3, 3
-            | Battleship -> 20, 30, 4, 2, 6
+            | Fighter -> 20, 15, 8, 2, 2
+            | Cruiser -> 20, 20, 5, 3, 3
+            | Battleship -> 35, 30, 3, 4, 7
 
           let unit = {
             id = id * 1<UnitId>
