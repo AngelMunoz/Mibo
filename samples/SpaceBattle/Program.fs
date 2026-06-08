@@ -52,10 +52,66 @@ type Model() =
   member val Effects: Effects.EffectState = Unchecked.defaultof<_> with get, set
   member val Fog: FogOfWar.FogState = Unchecked.defaultof<_> with get, set
   member val GameOver: Faction voption = ValueNone with get, set
-  member val HumanCount: int = 0 with get, set
-  member val HumanPlayerIndex: int voption = ValueNone with get, set
   member val VPWidth: float32 = Unchecked.defaultof<_> with get, set
   member val VPHeight: float32 = Unchecked.defaultof<_> with get, set
+
+// ─────────────────────────────────────────────────────────────
+// Player Control Helpers
+// ─────────────────────────────────────────────────────────────
+
+let private humanCount(order: Phase.TurnOrder) : int =
+  order.PlayerControls |> Array.filter(fun c -> c = Units.Human) |> Array.length
+
+let private humanPlayerIndex(order: Phase.TurnOrder) : int voption =
+  order.PlayerControls
+  |> Array.tryFindIndex(fun c -> c = Units.Human)
+  |> ValueOption.ofOption
+
+let private isAITurn(model: Model) = model.Turn.PlayerControl = Units.AI
+
+let private isHumanTurn(model: Model) = model.Turn.PlayerControl = Units.Human
+
+// ─────────────────────────────────────────────────────────────
+// Visibility Resolution
+// ─────────────────────────────────────────────────────────────
+
+[<Struct>]
+type VisibilityTrigger =
+  | GameStart
+  | TurnStart
+  | TransitionStart
+  | UnitMoved
+  | UnitChanged
+
+[<Struct>]
+type VisibilityAction =
+  | RefreshForSingleHuman
+  | RefreshForCurrentPlayer
+  | ClearVisibility
+  | NoVisibilityChange
+
+let private resolveVisibility
+  (model: Model)
+  (trigger: VisibilityTrigger)
+  : VisibilityAction =
+  let hCount = humanCount model.TurnOrder
+  let humanTurn = isHumanTurn model
+
+  match hCount, trigger with
+  | 0, _ -> NoVisibilityChange
+  | 1, GameStart -> RefreshForSingleHuman
+  | 1, TurnStart -> RefreshForSingleHuman
+  | 1, TransitionStart -> NoVisibilityChange
+  | 1, UnitMoved -> RefreshForSingleHuman
+  | 1, UnitChanged -> RefreshForSingleHuman
+  | _, GameStart -> NoVisibilityChange
+  | _, TurnStart when humanTurn -> RefreshForCurrentPlayer
+  | _, TurnStart -> NoVisibilityChange
+  | _, TransitionStart -> ClearVisibility
+  | _, UnitMoved when humanTurn -> RefreshForCurrentPlayer
+  | _, UnitMoved -> NoVisibilityChange
+  | _, UnitChanged when humanTurn -> RefreshForCurrentPlayer
+  | _, UnitChanged -> NoVisibilityChange
 
 // ─────────────────────────────────────────────────────────────
 // Messages
@@ -73,6 +129,24 @@ type Msg =
   | PreStartMsg of preStartMsg: PreStartMsg
   | RestartGame
   | EvaluateAI
+
+let private refreshCmd (model: Model) (playerIndex: int) : Cmd<Msg> =
+  Cmd.ofMsg(MapMsg(RefreshVisibility(model.Units, playerIndex)))
+
+let private executeVisibility
+  (model: Model)
+  (action: VisibilityAction)
+  : Cmd<Msg> =
+  match action with
+  | RefreshForSingleHuman ->
+    match humanPlayerIndex model.TurnOrder with
+    | ValueSome idx -> refreshCmd model idx
+    | ValueNone -> Cmd.none
+  | RefreshForCurrentPlayer -> refreshCmd model model.Turn.CurrentPlayerIndex
+  | ClearVisibility ->
+    model.Map <- { model.Map with Visible = Set.empty }
+    Cmd.none
+  | NoVisibilityChange -> Cmd.none
 
 // ─────────────────────────────────────────────────────────────
 // Init
@@ -119,19 +193,6 @@ let private startGame(preStartState: PreStartState, model: Model) =
   let units = PreStart.createUnits preStartState mapW mapH
   let turnOrder = PreStart.createTurnOrder preStartState
 
-  let humanSlots =
-    preStartState.Slots
-    |> Array.mapi(fun i s -> (i, s))
-    |> Array.filter(fun (_, s) -> s.Enabled && s.Control = Units.Human)
-
-  model.HumanCount <- humanSlots.Length
-
-  model.HumanPlayerIndex <-
-    if humanSlots.Length = 1 then
-      ValueSome(fst humanSlots[0])
-    else
-      ValueNone
-
   model.State <- Playing
   model.Input <- Input.init
   model.Map <- map
@@ -145,7 +206,14 @@ let private startGame(preStartState: PreStartState, model: Model) =
   model.Fog <- FogOfWar.init()
   model.GameOver <- ValueNone
 
-  if model.HumanCount = 0 then
+  match resolveVisibility model GameStart with
+  | RefreshForSingleHuman ->
+    match humanPlayerIndex turnOrder with
+    | ValueSome visIndex ->
+      model.Map <-
+        Map.update (MapMsg.RefreshVisibility(units, visIndex)) model.Map
+    | ValueNone -> ()
+  | NoVisibilityChange ->
     let allCells =
       seq {
         for r in 0 .. map.Grid.Height - 1 do
@@ -157,19 +225,9 @@ let private startGame(preStartState: PreStartState, model: Model) =
       |> Set.ofSeq
 
     model.Map <- { model.Map with Visible = allCells }
-  elif model.HumanCount = 1 then
-    match model.HumanPlayerIndex with
-    | ValueSome visIndex ->
-      model.Map <-
-        Map.update (MapMsg.RefreshVisibility(units, visIndex)) model.Map
-    | ValueNone -> ()
+  | _ -> ()
 
   model
-
-let private getVisibilityIndex(model: Model) : int =
-  match model.HumanPlayerIndex with
-  | ValueSome idx -> idx
-  | ValueNone -> model.Turn.CurrentPlayerIndex
 
 let private resetGameState(model: Model) =
   model.State <- PreStartScreen
@@ -221,7 +279,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
         if enabledCount >= 2 then
           let model = startGame(model.PreStartState, model)
 
-          if model.Turn.PlayerControl = Units.AI then
+          if isAITurn model then
             model,
             Cmd.ofMsg(
               AnimationMsg(
@@ -229,10 +287,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
               )
             )
           else
-            model,
-            Cmd.ofMsg(
-              MapMsg(RefreshVisibility(model.Units, getVisibilityIndex model))
-            )
+            model, executeVisibility model (resolveVisibility model GameStart)
         else
           model, Cmd.none
       | _ ->
@@ -270,7 +325,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       | _ -> false
 
     let struct (input, inputCmd) =
-      if model.Turn.PlayerControl = Units.AI && isGameplayInput then
+      if isAITurn model && isGameplayInput then
         model.Input, Cmd.none
       else
         Input.update
@@ -296,7 +351,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     let inputCmd =
       match inputMsg with
-      | CellClicked cell when model.Turn.PlayerControl = Units.Human ->
+      | CellClicked cell when isHumanTurn model ->
         Cmd.batch [
           inputCmd
           Cmd.ofMsg(PhaseMsg(Phase.PhaseMsg.CellClicked cell))
@@ -305,7 +360,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       | InputChanged inputs when
         inputs.Started.Contains EndTurn
         && model.Turn.Phase = Phase.Active
-        && model.Turn.PlayerControl = Units.Human
+        && isHumanTurn model
         ->
         Cmd.batch [ inputCmd; Cmd.ofMsg(PhaseMsg Phase.PhaseMsg.EndTurn) ]
       | _ -> inputCmd
@@ -426,21 +481,15 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     let visibilityCmd =
       match phaseMsg with
-      | Phase.TransitionDone when model.HumanCount = 1 ->
-        Cmd.ofMsg(
-          MapMsg(RefreshVisibility(model.Units, getVisibilityIndex model))
-        )
-      | Phase.TransitionDone when model.Turn.PlayerControl = Units.Human ->
-        Cmd.ofMsg(
-          MapMsg(RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex))
-        )
+      | Phase.TransitionDone ->
+        executeVisibility model (resolveVisibility model TurnStart)
       | _ -> Cmd.none
 
     let intentCmd =
       match result.Intent with
       | Phase.Intent.PerformMove move ->
         let path =
-          if model.Turn.PlayerControl = Units.AI then
+          if isAITurn model then
             Selection.computePath
               move.From
               move.Dest
@@ -559,7 +608,7 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
       | Phase.Intent.NoIntent -> Cmd.none
 
     let aiCmd =
-      if model.Turn.PlayerControl <> Units.AI then
+      if not(isAITurn model) || model.GameOver.IsSome then
         Cmd.none
       else
         match phaseMsg with
@@ -575,6 +624,10 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     model,
     Cmd.batch [ phaseCmd |> Cmd.map PhaseMsg; visibilityCmd; intentCmd; aiCmd ]
   | EvaluateAI ->
+    match model.GameOver with
+    | ValueSome _ -> model, Cmd.none
+    | ValueNone ->
+
     let gameOver = Units.checkGameOver model.Units model.TurnOrder.Factions
 
     match gameOver with
@@ -652,8 +705,8 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     | AnimationMsg.StartTransition(newFaction, duration) ->
       model.Anim <- AnimState.startTransition newFaction duration model.Anim
 
-      if model.HumanCount >= 2 then
-        model.Map <- { model.Map with Visible = Set.empty }
+      executeVisibility model (resolveVisibility model TransitionStart)
+      |> ignore
 
       model, Cmd.none
     | AnimationMsg.StartAttack(from,
@@ -690,38 +743,14 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     let cmd =
       match unitsMsg with
-      | MoveUnit _ when
-        model.HumanCount = 1 && model.Turn.PlayerControl = Units.Human
-        ->
+      | MoveUnit _ when isHumanTurn model ->
         Cmd.batch [
           Cmd.ofMsg(MapMsg(RecalculateRange(buildRangeQuery model)))
-          Cmd.ofMsg(
-            MapMsg(RefreshVisibility(model.Units, getVisibilityIndex model))
-          )
+          executeVisibility model (resolveVisibility model UnitMoved)
         ]
-      | MoveUnit _ when model.HumanCount = 1 ->
-        Cmd.ofMsg(
-          MapMsg(RefreshVisibility(model.Units, getVisibilityIndex model))
-        )
-      | MoveUnit _ when model.Turn.PlayerControl = Units.Human ->
-        Cmd.batch [
-          Cmd.ofMsg(MapMsg(RecalculateRange(buildRangeQuery model)))
-          Cmd.ofMsg(
-            MapMsg(
-              RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex)
-            )
-          )
-        ]
-      | MoveUnit _ -> Cmd.none
-      | _ when model.HumanCount = 1 ->
-        Cmd.ofMsg(
-          MapMsg(RefreshVisibility(model.Units, getVisibilityIndex model))
-        )
-      | _ when model.Turn.PlayerControl = Units.Human ->
-        Cmd.ofMsg(
-          MapMsg(RefreshVisibility(model.Units, model.Turn.CurrentPlayerIndex))
-        )
-      | _ -> Cmd.none
+      | MoveUnit _ ->
+        executeVisibility model (resolveVisibility model UnitMoved)
+      | _ -> executeVisibility model (resolveVisibility model UnitChanged)
 
     model, cmd
 

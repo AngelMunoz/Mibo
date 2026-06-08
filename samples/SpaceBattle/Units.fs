@@ -197,7 +197,8 @@ module Units =
       units
       |> Map.fold (fun acc _ (u: SBUnit) -> Set.add u.Faction acc) Set.empty
 
-    let remaining = factions |> Array.filter(fun f -> alive.Contains f)
+    let remaining =
+      factions |> Array.filter(fun f -> alive.Contains f) |> Array.distinct
 
     if remaining.Length <= 1 then
       remaining |> Array.tryHead |> ValueOption.ofOption
