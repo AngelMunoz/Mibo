@@ -255,6 +255,7 @@ let tests =
         |> HexLayout3D.run(fun s ->
           s
           |> HexLayout3D.iter 0 0 0 3 3 3 (fun c r l _ -> visited.Add(c, r, l)))
+        |> ignore
 
         Expect.equal visited.Count 27 "Should visit 27 cells"
     ]
