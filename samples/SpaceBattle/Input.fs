@@ -143,19 +143,10 @@ module Input =
       | MouseAction.GetInfo cell ->
         handleCellClick cell model units currentPlayerIndex
       | MouseAction.Hover cell ->
-        let cell, cmd =
-          match model.HoveredOver with
-          | ValueNone -> cell, Cmd.ofMsg CalculateRange
-          | ValueSome existing ->
-            match cell with
-            | ValueSome cell ->
-              if cell = existing then
-                ValueSome existing, Cmd.none
-              else
-                ValueSome cell, Cmd.ofMsg CalculateRange
-            | ValueNone -> ValueNone, Cmd.none
-
-        { model with HoveredOver = cell }, cmd
+        if cell = model.HoveredOver then
+          model, Cmd.none
+        else
+          { model with HoveredOver = cell }, Cmd.ofMsg CalculateRange
 
   module Debug =
 

@@ -189,7 +189,7 @@ module AI =
         struct (0, grid.Height - 1)
       |]
 
-      let idx = (turnNumber + playerIndex) % corners.Length
+      let idx = abs(turnNumber + playerIndex) % corners.Length
       let target = corners[idx]
       let struct (tc, tr) = target
 
