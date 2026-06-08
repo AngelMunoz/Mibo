@@ -144,7 +144,37 @@ module Map =
                 Path = [||]
           }
         | Some unit ->
-          if query.CanMove then
+          if query.CanMove && query.CanAct then
+            let reachable =
+              Selection.computeMoveRange
+                col
+                row
+                unit.MoveRange
+                model.Grid
+                query.Units
+                query.CurrentPlayerIndex
+
+            let attackTargets =
+              Selection.computeAttackRange col row unit.AttackRange model.Grid
+
+            let path =
+              match query.Hovered with
+              | ValueSome dest when reachable.Contains dest ->
+                Selection.computePath
+                  cell
+                  dest
+                  model.Grid
+                  query.Units
+                  query.CurrentPlayerIndex
+              | _ -> [||]
+
+            {
+              model with
+                  Reachable = reachable
+                  AttackTargets = attackTargets
+                  Path = path
+            }
+          elif query.CanMove then
             let reachable =
               Selection.computeMoveRange
                 col
