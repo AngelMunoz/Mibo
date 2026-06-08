@@ -98,6 +98,7 @@ module Phase =
     Selection: SelectionState
     UnitAt: struct (int * int) -> SBUnit voption
     IsReachable: struct (int * int) -> bool
+    IsAttackable: struct (int * int) -> bool
     IsVisible: struct (int * int) -> bool
     CurrentFaction: Faction
     CurrentPlayerIndex: int
@@ -244,7 +245,7 @@ module Phase =
               input.Query.CurrentPlayerIndex = playerIdx
               && playerIdx <> targetPlayerIdx
               && canPerformAction id input.Turn
-              && input.Query.IsReachable input.Cell
+              && input.Query.IsAttackable input.Cell
               && (input.Query.PlayerControl = Units.AI
                   || input.Query.IsVisible input.Cell)
             then

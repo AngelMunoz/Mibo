@@ -310,17 +310,17 @@ module Map =
       (fun col row tile ->
         let worldPos = model |> HexGrid.getWorldPos col row
 
-        if reachable.Contains(struct (col, row)) then
-          buffer
-          |> Draw.fillPoly
-            (0<RenderLayer>, Color(100uy, 180uy, 255uy, 100uy))
-            (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
-          |> Draw.drop
-
         if attackTargets.Contains(struct (col, row)) then
           buffer
           |> Draw.fillPoly
             (0<RenderLayer>, Color(255uy, 80uy, 80uy, 120uy))
+            (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
+          |> Draw.drop
+
+        if reachable.Contains(struct (col, row)) then
+          buffer
+          |> Draw.fillPoly
+            (0<RenderLayer>, Color(100uy, 180uy, 255uy, 100uy))
             (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
           |> Draw.drop
 

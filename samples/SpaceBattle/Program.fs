@@ -466,10 +466,8 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
           match model.Units |> Map.tryFind cell with
           | Some u -> ValueSome u
           | None -> ValueNone
-      IsReachable =
-        fun cell ->
-          model.Map.Reachable.Contains cell
-          || model.Map.AttackTargets.Contains cell
+      IsReachable = fun cell -> model.Map.Reachable.Contains cell
+      IsAttackable = fun cell -> model.Map.AttackTargets.Contains cell
       IsVisible = fun cell -> model.Map.Visible.Contains cell
 
       CurrentFaction = model.Turn.CurrentFaction

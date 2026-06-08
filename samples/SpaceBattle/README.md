@@ -268,7 +268,8 @@ Phase needs to read input state, unit positions, and reachable cells — but it 
 let query: Phase.PhaseQuery = {
   Selection = model.Input.Selection
   UnitAt = fun cell -> model.Units |> Map.tryFind cell
-  IsReachable = fun cell -> model.Map.Reachable.Contains cell || model.Map.AttackTargets.Contains cell
+  IsReachable = fun cell -> model.Map.Reachable.Contains cell
+  IsAttackable = fun cell -> model.Map.AttackTargets.Contains cell
   IsVisible = fun cell -> model.Map.Visible.Contains cell
   CurrentFaction = model.Turn.CurrentFaction
   CurrentPlayerIndex = model.Turn.CurrentPlayerIndex
