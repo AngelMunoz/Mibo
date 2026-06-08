@@ -62,7 +62,9 @@ module Effects =
     member val ImpactFlashes: ResizeArray<ImpactFlash> = ResizeArray() with get
 
     interface IDisposable with
-      member _.Dispose() = (lighting :> IDisposable).Dispose()
+      member this.Dispose() =
+        (lighting :> IDisposable).Dispose()
+        Raylib.UnloadTexture(this.ParticleTexture)
 
   let private generateParticleTexture() =
     let size = 32

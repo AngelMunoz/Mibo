@@ -191,19 +191,20 @@ module Units =
 
   let checkGameOver
     (units: Map<struct (int * int), SBUnit>)
+    (playerIndices: int[])
     (factions: Faction[])
     : Faction voption =
     let alive =
       units
-      |> Map.fold (fun acc _ (u: SBUnit) -> Set.add u.Faction acc) Set.empty
+      |> Map.fold (fun acc _ (u: SBUnit) -> Set.add u.PlayerIndex acc) Set.empty
 
-    let remaining =
-      factions |> Array.filter(fun f -> alive.Contains f) |> Array.distinct
+    let remaining = playerIndices |> Array.filter(fun p -> alive.Contains p)
 
-    if remaining.Length <= 1 then
-      remaining |> Array.tryHead |> ValueOption.ofOption
-    else
-      ValueNone
+    match remaining with
+    | [| winnerPlayer |] ->
+      let idx = playerIndices |> Array.findIndex(fun p -> p = winnerPlayer)
+      ValueSome factions[idx]
+    | _ -> ValueNone
 
   let directionFrame =
     function

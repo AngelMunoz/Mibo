@@ -96,34 +96,30 @@ module Selection =
       let result = ResizeArray<struct (int * int)>()
       result.Add(path[0])
 
+      let struct (c0, r0) = path[0]
+
       let struct (pq0, pr0, ps0) =
-        Hex2DSpatial.offsetToCube
-          (let struct (c, _) = path[0] in c)
-          (let struct (_, r) = path[0] in r)
-          grid.Orientation
+        Hex2DSpatial.offsetToCube c0 r0 grid.Orientation
+
+      let struct (c1, r1) = path[1]
 
       let struct (pq1, pr1, ps1) =
-        Hex2DSpatial.offsetToCube
-          (let struct (c, _) = path[1] in c)
-          (let struct (_, r) = path[1] in r)
-          grid.Orientation
+        Hex2DSpatial.offsetToCube c1 r1 grid.Orientation
 
       let mutable prevDq = pq1 - pq0
       let mutable prevDr = pr1 - pr0
       let mutable prevDs = ps1 - ps0
 
       for i in 2 .. path.Length - 1 do
+        let struct (ci, ri) = path[i]
+
         let struct (cq, cr, cs) =
-          Hex2DSpatial.offsetToCube
-            (let struct (c, _) = path[i] in c)
-            (let struct (_, r) = path[i] in r)
-            grid.Orientation
+          Hex2DSpatial.offsetToCube ci ri grid.Orientation
+
+        let struct (pi, riPrev) = path[i - 1]
 
         let struct (pq, pr, ps) =
-          Hex2DSpatial.offsetToCube
-            (let struct (c, _) = path[i - 1] in c)
-            (let struct (_, r) = path[i - 1] in r)
-            grid.Orientation
+          Hex2DSpatial.offsetToCube pi riPrev grid.Orientation
 
         let dq = cq - pq
         let dr = cr - pr

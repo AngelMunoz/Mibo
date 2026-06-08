@@ -19,8 +19,7 @@ module AnimatedDecorations =
         let sheet =
           assets.Decorations
           |> Map.tryFind Asteroid
-          |> Option.map(Array.tryHead)
-          |> Option.flatten
+          |> Option.bind Array.tryHead
           |> Option.defaultWith(fun () -> failwith "no asteroid")
 
         let animated = AnimatedSprite.create sheet "spin"
@@ -29,8 +28,7 @@ module AnimatedDecorations =
         let sheet =
           assets.Decorations
           |> Map.tryFind Asteroid
-          |> Option.map(Array.tryLast)
-          |> Option.flatten
+          |> Option.bind Array.tryLast
           |> Option.defaultWith(fun () -> failwith "no asteroid")
 
         let animated = AnimatedSprite.create sheet "spin"
@@ -39,8 +37,7 @@ module AnimatedDecorations =
         let sheet =
           assets.Decorations
           |> Map.tryFind Crate
-          |> Option.map(Array.tryHead)
-          |> Option.flatten
+          |> Option.bind Array.tryHead
           |> Option.defaultWith(fun () -> failwith "no crate")
 
         let animated = AnimatedSprite.create sheet "spin"
@@ -49,8 +46,7 @@ module AnimatedDecorations =
         let sheet =
           assets.Decorations
           |> Map.tryFind Crate
-          |> Option.map(Array.tryLast)
-          |> Option.flatten
+          |> Option.bind Array.tryLast
           |> Option.defaultWith(fun () -> failwith "no crate")
 
         let animated = AnimatedSprite.create sheet "spin"

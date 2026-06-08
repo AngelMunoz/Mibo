@@ -126,11 +126,7 @@ module UI =
     (buffer: RenderBuffer2D)
     =
     match hoveredOver with
-    | ValueSome struct (hCol, hRow) ->
-      if not(visible.Contains(struct (hCol, hRow))) then
-        ()
-      else
-
+    | ValueSome struct (hCol, hRow) when visible.Contains(struct (hCol, hRow)) ->
       match units |> Map.tryFind struct (hCol, hRow) with
       | Some hoveredUnit ->
         let topLeft = Raylib.GetScreenToWorld2D(Vector2.Zero, camera)
@@ -195,6 +191,7 @@ module UI =
                 (Vector2(worldPos.X, worldPos.Y), 6, Constants.CellSize, 0f)
               |> Draw.drop)
       | None -> ()
+    | ValueSome _
     | ValueNone -> ()
 
     buffer

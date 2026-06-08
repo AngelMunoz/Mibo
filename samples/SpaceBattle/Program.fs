@@ -184,7 +184,16 @@ let init(ctx: GameContext) : struct (Model * Cmd<Msg>) =
 
   model, Cmd.none
 
+let private disposeOldResources(model: Model) =
+  if box model.Effects <> null then
+    (model.Effects :> IDisposable).Dispose()
+
+  if box model.Fog <> null then
+    (model.Fog :> IDisposable).Dispose()
+
 let private startGame(preStartState: PreStartState, model: Model) =
+  disposeOldResources model
+
   let enabledCount =
     preStartState.Slots |> Array.filter(fun s -> s.Enabled) |> Array.length
 
@@ -230,6 +239,8 @@ let private startGame(preStartState: PreStartState, model: Model) =
   model
 
 let private resetGameState(model: Model) =
+  disposeOldResources model
+
   model.State <- PreStartScreen
   model.PreStartState <- PreStart.init()
   model.Units <- Map.empty
@@ -628,7 +639,11 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
     | ValueSome _ -> model, Cmd.none
     | ValueNone ->
 
-    let gameOver = Units.checkGameOver model.Units model.TurnOrder.Factions
+    let gameOver =
+      Units.checkGameOver
+        model.Units
+        model.TurnOrder.PlayerIndices
+        model.TurnOrder.Factions
 
     match gameOver with
     | ValueSome winner ->
@@ -733,7 +748,12 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 
     match unitsMsg with
     | AttackUnit _ ->
-      match Units.checkGameOver model.Units model.TurnOrder.Factions with
+      match
+        Units.checkGameOver
+          model.Units
+          model.TurnOrder.PlayerIndices
+          model.TurnOrder.Factions
+      with
       | ValueSome winner ->
         model.GameOver <- ValueSome winner
 

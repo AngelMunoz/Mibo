@@ -126,7 +126,10 @@ void main() {
     Shader: Shader
     TimeLoc: int
     Timer: Stopwatch
-  }
+  } with
+
+    interface IDisposable with
+      member this.Dispose() = Raylib.UnloadShader(this.Shader)
 
   let init() =
     let shader = Raylib.LoadShaderFromMemory(vertexSource, fragmentSource)
