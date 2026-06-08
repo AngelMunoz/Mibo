@@ -15,9 +15,9 @@ The core Elmish loop is `init → update → view`, driven by messages. In Space
   │         ├──▶ Units.update     ──▶ model.Units  + Cmd<Units>  │
   │         ├──▶ Camera.update    ──▶ model.Cam                  │
   │         ├──▶ Phase.System     ──▶ model.Turn   + Intent      │
-   │         ├──▶ AnimState.update ──▶ model.Anim   + Event       │
-   │         ├──▶ Effects.update  ──▶ model.Effects               │
-   │         └──▶ Tick (per frame) ──▶ camera, anim, decorations  │
+  │         ├──▶ AnimState.update ──▶ model.Anim   + Event       │
+  │         ├──▶ Effects.update  ──▶ model.Effects               │
+  │         └──▶ Tick (per frame) ──▶ camera, anim, decorations  │
   │                                                              │
   │   Intent ──▶ translate to Cmd<Msg> for other systems         │
   │   Event  ──▶ translate to Cmd<Msg> for other systems         │
@@ -35,24 +35,29 @@ type Msg =
   | PhaseMsg      of Phase.PhaseMsg
   | AnimationMsg  of AnimationMsg
   | Tick          of GameTime
+  | PreStartMsg   of PreStartMsg
   | RestartGame
+  | EvaluateAI
 ```
 
 ## Systems
 
-| System          | File                     | Owns                                       | Messages                 | Purpose                                      |
-| --------------- | ------------------------ | ------------------------------------------ | ------------------------ | -------------------------------------------- |
-| **Input**       | `Input.fs`               | `InputModel` (selection, hover, held keys) | `InputMsg`               | Mouse/keyboard input, selection state        |
-| **Camera**      | `Camera.fs`              | `CameraModel` (Camera2D)                   | `CameraMsg`              | Zoom, movement, map clamping                 |
+| System          | File                     | Owns                                        | Messages                 | Purpose                                                |
+| --------------- | ------------------------ | ------------------------------------------- | ------------------------ | ------------------------------------------------------ |
+| **Input**       | `Input.fs`               | `InputModel` (selection, hover, held keys)  | `InputMsg`               | Mouse/keyboard input, selection state                  |
+| **Camera**      | `Camera.fs`              | `CameraModel` (Camera2D)                    | `CameraMsg`              | Zoom, movement, map clamping                           |
 | **Map**         | `Map.fs`                 | `MapModel` (grid, reachable, visible, path) | `MapMsg`                 | Hex grid, pathfinding, reachable cells, fog visibility |
-| **Units**       | `Units.fs`               | `Map<cell, SBUnit>`                        | `UnitsMsg`               | Unit data, move/damage/direction             |
-| **Phase**       | `Phase.fs`               | `Turn`, `TurnOrder`                        | `PhaseMsg` → `Intent`    | Turn management, action resolution           |
-| **AnimState**   | `AnimState.fs`           | `AnimationState`                           | `AnimationMsg` → `Event` | Movement/attack tween, banners               |
-| **Selection**   | `Selection.fs`           | (pure functions)                           | —                        | Move range, path computation, simplification |
-| **Shaders**     | `Shaders.fs`             | `SkyboxModel`                              | —                        | Skybox rendering                             |
-| **Decorations** | `AnimatedDecorations.fs` | `Map<cell, AnimatedSprite>`                | —                        | Animated background sprites                  |
-| **Effects**     | `Effects.fs`             | `EffectState` (particles, lights, flashes) | —                        | Laser trail/impact particles, point lights   |
-| **FogOfWar**    | `FogOfWar.fs`            | `FogState` (shader, fog texture)           | —                        | Shader-based fog of war with space dust      |
+| **Units**       | `Units.fs`               | `Map<cell, SBUnit>`                         | `UnitsMsg`               | Unit data, move/damage/direction                       |
+| **Phase**       | `Phase.fs`               | `Turn`, `TurnOrder`                         | `PhaseMsg` → `Intent`    | Turn management, action resolution                     |
+| **AI**          | `AI.fs`                  | (pure functions)                            | —                        | AI decision tree, class-weighted scoring               |
+| **AnimState**   | `AnimState.fs`           | `AnimationState`                            | `AnimationMsg` → `Event` | Movement/attack tween, banners                         |
+| **Selection**   | `Selection.fs`           | (pure functions)                            | —                        | Move range, path computation, simplification           |
+| **PreStart**    | `PreStart.fs`            | `PreStartState` (player slots)              | `PreStartMsg`            | Pre-game player configuration screen                   |
+| **UI**          | `UI.fs`                  | (pure functions)                            | —                        | HP bars, action indicators, info overlays              |
+| **Shaders**     | `Shaders.fs`             | `SkyboxModel`                               | —                        | Skybox rendering                                       |
+| **Decorations** | `AnimatedDecorations.fs` | `Map<cell, AnimatedSprite>`                 | —                        | Animated background sprites                            |
+| **Effects**     | `Effects.fs`             | `EffectState` (particles, lights, flashes)  | —                        | Laser trail/impact particles, point lights             |
+| **FogOfWar**    | `FogOfWar.fs`            | `FogState` (shader)                         | —                        | Shader-based fog of war with space dust                |
 
 ## Cross-System Communication
 
@@ -190,14 +195,14 @@ The attack lifecycle mirrors the move flow — Phase declares intent, animation 
 When a player ends their turn, a 2-second transition plays before the next faction takes over:
 
 ```
-1. User presses Enter (EndTurn key)
+1. User presses Enter (EndTurn key) or AI sends EndTurn
    │
    ▼
 2. PhaseMsg(EndTurn)
    │  Phase returns Intent.StartTransition(nextFaction)
-   │  Program.fs starts transition animation:
+   │  Program.fs clears visibility (multi-human only) and starts transition:
    │
-   └─▶ AnimationMsg(ShowBanner("Federation's Turn", 2.0f))
+   └─▶ AnimationMsg(StartTransition(nextFaction, 2.0f))
    │
    ▼
 3. Tick (every frame)
@@ -210,7 +215,9 @@ When a player ends their turn, a 2-second transition plays before the next facti
    ▼
 4. PhaseMsg(TransitionDone)
    │  Phase calls advanceTurn → cycles to next faction
-   │  Program.fs recomputes fog visibility for new faction
+   │  Program.fs recomputes fog visibility via resolveVisibility
+   │  If next player is AI: Program.fs emits EvaluateAI
+   │  If next player is Human: waits for input
 ```
 
 ## Fog of War
@@ -219,32 +226,30 @@ The fog of war system uses a **shader-based approach** with procedural space dus
 
 ### Visibility
 
-Each unit has a `VisualRange` (hex steps). `Map.computeVisibleUnits` unions all cells visible to the current faction's units using `Hex2DSpatial.inRange`. The result is stored in `MapModel.Visible`.
+Each unit has a `VisualRange` (hex steps). `Map.computeVisibleUnits` unions all cells visible to a player's units using `Hex2DSpatial.inRange`. The result is stored in `MapModel.Visible`.
 
 ### Rendering
 
 `FogOfWar.fs` contains a GLSL shader that:
-1. Receives a 12×12 fog texture (white = visible, black = fogged)
-2. For each pixel, calculates which hex cell it belongs to
-3. Samples the fog texture
-4. If fogged: renders animated FBM noise (purple/blue nebulae, dark space dust)
-5. If visible: discards the pixel (transparent)
 
-The fog texture is updated only when visibility changes (turn change, unit move, unit destroyed).
+1. For each hex cell in the viewport, checks if it's in the `Visible` set
+2. If not visible: draws a filled hex polygon with a procedural nebula shader
+3. The shader uses 3-layer FBM noise for swirling purple/blue nebulae
+4. If visible: the hex is not drawn (transparent)
 
 ### Integration
 
-- `PhaseQuery.IsVisible` — Phase uses this to prevent attacks on fogged targets
+- `PhaseQuery.IsVisible` — Phase uses this to prevent human attacks on fogged targets (AI bypasses this check)
 - `Units.view` — Enemy units in fog are not rendered
-- `Map.viewTiles` — Tile sprites in fog are not rendered
-- Fog is rendered as a full-screen quad inside the camera transform, after particles and before overlays
+- `UI.drawHpBars` — HP bars in fog are not rendered
+- Fog is rendered after tiles but before units inside the camera transform
 
 ## Win Conditions
 
 Simple elimination: when a faction has no units remaining, the game ends.
 
-- `Units.checkGameOver(units, factions)` — returns `ValueSome winner` if only one faction has units
-- Called after every `AttackUnit` message
+- `Units.checkGameOver(units, factions)` — returns `ValueSome winner` if only one unique faction has units (deduplicates duplicate faction slots)
+- Called after every `AttackUnit` message and at the start of every `EvaluateAI` call
 - Sets `model.GameOver` which blocks all input except restart
 - Renders a victory overlay with the winning faction name
 - Press **R** to restart
@@ -264,7 +269,10 @@ let query: Phase.PhaseQuery = {
   Selection = model.Input.Selection
   UnitAt = fun cell -> model.Units |> Map.tryFind cell
   IsReachable = fun cell -> model.Map.Reachable.Contains cell || model.Map.AttackTargets.Contains cell
+  IsVisible = fun cell -> model.Map.Visible.Contains cell
   CurrentFaction = model.Turn.CurrentFaction
+  CurrentPlayerIndex = model.Turn.CurrentPlayerIndex
+  PlayerControl = model.Turn.PlayerControl
 }
 ```
 
@@ -280,6 +288,138 @@ inputCmd |> Cmd.map(fun msg -> match msg with CalculateRange -> MapMsg(...) | ot
 ### Mutable model, immutable messages
 
 The `Model` class uses mutable properties for performance (avoiding large immutable copies), but all messages and sub-system data types are immutable structs/records.
+
+## AI System
+
+The AI module (`AI.fs`) is a pure-function decision tree. It has no state — it reads the game state and returns `AIAction` values that `Program.fs` translates into `PhaseMsg` messages.
+
+### Decision Flow
+
+```
+EvaluateAI (Program.fs)
+  │
+  ├─▶ checkGameOver → if game over, show banner and stop
+  │
+  ├─▶ AI.evaluateNextAction → iterate AI player's units
+  │     │
+  │     ├─▶ For each unit: AI.evaluate → score actions
+  │     │     ├─ Compute visible enemies (AI.computeVisible)
+  │     │     ├─ Check attack range, movement range
+  │     │     ├─ Score: health + threat + target + support (weighted by class)
+  │     │     └─ Return: AttackOnly | MoveAndAttack | MoveOnly | NoAction
+  │     │
+  │     └─▶ Return first actionable (unitCell, PhaseMsg, PhaseMsg)
+  │
+  ├─▶ Set model.Map.Reachable + AttackTargets directly
+  ├─▶ Set model.Input.Selection
+  └─▶ Dispatch PhaseMsg(actionMsg) → flows through same Phase pipeline as human
+```
+
+### Class-Weighted Scoring
+
+Each unit class has different behavioral weights that shape decision-making:
+
+| Weight  | Fighter | Cruiser | Battleship | Meaning                           |
+| ------- | ------- | ------- | ---------- | --------------------------------- |
+| Health  | 0.2     | 0.3     | 0.5        | Caution when wounded              |
+| Threat  | 0.6     | 0.3     | -0.4       | Drawn to (or repelled by) enemies |
+| Target  | 0.8     | 0.5     | 0.3        | Wants to attack                   |
+| Support | -0.1    | 0.3     | 0.6        | Stays near allies                 |
+
+- **Fighters**: Aggressive — drawn to enemies, want to attack, don't care about damage
+- **Cruisers**: Balanced — moderate concern for health and allies
+- **Battleships**: Cautious — repelled by enemies, stay near allies, prioritize survival
+
+### Patrol Behavior
+
+When no enemies are visible, AI units patrol: center of map → corners (cycling each turn via `turnNumber + playerIndex`).
+
+### AI Turn Automation
+
+`Program.fs` automates AI turns via the `aiCmd` logic:
+
+- After `TransitionDone` or `Resolution` → send `EvaluateAI`
+- On `NoIntent` or `ClearSelection` → send `EndTurn`
+- AI evaluates one unit per `EvaluateAI` call; `Program.fs` loops until all units act or turn ends
+- Mouse/keyboard gameplay input is blocked during AI turns
+
+## Unit Classes and Combat
+
+### Unit Stats
+
+| Stat        | Fighter | Cruiser | Battleship |
+| ----------- | ------- | ------- | ---------- |
+| HP          | 12      | 20      | 35         |
+| Defense     | 5       | 12      | 25         |
+| MoveRange   | 8       | 5       | 3          |
+| AttackRange | 2       | 3       | 4          |
+| VisualRange | 2       | 3       | 7          |
+| Base Damage | 25      | 18      | 12         |
+
+### Damage Formula
+
+```
+damage = max 1 (baseDamage * 10 / (10 + defense))
+```
+
+Defense provides **diminishing returns** — each additional point of defense matters less. This prevents stalemates where high-defense units take 1 damage.
+
+| Attacker → Target   | Fighter (5def) | Cruiser (12def) | Battleship (25def) |
+| ------------------- | -------------- | --------------- | ------------------ |
+| **Fighter** (25)    | 17             | 15              | 8                  |
+| **Cruiser** (18)    | 12             | 7               | 6                  |
+| **Battleship** (12) | 8              | 5               | 4                  |
+
+### Movement and Attack Order
+
+Humans can move and attack in **any order** per unit:
+
+- Attack from original position (no move required)
+- Move then attack
+- Attack then move
+- Just move or just attack
+
+`RecalculateRange` computes both move range AND attack targets when a unit can do both (`CanMove && CanAct`).
+
+## Fog of War Modes
+
+The fog system adapts based on how many human players are in the game:
+
+| Mode         | HumanCount | Fog    | Visibility Source      | During Transitions    |
+| ------------ | :--------: | ------ | ---------------------- | --------------------- |
+| Spectator    |     0      | None   | All cells (set once)   | No fog                |
+| Single Human |     1      | Active | Human's units          | Never cleared         |
+| Hot-Seat     |     2+     | Active | Current player's units | Cleared between turns |
+
+### Visibility Resolution
+
+All visibility decisions are centralized in `resolveVisibility(model, trigger)`:
+
+```fsharp
+[<Struct>]
+type VisibilityTrigger =
+  | GameStart | TurnStart | TransitionStart | UnitMoved | UnitChanged
+
+[<Struct>]
+type VisibilityAction =
+  | RefreshForSingleHuman | RefreshForCurrentPlayer | ClearVisibility | NoVisibilityChange
+```
+
+This single function replaces the scattered `HumanCount`/`PlayerControl` checks that were previously in 6 different handler contexts.
+
+### All-AI Spectator Mode
+
+When all players are AI, `model.Map.Visible` is set to all grid cells at game start. No fog renders, no visibility restrictions — the human watches the AI fight.
+
+## Pre-Start Configuration
+
+`PreStart.fs` provides a configuration screen where players can:
+
+- Toggle up to 4 player slots on/off
+- Cycle faction (Federation, Empire, Pirates)
+- Cycle control type (Human, AI)
+
+Map size scales with player count: 10×10 (2 players) to 16×16 (4 players). Each player spawns 3 units (Fighter, Cruiser, Battleship) at their corner of the map.
 
 ## Performance Considerations
 
@@ -331,20 +471,24 @@ For the full scaling ladder and when to apply each pattern, see [Scaling Mibo.Ra
 
 ```
 SpaceBattle/
-├── Program.fs           ← Router: init, update, view, subscriptions
+├── Program.fs           ← Router: init, update, view, subscriptions, visibility resolution
 ├── Types.fs             ← Tile type (Asteroid, DeepSpace, etc.)
+├── Constants.fs         ← Game constants (cell size, zoom, viewport)
 ├── Input.fs             ← Mouse/keyboard input, selection state
 ├── Camera.fs            ← Camera movement and zoom
-├── Map.fs               ← Hex grid, pathfinding overlay, reachable cells
+├── Map.fs               ← Hex grid, pathfinding overlay, reachable cells, fog visibility
 ├── Units.fs             ← Unit data, movement, damage, direction, rendering
 ├── Phase.fs             ← Turn phases, action intents, resolution
 ├── Selection.fs         ← Move range computation, path simplification
-├── AnimState.fs         ← Movement tween animation, banners
+├── AI.fs                ← AI decision tree, class-weighted scoring, patrol behavior
+├── AnimState.fs         ← Movement tween animation, banners, turn transitions
 ├── AnimatedDecorations.fs ← Animated background sprites
 ├── Effects.fs           ← Laser trail/impact particles, point lights
 ├── FogOfWar.fs          ← Shader-based fog of war with space dust
 ├── Shaders.fs           ← Skybox shader
 ├── Assets.fs            ← Sprite sheet loading
-├── Constants.fs         ← Game constants (cell size, zoom, etc.)
-└── DebugUtils.fs        ← Debug overlay utilities
+├── UI.fs                ← HP bars, action indicators, info overlays, turn indicator
+├── PreStart.fs          ← Pre-game player configuration screen
+├── DebugUtils.fs        ← Debug overlay utilities
+└── SpaceBattle.fsproj   ← Compilation order
 ```
