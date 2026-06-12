@@ -176,11 +176,13 @@ type HeadlessRunner<'Model, 'Msg>
       dispatch msg
 
   /// <summary>Advance the simulation by one frame with the given delta time.</summary>
-  /// <param name="elapsed">Frame delta (e.g. TimeSpan.FromSeconds(0.016) for 60fps).</param>
+  /// <param name="elapsed">Frame delta (e.g. TimeSpan.FromMiliSeconds(16) for 60fps). Negative values are clamped to zero.</param>
   member _.Step(elapsed: TimeSpan) =
     if shouldQuit then
       ()
     else
+
+      let elapsed = if elapsed < TimeSpan.Zero then TimeSpan.Zero else elapsed
 
       totalTime <- totalTime + elapsed
 

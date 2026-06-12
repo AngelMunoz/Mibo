@@ -233,7 +233,7 @@ let headlessAdversarial =
       Expect.equal runner.Model.Count 1 "Messages should be processed"
       Expect.equal runner.TotalTime.TotalSeconds 0.0 "Time should not advance"
 
-    testCase "Negative delta advances time by negative amount"
+    testCase "Negative delta is clamped to zero"
     <| fun _ ->
       use runner =
         new HeadlessRunner<_, _>(
@@ -243,10 +243,10 @@ let headlessAdversarial =
 
       runner.Step(TimeSpan.FromMilliseconds(-16))
 
-      Expect.isLessThan
+      Expect.equal
         runner.TotalTime.TotalSeconds
         0.0
-        "Negative delta should result in negative time"
+        "Negative delta should be clamped to zero"
 
     testCase "Large delta with FixedStep caps at MaxStepsPerFrame"
     <| fun _ ->
