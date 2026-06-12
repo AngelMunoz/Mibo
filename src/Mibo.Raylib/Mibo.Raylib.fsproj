@@ -32,6 +32,7 @@
     <Compile Include="Assets.fs" />
     <Compile Include="Elmish.Program.fs" />
     <Compile Include="Elmish.Runtime.fs" />
+    <Compile Include="Elmish.Headless.fs" />
     <Compile Include="DefaultShaders.fs" />
     <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
     <Compile Include="Graphics2D/Lighting/LitShader.fs" />
