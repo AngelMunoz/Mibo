@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <Compile Include="ElmishTests.fs" />
+    <Compile Include="HeadlessTests.fs" />
     <Compile Include="InputMapperTests.fs" />
     <Compile Include="CameraTests.fs" />
     <Compile Include="RenderBufferTests.fs" />
