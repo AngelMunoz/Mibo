@@ -19,27 +19,27 @@ let program =
   |> HeadlessProgram.withSubscribe subscribe
   |> HeadlessProgram.withTick Tick
 
-use runner = new HeadlessRunner(program)
+use runner = new HeadlessRunner<Model, Msg>(program)
 ```
 
 ## Building a Program
 
 `HeadlessProgram` supports the same builder DSL as `Program`:
 
-| Function | Description |
-|----------|-------------|
+| Function                 | Description                                     |
+| ------------------------ | ----------------------------------------------- |
 | `mkHeadless init update` | Create a program with init and update functions |
-| `withSubscribe` | Add a subscription function |
-| `withTick` | Add a per-frame tick message |
-| `withFixedStep` | Enable framework-managed fixed timestep |
-| `withDispatchMode` | Set `Immediate` or `FrameBounded` dispatch |
+| `withSubscribe`          | Add a subscription function                     |
+| `withTick`               | Add a per-frame tick message                    |
+| `withFixedStep`          | Enable framework-managed fixed timestep         |
+| `withDispatchMode`       | Set `Immediate` or `FrameBounded` dispatch      |
 
 ## Running the Simulation
 
 `HeadlessRunner` provides explicit frame control with virtual time:
 
 ```fsharp
-use runner = new HeadlessRunner(program)
+use runner = new HeadlessRunner<_,_>(program)
 
 // Advance one frame
 runner.Step(TimeSpan.FromMilliseconds(16))
@@ -63,6 +63,7 @@ runner.DispatchMany [ Increment; Increment; Increment ]
 ```
 
 This is useful for:
+
 - Simulating input in tests
 - Feeding network messages in server scenarios
 - Driving the simulation from external sources
@@ -104,7 +105,7 @@ let program =
     Map = PhysicsTick
   }
 
-use runner = new HeadlessRunner(program)
+use runner = new HeadlessRunner<_,_>(program)
 runner.Step(TimeSpan.FromMilliseconds(16))
 ```
 
@@ -144,7 +145,7 @@ let program =
 `HeadlessRunner` implements `IDisposable`. Disposing it cleans up active subscriptions:
 
 ```fsharp
-use runner = new HeadlessRunner(program)
+use runner = new HeadlessRunner<_,_>(program)
 // ... run simulation ...
 // Subscriptions are disposed when runner goes out of scope
 ```
@@ -167,8 +168,9 @@ let update msg model =
 [<Test>]
 let ``increment increases count`` () =
   use runner =
-    HeadlessProgram.mkHeadless init update
-    |> HeadlessRunner
+    new HeadlessRunner<_,_>(
+      HeadlessProgram.mkHeadless init update
+    )
 
   runner.Dispatch(Increment)
   runner.Step(TimeSpan.FromMilliseconds(16))
@@ -189,7 +191,7 @@ let program =
     Map = GameTick
   }
 
-use runner = new HeadlessRunner(program)
+use runner = new HeadlessRunner<_,_>(program)
 
 // Simulate 10 seconds of game time
 while not runner.ShouldQuit do
