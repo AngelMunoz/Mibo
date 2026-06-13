@@ -33,6 +33,7 @@ use runner = new HeadlessRunner<Model, Msg>(program)
 | `withTick`               | Add a per-frame tick message                    |
 | `withFixedStep`          | Enable framework-managed fixed timestep         |
 | `withDispatchMode`       | Set `Immediate` or `FrameBounded` dispatch      |
+| `withObserver`           | Register an observer for per-frame model snapshots |
 
 ## Running the Simulation
 
@@ -53,6 +54,31 @@ let met = runner.StepUntil(
     TimeSpan.FromMilliseconds(16))
 ```
 
+### Run and RunAsync
+
+For server scenarios and real-time simulation, `Run` and `RunAsync` pace the
+loop automatically and yield a `(GameTime * 'Model)` snapshot each tick:
+
+```fsharp
+// Synchronous: spin-wait with Thread.Sleep(1) for timing precision.
+// Use for game servers where the loop owns the main thread.
+for (time, model) in runner.Run(TimeSpan.FromMilliseconds(16)) do
+    printfn "Tick: %A" model
+
+// Asynchronous: PeriodicTimer for efficient, cancellation-friendly pacing.
+// Iterate with F# 8+ `for .. in` over IAsyncEnumerable.
+let cts = new CancellationTokenSource()
+
+async {
+    for (time, model) in runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token) do
+        printfn "Tick: %A" model
+}
+|> Async.RunSynchronously
+```
+
+> **Warning:** Do not mix `Run`/`RunAsync` with `Step`/`StepN`/`StepUntil` on
+> the same runner — they all advance the simulation and will corrupt state.
+
 ## Dispatching Messages
 
 Send messages into the runner from outside the update loop:
@@ -71,9 +97,9 @@ This is useful for:
 ## Accessing State
 
 ```fsharp
-let model = runner.Model        // Current model state
-let time = runner.TotalTime     // Elapsed virtual time
-let quit = runner.ShouldQuit    // Whether Quit was signaled
+let model = runner.Model          // Current model state
+let time = runner.GameTime        // GameTime struct (TotalTime + ElapsedGameTime)
+let quit = runner.ShouldQuit      // Whether Quit was signaled
 ```
 
 ## Time Control
@@ -85,10 +111,10 @@ Unlike `RaylibGame` which uses real wall-clock time, `HeadlessRunner` uses virtu
 runner.Step(TimeSpan.FromMilliseconds(16))  // ~60fps
 runner.Step(TimeSpan.FromSeconds(1))        // 1 second
 
-// TotalTime accumulates across steps
+// GameTime accumulates across steps
 runner.Step(TimeSpan.FromMilliseconds(100))
 runner.Step(TimeSpan.FromMilliseconds(200))
-// runner.TotalTime.TotalSeconds = 0.3
+// runner.GameTime.TotalTime.TotalSeconds = 0.3
 ```
 
 ## Fixed Step with Headless
@@ -140,6 +166,31 @@ let program =
   |> HeadlessProgram.withSubscribe subscribe
 ```
 
+## Observers
+
+Observers receive a `(GameContext * 'Model * GameTime)` snapshot every frame,
+after the update loop completes. Use them to react to model changes without
+modifying the update function — e.g. broadcasting state to clients, logging
+telemetry, or recording replays.
+
+```fsharp
+let program =
+  HeadlessProgram.mkHeadless init update
+  |> HeadlessProgram.withObserver(fun () ->
+    HeadlessProgram.observe(fun struct (ctx, model, time) ->
+      printfn "Frame at %.2fs: %A" time.TotalTime.TotalSeconds model))
+
+use runner = new HeadlessRunner<_,_>(program)
+runner.Step(TimeSpan.FromMilliseconds(16))
+```
+
+`HeadlessProgram.observe` creates an `IObservable` from a single `onNext`
+callback, hiding the `OnError`/`OnCompleted` boilerplate. Observers
+implementing `IDisposable` are disposed when the runner is disposed.
+
+Multiple observers can be registered — they fire in registration order each
+frame.
+
 ## Cleanup
 
 `HeadlessRunner` implements `IDisposable`. Disposing it cleans up active subscriptions:
@@ -180,23 +231,31 @@ let ``increment increases count`` () =
 
 ## Example: Server Simulation
 
+A headless runner is an authoritative simulation server: `RunAsync` paces the
+tick loop, observers broadcast state to clients, and `Dispatch` injects
+client inputs from the network layer.
+
 ```fsharp
 let program =
   HeadlessProgram.mkHeadless init update
-  |> HeadlessProgram.withSubscribe subscribe
   |> HeadlessProgram.withFixedStep {
     StepSeconds = 1f / 20f  // 20 ticks/sec
     MaxStepsPerFrame = 4
     MaxFrameSeconds = ValueSome 0.5f
     Map = GameTick
   }
+  // Broadcast the model to all clients every frame
+  |> HeadlessProgram.withObserver(fun () ->
+    HeadlessProgram.observe(fun struct (_, model, _) ->
+      serialize model |> server.Broadcast))
 
 use runner = new HeadlessRunner<_,_>(program)
 
-// Simulate 10 seconds of game time
-while not runner.ShouldQuit do
-  runner.Step(TimeSpan.FromMilliseconds(50))
+// Feed client inputs as they arrive from the network
+server.MessageReceived.Add(fun (clientId, bytes) ->
+  runner.Dispatch(ClientInput(clientId, deserialize bytes)))
 
-  // In a real server, you'd receive client inputs here
-  // runner.Dispatch(ClientInput(clientId, input))
+// Run the server loop — RunAsync paces ticks, the observer broadcasts
+for (_, _) in runner.Run(TimeSpan.FromMilliseconds(50)) do
+  () // The observer handles the broadcast
 ```

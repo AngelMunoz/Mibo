@@ -70,11 +70,16 @@ module HeadlessProgram =
         Subscribe = subscribe
   }
 
+  /// <summary>Adds a per-frame tick message generated from the current <see cref="T:Mibo.Elmish.GameTime"/>.</summary>
+  /// <param name="map">Function that converts the current game time into a message dispatched each frame.</param>
   let withTick map program : HeadlessProgram<'Model, 'Msg> = {
     program with
         Tick = ValueSome map
   }
 
+  /// <summary>Enables a framework-managed fixed timestep that dispatches a message at a constant rate, independent of variable frame timing.</summary>
+  /// <param name="cfg">Fixed step configuration (step size, max steps per frame, max frame budget, message mapper).</param>
+  /// <exception cref="T:System.ArgumentException">Thrown when <c>StepSeconds</c> ≤ 0 or <c>MaxStepsPerFrame</c> ≤ 0.</exception>
   let withFixedStep cfg program : HeadlessProgram<'Model, 'Msg> =
     if cfg.StepSeconds <= 0.0f then
       invalidArg (nameof cfg.StepSeconds) "StepSeconds must be > 0"
@@ -87,6 +92,8 @@ module HeadlessProgram =
           FixedStep = ValueSome cfg
     }
 
+  /// <summary>Sets the dispatch mode controlling when messages become eligible for processing.</summary>
+  /// <param name="mode"><c>Immediate</c> processes in-frame; <c>FrameBounded</c> defers to the next step.</param>
   let withDispatchMode mode program : HeadlessProgram<'Model, 'Msg> = {
     program with
         DispatchMode = mode
