@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="Physics.fs" />
+    <Compile Include="Serialization.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="JDeck" Version="1.1.0" />
+  </ItemGroup>
+</Project>
