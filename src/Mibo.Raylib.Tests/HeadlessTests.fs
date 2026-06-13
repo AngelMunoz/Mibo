@@ -1180,4 +1180,22 @@ let headlessRun =
       }
       |> Async.AwaitTask
       |> Async.RunSynchronously
+
+    testCase "Run with zero interval throws ArgumentException"
+    <| fun _ ->
+      use runner =
+        new HeadlessRunner<_, _>(HeadlessProgram.mkHeadless init update)
+
+      Expect.throwsT<ArgumentException>
+        (fun () -> runner.Run(TimeSpan.Zero) |> Seq.iter ignore)
+        "Should throw ArgumentException for zero interval"
+
+    testCase "RunAsync with zero interval throws ArgumentException"
+    <| fun _ ->
+      use runner =
+        new HeadlessRunner<_, _>(HeadlessProgram.mkHeadless init update)
+
+      Expect.throwsT<ArgumentException>
+        (fun () -> runner.RunAsync(TimeSpan.Zero) |> ignore)
+        "Should throw ArgumentException for zero interval"
   ]

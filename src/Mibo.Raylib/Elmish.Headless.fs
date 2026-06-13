@@ -338,6 +338,9 @@ type HeadlessRunner<'Model, 'Msg>
   /// </para>
   /// </remarks>
   member this.Run(interval: TimeSpan, [<Struct>] ?ct: CancellationToken) =
+    if interval <= TimeSpan.Zero then
+      invalidArg (nameof interval) "Interval must be greater than zero"
+
     let ct = defaultValueArg ct CancellationToken.None
     let sw = Stopwatch.StartNew()
     let intervalMs = interval.TotalMilliseconds
@@ -370,10 +373,19 @@ type HeadlessRunner<'Model, 'Msg>
   /// </para>
   /// </remarks>
   member this.RunAsync(interval: TimeSpan, [<Struct>] ?ct: CancellationToken) =
+    if interval <= TimeSpan.Zero then
+      invalidArg (nameof interval) "Interval must be greater than zero"
+
     let ct = defaultValueArg ct CancellationToken.None
 
     { new IAsyncEnumerable<struct (GameTime * 'Model)> with
-        member _.GetAsyncEnumerator(_) =
+        member _.GetAsyncEnumerator(cancellationToken) =
+          let linkedCts =
+            CancellationTokenSource.CreateLinkedTokenSource(
+              ct,
+              cancellationToken
+            )
+
           let timer = new PeriodicTimer(interval)
           let mutable current = Unchecked.defaultof<struct (GameTime * 'Model)>
 
@@ -383,7 +395,7 @@ type HeadlessRunner<'Model, 'Msg>
               member _.MoveNextAsync() =
                 ValueTask<bool>(
                   task {
-                    let! tick = timer.WaitForNextTickAsync ct
+                    let! tick = timer.WaitForNextTickAsync linkedCts.Token
 
                     if tick && not this.ShouldQuit then
                       this.Step interval
@@ -396,6 +408,7 @@ type HeadlessRunner<'Model, 'Msg>
 
               member _.DisposeAsync() =
                 timer.Dispose()
+                linkedCts.Dispose()
                 ValueTask()
           }
     }
