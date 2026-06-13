@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Types.fs" />
+    <Compile Include="Physics.fs" />
     <Compile Include="Serialization.fs" />
   </ItemGroup>
   <ItemGroup>

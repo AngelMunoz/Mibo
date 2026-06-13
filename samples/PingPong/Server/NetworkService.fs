@@ -3,35 +3,111 @@ module PingPong.Server.NetworkService
 open System
 open System.Net
 open System.Net.WebSockets
-open System.Collections.Generic
+open System.Collections.Concurrent
 open System.Threading
+open FSharp.Control
 open PingPong.Shared.Types
 open FSharp.UMX
 
-// ── WebSocket Server Implementation ────────────────────────────────────────
+// ── Server Transport Interface (server-only) ───────────────────────────────
+// Multiplexer for many connected peers. Peer lifecycle is handled via
+// factory callbacks, not the interface.
 
-type WebSocketServer(port: int) as this =
-  let connections = Dictionary<int<peerId>, WebSocket>()
+type IServerTransport =
+  abstract MessageReceived: IObservable<int<peerId> * byte[]>
+  abstract Send: peer: int<peerId> * data: byte[] -> unit
+  abstract Broadcast: data: byte[] -> unit
+  abstract Disconnect: unit -> unit
+
+type private Command =
+  | SendOne of peer: int<peerId> * data: byte[]
+  | Broadcast of data: byte[]
+  | Shutdown
+
+/// <summary>
+/// Creates a WebSocket server hidden behind IServerTransport.
+/// All sends are serialized through a MailboxProcessor — WebSocket permits
+/// at most one outstanding SendAsync per instance.
+/// </summary>
+/// <param name="port">TCP port to listen on.</param>
+/// <param name="onPeerConnected">
+/// Called when a peer connects. Return optional handshake bytes to send back.
+/// </param>
+/// <param name="onPeerDisconnected">
+/// Called on both clean and abnormal disconnect. The peer has already been
+/// removed from the connection table when this fires.
+/// </param>
+let createWebSocketServer
+  (port: int)
+  (onPeerConnected: int<peerId> -> byte[] voption)
+  (onPeerDisconnected: int<peerId> -> unit)
+  : IServerTransport =
+
+  let connections = ConcurrentDictionary<int<peerId>, WebSocket>()
   let mutable nextPeerId = 1<peerId>
   let cts = new CancellationTokenSource()
 
-  let stateChanged = Event<ConnectionState>()
   let messageReceived = Event<int<peerId> * byte[]>()
+
+  let sendTo (ws: WebSocket) (data: byte[]) = async {
+    if ws.State = WebSocketState.Open then
+      try
+        do!
+          ws.SendAsync(
+            ArraySegment data,
+            WebSocketMessageType.Binary,
+            true,
+            cts.Token
+          )
+          |> Async.AwaitTask
+      with
+      | :? WebSocketException
+      | :? OperationCanceledException
+      | :? ObjectDisposedException -> ()
+  }
+
+  let agentBody(inbox: MailboxProcessor<Command>) =
+    let rec loop() = async {
+      let! cmd = inbox.Receive()
+
+      match cmd with
+      | SendOne(peer, data) ->
+        match connections.TryGetValue peer with
+        | true, ws -> do! sendTo ws data
+        | false, _ -> ()
+
+        return! loop()
+
+      | Broadcast data ->
+        for KeyValue(_, ws) in connections do
+          do! sendTo ws data
+
+        return! loop()
+
+      | Shutdown -> ()
+    }
+
+    loop()
+
+  let agent = MailboxProcessor.Start(agentBody, cancellationToken = cts.Token)
 
   let receiveLoop (peer: int<peerId>) (ws: WebSocket) = async {
     let buffer = Array.zeroCreate<byte> 4096
 
     try
-      while ws.State = WebSocketState.Open && not cts.IsCancellationRequested do
-        let! result =
-          ws.ReceiveAsync(ArraySegment(buffer), cts.Token) |> Async.AwaitTask
+      try
+        while ws.State = WebSocketState.Open && not cts.IsCancellationRequested do
+          let! result =
+            ws.ReceiveAsync(ArraySegment(buffer), cts.Token) |> Async.AwaitTask
 
-        if result.MessageType = WebSocketMessageType.Binary then
-          let data = buffer.[0 .. result.Count - 1]
-          messageReceived.Trigger(peer, data)
-    with _ ->
-      connections.Remove(peer) |> ignore
-      stateChanged.Trigger Disconnected
+          if result.MessageType = WebSocketMessageType.Binary then
+            messageReceived.Trigger(peer, buffer.[0 .. result.Count - 1])
+      with ex ->
+        Console.WriteLine $"receiveLoop error for peer {peer}: {ex}"
+    finally
+      let mutable _ws = Unchecked.defaultof<WebSocket>
+      connections.TryRemove(peer, &_ws) |> ignore
+      onPeerDisconnected peer
   }
 
   let acceptWebSocket(ctx: HttpListenerContext) = async {
@@ -39,16 +115,14 @@ type WebSocketServer(port: int) as this =
     let ws = socket.WebSocket
     let peer = nextPeerId
     nextPeerId <- nextPeerId + UMX.tag 1
-    connections.Add(peer, ws)
-    // Send the assigned peer ID back to the client as a single int
-    let peerBytes = System.BitConverter.GetBytes(int peer)
-    do! ws.SendAsync(
-          System.ArraySegment(peerBytes),
-          WebSocketMessageType.Binary,
-          true,
-          cts.Token
-        ) |> Async.AwaitTask |> Async.Ignore
-    stateChanged.Trigger(Connected peer)
+
+    // Send handshake BEFORE adding to connections so the Broadcast loop
+    // can't race ahead of the handshake with a GameState JSON blob.
+    match onPeerConnected peer with
+    | ValueSome handshake -> do! sendTo ws handshake
+    | ValueNone -> ()
+
+    connections[peer] <- ws
     Async.Start(receiveLoop peer ws, cts.Token)
   }
 
@@ -61,62 +135,34 @@ type WebSocketServer(port: int) as this =
   }
 
   let listener = new HttpListener()
+  listener.Prefixes.Add(sprintf "http://localhost:%d/" port)
+  listener.Start()
+  Async.Start(acceptConnections listener, cts.Token)
 
-  member _.Start() =
-    listener.Prefixes.Add(sprintf "http://localhost:%d/" port)
-    listener.Start()
-    Async.Start(acceptConnections listener, cts.Token)
-
-  member _.Stop() =
+  let stop() =
     cts.Cancel()
+    agent.Post Shutdown
     listener.Stop()
 
     for KeyValue(_, ws) in connections do
       try
-        ws.CloseAsync(
-          WebSocketCloseStatus.NormalClosure,
-          "",
-          CancellationToken.None
-        )
-        |> fun t -> t.Wait()
-
-        ws.Dispose()
-      with _ ->
-        ()
-
-  interface INetworkService with
-    member _.State = Connected 1<peerId>
-    member _.StateChanged = stateChanged.Publish :> IObservable<_>
-    member _.MessageReceived = messageReceived.Publish :> IObservable<_>
-
-    member _.Send(peer, data) =
-      match connections.TryGetValue(peer) with
-      | true, ws when ws.State = WebSocketState.Open ->
-        try
-          ws.SendAsync(
-            ArraySegment(data),
-            WebSocketMessageType.Binary,
-            true,
-            cts.Token
+        if ws.State = WebSocketState.Open then
+          ws.CloseAsync(
+            WebSocketCloseStatus.NormalClosure,
+            "",
+            CancellationToken.None
           )
           |> fun t -> t.Wait()
-        with _ ->
-          ()
-      | _ -> ()
 
-    member _.Broadcast(data) =
-      for KeyValue(_, ws) in connections do
-        if ws.State = WebSocketState.Open then
-          try
-            ws.SendAsync(
-              ArraySegment(data),
-              WebSocketMessageType.Binary,
-              true,
-              cts.Token
-            )
-            |> fun t -> t.Wait()
-          with _ ->
-            ()
+        ws.Dispose()
+      with
+      | :? WebSocketException
+      | :? OperationCanceledException
+      | :? ObjectDisposedException -> ()
 
-    member _.Connect(_) = ()
-    member _.Disconnect() = this.Stop()
+  { new IServerTransport with
+      member _.MessageReceived = upcast messageReceived.Publish
+      member _.Send(peer, data) = agent.Post(SendOne(peer, data))
+      member _.Broadcast(data) = agent.Post(Broadcast data)
+      member _.Disconnect() = stop()
+  }

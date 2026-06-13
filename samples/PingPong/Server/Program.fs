@@ -1,6 +1,10 @@
 module PingPong.Server.Program
 
 open System
+open System.Collections.Concurrent
+open System.Threading
+open IcedTasks
+open FSharp.Control
 open Mibo.Elmish
 open PingPong.Shared.Types
 open PingPong.Shared.Serialization
@@ -11,47 +15,75 @@ open PingPong.Server.GameLogic
 
 [<EntryPoint>]
 let main _args =
-    let port = 5000
+  let port = 5000
 
-    let program =
-        HeadlessProgram.mkHeadless init update
-        |> HeadlessProgram.withFixedStep {
-            StepSeconds = 1f / 60f
-            MaxStepsPerFrame = 4
-            MaxFrameSeconds = ValueSome 0.25f
-            Map = fun _ -> GameTick
-        }
-
-    use runner = new HeadlessRunner<_,_>(program)
-    let server = new WebSocketServer(port)
-    server.Start()
-    let net = server :> INetworkService
-
-    // Subscribe to incoming messages
-    use _sub = net.MessageReceived.Subscribe(fun (peerId, bytes) ->
-        let msg = deserializeClientMsg bytes
-        runner.Dispatch(FromClient(peerId, msg))
+  use runner =
+    new HeadlessRunner<_, _>(
+      HeadlessProgram.mkHeadless init update
+      |> HeadlessProgram.withFixedStep {
+        StepSeconds = 1f / 60f
+        MaxStepsPerFrame = 4
+        MaxFrameSeconds = ValueSome 0.25f
+        Map = fun _ -> GameTick
+      }
     )
 
-    printfn "Server listening on port %d" port
-    printfn "Press Ctrl+C to stop"
+  let paddles = ConcurrentDictionary<int<peerId>, PaddleSide voption>()
 
-    // Main loop — pace to real time
-    let frameMs = 16.0
-    let sw = System.Diagnostics.Stopwatch.StartNew()
-    let mutable nextTick = 0.0
+  let assignPaddle() =
+    let hasLeft = paddles.Values |> Seq.exists((=)(ValueSome Left))
+    let hasRight = paddles.Values |> Seq.exists((=)(ValueSome Right))
 
-    while not runner.ShouldQuit do
-        let elapsed = sw.Elapsed.TotalMilliseconds
+    if not hasLeft then ValueSome Left
+    elif not hasRight then ValueSome Right
+    else ValueNone
 
-        if elapsed >= nextTick then
-          runner.Step(TimeSpan.FromMilliseconds(frameMs))
-          nextTick <- nextTick + frameMs
+  let server: IServerTransport =
+    createWebSocketServer
+      port
+      (fun peerId ->
+        let side = assignPaddle()
+        paddles[peerId] <- side
 
-          let bytes = serializeGameState runner.Model
-          net.Broadcast(bytes)
-        else
-          System.Threading.Thread.Sleep(1)
+        let sideByte =
+          match side with
+          | ValueSome Left -> 0uy
+          | ValueSome Right -> 1uy
+          | ValueNone -> 2uy
 
-    net.Disconnect()
-    0
+        let peerBytes = BitConverter.GetBytes(int peerId)
+        let data = Array.zeroCreate<byte> 5
+        Array.Copy(peerBytes, data, 4)
+        data[4] <- sideByte
+        printfn "Peer %d connected, assigned %A" (int peerId) side
+        ValueSome data)
+      (fun peerId ->
+        let mutable _side = ValueNone
+        paddles.TryRemove(peerId, &_side) |> ignore
+        printfn "Peer %d disconnected" (int peerId))
+
+  server.MessageReceived.Add(fun (peerId, bytes) ->
+    let msg = deserializeClientMsg bytes
+    runner.Dispatch(FromClient(peerId, msg)))
+
+  printfn "Server listening on port %d" port
+  printfn "Press Ctrl+C to stop"
+
+  use cts = new CancellationTokenSource()
+
+  Console.CancelKeyPress.Add(fun args ->
+    args.Cancel <- true
+    cts.Cancel())
+
+  try
+    asyncEx {
+      for _, gameState in
+        runner.RunAsync(TimeSpan.FromMilliseconds 16., cts.Token) do
+        serializeGameState gameState |> server.Broadcast
+    }
+    |> Async.RunSynchronously
+  with :? OperationCanceledException ->
+    ()
+
+  server.Disconnect()
+  0

@@ -8,32 +8,18 @@ open System
 [<Measure>]
 type peerId
 
-// ── Connection State ───────────────────────────────────────────────────────
-
-[<Struct>]
-type ConnectionState =
-  | Disconnected
-  | Connecting
-  | Connected of int<peerId>
-  | Reconnecting
-
-// ── Network Service Interface ──────────────────────────────────────────────
-
-type INetworkService =
-  abstract State: ConnectionState
-  abstract StateChanged: IObservable<ConnectionState>
-  abstract MessageReceived: IObservable<int<peerId> * byte[]>
-  abstract Send: peer: int<peerId> * data: byte[] -> unit
-  abstract Broadcast: data: byte[] -> unit
-  abstract Connect: address: string -> unit
-  abstract Disconnect: unit -> unit
-
 // ── Game Types ─────────────────────────────────────────────────────────────
 
 [<Struct>]
 type PaddleSide =
   | Left
   | Right
+
+// ── Physics Constants ──────────────────────────────────────────────────────
+
+let paddleWidth = 10f
+let paddleHeight = 80f
+let ballRadius = 8f
 
 type Ball = { Position: Vector2; Velocity: Vector2 }
 

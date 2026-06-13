@@ -14,4 +14,7 @@
     <ProjectReference Include="..\Shared\Shared.fsproj" />
     <ProjectReference Include="..\..\..\src\Mibo.Raylib\Mibo.Raylib.fsproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="IcedTasks" Version="0.11.9" />
+  </ItemGroup>
 </Project>

@@ -1,116 +1,163 @@
 module PingPong.Client.Program
 
 open System
-open System.Numerics
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open PingPong.Shared.Types
+open PingPong.Shared.Physics
 open PingPong.Shared.Serialization
+open PingPong.Client.Types
 open PingPong.Client.NetworkService
 open PingPong.Client.View
-
-// ── Model ──────────────────────────────────────────────────────────────────
-
-type Model = {
-  GameState: GameState
-  Connected: bool
-  PeerId: int<peerId>
-}
-
-// ── Messages ───────────────────────────────────────────────────────────────
-
-type Msg =
-  | ServerState of byte[]
-  | ConnectionChanged of ConnectionState
-  | LocalInput of float32
-  | Tick of GameTime
+open FSharp.UMX
 
 // ── Env ────────────────────────────────────────────────────────────────────
 
-type Env = { Network: INetworkService }
+type Env = { Network: IClientTransport }
 
 // ── Elmish Logic ───────────────────────────────────────────────────────────
 
-let init ctx =
-  struct ({
-            GameState = initGameState 800f 800f
-            Connected = false
-            PeerId = 0<peerId>
-          },
-          Cmd.none)
+let init ctx : struct (Model * Cmd<_>) =
+  {
+    LocalState = initGameState 800f 800f
+    ServerState = ValueNone
+    AssignedPaddle = ValueNone
+    Connected = false
+    PeerId = 0<peerId>
+  },
+  Cmd.none
 
-let update env msg model =
+let update env msg model : struct (Model * Cmd<_>) =
   match msg with
-  | ConnectionChanged state ->
+  | ConnectionChanged(state, peerId, side) ->
     match state with
-    | Connected peerId ->
-      struct ({
-                model with
-                    Connected = true
-                    PeerId = peerId
-              },
-              Cmd.none)
-    | _ -> struct ({ model with Connected = false }, Cmd.none)
+    | Connected ->
+      {
+        model with
+            Connected = true
+            PeerId = peerId
+            AssignedPaddle = side
+      },
+      Cmd.none
+    | _ -> { model with Connected = false }, Cmd.none
 
-  | ServerState bytes ->
-    let serverState = deserializeGameState bytes
-    struct ({ model with GameState = serverState }, Cmd.none)
+  | ServerState serverState ->
+    let local = model.LocalState
+
+    let syncedBall = serverState.Ball
+
+    let leftPaddle =
+      match model.AssignedPaddle with
+      | ValueSome Left -> local.LeftPaddle
+      | _ ->
+          {
+            local.LeftPaddle with
+                Y = lerp local.LeftPaddle.Y serverState.LeftPaddle.Y 0.3f
+          }
+
+    let rightPaddle =
+      match model.AssignedPaddle with
+      | ValueSome Right -> local.RightPaddle
+      | _ ->
+          {
+            local.RightPaddle with
+                Y = lerp local.RightPaddle.Y serverState.RightPaddle.Y 0.3f
+          }
+
+    let synced = {
+      local with
+          Ball = syncedBall
+          LeftPaddle = leftPaddle
+          RightPaddle = rightPaddle
+          Scores = serverState.Scores
+    }
+
+    {
+      model with
+          LocalState = synced
+          ServerState = ValueSome serverState
+    },
+    Cmd.none
 
   | LocalInput mouseY ->
-    if model.Connected then
-      let side = if model.PeerId = 1<peerId> then Left else Right
-      let bytes = serializeClientMsg(MovePaddle(side, mouseY))
+    match model.AssignedPaddle with
+    | ValueSome side ->
+      let clampedY = clampPaddle model.LocalState.Height mouseY
 
-      struct (model,
-              Cmd.ofEffect(
-                Effect<Msg>(fun _ ->
-                  env.Network.Send(model.PeerId, bytes))
-              ))
-    else
-      struct (model, Cmd.none)
+      let localState =
+        match side with
+        | Left -> {
+            model.LocalState with
+                LeftPaddle = {
+                  model.LocalState.LeftPaddle with
+                      Y = clampedY
+                }
+          }
+        | Right ->
+            {
+              model.LocalState with
+                  RightPaddle = {
+                    model.LocalState.RightPaddle with
+                        Y = clampedY
+                  }
+            }
 
-  | Tick _ -> struct (model, Cmd.none)
+      { model with LocalState = localState },
+      Network.send env.Network (MovePaddle(side, mouseY))
+    | ValueNone -> model, Cmd.none
 
 // ── Subscriptions ──────────────────────────────────────────────────────────
 
-let subscribe (net: INetworkService) ctx model =
-  let networkSub =
-    Sub.Active(
-      SubId.ofString "network",
-      fun dispatch ->
-        net.MessageReceived.Subscribe(fun (_, bytes) ->
-          dispatch(ServerState bytes))
-    )
-
+let subscribe
+  (transport: IClientTransport)
+  (getHandshake: unit -> struct (int<peerId> * PaddleSide voption))
+  ctx
+  model
+  =
   let stateSub =
     Sub.Active(
       SubId.ofString "network/state",
-      fun dispatch ->
-        // If already connected by the time subscription starts, dispatch now
-        match net.State with
-        | Connected _ as state -> dispatch(ConnectionChanged state)
-        | _ -> ()
-        net.StateChanged.Subscribe(fun state ->
-          dispatch(ConnectionChanged state))
+      Network.subscribeState transport (fun state ->
+        match state with
+        | Connected ->
+          let struct (peerId, side) = getHandshake()
+          ConnectionChanged(Connected, peerId, side)
+        | other -> ConnectionChanged(other, 0<peerId>, ValueNone))
     )
 
-  let inputSub =
-    Mibo.Input.Mouse.onMove (fun pos -> LocalInput pos.Y) ctx
+  let msgSub =
+    Sub.Active(
+      SubId.ofString "network/messages",
+      fun dispatch ->
+        transport.MessageReceived.Subscribe(fun bytes ->
+          deserializeGameState bytes |> ServerState |> dispatch)
+    )
 
-  Sub.batch [ networkSub; stateSub; inputSub ]
+  let inputSub = Mibo.Input.Mouse.onMove (fun pos -> LocalInput pos.Y) ctx
+
+  Sub.batch [ stateSub; msgSub; inputSub ]
 
 // ── Program ────────────────────────────────────────────────────────────────
 
 [<EntryPoint>]
 let main _args =
-  let net = new WebSocketClient() :> INetworkService
+  let transport, getHandshake =
+    createWebSocketClient(fun bytes ->
+      let peerId = BitConverter.ToInt32(bytes, 0) |> UMX.tag<peerId>
 
-  let env = { Network = net }
+      let side =
+        match bytes[4] with
+        | 0uy -> ValueSome Left
+        | 1uy -> ValueSome Right
+        | _ -> ValueNone
+
+      struct (peerId, side))
+
+  let env = { Network = transport }
 
   let program =
     Program.mkProgram init (update env)
-    |> Program.withSubscription(subscribe net)
-    |> Program.withTick Tick
+    |> Program.withSubscription(subscribe transport getHandshake)
     |> Program.withInput
     |> Program.withConfig(fun cfg -> {
       cfg with
@@ -120,14 +167,12 @@ let main _args =
           TargetFPS = 60
     })
     |> Program.withRenderer(fun () ->
-      Renderer2D.create(fun c m b -> view c m.GameState b))
+      Renderer2D.create(fun c m b -> view c m.LocalState b))
 
-  // Connect to server
-  net.Connect("ws://localhost:5000")
+  transport.Connect("ws://localhost:5000")
 
-  // Run game
   let game = new RaylibGame<Model, Msg>(program)
   game.Run()
 
-  net.Disconnect()
+  transport.Disconnect()
   0

@@ -1,13 +1,34 @@
 module PingPong.Client.Types
 
+open System
 open PingPong.Shared.Types
-open Mibo.Elmish
 
+// ── Connection State (client-only) ─────────────────────────────────────────
+
+[<Struct>]
+type ConnectionState =
+  | Disconnected
+  | Connecting
+  | Connected
+  | Reconnecting
+
+// ── Client Transport (client-only) ─────────────────────────────────────────
+// Point-to-point pipe to a single server. No peer multiplexing.
+
+type IClientTransport =
+  abstract State: ConnectionState
+  abstract StateChanged: IObservable<ConnectionState>
+  abstract MessageReceived: IObservable<byte[]>
+  abstract Send: data: byte[] -> unit
+  abstract Connect: address: string -> unit
+  abstract Disconnect: unit -> unit
 
 // ── Model ──────────────────────────────────────────────────────────────────
 
 type Model = {
-  GameState: GameState
+  LocalState: GameState
+  ServerState: GameState voption
+  AssignedPaddle: PaddleSide voption
   Connected: bool
   PeerId: int<peerId>
 }
@@ -15,7 +36,9 @@ type Model = {
 // ── Messages ───────────────────────────────────────────────────────────────
 
 type Msg =
-  | ServerState of byte[]
-  | ConnectionChanged of ConnectionState
+  | ConnectionChanged of
+    state: ConnectionState *
+    peerId: int<peerId> *
+    side: PaddleSide voption
+  | ServerState of GameState
   | LocalInput of float32
-  | Tick of GameTime

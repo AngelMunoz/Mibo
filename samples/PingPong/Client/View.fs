@@ -6,12 +6,6 @@ open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open PingPong.Shared.Types
 
-// ── Constants ──────────────────────────────────────────────────────────────
-
-let paddleWidth = 10f
-let paddleHeight = 80f
-let ballRadius = 8f
-
 // ── View ───────────────────────────────────────────────────────────────────
 
 let view (_ctx: GameContext) (model: GameState) (buffer: RenderBuffer2D) =
