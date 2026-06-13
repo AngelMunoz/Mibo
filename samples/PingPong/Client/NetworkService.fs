@@ -98,24 +98,37 @@ let createWebSocketClient
       stateChanged.Trigger Connecting
 
       let client = new ClientWebSocket()
-      do! client.ConnectAsync(Uri(address), cts.Token) |> Async.AwaitTask
-      ws <- Some client
 
-      // Consume the handshake (first message) BEFORE signaling Connected.
-      // This ensures handshake data is available before any subscriber
-      // observes the connected state, eliminating the race between
-      // early message delivery and subscription setup.
-      let handshakeBuffer = Array.zeroCreate<byte> 4096
+      try
+        do! client.ConnectAsync(Uri(address), cts.Token) |> Async.AwaitTask
+        ws <- Some client
 
-      let! result =
-        client.ReceiveAsync(ArraySegment(handshakeBuffer), cts.Token)
-        |> Async.AwaitTask
+        // Consume the handshake (first message) BEFORE signaling Connected.
+        // This ensures handshake data is available before any subscriber
+        // observes the connected state, eliminating the race between
+        // early message delivery and subscription setup.
+        let handshakeBuffer = Array.zeroCreate<byte> 4096
 
-      handshakeData <- onHandshake(handshakeBuffer.[0 .. result.Count - 1])
+        let! result =
+          client.ReceiveAsync(ArraySegment(handshakeBuffer), cts.Token)
+          |> Async.AwaitTask
 
-      currentState <- Connected
-      stateChanged.Trigger Connected
-      Async.Start(receiveLoop client, cts.Token)
+        handshakeData <- onHandshake(handshakeBuffer.[0 .. result.Count - 1])
+
+        currentState <- Connected
+        stateChanged.Trigger Connected
+        Async.Start(receiveLoop client, cts.Token)
+      with ex ->
+        Console.WriteLine $"connect error: {ex}"
+        ws <- None
+
+        try
+          client.Dispose()
+        with _ ->
+          ()
+
+        currentState <- Disconnected
+        stateChanged.Trigger Disconnected
     }
     |> Async.Start
 

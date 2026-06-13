@@ -29,6 +29,7 @@ let main _args =
     )
 
   let paddles = ConcurrentDictionary<int<peerId>, PaddleSide voption>()
+  let paddleLock = obj()
 
   let assignPaddle() =
     let hasLeft = paddles.Values |> Seq.exists((=)(ValueSome Left))
@@ -42,8 +43,11 @@ let main _args =
     createWebSocketServer
       port
       (fun peerId ->
-        let side = assignPaddle()
-        paddles[peerId] <- side
+        let side =
+          lock paddleLock (fun () ->
+            let s = assignPaddle()
+            paddles[peerId] <- s
+            s)
 
         let sideByte =
           match side with
@@ -58,8 +62,10 @@ let main _args =
         printfn "Peer %d connected, assigned %A" (int peerId) side
         ValueSome data)
       (fun peerId ->
-        let mutable _side = ValueNone
-        paddles.TryRemove(peerId, &_side) |> ignore
+        lock paddleLock (fun () ->
+          let mutable _side = ValueNone
+          paddles.TryRemove(peerId, &_side) |> ignore)
+
         printfn "Peer %d disconnected" (int peerId))
 
   server.MessageReceived.Add(fun (peerId, bytes) ->

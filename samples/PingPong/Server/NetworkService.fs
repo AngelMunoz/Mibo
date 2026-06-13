@@ -44,7 +44,7 @@ let createWebSocketServer
   : IServerTransport =
 
   let connections = ConcurrentDictionary<int<peerId>, WebSocket>()
-  let mutable nextPeerId = 1<peerId>
+  let mutable nextPeerId = 0
   let cts = new CancellationTokenSource()
 
   let messageReceived = Event<int<peerId> * byte[]>()
@@ -111,19 +111,21 @@ let createWebSocketServer
   }
 
   let acceptWebSocket(ctx: HttpListenerContext) = async {
-    let! socket = ctx.AcceptWebSocketAsync(null) |> Async.AwaitTask
-    let ws = socket.WebSocket
-    let peer = nextPeerId
-    nextPeerId <- nextPeerId + UMX.tag 1
+    try
+      let! socket = ctx.AcceptWebSocketAsync(null) |> Async.AwaitTask
+      let ws = socket.WebSocket
+      let peer = Interlocked.Increment(&nextPeerId) |> UMX.tag<peerId>
 
-    // Send handshake BEFORE adding to connections so the Broadcast loop
-    // can't race ahead of the handshake with a GameState JSON blob.
-    match onPeerConnected peer with
-    | ValueSome handshake -> do! sendTo ws handshake
-    | ValueNone -> ()
+      // Send handshake BEFORE adding to connections so the Broadcast loop
+      // can't race ahead of the handshake with a GameState JSON blob.
+      match onPeerConnected peer with
+      | ValueSome handshake -> do! sendTo ws handshake
+      | ValueNone -> ()
 
-    connections[peer] <- ws
-    Async.Start(receiveLoop peer ws, cts.Token)
+      connections[peer] <- ws
+      Async.Start(receiveLoop peer ws, cts.Token)
+    with ex ->
+      Console.WriteLine $"acceptWebSocket error: {ex}"
   }
 
   let acceptConnections(listener: HttpListener) = async {
@@ -131,7 +133,7 @@ let createWebSocketServer
       let! ctx = listener.GetContextAsync() |> Async.AwaitTask
 
       if ctx.Request.IsWebSocketRequest then
-        do! acceptWebSocket ctx
+        Async.Start(acceptWebSocket ctx, cts.Token)
   }
 
   let listener = new HttpListener()
