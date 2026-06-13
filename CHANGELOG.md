@@ -6,11 +6,20 @@
 
 - `HeadlessProgram` and `HeadlessRunner` for running the Elmish update loop without graphics, input polling, or Raylib initialization. Use for unit testing, server-side simulation, and CLI debugging.
 - `HeadlessProgram.mkHeadless init update` — creates a headless program with the same `Init`/`Update` signatures as `Program`.
-- `HeadlessProgram` builder DSL: `withSubscribe`, `withTick`, `withFixedStep`, `withDispatchMode`.
+- `HeadlessProgram` builder DSL: `withSubscribe`, `withTick`, `withFixedStep`, `withDispatchMode`, `withObserver`.
+- `HeadlessProgram.observe` — helper that creates a `System.IObserver<'T>` from an `onNext` callback, hiding the `OnError`/`OnCompleted` boilerplate.
 - `HeadlessRunner` with explicit frame control: `Step(TimeSpan)`, `StepN(count, TimeSpan)`, `StepUntil(predicate, TimeSpan, ?maxFrames)`.
 - `HeadlessRunner.Dispatch(msg)` and `DispatchMany(msgs)` for sending messages from outside the update loop.
-- `HeadlessRunner.Model`, `TotalTime`, `ShouldQuit` for accessing simulation state.
-- 20 unit tests covering basic operation and adversarial edge cases (dispatch timing, deferred commands, subscription lifecycle, quit behavior, time boundaries).
+- `HeadlessRunner.Model`, `GameTime`, `ShouldQuit` for accessing simulation state.
+- `HeadlessRunner.Run(interval, ?ct)` — returns `seq<struct(GameTime * 'Model)>`, a paced synchronous sequence of simulation frames. Uses spin-wait with `Thread.Sleep(1)` for timing.
+- `HeadlessRunner.RunAsync(interval, ct)` — returns `IAsyncEnumerable<struct(GameTime * 'Model)>`, a paced async sequence of simulation frames. Uses `PeriodicTimer` for efficient timing.
+- Observer support: `HeadlessProgram.Observers` field and `withObserver` DSL for registering `System.IObserver<struct(GameContext * 'Model * GameTime)>` factories. Observers fire every frame after the update loop, receiving the current model and game time. Observers implementing `IDisposable` are disposed when the runner is disposed.
+- 27 unit tests for new features: step return values, observer lifecycle, observer correctness (post-update model, GameTime accumulation, multiple observers, window dimensions, subscription interaction), Run/RunAsync enumeration, cancellation, and ShouldQuit behavior. 47 total headless tests.
+
+### Changed
+
+- **Breaking:** `HeadlessRunner.TotalTime` renamed to `HeadlessRunner.GameTime` (returns `GameTime` struct with both `TotalTime` and `ElapsedGameTime`).
+- `HeadlessRunner.Step`, `StepN`, `StepUntil`, `Run`, and `RunAsync` all advance the simulation and mutate the runner's internal state. Mixing Step and Run families on the same runner instance will produce simulation corruption — use one approach per runner.
 
 ## [1.2.0] - 2026-06-07
 
