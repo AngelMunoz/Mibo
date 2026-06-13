@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-13
+
 ### Added
 
 - `HeadlessProgram` and `HeadlessRunner` for running the Elmish update loop without graphics, input polling, or Raylib initialization. Use for unit testing, server-side simulation, and CLI debugging.
@@ -17,11 +19,6 @@
 - 27 unit tests for new features: step return values, observer lifecycle, observer correctness (post-update model, GameTime accumulation, multiple observers, window dimensions, subscription interaction), Run/RunAsync enumeration, cancellation, and ShouldQuit behavior. 47 total headless tests.
 - XML documentation for `HeadlessProgram.withTick`, `withFixedStep`, and `withDispatchMode`.
 - Headless mode documentation: Observers section (`withObserver`/`observe`), `Run`/`RunAsync` section with pacing and cancellation examples, server simulation example using observer-based broadcast.
-
-### Changed
-
-- **Breaking:** `HeadlessRunner.TotalTime` renamed to `HeadlessRunner.GameTime` (returns `GameTime` struct with both `TotalTime` and `ElapsedGameTime`).
-- `HeadlessRunner.Step`, `StepN`, `StepUntil`, `Run`, and `RunAsync` all advance the simulation and mutate the runner's internal state. Mixing Step and Run families on the same runner instance will produce simulation corruption — use one approach per runner.
 
 ## [1.2.0] - 2026-06-07
 
