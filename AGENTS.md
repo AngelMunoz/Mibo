@@ -12,6 +12,7 @@ General setup and usage instructions can be found in the [README.md](README.md) 
 2. **NEVER FORCE PUSH.** Tell the user they have to force push instead of you.
 3. **Always run `dotnet fantomas .` before committing code.** Format all F# files before staging.
 4. **Never use `Option.get` or `ValueOption.get`.** Always pattern match (`match`, `function`, `if ... then`) or use safe alternatives (`Option.defaultValue`, `Option.map`, `Array.choose`, etc.) to handle option values. Unchecked `.get` calls crash at runtime on `None`.
+5. Pull requests made with the `gh` command should use a markdown file as the PR body, not inline escaped markdown strings.
 
 ## Project Structure
 
@@ -72,7 +73,7 @@ When adding entries to the changelog, make sure to follow format and categories.
 
 ## raylib-cs / F# Quirks
 
-### DisableRuntimeMarshalling + void* Bug
+### DisableRuntimeMarshalling + void\* Bug
 
 The project uses `[<DisableRuntimeMarshalling>]`. This affects how `SetShaderValue` and similar FFI calls work:
 
@@ -97,10 +98,11 @@ let setShaderInt (shader: Shader) (loc: int) (value: int) =
 raylib's `rlMatrix` stores columns contiguously: `m0 m4 m8 m12 m1 m5 m9 m13 ...`
 
 `rlMatrixToFloatV` reorders from raylib's struct layout to GLSL column-major order (fields m0→m1→m2→...→m15). This means:
+
 - `SetShaderValueMatrix` and the batch's `glUniformMatrix4fv` both go through `rlMatrixToFloatV` — **they match**.
 - Do NOT manually blit a `Matrix4x4` to float arrays — use `rlMatrixToFloatV` for correct conversion.
 
-#### Vector4.Transform vs GLSL mat*vec
+#### Vector4.Transform vs GLSL mat\*vec
 
 - `Vector4.Transform(v, M)` computes `v * M^T` (transposed convention)
 - GLSL `M * v` computes `M * v` (standard convention)
@@ -110,6 +112,7 @@ raylib's `rlMatrix` stores columns contiguously: `m0 m4 m8 m12 m1 m5 m9 m13 ...`
 #### VP Matrix Capture
 
 When capturing the View-Projection matrix for shadow mapping:
+
 - **MUST** capture inside `BeginMode3D` using `Rlgl.GetMatrixModelview() * Rlgl.GetMatrixProjection()`
 - This matches what the batch computes for `mvp` (for identity model transforms)
 - Precomputing VP outside `BeginMode3D` or using `Matrix4x4.CreateLookAt * CreatePerspectiveFieldOfView` may produce different results due to raylib's internal matrix adjustments
