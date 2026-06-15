@@ -117,7 +117,7 @@ Program.mkProgram init update
 type GameConfig = {
   Width: int          // default: 800
   Height: int         // default: 600
-  Title: string       // default: "Mibo"
+  Title: string       // default: varies by backend
   TargetFPS: int      // default: 60; 0 = unlimited
   MinWidth: int voption
   MinHeight: int voption
@@ -454,7 +454,10 @@ let createMyRenderer () =
 
         // draw your game using spriteBatch.Draw, spriteBatch.DrawString, etc.
         spriteBatch.End()
-  }
+
+    interface IDisposable with
+      member _.Dispose() =
+        if spriteBatch <> null then spriteBatch.Dispose() }
 ```
 
 Register it:
@@ -512,7 +515,8 @@ If you were using the old rendering stack heavily, consider:
 ## 9. Animation
 
 The `Mibo.Animation` module (`SpriteSheet`, `AnimatedSprite`, `Animation`) is
-**not in `Mibo.Core` or `Mibo.MonoGame`**. It was specific to the raylib backend.
+**not in `Mibo.Core` or `Mibo.MonoGame`**. It existed in the original MonoGame
+Mibo but was not ported to the new architecture.
 
 ### What you need to do
 
@@ -710,8 +714,8 @@ type Model = { Position: Vector2; Texture: Texture2D }
 
 let init ctx =
   let assets = GameContext.getService<IAssets> ctx
-  { Position = Vector2.Zero
-    Texture = assets.Texture "player" }, Cmd.none
+  struct ({ Position = Vector2.Zero
+            Texture = assets.Texture "player" }, Cmd.none)
 
 let inputMap =
   InputMap.empty
@@ -721,10 +725,10 @@ let inputMap =
 
 let update msg model =
   match msg with
-  | Tick _gt -> model, Cmd.none
+  | Tick _gt -> struct (model, Cmd.none)
   | Action state ->
     let dx = if Set.contains MoveLeft state.Held then -1f elif Set.contains MoveRight state.Held then 1f else 0f
-    { model with Position = model.Position + Vector2(dx * 200f, 0f) * 0.016f }, Cmd.none
+    struct ({ model with Position = model.Position + Vector2(dx * 200f, 0f) * 0.016f }, Cmd.none)
 
 let createRenderer () =
   let mutable spriteBatch: SpriteBatch = Unchecked.defaultof<_>
@@ -738,7 +742,11 @@ let createRenderer () =
 
         spriteBatch.Begin()
         spriteBatch.Draw(model.Texture, model.Position, Color.White)
-        spriteBatch.End() }
+        spriteBatch.End()
+
+    interface IDisposable with
+      member _.Dispose() =
+        if spriteBatch <> null then spriteBatch.Dispose() }
 
 let program =
   Program.mkProgram init update
