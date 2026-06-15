@@ -40,6 +40,7 @@ that leaks a backend enum/handle stay in the backend.**
 | 1d | `Program` builder moves to Core; `withInputMapper` stores a factory instead of calling the backend directly | Yes |
 | 2  | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core | No |
 | 3  | `Layout` and `Layout3D` move to Core | No |
+| 3b | `Cmd<'Msg>` gains `Msg` case; `Cmd.ofMsg` is zero-alloc | Yes |
 | 4  | Fresh `Mibo.MonoGame` backend | n/a (new project) |
 
 ## Breaking changes
@@ -314,6 +315,98 @@ What stays in the raylib backend:
 The benefit: a fresh backend (e.g. MonoGame) now gets the full layout/hex/spatial
 geometry surface from `Mibo.Core` without re-implementing it, and only has to
 provide its own renderer bridge if it wants instanced grid drawing.
+
+### Phase 3b — Zero-alloc `Cmd.ofMsg` (`Msg` case)
+
+**Breaking.** The `Cmd<'Msg>` discriminated union has a new `Msg of 'Msg` case
+between `Empty` and `Single`. This eliminates the delegate allocation that
+`Cmd.ofMsg` previously incurred.
+
+#### What changed
+
+`Cmd.ofMsg` now returns `Msg msg` directly instead of wrapping the message in
+an `Effect` delegate:
+
+```fsharp
+// Before (1.3.0)
+let inline ofMsg(msg: 'Msg) : Cmd<'Msg> =
+  Single(Effect<'Msg>(fun dispatch -> dispatch msg))  // allocates
+
+// After (vNext)
+let inline ofMsg(msg: 'Msg) : Cmd<'Msg> = Msg msg  // zero-alloc
+```
+
+The runtime dispatches `Msg` directly without invoking a delegate:
+
+```fsharp
+// In execCmd (ElmishLoop)
+| Msg msg -> dispatch msg  // direct call, no delegate overhead
+```
+
+`Cmd.map` on a `Msg` stays allocation-free:
+
+```fsharp
+// Before: map on Single(Effect(...)) allocates a new Effect
+// After: map on Msg msg returns Msg(f msg) — no allocation
+| Msg msg -> Msg(f msg)
+```
+
+`batch` and `batch2` preserve the `Msg` case in their fast paths (when the
+batch contains a single immediate command, the result is `Msg` rather than
+`Single`).
+
+#### Migration: exhaustive pattern matches on `Cmd<'Msg>`
+
+If you pattern-match on `Cmd<'Msg>`, add the new case:
+
+```fsharp
+// Before
+match cmd with
+| Empty -> ...
+| Single eff -> ...
+| Batch effs -> ...
+| DeferNextFrame effs -> ...
+| NowAndDeferNextFrame(now, next) -> ...
+| Quit -> ...
+
+// After
+match cmd with
+| Empty -> ...
+| Msg msg -> ...          // NEW: direct message dispatch
+| Single eff -> ...
+| Batch effs -> ...
+| DeferNextFrame effs -> ...
+| NowAndDeferNextFrame(now, next) -> ...
+| Quit -> ...
+```
+
+If you have a wildcard match (`| _ ->`), no change is needed.
+
+#### Migration: tests that assert on `Cmd.ofMsg` results
+
+Tests that match on `Single` from `Cmd.ofMsg` will now see `Msg`:
+
+```fsharp
+// Before
+let cmd = Cmd.ofMsg 42
+match cmd with
+| Single eff -> eff.Invoke(fun x -> result <- x)  // worked
+| _ -> failwith "expected Single"
+
+// After
+let cmd = Cmd.ofMsg 42
+match cmd with
+| Msg msg -> result <- msg  // direct, no invoke needed
+| _ -> failwith "expected Msg"
+```
+
+#### Why this matters
+
+`Cmd.ofMsg` is one of the most frequently called functions in Mibo games —
+every `update` branch that returns a follow-up message uses it. The previous
+implementation allocated an `Effect<'Msg>` delegate and a closure on every call.
+The new `Msg` case eliminates both allocations, reducing GC pressure in the
+hot path.
 
 
 

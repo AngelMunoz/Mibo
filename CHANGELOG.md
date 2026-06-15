@@ -4,6 +4,8 @@
 
 ### Added
 
+- `Cmd.Msg of 'Msg` case in the `Cmd<'Msg>` struct DU: a zero-allocation alternative to `Single(Effect(...))` for `Cmd.ofMsg`. `Cmd.ofMsg` now returns `Msg msg` directly instead of wrapping the message in an `Effect` delegate. `Cmd.map` on a `Msg` stays allocation-free (`Msg(f msg)`). The runtime dispatches `Msg` directly without invoking a delegate. `batch` and `batch2` preserve the `Msg` case in their fast paths.
+- `Mibo.Core.Tests` project: 11 backend-agnostic test files extracted from `Mibo.Raylib.Tests` into a standalone project that references only `Mibo.Core` (no Raylib dependency). Covers Elmish Cmd/Sub, HeadlessLoop/GameTime, Layout, Layout3D, HexGrid, HexLayout, LayeredHex, HexGrid3D, HexLayout3D, LayeredHex3D, Spatial2D, and Spatial3D (503 tests).
 - `Mibo.Core` project: backend-agnostic home for `Cmd`/`Sub`/`GameTime`/`DispatchMode`/`FixedStep`/`System`/`RenderBuffer`/`IRenderer`/`GameContext`/`Program`/`GameConfig`. The `Mibo.Raylib` project now references `Mibo.Core`. No API changes; all types remain in the `Mibo.Elmish` namespace. See `docs/migration-to-vnext.md` for the vNext roadmap.
 - Backend-neutral input contracts in `Mibo.Core` (namespace `Mibo.Input`): `KeyCode`, `MouseButtonCode`, `GamepadButtonCode`, `GestureKind` (struct DUs, `RequireQualifiedAccess`), the delta types, the `IInput`/`IInputMapper<'Action>` contracts, `Trigger`/`InputMap<'Action>`/`ActionState<'Action>`, and the `Keyboard`/`Mouse`/`Touch`/`Gamepad`/`Gesture` subscription modules. Backends supply concrete `IInput`/`IInputMapper` implementations.
 - Raylib↔Core input translation modules in the raylib backend: `KeyCode.ofRaylibKey`/`toRaylibKey`, `MouseButtonCode.ofRaylibButton`/`toRaylibButton`, `GamepadButtonCode.ofRaylibButton`/`toRaylibButton`, `GestureKind.ofRaylibGesture`/`toRaylibGesture`.
@@ -16,6 +18,7 @@
 
 ### Changed
 
+- **Breaking:** `Cmd<'Msg>` discriminated union has new `Msg of 'Msg` case between `Empty` and `Single`. Users with exhaustive pattern matches on `Cmd<'Msg>` must handle the new case (or add a wildcard match). `Cmd.ofMsg` now returns `Msg` instead of `Single(Effect(...))`. See `docs/migration-to-vnext.md` (Phase 3b) for the full migration guide.
 - **Breaking:** the input surface now uses backend-neutral codes instead of raylib's native enums. See `docs/migration-to-vnext.md` (Phase 1b) for the full migration guide. Highlights:
   - `InputMap.key` takes `KeyCode` instead of `Raylib_cs.KeyboardKey`. Bindings become portable across backends.
   - `Trigger` cases renamed: `MouseBut of int` → `MouseButton of MouseButtonCode`; `GamepadBut` → `GamepadButton of int * GamepadButtonCode`.

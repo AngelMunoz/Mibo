@@ -53,4 +53,7 @@ module RaylibProgram =
         let mapper = InputMapper.createService initialMap
         GameContext.register<IInputMapper<'Action>> mapper ctx)
 
-    { withRegistration with HasInputMapper = true }
+    {
+      withRegistration with
+          HasInputMapper = true
+    }
