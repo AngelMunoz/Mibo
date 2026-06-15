@@ -5,7 +5,7 @@
 > user-facing breaking-changes live in [`docs/migration-to-vnext.md`](docs/migration-to-vnext.md);
 > this document is the engineering record.
 >
-> **Branch:** `vnext`. **Status:** Phases 1a–1d and 2 are merged.
+> **Branch:** `vnext`. **Status:** Phases 1a–1d, 2, and 3 are merged.
 >
 > **Workflow:** `vnext` is the integration branch. Each phase is developed on a
 > feature branch cut from `vnext` and merged back via a PR to `vnext`
@@ -39,7 +39,7 @@ backend enum/handle stays in the backend.
 | 1c | `IAssetCache` split: generic asset cache in Core; typed loaders stay backend | No | ✅ Done (`#21`) |
 | 1d | `Program` builder moves to Core; `withInputMapper` decoupled from the backend | Yes | ✅ Done (`#21`) |
 | 2  | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core | No | ✅ Done (`#22`) |
-| 3  | `Layout` and `Layout3D` move to Core | No | ⬜ Pending |
+| 3  | `Layout` and `Layout3D` move to Core | No | ✅ Done (`#23`) |
 | 4  | Fresh `Mibo.MonoGame` backend | n/a (new project) | ⬜ Pending |
 | 5  | Parity verification (optional) | n/a | ⬜ Pending |
 
