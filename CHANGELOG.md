@@ -15,6 +15,7 @@
 - `ElmishLoop<'Model,'Msg>` and `LoopCore<'Model,'Msg>` in `Mibo.Core` (`Mibo.Elmish` namespace): the shared message-processing loop extracted from the duplicated code in `RaylibGame` and `HeadlessRunner`. Both hosts now delegate to `ElmishLoop`; `Program` and `HeadlessProgram` project to `LoopCore` via `ElmishLoop.coreOfProgram` / `HeadlessProgram.toLoopCore`.
 - `HeadlessProgram`, `HeadlessRunner`, and the `HeadlessProgram` builder module moved from the raylib backend to `Mibo.Core` (pure F#, no backend dependencies). All existing user code keeps working unchanged — types stay in the `Mibo.Elmish` namespace.
 - `Mibo.Layout` and `Mibo.Layout3D` modules moved from the raylib backend to `Mibo.Core`. 17 files of pure layout geometry (2D grids/hex/spatial/platformer/top-down/layered + 3D grids/hex/spatial/interior/terrain) over `System.Numerics`. Namespaces preserved; all existing code compiles unchanged. `Layout3D/Renderer3D.fs` (the raylib instanced-draw bridge) stays in the raylib backend.
+- Migration guide for Mibo (MonoGame) users: `docs/migration-from-monogame.md` — comprehensive guide covering program setup, GameContext, input types, assets, rendering, animation, camera, and a full before/after example.
 
 ### Changed
 
