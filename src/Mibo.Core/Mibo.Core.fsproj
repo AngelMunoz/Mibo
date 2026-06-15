@@ -21,6 +21,23 @@
     <Compile Include="Elmish.Program.fs" />
     <Compile Include="Elmish.Loop.fs" />
     <Compile Include="Elmish.Headless.fs" />
+    <Compile Include="Layout/Grid2D.fs" />
+    <Compile Include="Layout/HexGrid.fs" />
+    <Compile Include="Layout/Spatial2D.fs" />
+    <Compile Include="Layout/HexLayout.fs" />
+    <Compile Include="Layout/LayeredHex.fs" />
+    <Compile Include="Layout/Layout.fs" />
+    <Compile Include="Layout/Platformer.fs" />
+    <Compile Include="Layout/TopDown.fs" />
+    <Compile Include="Layout/Layered.fs" />
+    <Compile Include="Layout3D/Grid3D.fs" />
+    <Compile Include="Layout3D/HexGrid3D.fs" />
+    <Compile Include="Layout3D/Spatial3D.fs" />
+    <Compile Include="Layout3D/Layout3D.fs" />
+    <Compile Include="Layout3D/HexLayout3D.fs" />
+    <Compile Include="Layout3D/LayeredHex3D.fs" />
+    <Compile Include="Layout3D/Interior.fs" />
+    <Compile Include="Layout3D/Terrain.fs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -290,6 +290,32 @@ All existing user code (`HeadlessProgram.mkHeadless`, `HeadlessRunner`, etc.)
 keeps working unchanged — the types stay in the `Mibo.Elmish` namespace.
 The `PingPong` server sample, which relies on `HeadlessRunner`, continues to work.
 
+### Phase 3 - `Layout` and `Layout3D` move to Core
+
+**No breaking changes.** The layout geometry modules have moved from the raylib
+backend into `Mibo.Core`. Both namespaces (`Mibo.Layout`, `Mibo.Layout3D`) are
+preserved, so `open Mibo.Layout` / `open Mibo.Layout3D` continue to resolve
+exactly as before — all existing game code compiles unchanged.
+
+What moved (17 files, all pure F# over `System.Numerics`):
+- `Mibo.Layout` (9 files): `Grid2D`, `HexGrid`, `Spatial2D`, `HexLayout`,
+  `LayeredHex`, `Layout`, `Platformer`, `TopDown`, `Layered`.
+- `Mibo.Layout3D` (8 files): `Grid3D`, `HexGrid3D`, `Spatial3D`, `Layout3D`,
+  `HexLayout3D`, `LayeredHex3D`, `Interior`, `Terrain`.
+
+What stays in the raylib backend:
+- `Layout3D/Renderer3D.fs` — the instanced-draw bridge (`InstancedRenderContext`,
+  `CellGridRenderer3D`, `HexGrid3DRenderer`). It depends on
+  `Mibo.Elmish.Graphics3D` (`Command3D`/`RenderBuffer3D`/`Material3D`) and the
+  native `Raylib_cs.Mesh`, so it is a renderer and stays backend-side (in
+  `namespace Mibo.Layout3D`, same as today). Moving it would require first
+  abstracting the 3D command buffer into Core, which is out of scope.
+
+The benefit: a fresh backend (e.g. MonoGame) now gets the full layout/hex/spatial
+geometry surface from `Mibo.Core` without re-implementing it, and only has to
+provide its own renderer bridge if it wants instanced grid drawing.
+
+
 
 
 
