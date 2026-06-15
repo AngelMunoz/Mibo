@@ -215,3 +215,37 @@ let cache = GameContext.getService<IAssetCache> ctx
 let config = cache.GetOrCreate("gameConfig", fun () -> loadConfig())
 ```
 
+### Phase 1d - Program builder in Core; `withInputMapper` decoupled
+
+**Breaking** (minor: only affects `withInputMapper` call sites, of which there
+are none in the samples). Two changes:
+
+**1. The framework-free `Program` builder moved to `Mibo.Core`.** `mkProgram`,
+`withConfig`, `withRenderer`, `withTick`, `withFixedStep`, `withDispatchMode`,
+`withSubscription`, `withAssets`, `withAssetsBasePath`, `withInput` now live in
+`Mibo.Core` (still `Mibo.Elmish` namespace, still `Program.withX` at call sites).
+A new `Program.withServiceRegistration` lets any builder register a callback the
+host runs before `Init`.
+
+**2. `withInputMapper` moved to a per-backend module.** Because the mapper factory
+(`InputMapper.createService`) is backend-specific, `withInputMapper` can no longer
+live in the shared Core `Program` builder. On the raylib backend it is now
+`RaylibProgram.withInputMapper` (in `Mibo.Elmish`):
+
+```fsharp
+// Before (1.3.0)
+program |> Program.withInputMapper inputMap
+
+// After (vNext, raylib backend)
+program |> RaylibProgram.withInputMapper inputMap
+```
+
+It still registers `IInput` automatically and now registers `IInputMapper` via a
+`ServiceRegistrations` callback (rather than wrapping `Init`), so the Core
+`Program` type never references the raylib factory. Each backend will expose its
+own `withInputMapper` (MonoGame: `MonoGameProgram.withInputMapper`, etc.).
+
+If you used the subscription path (`InputMapper.subscribe` / `subscribeStatic`),
+nothing changes — that API is backend-neutral and already lives in Core.
+
+

@@ -91,4 +91,14 @@ type Program<'Model, 'Msg> = {
   HasInput: bool
   /// <summary>Whether an input mapper service is enabled. Set via <see cref="M:Mibo.Elmish.Program.withInputMapper"/>.</summary>
   HasInputMapper: bool
+  /// <summary>
+  /// Service-registration callbacks invoked by the runtime host after core services
+  /// (assets, input) are registered but before <see cref="F:Mibo.Elmish.Program.Init"/>.
+  /// </summary>
+  /// <remarks>
+  /// Used by builder functions like <see cref="M:Mibo.Elmish.Program.withInputMapper"/>
+  /// to register backend-specific services without the Core Program builder
+  /// referencing a backend factory directly.
+  /// </remarks>
+  ServiceRegistrations: (GameContext -> unit) list
 }

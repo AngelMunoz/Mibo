@@ -18,6 +18,7 @@
     <Compile Include="Input.fs" />
     <Compile Include="InputMapper.fs" />
     <Compile Include="InputServices.fs" />
+    <Compile Include="Elmish.Program.fs" />
   </ItemGroup>
 
   <ItemGroup>

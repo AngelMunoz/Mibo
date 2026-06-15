@@ -146,6 +146,11 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
       GameContext.register<IInput> inputService ctx
       inputServiceOpt <- ValueSome inputService
 
+    // Run backend-specific service registrations (e.g. IInputMapper) before
+    // Init so user init code can see every registered service.
+    for register in List.rev program.ServiceRegistrations do
+      register ctx
+
     ctxOpt <- ValueSome ctx
 
     let struct (initialState, initialCmds) = program.Init ctx
