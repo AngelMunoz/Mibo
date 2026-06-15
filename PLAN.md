@@ -196,6 +196,27 @@ callbacks. Porting the Mibo types would reintroduce the coupling Phases 1–3 re
 if the MonoGame backend wants JSON asset decoding, add `JDeck` to that backend
 only — not to Core.
 
+### Reference guidance for steps 4–7 (the MonoGame-specific implementations)
+
+The original `E:\Mibo` is the **reference for *what MonoGame surface to cover***,
+not portable code. For steps 4–7, duplicate the patterns from `E:\Mibo\src\Mibo`
+*as long as they are backend-specific and do not break Core code*:
+
+- **Step 4 (IInput):** mirror `E:\Mibo\src\Mibo\Input.fs`'s polling shape
+  (`Keyboard.GetState`/`Mouse.GetState`/`GamePad.GetState`/`TouchPanel.GetState`)
+  and the set of `Keys`/`Buttons` it maps. Translate onto Core's
+  `KeyCode`/`MouseButtonCode`/`GamepadButtonCode`/delta structs — do **not**
+  reuse the MonoGame-typed delta records.
+- **Step 5 (IInputMapper):** the pure `InputMap`/`ActionState` core is already in
+  `Mibo.Core`; only the per-frame ticking impl is backend-specific.
+- **Step 6 (IAssets):** mirror `E:\Mibo\src\Mibo\Assets.fs`'s `ContentManager.Load`
+  caching pattern and the typed loaders it exposes
+  (`Texture2D`/`SpriteFont`/`SoundEffect`/`Model`/`Effect`). Implement against
+  Core's `IAssetCache` + a MonoGame `IAssets` that extends it.
+- **Step 7 (withInputMapper):** mirror `RaylibProgram.withInputMapper`'s
+  `ServiceRegistrations` shape; the upstream `E:\Mibo` version wraps `Init`
+  instead, which is the older pattern — follow the raylib one.
+
 ### What the new backend must provide
 
 | Core contract | MonoGame implementation |
@@ -273,6 +294,17 @@ only — not to Core.
 
    This resolves the "sharing mechanism" question: it's the established
    inheritance pattern, not a new interface/base-record debate.
+
+   **Refinement (resolved during Phase 4 scaffolding):** `LoopCore.Init` is
+   typed to the Core `GameContext` class (not an interface), and that class has
+   no backend-handle slot and an `internal` constructor. Rather than widen the
+   Core type (out of Phase 4's "new backend only" scope) or introduce a wrapper,
+   the MonoGame backend follows the **raylib pattern exactly**: the host
+   registers `GraphicsDevice`, `ContentManager`, and `Game` into the Core
+   `GameContext` service registry, and user code retrieves them via
+   `GameContext.getService<GraphicsDevice>() ctx` (just as raylib registers and
+   retrieves `IInput`/`IAssets`). Zero Core changes; `InternalsVisibleTo`
+   already grants `Mibo.MonoGame` access to the internal `register`.
 
 ### Steps (high level — flesh out when Phase 4 starts)
 
