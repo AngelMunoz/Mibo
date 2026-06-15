@@ -187,4 +187,6 @@ module InputMapper =
     : IInputMapper<'Action> =
     match tryGetService<'Action> ctx with
     | ValueSome m -> m
-    | ValueNone -> failwith "IInputMapper service not registered."
+    | ValueNone ->
+      failwith
+        "IInputMapper service not registered. Add Program.withInputMapper to your program."

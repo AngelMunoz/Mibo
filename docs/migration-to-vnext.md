@@ -169,9 +169,10 @@ Mibo-side code that works in Core codes (e.g. `Raylib.IsKeyDown(KeyCode.toRaylib
 
 #### Notes on round-tripping
 
-- raylib exposes the D-pad as analog axes (`GamepadAxis.LeftX/LeftY`), not as
-  buttons. The Core `GamepadButtonCode.DPad*` cases map to/from `Unknown` on
-  the raylib backend. If you need D-pad state on raylib, read the axes.
+- raylib's `GamepadButton` enum names the D-pad cluster "left face"
+  (`LeftFaceUp/Down/Left/Right`) and the action-button cluster "right face"
+  (`RightFaceUp/Down/Left/Right`, i.e. Y/B/A/X on Xbox). The raylib backend
+  maps `LeftFace*` to `GamepadButtonCode.DPad*` and `RightFace*` to `Face*`.
 - Any native input with no logical Core case maps to `Unknown`. Do not assume
   `Unknown` round-trips to the same native value.
 

@@ -273,19 +273,20 @@ module MouseButtonCode =
 
 /// <summary>Functions for translating between raylib's <c>GamepadButton</c> and Mibo's backend-neutral <c>GamepadButtonCode</c>.</summary>
 /// <remarks>
-/// raylib uses an Xbox-style face layout (Up/Right/Down/Left = Y/B/A/X); the Core
-/// codes abstract that ordering so backends with different conventions (e.g.
-/// MonoGame / XNA) can map onto the same logical buttons.
-/// Note: raylib exposes the D-pad as analog axes (GamepadAxis.LeftX/LeftY), not
-/// as buttons, so the Core DPad* cases map to/from <c>Unknown</c> on raylib.
+/// raylib's <c>GamepadButton</c> enum uses "left face" for the D-pad cluster and
+/// "right face" for the action-button cluster (Xbox: Y/B/A/X). The Core codes
+/// abstract that naming so backends with different conventions (e.g. MonoGame /
+/// XNA) can map onto the same logical buttons.
 /// </remarks>
 module GamepadButtonCode =
   let ofRaylibButton(b: GamepadButton) : GamepadButtonCode =
     match b with
-    | GamepadButton.LeftFaceUp -> GamepadButtonCode.FaceUp
-    | GamepadButton.LeftFaceRight -> GamepadButtonCode.FaceRight
-    | GamepadButton.LeftFaceDown -> GamepadButtonCode.FaceDown
-    | GamepadButton.LeftFaceLeft -> GamepadButtonCode.FaceLeft
+    // raylib's "left face" cluster IS the D-pad
+    | GamepadButton.LeftFaceUp -> GamepadButtonCode.DPadUp
+    | GamepadButton.LeftFaceRight -> GamepadButtonCode.DPadRight
+    | GamepadButton.LeftFaceDown -> GamepadButtonCode.DPadDown
+    | GamepadButton.LeftFaceLeft -> GamepadButtonCode.DPadLeft
+    // raylib's "right face" cluster is the action buttons (Y/B/A/X on Xbox)
     | GamepadButton.RightFaceUp -> GamepadButtonCode.FaceUp
     | GamepadButton.RightFaceRight -> GamepadButtonCode.FaceRight
     | GamepadButton.RightFaceDown -> GamepadButtonCode.FaceDown
@@ -303,6 +304,10 @@ module GamepadButtonCode =
 
   let toRaylibButton(b: GamepadButtonCode) : GamepadButton =
     match b with
+    | GamepadButtonCode.DPadUp -> GamepadButton.LeftFaceUp
+    | GamepadButtonCode.DPadRight -> GamepadButton.LeftFaceRight
+    | GamepadButtonCode.DPadDown -> GamepadButton.LeftFaceDown
+    | GamepadButtonCode.DPadLeft -> GamepadButton.LeftFaceLeft
     | GamepadButtonCode.FaceUp -> GamepadButton.RightFaceUp
     | GamepadButtonCode.FaceRight -> GamepadButton.RightFaceRight
     | GamepadButtonCode.FaceDown -> GamepadButton.RightFaceDown
@@ -316,12 +321,6 @@ module GamepadButtonCode =
     | GamepadButtonCode.Select -> GamepadButton.MiddleLeft
     | GamepadButtonCode.Home -> GamepadButton.Middle
     | GamepadButtonCode.Start -> GamepadButton.MiddleRight
-    // raylib has no DPad buttons in its GamepadButton enum (D-pad is an axis),
-    // so the Core DPad* cases cannot round-trip on this backend.
-    | GamepadButtonCode.DPadUp
-    | GamepadButtonCode.DPadRight
-    | GamepadButtonCode.DPadDown
-    | GamepadButtonCode.DPadLeft
     | GamepadButtonCode.Unknown -> GamepadButton.Unknown
 
 /// <summary>Functions for translating between raylib's <c>Gesture</c> and Mibo's backend-neutral <c>GestureKind</c>.</summary>

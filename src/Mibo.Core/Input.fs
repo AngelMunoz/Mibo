@@ -13,7 +13,9 @@ open System.Numerics
 //    these types — it just translates its native codes to/from these cases.
 //
 // Each DU has an `Unknown` case: a backend maps any native input it does not
-// recognize to `Unknown` rather than dropping it silently or fabricating a value.
+// recognize to `Unknown` rather than fabricating a value. Note that the default
+// raylib polling implementation filters out `Unknown` values at the polling
+// boundary to avoid flooding the input queue with indistinguishable events.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
