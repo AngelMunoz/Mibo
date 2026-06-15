@@ -7,6 +7,7 @@
 - `Mibo.Core` project: backend-agnostic home for `Cmd`/`Sub`/`GameTime`/`DispatchMode`/`FixedStep`/`System`/`RenderBuffer`/`IRenderer`/`GameContext`/`Program`/`GameConfig`. The `Mibo.Raylib` project now references `Mibo.Core`. No API changes; all types remain in the `Mibo.Elmish` namespace. See `docs/migration-to-vnext.md` for the vNext roadmap.
 - Backend-neutral input contracts in `Mibo.Core` (namespace `Mibo.Input`): `KeyCode`, `MouseButtonCode`, `GamepadButtonCode`, `GestureKind` (struct DUs, `RequireQualifiedAccess`), the delta types, the `IInput`/`IInputMapper<'Action>` contracts, `Trigger`/`InputMap<'Action>`/`ActionState<'Action>`, and the `Keyboard`/`Mouse`/`Touch`/`Gamepad`/`Gesture` subscription modules. Backends supply concrete `IInput`/`IInputMapper` implementations.
 - Raylib↔Core input translation modules in the raylib backend: `KeyCode.ofRaylibKey`/`toRaylibKey`, `MouseButtonCode.ofRaylibButton`/`toRaylibButton`, `GamepadButtonCode.ofRaylibButton`/`toRaylibButton`, `GestureKind.ofRaylibGesture`/`toRaylibGesture`.
+- `IAssetCache` interface in `Mibo.Core` (`Mibo.Elmish` namespace): the backend-neutral generic asset-cache contract (`Get<'T>`/`Create<'T>`/`GetOrCreate<'T>`/`Clear`/`Dispose`). The raylib backend's `IAssets` now extends `IAssetCache`; all existing calls compile unchanged. Portable code can retrieve an `IAssetCache` from `GameContext` to cache custom assets without referencing a backend.
 
 ### Changed
 

@@ -36,7 +36,7 @@ that leaks a backend enum/handle stay in the backend.**
 |-------|-------|-----------|
 | 1a | Move framework-free files (Time, Commands, System, Subscriptions, Rendering, ProgramTypes) into `Mibo.Core` | No |
 | 1b | Input abstraction: Core key/mouse/gamepad/gesture codes, `IInput`/`IInputMapper` contracts + delta types in Core | Yes |
-| 1c | `IAssetCache` split: generic asset cache in Core; typed loaders stay backend | Yes |
+| 1c | `IAssetCache` split: generic asset cache in Core; typed loaders stay backend | No |
 | 1d | `Program` builder moves to Core; `withInputMapper` stores a factory instead of calling the backend directly | Yes |
 | 2  | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core | No |
 | 3  | `Layout` and `Layout3D` move to Core | No |
@@ -175,4 +175,43 @@ Mibo-side code that works in Core codes (e.g. `Raylib.IsKeyDown(KeyCode.toRaylib
   maps `LeftFace*` to `GamepadButtonCode.DPad*` and `RightFace*` to `Face*`.
 - Any native input with no logical Core case maps to `Unknown`. Do not assume
   `Unknown` round-trips to the same native value.
+
+### Phase 1c - `IAssetCache` split
+
+**No breaking changes.** The generic subset of asset caching - the methods that
+store arbitrary user-created assets by string key - is now a backend-neutral
+contract in `Mibo.Core`:
+
+```fsharp
+// Mibo.Elmish (in Mibo.Core)
+type IAssetCache =
+  abstract Get<'T> : key: string -> 'T voption
+  abstract Create<'T> : key: string * factory: (unit -> 'T) -> 'T
+  abstract GetOrCreate<'T> : key: string * factory: (unit -> 'T) -> 'T
+  abstract Clear: unit -> unit
+  abstract Dispose: unit -> unit
+```
+
+The raylib backend's `IAssets` now extends `IAssetCache`:
+
+```fsharp
+type IAssets =
+  inherit IAssetCache
+  abstract Texture: path: string -> Texture2D
+  abstract Font:     path: string -> Font
+  abstract Sound:    path: string -> Sound
+  abstract Model:    path: string -> Model
+  abstract ModelAnimations: path: string -> ModelAnimation[]
+```
+
+All existing code keeps working unchanged: `assets.Get<'T>(...)`,
+`assets.GetOrCreate(...)`, etc. resolve to the inherited members. The benefit
+is that portable code (and the Headless runner, once it lands in Core) can
+retrieve an `IAssetCache` from a `GameContext` and cache custom assets
+without referencing a backend:
+
+```fsharp
+let cache = GameContext.getService<IAssetCache> ctx
+let config = cache.GetOrCreate("gameConfig", fun () -> loadConfig())
+```
 
