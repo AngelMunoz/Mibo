@@ -300,9 +300,12 @@ module InputMapper =
             if not(held.Contains a) then
               releasedSet <- releasedSet |> Set.add a
 
-          for a in releasedSet do
-            held <- held |> Set.remove a
-            values <- values |> Map.remove a
+          // An action may appear in releasedSet via a KeyCombo release while
+          // still held by another trigger. Filter rather than mutate held —
+          // matches buildActions (line ~81). Mutating held here would
+          // incorrectly deactivate an action still held by another binding.
+          releasedSet <-
+            releasedSet |> Set.filter(fun a -> not(held.Contains a))
 
           state <- {
             Held = held

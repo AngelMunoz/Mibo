@@ -414,7 +414,7 @@ module private InputPolling =
           Released = released.ToArray()
         }
         ScrollDelta = float32 scrollDelta
-        ScrollDeltaV = Vector2(float32 scrollDeltaH, 0.0f)
+        ScrollDeltaV = Vector2(float32 scrollDeltaH, float32 scrollDelta)
       }
 
     prevMouse <- curr

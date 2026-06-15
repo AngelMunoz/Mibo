@@ -141,10 +141,14 @@ type AssetsService(content: ContentManager) =
       effects.Clear()
 
     member _.Dispose() =
-      // ContentManager owns the XNB assets; individual Texture2D/Effect/etc.
-      // instances are NOT disposed here because ContentManager.Unload handles
-      // them. Disposing typed user assets would be unsafe if they hold
-      // references into content-loaded resources. Clear caches only.
+      // Dispose user-created IDisposable assets. ContentManager owns the
+      // XNB-loaded textures/fonts/etc., so the typed-loader caches below are
+      // left for ContentManager.Unload — only the generic typedCache is ours.
+      for kvp in typedCache do
+        match kvp.Value with
+        | :? IDisposable as d -> d.Dispose()
+        | _ -> ()
+
       typedCache.Clear()
       textures.Clear()
       fonts.Clear()

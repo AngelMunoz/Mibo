@@ -58,6 +58,10 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
 
     graphics.SynchronizeWithVerticalRetrace <- config.TargetFPS <= 0
 
+    // Disable MG fixed timestep when TargetFPS <= 0 (unlocked/VSync intent).
+    // MG defaults IsFixedTimeStep=true (fixed 60fps), which would override VSync.
+    this.IsFixedTimeStep <- config.TargetFPS > 0
+
     if config.TargetFPS > 0 then
       this.TargetElapsedTime <-
         TimeSpan.FromSeconds(1.0 / float config.TargetFPS)
@@ -161,6 +165,12 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
         match renderers[i] with
         | :? IDisposable as d -> d.Dispose()
         | _ -> ()
+
+      ctxOpt
+      |> ValueOption.iter(fun ctx ->
+        match GameContext.tryGetService<IAssets> ctx with
+        | ValueSome assets -> assets.Dispose()
+        | _ -> ())
 
       loop.DisposeSubs()
 
