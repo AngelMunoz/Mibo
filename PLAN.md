@@ -5,7 +5,7 @@
 > user-facing breaking-changes live in [`docs/migration-to-vnext.md`](docs/migration-to-vnext.md);
 > this document is the engineering record.
 >
-> **Branch:** `vnext`. **Status:** Phases 1a–1d and 2 are merged.
+> **Branch:** `vnext`. **Status:** Phases 1a–1d, 2, and 3 are merged.
 >
 > **Workflow:** `vnext` is the integration branch. Each phase is developed on a
 > feature branch cut from `vnext` and merged back via a PR to `vnext`
@@ -39,8 +39,8 @@ backend enum/handle stays in the backend.
 | 1c | `IAssetCache` split: generic asset cache in Core; typed loaders stay backend | No | ✅ Done (`#21`) |
 | 1d | `Program` builder moves to Core; `withInputMapper` decoupled from the backend | Yes | ✅ Done (`#21`) |
 | 2  | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core | No | ✅ Done (`#22`) |
-| 3  | `Layout` and `Layout3D` move to Core | No | ⬜ Pending |
-| 4  | Fresh `Mibo.MonoGame` backend | n/a (new project) | ⬜ Pending |
+| 3  | `Layout` and `Layout3D` move to Core | No | ✅ Done (`#23`) |
+| 4  | Fresh `Mibo.MonoGame` backend | n/a (new project) | 🔨 In progress (`feature/monogame-backend`) |
 | 5  | Parity verification (optional) | n/a | ⬜ Pending |
 
 ---
@@ -128,6 +128,47 @@ Phase 4 also targets `net8.0`, matching the upstream Mibo repo.)
 
 **Breaking:** n/a — new project.
 
+### Status (in progress — `feature/monogame-backend`)
+
+Implemented and compiling (whole solution builds with 0 errors):
+- `MiboGame : Game` host — drives `ElmishLoop` from `Update`/`Draw`, applies
+  `GameConfig`, registers MonoGame handles + `IAssets` + `IInput` + service
+  registrations, reflects window resize into `GameContext` dimensions.
+- `MonoGameGameContext` — registers `GraphicsDevice`/`ContentManager`/`Game` into
+  the Core service registry (decision 5); typed `getGraphicsDevice`/
+  `getContentManager`/`getGame` accessors.
+- `Input.fs` — `KeyCode.ofMonoGameKey`/`toMonoGameKey`,
+  `GamepadButtonCode.ofMonoGameButton`/`toMonoGameButton`, whole-state pollers
+  (keyboard/mouse/touch/gamepad), `Input.create`. Matches the raylib 80/20
+  surface (decision 3).
+- `InputMapper.fs` — `buildActions` (shared logic) + `subscribe`/
+  `subscribeStatic` + `createService`, mirroring raylib.
+- `Assets.fs` — `IAssets` over `ContentManager` (typed loaders cached in
+  dictionaries), extending Core `IAssetCache`.
+- `Program.fs` — `MonoGameProgram.withInputMapper`.
+
+Parity notes surfaced during implementation:
+- **MonoGame gives whole-state snapshots** (`KeyboardState`/`MouseState`/
+  `GamePadState`), unlike raylib's per-query functions. Pollers diff against
+  the previous frame's state via `byref`/array fields.
+- **D-pad lives on `GamePadState.DPad`, not `GamePadButtons`** — a real API
+  difference from what the `Buttons` enum suggests.
+- **Triggers exposed digitally at a 0.5 threshold** (analog via `GamepadAnalog`).
+- **No `RightSuper` mapping** — MonoGame has only `LeftWindows`.
+- **No separate numpad Enter** — MonoGame shares `Keys.Enter`.
+- **Gestures are a known 80/20 gap** — MonoGame has no built-in high-level
+  gesture detection matching raylib's; the `GestureDelta` stream stays empty
+  until a recognizer is layered on.
+- **`IInputMapper` service path is registered but not ticked** — this matches
+  the raylib backend exactly (raylib also registers but never calls `Update()`;
+  the working path is the subscription `InputMapper.subscribeStatic`). Not a
+  regression; consistent with raylib.
+
+Remaining before merge: runtime smoke test (a `MiboGame` that boots, processes
+one tick, and exits cleanly without a window in CI is non-trivial — MonoGame
+needs a real `GraphicsDevice`). The library compiles and is API-complete; a
+manual boot test on a desktop is the verification step.
+
 ### Upstream reference: `E:\Mibo` (the original MonoGame Mibo)
 
 The original MonoGame Mibo lives at `E:\Mibo` (`net8.0`, `MonoGame.Framework.Native`
@@ -195,6 +236,27 @@ callbacks. Porting the Mibo types would reintroduce the coupling Phases 1–3 re
 `FSharp.UMX` for `SubId`. `JDeck`'s `Assets.fromJson` is an asset-layer feature;
 if the MonoGame backend wants JSON asset decoding, add `JDeck` to that backend
 only — not to Core.
+
+### Reference guidance for steps 4–7 (the MonoGame-specific implementations)
+
+The original `E:\Mibo` is the **reference for *what MonoGame surface to cover***,
+not portable code. For steps 4–7, duplicate the patterns from `E:\Mibo\src\Mibo`
+*as long as they are backend-specific and do not break Core code*:
+
+- **Step 4 (IInput):** mirror `E:\Mibo\src\Mibo\Input.fs`'s polling shape
+  (`Keyboard.GetState`/`Mouse.GetState`/`GamePad.GetState`/`TouchPanel.GetState`)
+  and the set of `Keys`/`Buttons` it maps. Translate onto Core's
+  `KeyCode`/`MouseButtonCode`/`GamepadButtonCode`/delta structs — do **not**
+  reuse the MonoGame-typed delta records.
+- **Step 5 (IInputMapper):** the pure `InputMap`/`ActionState` core is already in
+  `Mibo.Core`; only the per-frame ticking impl is backend-specific.
+- **Step 6 (IAssets):** mirror `E:\Mibo\src\Mibo\Assets.fs`'s `ContentManager.Load`
+  caching pattern and the typed loaders it exposes
+  (`Texture2D`/`SpriteFont`/`SoundEffect`/`Model`/`Effect`). Implement against
+  Core's `IAssetCache` + a MonoGame `IAssets` that extends it.
+- **Step 7 (withInputMapper):** mirror `RaylibProgram.withInputMapper`'s
+  `ServiceRegistrations` shape; the upstream `E:\Mibo` version wraps `Init`
+  instead, which is the older pattern — follow the raylib one.
 
 ### What the new backend must provide
 
@@ -273,6 +335,17 @@ only — not to Core.
 
    This resolves the "sharing mechanism" question: it's the established
    inheritance pattern, not a new interface/base-record debate.
+
+   **Refinement (resolved during Phase 4 scaffolding):** `LoopCore.Init` is
+   typed to the Core `GameContext` class (not an interface), and that class has
+   no backend-handle slot and an `internal` constructor. Rather than widen the
+   Core type (out of Phase 4's "new backend only" scope) or introduce a wrapper,
+   the MonoGame backend follows the **raylib pattern exactly**: the host
+   registers `GraphicsDevice`, `ContentManager`, and `Game` into the Core
+   `GameContext` service registry, and user code retrieves them via
+   `GameContext.getService<GraphicsDevice>() ctx` (just as raylib registers and
+   retrieves `IInput`/`IAssets`). Zero Core changes; `InternalsVisibleTo`
+   already grants `Mibo.MonoGame` access to the internal `register`.
 
 ### Steps (high level — flesh out when Phase 4 starts)
 
