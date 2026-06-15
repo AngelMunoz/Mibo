@@ -8,7 +8,11 @@
 
   <ItemGroup>
     <Compile Include="GameContext.fs" />
+    <Compile Include="Input.fs" />
+    <Compile Include="InputMapper.fs" />
+    <Compile Include="Assets.fs" />
     <Compile Include="Runtime.fs" />
+    <Compile Include="Program.fs" />
   </ItemGroup>
 
   <ItemGroup>

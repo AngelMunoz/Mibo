@@ -3,6 +3,7 @@ namespace Mibo.Elmish
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open Mibo.Input
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MiboGame: the MonoGame-backed Elmish host.
@@ -40,7 +41,7 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
 
   let loop = ElmishLoop.create(ElmishLoop.coreOfProgram program)
   let renderers = ResizeArray<IRenderer<'Model>>()
-  // inputServiceOpt is wired in a later Phase 4 step when Mibo.MonoGame.Input lands.
+  let mutable inputServiceOpt: IInput voption = ValueNone
   let mutable ctxOpt: GameContext voption = ValueNone
 
   // ── Config: apply the cumulative GameConfig callbacks once, in the ctor,
@@ -64,8 +65,8 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     this.Window.Title <- config.Title
     this.IsMouseVisible <- true
 
-  // ── Initialize: build renderers and register input (the MG GraphicsDevice
-  // exists by now). LoadContent (below) finishes wiring and starts the loop.
+  // ── Initialize: build renderers (the MG GraphicsDevice exists by now).
+  // LoadContent (below) finishes wiring and starts the loop.
   override _.Initialize() =
     // Reverse to match add-order (the list is ::-prepended, like Config and
     // ServiceRegistrations). Same rationale as RaylibGame: without this the
@@ -91,9 +92,15 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     // Register MonoGame handles so user init/update code can resolve them.
     MonoGameGameContext.register this ctx
 
-    // NOTE: input service registration (IInput) lands in a later Phase 4 step
-    // when the Mibo.MonoGame input module exists. For now, programs that use
-    // input subscriptions won't find an IInput in the registry.
+    // Register the MonoGame asset service (always, mirroring RaylibGame which
+    // registers IAssets unconditionally). Built over the host's ContentManager.
+    let assets = AssetsService.create this.Content
+    GameContext.register<IAssets> assets ctx
+
+    if program.HasInput then
+      let inputService = Input.create this
+      GameContext.register<IInput> inputService ctx
+      inputServiceOpt <- ValueSome inputService
 
     // Run backend-specific service registrations (e.g. IInputMapper) before
     // Init so user init code sees every registered service.
@@ -103,9 +110,11 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     // Initialize the shared loop (calls program.Init, execCmd, updateSubs).
     loop.Init(ctx)
 
-  // ── Update: advance the shared loop. (Input polling lands in a later step.)
+  // ── Update: poll hardware input, then advance the shared loop.
   override _.Update(gameTime: GameTime) =
     base.Update gameTime
+
+    inputServiceOpt |> ValueOption.iter(fun svc -> svc.Poll())
 
     match ctxOpt with
     | ValueSome ctx ->
