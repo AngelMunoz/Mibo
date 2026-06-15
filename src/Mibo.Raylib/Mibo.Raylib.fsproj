@@ -7,15 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Properties/AssemblyInfo.fs" />
-    <Compile Include="Layout/Grid2D.fs" />
-    <Compile Include="Layout/HexGrid.fs" />
-    <Compile Include="Layout/Spatial2D.fs" />
-    <Compile Include="Layout/HexLayout.fs" />
-    <Compile Include="Layout/LayeredHex.fs" />
-    <Compile Include="Layout/Layout.fs" />
-    <Compile Include="Layout/Platformer.fs" />
-    <Compile Include="Layout/TopDown.fs" />
-    <Compile Include="Layout/Layered.fs" />
     <Compile Include="RaylibHelpers.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="InputMapper.fs" />
@@ -52,14 +43,6 @@
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
     <Compile Include="Graphics3D/Pipelines/Shaders.fs" />
     <Compile Include="Graphics3D/Pipelines/ForwardPbrPipeline.fs" />
-    <Compile Include="Layout3D/Grid3D.fs" />
-    <Compile Include="Layout3D/HexGrid3D.fs" />
-    <Compile Include="Layout3D/Spatial3D.fs" />
-    <Compile Include="Layout3D/Layout3D.fs" />
-    <Compile Include="Layout3D/HexLayout3D.fs" />
-    <Compile Include="Layout3D/LayeredHex3D.fs" />
-    <Compile Include="Layout3D/Interior.fs" />
-    <Compile Include="Layout3D/Terrain.fs" />
     <Compile Include="Layout3D/Renderer3D.fs" />
   </ItemGroup>
   <ItemGroup>
