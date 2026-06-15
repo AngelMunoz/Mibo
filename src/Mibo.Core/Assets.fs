@@ -19,7 +19,7 @@ namespace Mibo.Elmish
 /// </summary>
 /// <remarks>
 /// This is the shareable subset of asset caching. Backend-specific asset services
-// (e.g. raylib's <c>IAssets</c>) extend this interface to add typed loaders that
+/// (e.g. raylib's <c>IAssets</c>) extend this interface to add typed loaders that
 /// return native GPU/resource handles (<c>Texture2D</c>, <c>Font</c>, <c>Sound</c>,
 /// etc.), which are inherently backend-specific.
 /// </remarks>

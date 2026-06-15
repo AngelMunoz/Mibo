@@ -248,4 +248,27 @@ own `withInputMapper` (MonoGame: `MonoGameProgram.withInputMapper`, etc.).
 If you used the subscription path (`InputMapper.subscribe` / `subscribeStatic`),
 nothing changes — that API is backend-neutral and already lives in Core.
 
+#### Behavioral fix: renderer draw order
+
+**This is a behavioral breaking change that will not produce compiler errors.
+Review your renderer setup if you use multiple renderers.**
+
+The `Program.Renderers` list is built by prepending each new renderer.
+Previously, the runtime iterated the list without reversing it,
+which meant the last renderer added was the first to draw. If you added a 3D
+renderer first and a 2D UI renderer second, the 2D UI drew first and the 3D
+scene drew on top — the opposite of the expected layering.
+
+This is now fixed: the runtime reverses `program.Renderers` before iterating,
+matching the existing pattern for `Config` and `ServiceRegistrations`.
+Renderers now draw in the order you add them.
+
+```fsharp
+// This now draws the 3D scene first, then the 2D UI on top (correct)
+program
+|> Program.withRenderer (fun () -> Renderer3D.create view3D)
+|> Program.withRenderer (fun () -> Renderer2D.create view2D)
+```
+
+
 
