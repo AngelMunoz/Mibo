@@ -40,7 +40,7 @@ backend enum/handle stays in the backend.
 | 1d | `Program` builder moves to Core; `withInputMapper` decoupled from the backend | Yes | ✅ Done (`#21`) |
 | 2  | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core | No | ✅ Done (`#22`) |
 | 3  | `Layout` and `Layout3D` move to Core | No | ✅ Done (`#23`) |
-| 4  | Fresh `Mibo.MonoGame` backend | n/a (new project) | ⬜ Pending |
+| 4  | Fresh `Mibo.MonoGame` backend | n/a (new project) | 🔨 In progress (`feature/monogame-backend`) |
 | 5  | Parity verification (optional) | n/a | ⬜ Pending |
 
 ---
@@ -127,6 +127,47 @@ Phase 4 also targets `net8.0`, matching the upstream Mibo repo.)
 ## Phase 4 — Fresh `Mibo.MonoGame` backend
 
 **Breaking:** n/a — new project.
+
+### Status (in progress — `feature/monogame-backend`)
+
+Implemented and compiling (whole solution builds with 0 errors):
+- `MiboGame : Game` host — drives `ElmishLoop` from `Update`/`Draw`, applies
+  `GameConfig`, registers MonoGame handles + `IAssets` + `IInput` + service
+  registrations, reflects window resize into `GameContext` dimensions.
+- `MonoGameGameContext` — registers `GraphicsDevice`/`ContentManager`/`Game` into
+  the Core service registry (decision 5); typed `getGraphicsDevice`/
+  `getContentManager`/`getGame` accessors.
+- `Input.fs` — `KeyCode.ofMonoGameKey`/`toMonoGameKey`,
+  `GamepadButtonCode.ofMonoGameButton`/`toMonoGameButton`, whole-state pollers
+  (keyboard/mouse/touch/gamepad), `Input.create`. Matches the raylib 80/20
+  surface (decision 3).
+- `InputMapper.fs` — `buildActions` (shared logic) + `subscribe`/
+  `subscribeStatic` + `createService`, mirroring raylib.
+- `Assets.fs` — `IAssets` over `ContentManager` (typed loaders cached in
+  dictionaries), extending Core `IAssetCache`.
+- `Program.fs` — `MonoGameProgram.withInputMapper`.
+
+Parity notes surfaced during implementation:
+- **MonoGame gives whole-state snapshots** (`KeyboardState`/`MouseState`/
+  `GamePadState`), unlike raylib's per-query functions. Pollers diff against
+  the previous frame's state via `byref`/array fields.
+- **D-pad lives on `GamePadState.DPad`, not `GamePadButtons`** — a real API
+  difference from what the `Buttons` enum suggests.
+- **Triggers exposed digitally at a 0.5 threshold** (analog via `GamepadAnalog`).
+- **No `RightSuper` mapping** — MonoGame has only `LeftWindows`.
+- **No separate numpad Enter** — MonoGame shares `Keys.Enter`.
+- **Gestures are a known 80/20 gap** — MonoGame has no built-in high-level
+  gesture detection matching raylib's; the `GestureDelta` stream stays empty
+  until a recognizer is layered on.
+- **`IInputMapper` service path is registered but not ticked** — this matches
+  the raylib backend exactly (raylib also registers but never calls `Update()`;
+  the working path is the subscription `InputMapper.subscribeStatic`). Not a
+  regression; consistent with raylib.
+
+Remaining before merge: runtime smoke test (a `MiboGame` that boots, processes
+one tick, and exits cleanly without a window in CI is non-trivial — MonoGame
+needs a real `GraphicsDevice`). The library compiles and is API-complete; a
+manual boot test on a desktop is the verification step.
 
 ### Upstream reference: `E:\Mibo` (the original MonoGame Mibo)
 
