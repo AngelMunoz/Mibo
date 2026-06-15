@@ -5,103 +5,361 @@ open System.Numerics
 open Raylib_cs
 open Mibo.Elmish
 
-/// <summary>Keyboard state delta containing keys that changed this frame.</summary>
-[<Struct>]
-type KeyboardDelta = {
-  Pressed: KeyboardKey[]
-  Released: KeyboardKey[]
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Raylib ↔ Core input translation.
+//
+// This is the ONLY place in the raylib backend where Raylib_cs.KeyboardKey /
+// MouseButton / GamepadButton / Gesture touch the Core-neutral code types.
+// Everything else in the backend works in Core codes.
+// ─────────────────────────────────────────────────────────────────────────────
 
-/// <summary>Mouse button state changes for a single frame.</summary>
-[<Struct>]
-type MouseButtons = {
-  Pressed: MouseButton[]
-  Released: MouseButton[]
-}
+/// <summary>Functions for translating between raylib's <c>KeyboardKey</c> and Mibo's backend-neutral <c>KeyCode</c>.</summary>
+module KeyCode =
+  /// <summary>Maps a raylib <c>KeyboardKey</c> to the backend-neutral <see cref="T:Mibo.Input.KeyCode"/>.
+  /// Returns <see cref="F:Mibo.Input.KeyCode.Unknown"/> for any raylib key with no logical equivalent.</summary>
+  let ofRaylibKey(k: KeyboardKey) : KeyCode =
+    match k with
+    // Letters
+    | KeyboardKey.A -> KeyCode.A
+    | KeyboardKey.B -> KeyCode.B
+    | KeyboardKey.C -> KeyCode.C
+    | KeyboardKey.D -> KeyCode.D
+    | KeyboardKey.E -> KeyCode.E
+    | KeyboardKey.F -> KeyCode.F
+    | KeyboardKey.G -> KeyCode.G
+    | KeyboardKey.H -> KeyCode.H
+    | KeyboardKey.I -> KeyCode.I
+    | KeyboardKey.J -> KeyCode.J
+    | KeyboardKey.K -> KeyCode.K
+    | KeyboardKey.L -> KeyCode.L
+    | KeyboardKey.M -> KeyCode.M
+    | KeyboardKey.N -> KeyCode.N
+    | KeyboardKey.O -> KeyCode.O
+    | KeyboardKey.P -> KeyCode.P
+    | KeyboardKey.Q -> KeyCode.Q
+    | KeyboardKey.R -> KeyCode.R
+    | KeyboardKey.S -> KeyCode.S
+    | KeyboardKey.T -> KeyCode.T
+    | KeyboardKey.U -> KeyCode.U
+    | KeyboardKey.V -> KeyCode.V
+    | KeyboardKey.W -> KeyCode.W
+    | KeyboardKey.X -> KeyCode.X
+    | KeyboardKey.Y -> KeyCode.Y
+    | KeyboardKey.Z -> KeyCode.Z
+    // Digits
+    | KeyboardKey.Zero -> KeyCode.D0
+    | KeyboardKey.One -> KeyCode.D1
+    | KeyboardKey.Two -> KeyCode.D2
+    | KeyboardKey.Three -> KeyCode.D3
+    | KeyboardKey.Four -> KeyCode.D4
+    | KeyboardKey.Five -> KeyCode.D5
+    | KeyboardKey.Six -> KeyCode.D6
+    | KeyboardKey.Seven -> KeyCode.D7
+    | KeyboardKey.Eight -> KeyCode.D8
+    | KeyboardKey.Nine -> KeyCode.D9
+    // Function keys
+    | KeyboardKey.F1 -> KeyCode.F1
+    | KeyboardKey.F2 -> KeyCode.F2
+    | KeyboardKey.F3 -> KeyCode.F3
+    | KeyboardKey.F4 -> KeyCode.F4
+    | KeyboardKey.F5 -> KeyCode.F5
+    | KeyboardKey.F6 -> KeyCode.F6
+    | KeyboardKey.F7 -> KeyCode.F7
+    | KeyboardKey.F8 -> KeyCode.F8
+    | KeyboardKey.F9 -> KeyCode.F9
+    | KeyboardKey.F10 -> KeyCode.F10
+    | KeyboardKey.F11 -> KeyCode.F11
+    | KeyboardKey.F12 -> KeyCode.F12
+    // Arrows / navigation
+    | KeyboardKey.Right -> KeyCode.Right
+    | KeyboardKey.Left -> KeyCode.Left
+    | KeyboardKey.Down -> KeyCode.Down
+    | KeyboardKey.Up -> KeyCode.Up
+    | KeyboardKey.PageUp -> KeyCode.PageUp
+    | KeyboardKey.PageDown -> KeyCode.PageDown
+    | KeyboardKey.Home -> KeyCode.Home
+    | KeyboardKey.End -> KeyCode.End
+    | KeyboardKey.Insert -> KeyCode.Insert
+    | KeyboardKey.Delete -> KeyCode.Delete
+    // Editing / control
+    | KeyboardKey.Space -> KeyCode.Space
+    | KeyboardKey.Enter -> KeyCode.Enter
+    | KeyboardKey.Escape -> KeyCode.Escape
+    | KeyboardKey.Tab -> KeyCode.Tab
+    | KeyboardKey.Backspace -> KeyCode.Backspace
+    | KeyboardKey.CapsLock -> KeyCode.CapsLock
+    // Modifiers
+    | KeyboardKey.LeftShift -> KeyCode.LeftShift
+    | KeyboardKey.RightShift -> KeyCode.RightShift
+    | KeyboardKey.LeftControl -> KeyCode.LeftControl
+    | KeyboardKey.RightControl -> KeyCode.RightControl
+    | KeyboardKey.LeftAlt -> KeyCode.LeftAlt
+    | KeyboardKey.RightAlt -> KeyCode.RightAlt
+    | KeyboardKey.LeftSuper -> KeyCode.LeftSuper
+    | KeyboardKey.RightSuper -> KeyCode.RightSuper
+    // Punctuation / symbols (US layout)
+    | KeyboardKey.Grave -> KeyCode.Grave
+    | KeyboardKey.Minus -> KeyCode.Minus
+    | KeyboardKey.Equal -> KeyCode.Equal
+    | KeyboardKey.LeftBracket -> KeyCode.LeftBracket
+    | KeyboardKey.RightBracket -> KeyCode.RightBracket
+    | KeyboardKey.Backslash -> KeyCode.Backslash
+    | KeyboardKey.Semicolon -> KeyCode.Semicolon
+    | KeyboardKey.Apostrophe -> KeyCode.Apostrophe
+    | KeyboardKey.Comma -> KeyCode.Comma
+    | KeyboardKey.Period -> KeyCode.Period
+    | KeyboardKey.Slash -> KeyCode.Slash
+    // Keypad
+    | KeyboardKey.Kp0 -> KeyCode.Kp0
+    | KeyboardKey.Kp1 -> KeyCode.Kp1
+    | KeyboardKey.Kp2 -> KeyCode.Kp2
+    | KeyboardKey.Kp3 -> KeyCode.Kp3
+    | KeyboardKey.Kp4 -> KeyCode.Kp4
+    | KeyboardKey.Kp5 -> KeyCode.Kp5
+    | KeyboardKey.Kp6 -> KeyCode.Kp6
+    | KeyboardKey.Kp7 -> KeyCode.Kp7
+    | KeyboardKey.Kp8 -> KeyCode.Kp8
+    | KeyboardKey.Kp9 -> KeyCode.Kp9
+    | KeyboardKey.KpDecimal -> KeyCode.KpDecimal
+    | KeyboardKey.KpDivide -> KeyCode.KpDivide
+    | KeyboardKey.KpMultiply -> KeyCode.KpMultiply
+    | KeyboardKey.KpSubtract -> KeyCode.KpSubtract
+    | KeyboardKey.KpAdd -> KeyCode.KpAdd
+    | KeyboardKey.KpEnter -> KeyCode.KpEnter
+    | KeyboardKey.KpEqual -> KeyCode.KpEqual
+    // Media / system
+    | KeyboardKey.PrintScreen -> KeyCode.PrintScreen
+    | KeyboardKey.ScrollLock -> KeyCode.ScrollLock
+    | KeyboardKey.Pause -> KeyCode.Pause
+    | KeyboardKey.Menu -> KeyCode.Menu
+    // Locks
+    | KeyboardKey.NumLock -> KeyCode.NumLock
+    | _ -> KeyCode.Unknown
 
-/// <summary>Mouse state delta containing position and button changes.</summary>
-[<Struct>]
-type MouseDelta = {
-  Position: Vector2
-  PositionDelta: Vector2
-  Buttons: MouseButtons
-  ScrollDelta: float32
-  ScrollDeltaV: Vector2
-}
+  /// <summary>Maps a backend-neutral <see cref="T:Mibo.Input.KeyCode"/> back to raylib's <c>KeyboardKey</c>.
+  /// Returns <c>KeyboardKey.Null</c> for <see cref="F:Mibo.Input.KeyCode.Unknown"/>.</summary>
+  let toRaylibKey(k: KeyCode) : KeyboardKey =
+    match k with
+    | KeyCode.A -> KeyboardKey.A
+    | KeyCode.B -> KeyboardKey.B
+    | KeyCode.C -> KeyboardKey.C
+    | KeyCode.D -> KeyboardKey.D
+    | KeyCode.E -> KeyboardKey.E
+    | KeyCode.F -> KeyboardKey.F
+    | KeyCode.G -> KeyboardKey.G
+    | KeyCode.H -> KeyboardKey.H
+    | KeyCode.I -> KeyboardKey.I
+    | KeyCode.J -> KeyboardKey.J
+    | KeyCode.K -> KeyboardKey.K
+    | KeyCode.L -> KeyboardKey.L
+    | KeyCode.M -> KeyboardKey.M
+    | KeyCode.N -> KeyboardKey.N
+    | KeyCode.O -> KeyboardKey.O
+    | KeyCode.P -> KeyboardKey.P
+    | KeyCode.Q -> KeyboardKey.Q
+    | KeyCode.R -> KeyboardKey.R
+    | KeyCode.S -> KeyboardKey.S
+    | KeyCode.T -> KeyboardKey.T
+    | KeyCode.U -> KeyboardKey.U
+    | KeyCode.V -> KeyboardKey.V
+    | KeyCode.W -> KeyboardKey.W
+    | KeyCode.X -> KeyboardKey.X
+    | KeyCode.Y -> KeyboardKey.Y
+    | KeyCode.Z -> KeyboardKey.Z
+    | KeyCode.D0 -> KeyboardKey.Zero
+    | KeyCode.D1 -> KeyboardKey.One
+    | KeyCode.D2 -> KeyboardKey.Two
+    | KeyCode.D3 -> KeyboardKey.Three
+    | KeyCode.D4 -> KeyboardKey.Four
+    | KeyCode.D5 -> KeyboardKey.Five
+    | KeyCode.D6 -> KeyboardKey.Six
+    | KeyCode.D7 -> KeyboardKey.Seven
+    | KeyCode.D8 -> KeyboardKey.Eight
+    | KeyCode.D9 -> KeyboardKey.Nine
+    | KeyCode.F1 -> KeyboardKey.F1
+    | KeyCode.F2 -> KeyboardKey.F2
+    | KeyCode.F3 -> KeyboardKey.F3
+    | KeyCode.F4 -> KeyboardKey.F4
+    | KeyCode.F5 -> KeyboardKey.F5
+    | KeyCode.F6 -> KeyboardKey.F6
+    | KeyCode.F7 -> KeyboardKey.F7
+    | KeyCode.F8 -> KeyboardKey.F8
+    | KeyCode.F9 -> KeyboardKey.F9
+    | KeyCode.F10 -> KeyboardKey.F10
+    | KeyCode.F11 -> KeyboardKey.F11
+    | KeyCode.F12 -> KeyboardKey.F12
+    | KeyCode.Right -> KeyboardKey.Right
+    | KeyCode.Left -> KeyboardKey.Left
+    | KeyCode.Down -> KeyboardKey.Down
+    | KeyCode.Up -> KeyboardKey.Up
+    | KeyCode.PageUp -> KeyboardKey.PageUp
+    | KeyCode.PageDown -> KeyboardKey.PageDown
+    | KeyCode.Home -> KeyboardKey.Home
+    | KeyCode.End -> KeyboardKey.End
+    | KeyCode.Insert -> KeyboardKey.Insert
+    | KeyCode.Delete -> KeyboardKey.Delete
+    | KeyCode.Space -> KeyboardKey.Space
+    | KeyCode.Enter -> KeyboardKey.Enter
+    | KeyCode.Escape -> KeyboardKey.Escape
+    | KeyCode.Tab -> KeyboardKey.Tab
+    | KeyCode.Backspace -> KeyboardKey.Backspace
+    | KeyCode.CapsLock -> KeyboardKey.CapsLock
+    | KeyCode.LeftShift -> KeyboardKey.LeftShift
+    | KeyCode.RightShift -> KeyboardKey.RightShift
+    | KeyCode.LeftControl -> KeyboardKey.LeftControl
+    | KeyCode.RightControl -> KeyboardKey.RightControl
+    | KeyCode.LeftAlt -> KeyboardKey.LeftAlt
+    | KeyCode.RightAlt -> KeyboardKey.RightAlt
+    | KeyCode.LeftSuper -> KeyboardKey.LeftSuper
+    | KeyCode.RightSuper -> KeyboardKey.RightSuper
+    | KeyCode.Grave -> KeyboardKey.Grave
+    | KeyCode.Minus -> KeyboardKey.Minus
+    | KeyCode.Equal -> KeyboardKey.Equal
+    | KeyCode.LeftBracket -> KeyboardKey.LeftBracket
+    | KeyCode.RightBracket -> KeyboardKey.RightBracket
+    | KeyCode.Backslash -> KeyboardKey.Backslash
+    | KeyCode.Semicolon -> KeyboardKey.Semicolon
+    | KeyCode.Apostrophe -> KeyboardKey.Apostrophe
+    | KeyCode.Comma -> KeyboardKey.Comma
+    | KeyCode.Period -> KeyboardKey.Period
+    | KeyCode.Slash -> KeyboardKey.Slash
+    | KeyCode.Kp0 -> KeyboardKey.Kp0
+    | KeyCode.Kp1 -> KeyboardKey.Kp1
+    | KeyCode.Kp2 -> KeyboardKey.Kp2
+    | KeyCode.Kp3 -> KeyboardKey.Kp3
+    | KeyCode.Kp4 -> KeyboardKey.Kp4
+    | KeyCode.Kp5 -> KeyboardKey.Kp5
+    | KeyCode.Kp6 -> KeyboardKey.Kp6
+    | KeyCode.Kp7 -> KeyboardKey.Kp7
+    | KeyCode.Kp8 -> KeyboardKey.Kp8
+    | KeyCode.Kp9 -> KeyboardKey.Kp9
+    | KeyCode.KpDecimal -> KeyboardKey.KpDecimal
+    | KeyCode.KpDivide -> KeyboardKey.KpDivide
+    | KeyCode.KpMultiply -> KeyboardKey.KpMultiply
+    | KeyCode.KpSubtract -> KeyboardKey.KpSubtract
+    | KeyCode.KpAdd -> KeyboardKey.KpAdd
+    | KeyCode.KpEnter -> KeyboardKey.KpEnter
+    | KeyCode.KpEqual -> KeyboardKey.KpEqual
+    | KeyCode.PrintScreen -> KeyboardKey.PrintScreen
+    | KeyCode.ScrollLock -> KeyboardKey.ScrollLock
+    | KeyCode.Pause -> KeyboardKey.Pause
+    | KeyCode.Menu -> KeyboardKey.Menu
+    | KeyCode.NumLock -> KeyboardKey.NumLock
+    | KeyCode.Unknown -> KeyboardKey.Null
 
-/// <summary>Touch point state for tracking individual touch lifecycle.</summary>
-type TouchState =
-  | Pressed
-  | Moved
-  | Released
+/// <summary>Functions for translating between raylib's <c>MouseButton</c> and Mibo's backend-neutral <c>MouseButtonCode</c>.</summary>
+module MouseButtonCode =
+  let ofRaylibButton(b: MouseButton) : MouseButtonCode =
+    match b with
+    | MouseButton.Left -> MouseButtonCode.Left
+    | MouseButton.Right -> MouseButtonCode.Right
+    | MouseButton.Middle -> MouseButtonCode.Middle
+    | MouseButton.Side -> MouseButtonCode.Extra1
+    | MouseButton.Extra -> MouseButtonCode.Extra2
+    | MouseButton.Forward -> MouseButtonCode.Extra3
+    | MouseButton.Back -> MouseButtonCode.Extra4
+    | _ -> MouseButtonCode.Unknown
 
-/// <summary>A single touch point for touch input.</summary>
-[<Struct>]
-type TouchPoint = {
-  Id: int
-  Position: Vector2
-  State: TouchState
-}
+  let toRaylibButton(b: MouseButtonCode) : MouseButton =
+    match b with
+    | MouseButtonCode.Left -> MouseButton.Left
+    | MouseButtonCode.Right -> MouseButton.Right
+    | MouseButtonCode.Middle -> MouseButton.Middle
+    | MouseButtonCode.Extra1 -> MouseButton.Side
+    | MouseButtonCode.Extra2 -> MouseButton.Extra
+    | MouseButtonCode.Extra3 -> MouseButton.Forward
+    | MouseButtonCode.Extra4 -> MouseButton.Back
+    | MouseButtonCode.Unknown -> MouseButton.Left
 
-/// <summary>Touch input state containing all active touch points.</summary>
-[<Struct>]
-type TouchDelta = { Touches: TouchPoint[] }
+/// <summary>Functions for translating between raylib's <c>GamepadButton</c> and Mibo's backend-neutral <c>GamepadButtonCode</c>.</summary>
+/// <remarks>
+/// raylib uses an Xbox-style face layout (Up/Right/Down/Left = Y/B/A/X); the Core
+/// codes abstract that ordering so backends with different conventions (e.g.
+/// MonoGame / XNA) can map onto the same logical buttons.
+/// Note: raylib exposes the D-pad as analog axes (GamepadAxis.LeftX/LeftY), not
+/// as buttons, so the Core DPad* cases map to/from <c>Unknown</c> on raylib.
+/// </remarks>
+module GamepadButtonCode =
+  let ofRaylibButton(b: GamepadButton) : GamepadButtonCode =
+    match b with
+    | GamepadButton.LeftFaceUp -> GamepadButtonCode.FaceUp
+    | GamepadButton.LeftFaceRight -> GamepadButtonCode.FaceRight
+    | GamepadButton.LeftFaceDown -> GamepadButtonCode.FaceDown
+    | GamepadButton.LeftFaceLeft -> GamepadButtonCode.FaceLeft
+    | GamepadButton.RightFaceUp -> GamepadButtonCode.FaceUp
+    | GamepadButton.RightFaceRight -> GamepadButtonCode.FaceRight
+    | GamepadButton.RightFaceDown -> GamepadButtonCode.FaceDown
+    | GamepadButton.RightFaceLeft -> GamepadButtonCode.FaceLeft
+    | GamepadButton.LeftTrigger1 -> GamepadButtonCode.LeftShoulder
+    | GamepadButton.LeftTrigger2 -> GamepadButtonCode.LeftTrigger
+    | GamepadButton.RightTrigger1 -> GamepadButtonCode.RightShoulder
+    | GamepadButton.RightTrigger2 -> GamepadButtonCode.RightTrigger
+    | GamepadButton.LeftThumb -> GamepadButtonCode.LeftStick
+    | GamepadButton.RightThumb -> GamepadButtonCode.RightStick
+    | GamepadButton.MiddleLeft -> GamepadButtonCode.Select
+    | GamepadButton.Middle -> GamepadButtonCode.Home
+    | GamepadButton.MiddleRight -> GamepadButtonCode.Start
+    | _ -> GamepadButtonCode.Unknown
 
-/// <summary>Gamepad button state changes for a single frame.</summary>
-[<Struct>]
-type GamepadButtons = {
-  Pressed: GamepadButton[]
-  Released: GamepadButton[]
-}
+  let toRaylibButton(b: GamepadButtonCode) : GamepadButton =
+    match b with
+    | GamepadButtonCode.FaceUp -> GamepadButton.RightFaceUp
+    | GamepadButtonCode.FaceRight -> GamepadButton.RightFaceRight
+    | GamepadButtonCode.FaceDown -> GamepadButton.RightFaceDown
+    | GamepadButtonCode.FaceLeft -> GamepadButton.RightFaceLeft
+    | GamepadButtonCode.LeftShoulder -> GamepadButton.LeftTrigger1
+    | GamepadButtonCode.RightShoulder -> GamepadButton.RightTrigger1
+    | GamepadButtonCode.LeftTrigger -> GamepadButton.LeftTrigger2
+    | GamepadButtonCode.RightTrigger -> GamepadButton.RightTrigger2
+    | GamepadButtonCode.LeftStick -> GamepadButton.LeftThumb
+    | GamepadButtonCode.RightStick -> GamepadButton.RightThumb
+    | GamepadButtonCode.Select -> GamepadButton.MiddleLeft
+    | GamepadButtonCode.Home -> GamepadButton.Middle
+    | GamepadButtonCode.Start -> GamepadButton.MiddleRight
+    // raylib has no DPad buttons in its GamepadButton enum (D-pad is an axis),
+    // so the Core DPad* cases cannot round-trip on this backend.
+    | GamepadButtonCode.DPadUp
+    | GamepadButtonCode.DPadRight
+    | GamepadButtonCode.DPadDown
+    | GamepadButtonCode.DPadLeft
+    | GamepadButtonCode.Unknown -> GamepadButton.Unknown
 
-/// <summary>Gamepad analog input values (thumbsticks and triggers).</summary>
-/// <remarks>Thumbsticks range from -1 to 1, triggers range from 0 to 1.</remarks>
-[<Struct>]
-type GamepadAnalog = {
-  LeftThumbstick: Vector2
-  RightThumbstick: Vector2
-  LeftTrigger: float32
-  RightTrigger: float32
-}
+/// <summary>Functions for translating between raylib's <c>Gesture</c> and Mibo's backend-neutral <c>GestureKind</c>.</summary>
+module GestureKind =
+  let ofRaylibGesture(g: Gesture) : GestureKind =
+    match g with
+    | Gesture.Tap -> GestureKind.Tap
+    | Gesture.DoubleTap -> GestureKind.DoubleTap
+    | Gesture.Hold -> GestureKind.Hold
+    | Gesture.Drag -> GestureKind.Drag
+    | Gesture.SwipeRight -> GestureKind.SwipeRight
+    | Gesture.SwipeLeft -> GestureKind.SwipeLeft
+    | Gesture.SwipeUp -> GestureKind.SwipeUp
+    | Gesture.SwipeDown -> GestureKind.SwipeDown
+    | Gesture.PinchIn
+    | Gesture.PinchOut -> GestureKind.Pinch
+    | _ -> GestureKind.Unknown
 
-/// <summary>Per-player gamepad delta containing button and analog changes.</summary>
-[<Struct>]
-type GamepadDelta = {
-  PlayerIndex: int
-  Buttons: GamepadButtons
-  Analog: GamepadAnalog
-}
-
-/// <summary>Gamepad connection state change event.</summary>
-[<Struct>]
-type GamepadConnection = { PlayerIndex: int; IsConnected: bool }
-
-/// <summary>Gesture detection events for touch-capable devices.</summary>
-[<Struct>]
-type GestureDelta = {
-  Gesture: Gesture
-  HoldDuration: float32
-  DragVector: Vector2
-  DragAngle: float32
-  PinchVector: Vector2
-  PinchAngle: float32
-}
-
-/// <summary>Per-game input service providing reactive observables for hardware input.</summary>
-type IInput =
-  abstract Poll: unit -> unit
-  abstract KeyboardDelta: IObservable<KeyboardDelta>
-  abstract MouseDelta: IObservable<MouseDelta>
-  abstract TouchDelta: IObservable<TouchDelta>
-  abstract GamepadDelta: IObservable<GamepadDelta>
-  abstract GamepadConnection: IObservable<GamepadConnection>
-  abstract GestureDelta: IObservable<GestureDelta>
+  let toRaylibGesture(g: GestureKind) : Gesture =
+    match g with
+    | GestureKind.Tap -> Gesture.Tap
+    | GestureKind.DoubleTap -> Gesture.DoubleTap
+    | GestureKind.Hold -> Gesture.Hold
+    | GestureKind.Drag -> Gesture.Drag
+    | GestureKind.SwipeRight -> Gesture.SwipeRight
+    | GestureKind.SwipeLeft -> Gesture.SwipeLeft
+    | GestureKind.SwipeUp -> Gesture.SwipeUp
+    | GestureKind.SwipeDown -> Gesture.SwipeDown
+    | GestureKind.Pinch -> Gesture.PinchOut
+    | GestureKind.Unknown -> Gesture.None
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Input Polling Functions (module-level, composable)
+// Input polling (raylib). Emits Core-neutral delta values.
 // ─────────────────────────────────────────────────────────────────────────────
 
 module InputPolling =
+  // Only iterate over keys that are likely to produce a meaningful KeyCode —
+  // the translation function returns Unknown for the rest, which we filter out.
   let private allKeyboardKeys =
     Enum.GetValues(typeof<KeyboardKey>) :?> KeyboardKey[]
     |> Array.filter(fun k ->
@@ -112,10 +370,11 @@ module InputPolling =
 
   let private allGamepadButtons =
     Enum.GetValues(typeof<GamepadButton>) :?> GamepadButton[]
+    |> Array.filter(fun b -> b <> GamepadButton.Unknown)
 
   let pollKeyboard
-    (pressedBuf: ResizeArray<KeyboardKey>)
-    (releasedBuf: ResizeArray<KeyboardKey>)
+    (pressedBuf: ResizeArray<KeyCode>)
+    (releasedBuf: ResizeArray<KeyCode>)
     (trigger: KeyboardDelta -> unit)
     =
     pressedBuf.Clear()
@@ -123,9 +382,15 @@ module InputPolling =
 
     for k in allKeyboardKeys do
       if Raylib.IsKeyPressed(k).AsBool() then
-        pressedBuf.Add(k)
+        let code = KeyCode.ofRaylibKey k
+
+        if code <> KeyCode.Unknown then
+          pressedBuf.Add(code)
       elif Raylib.IsKeyReleased(k).AsBool() then
-        releasedBuf.Add(k)
+        let code = KeyCode.ofRaylibKey k
+
+        if code <> KeyCode.Unknown then
+          releasedBuf.Add(code)
 
     if pressedBuf.Count > 0 || releasedBuf.Count > 0 then
       trigger {
@@ -134,8 +399,8 @@ module InputPolling =
       }
 
   let pollMouse
-    (pressedBuf: ResizeArray<MouseButton>)
-    (releasedBuf: ResizeArray<MouseButton>)
+    (pressedBuf: ResizeArray<MouseButtonCode>)
+    (releasedBuf: ResizeArray<MouseButtonCode>)
     (trigger: MouseDelta -> unit)
     =
     pressedBuf.Clear()
@@ -143,9 +408,9 @@ module InputPolling =
 
     for btn in allMouseButtons do
       if Raylib.IsMouseButtonPressed(btn).AsBool() then
-        pressedBuf.Add(btn)
+        pressedBuf.Add(MouseButtonCode.ofRaylibButton btn)
       elif Raylib.IsMouseButtonReleased(btn).AsBool() then
-        releasedBuf.Add(btn)
+        releasedBuf.Add(MouseButtonCode.ofRaylibButton btn)
 
     let pos = Raylib.GetMousePosition()
     let delta = Raylib.GetMouseDelta()
@@ -224,8 +489,8 @@ module InputPolling =
 
   let pollGamepad
     (prevConnected: bool[])
-    (pressedBuf: ResizeArray<GamepadButton>)
-    (releasedBuf: ResizeArray<GamepadButton>)
+    (pressedBuf: ResizeArray<GamepadButtonCode>)
+    (releasedBuf: ResizeArray<GamepadButtonCode>)
     (triggerDelta: GamepadDelta -> unit)
     (triggerConnection: GamepadConnection -> unit)
     =
@@ -245,11 +510,16 @@ module InputPolling =
         releasedBuf.Clear()
 
         for btn in allGamepadButtons do
-          if btn <> GamepadButton.Unknown then
-            if Raylib.IsGamepadButtonPressed(i, btn).AsBool() then
-              pressedBuf.Add(btn)
-            elif Raylib.IsGamepadButtonReleased(i, btn).AsBool() then
-              releasedBuf.Add(btn)
+          if Raylib.IsGamepadButtonPressed(i, btn).AsBool() then
+            let code = GamepadButtonCode.ofRaylibButton btn
+
+            if code <> GamepadButtonCode.Unknown then
+              pressedBuf.Add(code)
+          elif Raylib.IsGamepadButtonReleased(i, btn).AsBool() then
+            let code = GamepadButtonCode.ofRaylibButton btn
+
+            if code <> GamepadButtonCode.Unknown then
+              releasedBuf.Add(code)
 
         let hasButtonChange = pressedBuf.Count > 0 || releasedBuf.Count > 0
 
@@ -298,17 +568,23 @@ module InputPolling =
     let detected = Raylib.GetGestureDetected()
 
     if detected <> Gesture.None then
-      trigger {
-        Gesture = detected
-        HoldDuration = Raylib.GetGestureHoldDuration()
-        DragVector = Raylib.GetGestureDragVector()
-        DragAngle = Raylib.GetGestureDragAngle()
-        PinchVector = Raylib.GetGesturePinchVector()
-        PinchAngle = Raylib.GetGesturePinchAngle()
-      }
+      let kind = GestureKind.ofRaylibGesture detected
+
+      if kind <> GestureKind.Unknown then
+        trigger {
+          Gesture = kind
+          HoldDuration = Raylib.GetGestureHoldDuration()
+          DragVector = Raylib.GetGestureDragVector()
+          DragAngle = Raylib.GetGestureDragAngle()
+          PinchVector = Raylib.GetGesturePinchVector()
+          PinchAngle = Raylib.GetGesturePinchAngle()
+        }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Input Service (IInput implementation via object expression)
+// IInput factory (raylib implementation).
+//
+// Input.getService / tryGetService and the Keyboard/Mouse/Touch/Gamepad/Gesture
+// subscription modules all live in Core now; only the polling + factory stays here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 module Input =
@@ -321,12 +597,12 @@ module Input =
     let gamepadConnection = Event<GamepadConnection>()
     let gestureDelta = Event<GestureDelta>()
 
-    let pressedKeysBuf = ResizeArray<KeyboardKey>(8)
-    let releasedKeysBuf = ResizeArray<KeyboardKey>(8)
-    let pressedMouseBuf = ResizeArray<MouseButton>(4)
-    let releasedMouseBuf = ResizeArray<MouseButton>(4)
-    let pressedGpBuf = ResizeArray<GamepadButton>(8)
-    let releasedGpBuf = ResizeArray<GamepadButton>(8)
+    let pressedKeysBuf = ResizeArray<KeyCode>(8)
+    let releasedKeysBuf = ResizeArray<KeyCode>(8)
+    let pressedMouseBuf = ResizeArray<MouseButtonCode>(4)
+    let releasedMouseBuf = ResizeArray<MouseButtonCode>(4)
+    let pressedGpBuf = ResizeArray<GamepadButtonCode>(8)
+    let releasedGpBuf = ResizeArray<GamepadButtonCode>(8)
     let prevTouchIds = ResizeArray<int>(8)
     let prevConnected = Array.create 4 false
 
@@ -369,207 +645,3 @@ module Input =
         member _.GamepadConnection = gamepadConnection.Publish
         member _.GestureDelta = gestureDelta.Publish
     }
-
-  let tryGetService(ctx: GameContext) : IInput voption =
-    GameContext.tryGetService<IInput> ctx
-
-  let getService(ctx: GameContext) : IInput =
-    match tryGetService ctx with
-    | ValueSome i -> i
-    | ValueNone ->
-      failwith
-        "IInput service not registered. Add Program.withInput to your program."
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Subscription Helpers (Elmish)
-// ─────────────────────────────────────────────────────────────────────────────
-
-module Keyboard =
-  let listen
-    (onPressed: KeyboardKey -> 'Msg)
-    (onReleased: KeyboardKey -> 'Msg)
-    (ctx: GameContext)
-    : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Keyboard/listen"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .KeyboardDelta.Subscribe(fun delta ->
-          for k in delta.Pressed do
-            dispatch(onPressed k)
-
-          for k in delta.Released do
-            dispatch(onReleased k))
-
-    Sub.Active(subId, subscribe)
-
-  let onPressed (handler: KeyboardKey -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Keyboard/onPressed"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .KeyboardDelta.Subscribe(fun delta ->
-          for k in delta.Pressed do
-            dispatch(handler k))
-
-    Sub.Active(subId, subscribe)
-
-  let onReleased (handler: KeyboardKey -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Keyboard/onReleased"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .KeyboardDelta.Subscribe(fun delta ->
-          for k in delta.Released do
-            dispatch(handler k))
-
-    Sub.Active(subId, subscribe)
-
-module Mouse =
-  let listen (handler: MouseDelta -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Mouse/listen"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .MouseDelta.Subscribe(fun delta -> dispatch(handler delta))
-
-    Sub.Active(subId, subscribe)
-
-  let onMove (handler: Vector2 -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Mouse/onMove"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .MouseDelta.Subscribe(fun delta ->
-          if
-            delta.PositionDelta.X <> 0.0f || delta.PositionDelta.Y <> 0.0f
-          then
-            dispatch(handler delta.Position))
-
-    Sub.Active(subId, subscribe)
-
-  let onButton
-    (handler: MouseButton * Vector2 -> 'Msg)
-    (ctx: GameContext)
-    : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Mouse/onButton"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .MouseDelta.Subscribe(fun delta ->
-          for btn in delta.Buttons.Pressed do
-            dispatch(handler(btn, delta.Position)))
-
-    Sub.Active(subId, subscribe)
-
-  let onLeftClick (handler: Vector2 -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Mouse/onLeftClick"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .MouseDelta.Subscribe(fun delta ->
-          if delta.Buttons.Pressed |> Array.contains MouseButton.Left then
-            dispatch(handler delta.Position))
-
-    Sub.Active(subId, subscribe)
-
-  let onRightClick (handler: Vector2 -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Mouse/onRightClick"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .MouseDelta.Subscribe(fun delta ->
-          if delta.Buttons.Pressed |> Array.contains MouseButton.Right then
-            dispatch(handler delta.Position))
-
-    Sub.Active(subId, subscribe)
-
-  let onScroll (handler: float32 -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Mouse/onScroll"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .MouseDelta.Subscribe(fun delta ->
-          if delta.ScrollDelta <> 0.0f then
-            dispatch(handler delta.ScrollDelta))
-
-    Sub.Active(subId, subscribe)
-
-module Touch =
-  let listen (handler: TouchPoint[] -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Touch/listen"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .TouchDelta.Subscribe(fun delta -> dispatch(handler delta.Touches))
-
-    Sub.Active(subId, subscribe)
-
-module Gamepad =
-  let listen (handler: GamepadDelta -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Gamepad/listen"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .GamepadDelta.Subscribe(fun delta -> dispatch(handler delta))
-
-    Sub.Active(subId, subscribe)
-
-  let listenPlayer
-    (player: int)
-    (handler: GamepadDelta -> 'Msg)
-    (ctx: GameContext)
-    : Sub<'Msg> =
-    let subId = SubId.ofString $"Mibo/Input/Gamepad/listenPlayer/{player}"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .GamepadDelta.Subscribe(fun delta ->
-          if delta.PlayerIndex = player then
-            dispatch(handler delta))
-
-    Sub.Active(subId, subscribe)
-
-  let onConnected (handler: int -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Gamepad/onConnected"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .GamepadConnection.Subscribe(fun conn ->
-          if conn.IsConnected then
-            dispatch(handler conn.PlayerIndex))
-
-    Sub.Active(subId, subscribe)
-
-  let onDisconnected (handler: int -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Gamepad/onDisconnected"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .GamepadConnection.Subscribe(fun conn ->
-          if not conn.IsConnected then
-            dispatch(handler conn.PlayerIndex))
-
-    Sub.Active(subId, subscribe)
-
-  let onConnectionChange
-    (handler: GamepadConnection -> 'Msg)
-    (ctx: GameContext)
-    : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Gamepad/onConnectionChange"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .GamepadConnection.Subscribe(fun conn -> dispatch(handler conn))
-
-    Sub.Active(subId, subscribe)
-
-module Gesture =
-  let listen (handler: GestureDelta -> 'Msg) (ctx: GameContext) : Sub<'Msg> =
-    let subId = SubId.ofString "Mibo/Input/Gesture/listen"
-
-    let subscribe(dispatch: Dispatch<'Msg>) =
-      (Input.getService ctx)
-        .GestureDelta.Subscribe(fun delta -> dispatch(handler delta))
-
-    Sub.Active(subId, subscribe)

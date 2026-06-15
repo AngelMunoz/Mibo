@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- `Mibo.Core` project: backend-agnostic home for `Cmd`/`Sub`/`GameTime`/`DispatchMode`/`FixedStep`/`System`/`RenderBuffer`/`IRenderer`/`GameContext`/`Program`/`GameConfig`. The `Mibo.Raylib` project now references `Mibo.Core`. No API changes; all types remain in the `Mibo.Elmish` namespace. See `docs/migration-to-vnext.md` for the vNext roadmap.
+- Backend-neutral input contracts in `Mibo.Core` (namespace `Mibo.Input`): `KeyCode`, `MouseButtonCode`, `GamepadButtonCode`, `GestureKind` (struct DUs, `RequireQualifiedAccess`), the delta types, the `IInput`/`IInputMapper<'Action>` contracts, `Trigger`/`InputMap<'Action>`/`ActionState<'Action>`, and the `Keyboard`/`Mouse`/`Touch`/`Gamepad`/`Gesture` subscription modules. Backends supply concrete `IInput`/`IInputMapper` implementations.
+- Raylib↔Core input translation modules in the raylib backend: `KeyCode.ofRaylibKey`/`toRaylibKey`, `MouseButtonCode.ofRaylibButton`/`toRaylibButton`, `GamepadButtonCode.ofRaylibButton`/`toRaylibButton`, `GestureKind.ofRaylibGesture`/`toRaylibGesture`.
+
+### Changed
+
+- **Breaking:** the input surface now uses backend-neutral codes instead of raylib's native enums. See `docs/migration-to-vnext.md` (Phase 1b) for the full migration guide. Highlights:
+  - `InputMap.key` takes `KeyCode` instead of `Raylib_cs.KeyboardKey`. Bindings become portable across backends.
+  - `Trigger` cases renamed: `MouseBut of int` → `MouseButton of MouseButtonCode`; `GamepadBut` → `GamepadButton of int * GamepadButtonCode`.
+  - `InputMap.mouse` takes `MouseButtonCode` instead of `int`.
+  - `MouseDelta.Buttons` holds `MouseButtonCode[]`.
+
 ## [1.3.0] - 2026-06-13
 
 ### Added

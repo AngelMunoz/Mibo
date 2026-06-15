@@ -5,172 +5,23 @@ open System.Numerics
 open Raylib_cs
 open Mibo.Elmish
 
-/// <summary>
-/// Represents a physical hardware input trigger.
-/// </summary>
-type Trigger =
-  | Key of KeyboardKey
-  | KeyCombo of Set<KeyboardKey>
-  | MouseBut of int
-  | GamepadBut of player: int * button: GamepadButton
-
-/// <summary>
-/// Configuration mapping game actions to their trigger inputs.
-/// </summary>
-type InputMap<'Action when 'Action: comparison> = {
-  ActionToTriggers: Map<'Action, Trigger list>
-  TriggerToActions: Map<Trigger, 'Action list>
-}
-
-/// Functions for building InputMap configurations.
-module InputMap =
-  let empty = {
-    ActionToTriggers = Map.empty
-    TriggerToActions = Map.empty
-  }
-
-  let bind (action: 'Action) (trigger: Trigger) (map: InputMap<'Action>) =
-    let existingTriggers =
-      map.ActionToTriggers |> Map.tryFind action |> Option.defaultValue []
-
-    let existingActions =
-      map.TriggerToActions |> Map.tryFind trigger |> Option.defaultValue []
-
-    {
-      ActionToTriggers =
-        map.ActionToTriggers |> Map.add action (trigger :: existingTriggers)
-      TriggerToActions =
-        map.TriggerToActions |> Map.add trigger (action :: existingActions)
-    }
-
-  let key (action: 'Action) (k: KeyboardKey) (map: InputMap<'Action>) =
-    bind action (Key k) map
-
-  let keyCombo
-    (action: 'Action)
-    (keys: Set<KeyboardKey>)
-    (map: InputMap<'Action>)
-    =
-    bind action (KeyCombo keys) map
-
-  let mouse (action: 'Action) (btn: int) (map: InputMap<'Action>) =
-    bind action (MouseBut btn) map
-
-  let gamepadButton
-    (action: 'Action)
-    (player: int)
-    (btn: GamepadButton)
-    (map: InputMap<'Action>)
-    =
-    bind action (GamepadBut(player, btn)) map
-
-/// <summary>
-/// Runtime state tracking which actions are currently active.
-/// </summary>
-/// <summary>
-/// Runtime state tracking which actions are currently active.
-/// </summary>
-/// <remarks>
-/// ActionState is the "output" of the input mapping system. It tells you
-/// which actions are held, just started, or just released.
-/// </remarks>
-/// <example>
-/// <code>
-/// if actionState.Started.Contains Jump then
-///     // Player just pressed jump this frame
-///
-/// if actionState.Held.Contains MoveLeft then
-///     // Player is holding left
-/// </code>
-/// </example>
-type ActionState<'Action when 'Action: comparison> = {
-  Held: Set<'Action>
-  Started: Set<'Action>
-  Released: Set<'Action>
-  Values: Map<'Action, float32>
-  HeldTriggers: Set<Trigger>
-}
-
-module ActionState =
-  let empty = {
-    Held = Set.empty
-    Started = Set.empty
-    Released = Set.empty
-    Values = Map.empty
-    HeldTriggers = Set.empty
-  }
-
-  let update
-    (map: InputMap<'Action>)
-    (isDown: bool)
-    (trigger: Trigger)
-    (state: ActionState<'Action>)
-    : ActionState<'Action> =
-    let newHeldTriggers =
-      if isDown then
-        state.HeldTriggers |> Set.add trigger
-      else
-        state.HeldTriggers |> Set.remove trigger
-
-    let actions =
-      map.TriggerToActions |> Map.tryFind trigger |> Option.defaultValue []
-
-    let mutable newHeld = state.Held
-    let mutable newStarted = state.Started
-    let mutable newReleased = state.Released
-    let mutable newValues = state.Values
-
-    for action in actions do
-      let allTriggers =
-        map.ActionToTriggers |> Map.tryFind action |> Option.defaultValue []
-
-      let isActionHeld = allTriggers |> List.exists newHeldTriggers.Contains
-
-      let wasHeld = state.Held.Contains action
-
-      if isActionHeld && not wasHeld then
-        newHeld <- newHeld |> Set.add action
-        newStarted <- newStarted |> Set.add action
-        newValues <- newValues |> Map.add action 1.0f
-      elif not isActionHeld && wasHeld then
-        newHeld <- newHeld |> Set.remove action
-        newReleased <- newReleased |> Set.add action
-        newValues <- newValues |> Map.remove action
-
-    {
-      Held = newHeld
-      Started = newStarted
-      Released = newReleased
-      Values = newValues
-      HeldTriggers = newHeldTriggers
-    }
-
-  let nextFrame(state: ActionState<'Action>) = {
-    state with
-        Started = Set.empty
-        Released = Set.empty
-  }
-
-/// Service Interface for Input Mapping
-type IInputMapper<'Action when 'Action: comparison> =
-  abstract CurrentState: ActionState<'Action>
-  abstract Update: unit -> unit
-
-// ─────────────────────────────────────────────────────────────────────────────
-// IInputMapper service (registered via Program.withInputMapper)
-// ─────────────────────────────────────────────────────────────────────────────
+// Trigger, InputMap<'Action>, ActionState<'Action>, IInputMapper<'Action>, and
+// the InputMapper service accessors (getService/tryGetService) all live in Core
+// now. This file contains only the raylib-specific factory + polling logic that
+// evaluates whether a Core Trigger is currently held, by translating to the
+// native raylib key/button and calling Raylib.IsKeyDown etc.
 
 module InputMapper =
 
   let internal buildActions
     (getMap: unit -> InputMap<'Action>)
-    (prevComboStates: Map<Set<KeyboardKey>, bool>)
+    (prevComboStates: Map<Set<KeyCode>, bool>)
     (pressed: Trigger[])
     (released: Trigger[])
-    (isKeyDown: KeyboardKey -> bool)
-    (isMouseButtonDown: int -> bool)
-    (isGamepadButtonDown: int -> GamepadButton -> bool)
-    : ActionState<'Action> * Map<Set<KeyboardKey>, bool> =
+    (isKeyDown: KeyCode -> bool)
+    (isMouseButtonDown: MouseButtonCode -> bool)
+    (isGamepadButtonDown: int -> GamepadButtonCode -> bool)
+    : ActionState<'Action> * Map<Set<KeyCode>, bool> =
     let map = getMap()
     let mutable started = Set.empty
     let mutable releasedSet = Set.empty
@@ -184,8 +35,8 @@ module InputMapper =
         match kv.Key with
         | Key k -> isKeyDown k
         | KeyCombo keys -> keys |> Set.forall isKeyDown
-        | MouseBut b -> isMouseButtonDown b
-        | GamepadBut(p, b) -> isGamepadButtonDown p b
+        | MouseButton b -> isMouseButtonDown b
+        | GamepadButton(p, b) -> isGamepadButtonDown p b
 
       if isDown then
         heldTriggers <- heldTriggers |> Set.add kv.Key
@@ -234,6 +85,11 @@ module InputMapper =
      },
      comboStates)
 
+  /// <summary>
+  /// Elmish subscription that builds an <see cref="T:Mibo.Input.ActionState`1"/> from
+  /// the registered <see cref="T:Mibo.Input.IInput"/> observables and the supplied map.
+  /// Backend-neutral apart from the "is key down" poller, which calls raylib.
+  /// </summary>
   let subscribe
     (getMap: unit -> InputMap<'Action>)
     (toMsg: ActionState<'Action> -> 'Msg)
@@ -243,7 +99,7 @@ module InputMapper =
 
     let subscribeFn(dispatch: Dispatch<'Msg>) =
       let input = Input.getService ctx
-      let mutable prevComboStates = Map.empty<Set<KeyboardKey>, bool>
+      let mutable prevComboStates = Map.empty<Set<KeyCode>, bool>
 
       let doBuild (pressed: Trigger[]) (released: Trigger[]) =
         let state, newComboStates =
@@ -252,9 +108,15 @@ module InputMapper =
             prevComboStates
             pressed
             released
-            (fun k -> Raylib.IsKeyDown(k).AsBool())
-            (fun b -> Raylib.IsMouseButtonDown(enum<MouseButton>(b)).AsBool())
-            (fun p b -> Raylib.IsGamepadButtonDown(p, b).AsBool())
+            (fun k -> Raylib.IsKeyDown(KeyCode.toRaylibKey k).AsBool())
+            (fun b ->
+              Raylib
+                .IsMouseButtonDown(MouseButtonCode.toRaylibButton b)
+                .AsBool())
+            (fun p b ->
+              Raylib
+                .IsGamepadButtonDown(p, GamepadButtonCode.toRaylibButton b)
+                .AsBool())
 
         prevComboStates <- newComboStates
         state
@@ -267,11 +129,8 @@ module InputMapper =
 
       let subMouse: IDisposable =
         input.MouseDelta.Subscribe(fun (d: MouseDelta) ->
-          let pressed =
-            d.Buttons.Pressed |> Array.map(fun b -> MouseBut(int b))
-
-          let released =
-            d.Buttons.Released |> Array.map(fun b -> MouseBut(int b))
+          let pressed = d.Buttons.Pressed |> Array.map Trigger.MouseButton
+          let released = d.Buttons.Released |> Array.map Trigger.MouseButton
 
           doBuild pressed released |> toMsg |> dispatch)
 
@@ -279,11 +138,11 @@ module InputMapper =
         input.GamepadDelta.Subscribe(fun (d: GamepadDelta) ->
           let pressed =
             d.Buttons.Pressed
-            |> Array.map(fun b -> GamepadBut(d.PlayerIndex, b))
+            |> Array.map(fun b -> Trigger.GamepadButton(d.PlayerIndex, b))
 
           let released =
             d.Buttons.Released
-            |> Array.map(fun b -> GamepadBut(d.PlayerIndex, b))
+            |> Array.map(fun b -> Trigger.GamepadButton(d.PlayerIndex, b))
 
           doBuild pressed released |> toMsg |> dispatch)
 
@@ -296,6 +155,9 @@ module InputMapper =
 
     Sub.Active(subId, subscribeFn)
 
+  /// <summary>
+  /// Elmish subscription variant for a fixed (non-changing) InputMap.
+  /// </summary>
   let subscribeStatic
     (map: InputMap<'Action>)
     (toMsg: ActionState<'Action> -> 'Msg)
@@ -303,24 +165,17 @@ module InputMapper =
     : Sub<'Msg> =
     subscribe (fun () -> map) toMsg ctx
 
-  let tryGetService<'Action when 'Action: comparison>
-    (ctx: GameContext)
-    : IInputMapper<'Action> voption =
-    GameContext.tryGetService<IInputMapper<'Action>> ctx
-
-  let getService<'Action when 'Action: comparison>
-    (ctx: GameContext)
-    : IInputMapper<'Action> =
-    match tryGetService<'Action> ctx with
-    | ValueSome m -> m
-    | ValueNone -> failwith "IInputMapper service not registered."
-
+  /// <summary>
+  /// Creates the backend-specific <see cref="T:Mibo.Input.IInputMapper`1"/> service.
+  /// Polls raylib directly on each <c>Update()</c>. Registered into GameContext
+  /// by the runtime host when <c>Program.withInputMapper</c> is set.
+  /// </summary>
   let internal createService
     (initialMap: InputMap<'Action>)
     : IInputMapper<'Action> =
     let mutable map = initialMap
     let mutable state = ActionState.empty
-    let mutable prevComboStates = Map.empty<Set<KeyboardKey>, bool>
+    let mutable prevComboStates = Map.empty<Set<KeyCode>, bool>
 
     { new IInputMapper<'Action> with
         member _.CurrentState = state
@@ -336,12 +191,14 @@ module InputMapper =
             let isPressed, isReleased, isDown =
               match kv.Key with
               | Key k ->
-                Raylib.IsKeyPressed(k).AsBool(),
-                Raylib.IsKeyReleased(k).AsBool(),
-                Raylib.IsKeyDown(k).AsBool()
+                Raylib.IsKeyPressed(KeyCode.toRaylibKey k).AsBool(),
+                Raylib.IsKeyReleased(KeyCode.toRaylibKey k).AsBool(),
+                Raylib.IsKeyDown(KeyCode.toRaylibKey k).AsBool()
               | KeyCombo keys ->
                 let allHeld =
-                  keys |> Set.forall(fun k -> Raylib.IsKeyDown(k).AsBool())
+                  keys
+                  |> Set.forall(fun k ->
+                    Raylib.IsKeyDown(KeyCode.toRaylibKey k).AsBool())
 
                 let wasHeld =
                   prevComboStates
@@ -350,16 +207,18 @@ module InputMapper =
 
                 prevComboStates <- prevComboStates |> Map.add keys allHeld
                 (allHeld && not wasHeld), (not allHeld && wasHeld), allHeld
-              | MouseBut b ->
-                let btn = enum<MouseButton>(b)
+              | MouseButton b ->
+                let btn = MouseButtonCode.toRaylibButton b
 
                 Raylib.IsMouseButtonPressed(btn).AsBool(),
                 Raylib.IsMouseButtonReleased(btn).AsBool(),
                 Raylib.IsMouseButtonDown(btn).AsBool()
-              | GamepadBut(p, b) ->
-                Raylib.IsGamepadButtonPressed(p, b).AsBool(),
-                Raylib.IsGamepadButtonReleased(p, b).AsBool(),
-                Raylib.IsGamepadButtonDown(p, b).AsBool()
+              | GamepadButton(p, b) ->
+                let btn = GamepadButtonCode.toRaylibButton b
+
+                Raylib.IsGamepadButtonPressed(p, btn).AsBool(),
+                Raylib.IsGamepadButtonReleased(p, btn).AsBool(),
+                Raylib.IsGamepadButtonDown(p, btn).AsBool()
 
             if isPressed then
               for a in kv.Value do

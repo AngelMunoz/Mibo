@@ -52,20 +52,20 @@ module Input =
 
   let inputMap =
     InputMap.empty
-    |> InputMap.key MoveLeft KeyboardKey.Left
-    |> InputMap.key MoveLeft KeyboardKey.A
-    |> InputMap.key MoveRight KeyboardKey.Right
-    |> InputMap.key MoveRight KeyboardKey.D
-    |> InputMap.key MoveUp KeyboardKey.Up
-    |> InputMap.key MoveUp KeyboardKey.W
-    |> InputMap.key MoveDown KeyboardKey.Down
-    |> InputMap.key MoveDown KeyboardKey.S
-    |> InputMap.key Deselect KeyboardKey.Escape
-    |> InputMap.key EndTurn KeyboardKey.Enter
-    |> InputMap.key Restart KeyboardKey.R
-    |> InputMap.key InfoMode KeyboardKey.LeftShift
-    |> InputMap.key InfoMode KeyboardKey.RightShift
-    |> InputMap.key ToggleFullScreen KeyboardKey.F11
+    |> InputMap.key MoveLeft KeyCode.Left
+    |> InputMap.key MoveLeft KeyCode.A
+    |> InputMap.key MoveRight KeyCode.Right
+    |> InputMap.key MoveRight KeyCode.D
+    |> InputMap.key MoveUp KeyCode.Up
+    |> InputMap.key MoveUp KeyCode.W
+    |> InputMap.key MoveDown KeyCode.Down
+    |> InputMap.key MoveDown KeyCode.S
+    |> InputMap.key Deselect KeyCode.Escape
+    |> InputMap.key EndTurn KeyCode.Enter
+    |> InputMap.key Restart KeyCode.R
+    |> InputMap.key InfoMode KeyCode.LeftShift
+    |> InputMap.key InfoMode KeyCode.RightShift
+    |> InputMap.key ToggleFullScreen KeyCode.F11
 
   let init = {
     State = ActionState.empty

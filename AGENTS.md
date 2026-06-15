@@ -17,7 +17,8 @@ General setup and usage instructions can be found in the [README.md](README.md) 
 
 All of the projects live in the `src` folder:
 
-- `Mibo.Raylib`: Main library project
+- `Mibo.Core`: Backend-agnostic core (Cmd/Sub/System/GameTime/RenderBuffer/Program/IRenderer/GameContext). No raylib dependency.
+- `Mibo.Raylib`: Main library project (raylib backend; depends on `Mibo.Core`)
 - `PlatformerSample`: Sample project showcasing 2D platformer capabilities
 - `ThreeDSample`: Sample project showcasing 3D rendering capabilities
 

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Properties/AssemblyInfo.fs" />
+    <Compile Include="Elmish.Time.fs" />
+    <Compile Include="Elmish.Commands.fs" />
+    <Compile Include="Elmish.System.fs" />
+    <Compile Include="Elmish.Subscriptions.fs" />
+    <Compile Include="Elmish.Rendering.fs" />
+    <Compile Include="Elmish.ProgramTypes.fs" />
+    <Compile Include="Input.fs" />
+    <Compile Include="InputMapper.fs" />
+    <Compile Include="InputServices.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.UMX" Version="1.1.0" />
+  </ItemGroup>
+
+</Project>
