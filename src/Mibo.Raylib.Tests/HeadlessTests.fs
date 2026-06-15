@@ -730,6 +730,33 @@ let headlessObserver =
         snapshotsB[1]
         "Second snapshot should be identical"
 
+    testCase "Observers are notified in registration order"
+    <| fun _ ->
+      // withObserver prepends, so the runner must reverse the list before
+      // iterating or observers fire in reverse-registration order.
+      let order = ResizeArray<int>()
+
+      use runner =
+        new HeadlessRunner<_, _>(
+          HeadlessProgram.mkHeadless init update
+          |> HeadlessProgram.withObserver(fun () ->
+            HeadlessProgram.observe(fun struct (_, _: TestModel, _) ->
+              order.Add(1)))
+          |> HeadlessProgram.withObserver(fun () ->
+            HeadlessProgram.observe(fun struct (_, _: TestModel, _) ->
+              order.Add(2)))
+          |> HeadlessProgram.withObserver(fun () ->
+            HeadlessProgram.observe(fun struct (_, _: TestModel, _) ->
+              order.Add(3)))
+        )
+
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal order.Count 3 "All three observers should fire once"
+      Expect.equal order[0] 1 "First-registered observer fires first"
+      Expect.equal order[1] 2 "Second-registered observer fires second"
+      Expect.equal order[2] 3 "Third-registered observer fires third"
+
     testCase "Observer fires after ShouldQuit with frozen model"
     <| fun _ ->
       let snapshots = ResizeArray<int>()

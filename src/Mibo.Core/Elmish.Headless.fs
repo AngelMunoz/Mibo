@@ -147,7 +147,10 @@ type HeadlessRunner<'Model, 'Msg>
     let ctx = GameContext.create(w, h)
     loop.Init(ctx)
 
-    for factory in program.Observers do
+    // Observers are stored by prepending (see withObserver), so reverse to
+    // initialize and notify in registration order — matching Renderers,
+    // Config, and ServiceRegistrations.
+    for factory in List.rev program.Observers do
       observers.Add(factory())
 
   /// <summary>Whether the runner has received a Quit signal.</summary>
