@@ -16,12 +16,6 @@
     <Compile Include="Layout/Platformer.fs" />
     <Compile Include="Layout/TopDown.fs" />
     <Compile Include="Layout/Layered.fs" />
-    <Compile Include="Elmish.Time.fs" />
-    <Compile Include="Elmish.Commands.fs" />
-    <Compile Include="Elmish.System.fs" />
-    <Compile Include="Elmish.Subscriptions.fs" />
-    <Compile Include="Elmish.Rendering.fs" />
-    <Compile Include="Elmish.ProgramTypes.fs" />
     <Compile Include="RaylibHelpers.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="InputMapper.fs" />
@@ -69,6 +63,10 @@
     <Compile Include="Layout3D/Terrain.fs" />
     <Compile Include="Layout3D/Renderer3D.fs" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Mibo.Core\Mibo.Core.fsproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Raylib-cs" Version="8.0.0" />
     <PackageReference Include="FSharp.UMX" Version="1.1.0" />
