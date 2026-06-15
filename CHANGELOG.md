@@ -10,6 +10,8 @@
 - `IAssetCache` interface in `Mibo.Core` (`Mibo.Elmish` namespace): the backend-neutral generic asset-cache contract (`Get<'T>`/`Create<'T>`/`GetOrCreate<'T>`/`Clear`/`Dispose`). The raylib backend's `IAssets` now extends `IAssetCache`; all existing calls compile unchanged. Portable code can retrieve an `IAssetCache` from `GameContext` to cache custom assets without referencing a backend.
 - `Program` builder functions in `Mibo.Core` (`Mibo.Elmish` namespace): `mkProgram`, `withConfig`, `withRenderer`, `withTick`, `withFixedStep`, `withDispatchMode`, `withSubscription`, `withAssets`, `withAssetsBasePath`, `withInput`, plus a new `withServiceRegistration` hook for backend-specific service registration. The `Program` record gained a `ServiceRegistrations: (GameContext -> unit) list` field that hosts invoke before `Init`.
 - `RaylibProgram.withInputMapper` in the raylib backend (`Mibo.Elmish` namespace): the raylib-specific `withInputMapper`, now decoupled from the Core `Program` builder. It registers the raylib-backed `IInputMapper` via a `ServiceRegistrations` callback so Core never references the raylib factory.
+- `ElmishLoop<'Model,'Msg>` and `LoopCore<'Model,'Msg>` in `Mibo.Core` (`Mibo.Elmish` namespace): the shared message-processing loop extracted from the duplicated code in `RaylibGame` and `HeadlessRunner`. Both hosts now delegate to `ElmishLoop`; `Program` and `HeadlessProgram` project to `LoopCore` via `ElmishLoop.coreOfProgram` / `HeadlessProgram.toLoopCore`.
+- `HeadlessProgram`, `HeadlessRunner`, and the `HeadlessProgram` builder module moved from the raylib backend to `Mibo.Core` (pure F#, no backend dependencies). All existing user code keeps working unchanged — types stay in the `Mibo.Elmish` namespace.
 
 ### Changed
 

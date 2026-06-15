@@ -31,9 +31,7 @@ type HeadlessProgram<'Model, 'Msg> = {
   Observers: (unit -> IObserver<struct (GameContext * 'Model * GameTime)>) list
 }
 
-/// <summary>
-/// Functions for creating and configuring headless Elmish programs.
-/// </summary>
+/// <summary>Extension functions for projecting a <see cref="T:Mibo.Elmish.HeadlessProgram`2"/> onto a <see cref="T:Mibo.Elmish.LoopCore`2"/>.</summary>
 module HeadlessProgram =
 
   /// <summary>
@@ -45,6 +43,19 @@ module HeadlessProgram =
         member _.OnNext value = onNext value
         member _.OnError _ = ()
         member _.OnCompleted() = ()
+    }
+
+  /// <summary>Projects a <see cref="T:Mibo.Elmish.HeadlessProgram`2"/> to a <see cref="T:Mibo.Elmish.LoopCore`2"/>.</summary>
+  let toLoopCore
+    (program: HeadlessProgram<'Model, 'Msg>)
+    : LoopCore<'Model, 'Msg> =
+    {
+      Init = program.Init
+      Update = program.Update
+      Subscribe = program.Subscribe
+      Tick = program.Tick
+      FixedStep = program.FixedStep
+      DispatchMode = program.DispatchMode
     }
 
   /// <summary>
@@ -112,114 +123,49 @@ module HeadlessProgram =
 /// Controls execution of a headless Elmish program with explicit frame stepping.
 /// </summary>
 /// <remarks>
-/// The runner manages virtual time, message dispatching, command execution,
-/// and subscription lifecycle. Call <see cref="Step"/> or <see cref="StepN"/>
-/// to advance the simulation.
+/// The runner delegates message processing to a shared <see cref="T:Mibo.Elmish.ElmishLoop`2"/>
+/// and adds observer notification + virtual time management on top. Call <see cref="Step"/>
+/// or <see cref="StepN"/> to advance the simulation.
 /// </remarks>
 type HeadlessRunner<'Model, 'Msg>
   (program: HeadlessProgram<'Model, 'Msg>, ?width: int, ?height: int) =
 
-  let msgQueue = DispatchQueue<'Msg> program.DispatchMode
-  let mutable state: 'Model = Unchecked.defaultof<'Model>
-  let mutable ctxOpt: GameContext voption = ValueNone
-  let activeSubs = Dictionary<SubId, IDisposable>()
-  let subIdsInUse = HashSet<SubId>()
-  let subIdsToRemove = ResizeArray<SubId>(32)
-  let subBuffer = ResizeArray<struct (SubId * Subscribe<'Msg>)>()
-  let subStack = ResizeArray<Sub<'Msg>>()
-  let deferredEffs = ResizeArray<Effect<'Msg>>(64)
-  let deferredEffsRun = ResizeArray<Effect<'Msg>>(64)
-  let mutable fixedAccSeconds = 0.0f
+  let loop = ElmishLoop.create(HeadlessProgram.toLoopCore program)
+
+  let observers =
+    ResizeArray<IObserver<struct (GameContext * 'Model * GameTime)>>()
 
   let mutable gameTime = {
     TotalTime = TimeSpan.Zero
     ElapsedGameTime = TimeSpan.Zero
   }
 
-
-  let mutable shouldQuit = false
-
-  let observers =
-    ResizeArray<IObserver<struct (GameContext * 'Model * GameTime)>>()
-
   let w = defaultArg width 800
   let h = defaultArg height 600
 
-  let dispatch(msg: 'Msg) = msgQueue.Dispatch(msg)
-
-  let execCmd(cmd: Cmd<'Msg>) =
-    match cmd with
-    | Empty -> ()
-    | Quit -> shouldQuit <- true
-    | Single eff -> eff.Invoke dispatch
-    | Batch effs ->
-      for i = 0 to effs.Length - 1 do
-        effs[i].Invoke dispatch
-    | DeferNextFrame effs -> deferredEffs.AddRange effs
-    | NowAndDeferNextFrame(now, next) ->
-      for i = 0 to now.Length - 1 do
-        now[i].Invoke dispatch
-
-      deferredEffs.AddRange next
-
-  let updateSubs(ctx: GameContext) =
-    subBuffer.Clear()
-    subStack.Clear()
-    subStack.Add(program.Subscribe ctx state)
-    Sub.flatten subStack subBuffer
-
-    subIdsInUse.Clear()
-    subIdsToRemove.Clear()
-
-    for id, subscribeFn in subBuffer do
-      subIdsInUse.Add id |> ignore
-
-      if not(activeSubs.ContainsKey id) then
-        try
-          activeSubs.Add(id, subscribeFn dispatch)
-        with ex ->
-          Console.WriteLine $"Error starting sub {SubId.value id}: {ex}"
-
-    for KeyValue(key, _disp) in activeSubs do
-      if not(subIdsInUse.Contains key) then
-        subIdsToRemove.Add key
-
-    for i = 0 to subIdsToRemove.Count - 1 do
-      let key = subIdsToRemove[i]
-
-      match activeSubs.TryGetValue key with
-      | true, disp ->
-        disp.Dispose()
-        activeSubs.Remove key |> ignore
-      | _ -> ()
-
   do
     let ctx = GameContext.create(w, h)
-    ctxOpt <- ValueSome ctx
-    let struct (initialState, initialCmds) = program.Init ctx
-    state <- initialState
-    execCmd initialCmds
-    updateSubs ctx
+    loop.Init(ctx)
 
     for factory in program.Observers do
       observers.Add(factory())
 
   /// <summary>Whether the runner has received a Quit signal.</summary>
-  member _.ShouldQuit = shouldQuit
+  member _.ShouldQuit = loop.ShouldQuit
 
   /// <summary>The current model state.</summary>
-  member _.Model = state
+  member _.Model = loop.Model
 
   /// <summary>Total elapsed virtual time.</summary>
   member _.GameTime = gameTime
 
   /// <summary>Dispatch a message to the runner.</summary>
-  member _.Dispatch(msg: 'Msg) = dispatch msg
+  member _.Dispatch(msg: 'Msg) = loop.Dispatch(msg)
 
   /// <summary>Dispatch multiple messages at once.</summary>
   member _.DispatchMany(msgs: 'Msg seq) =
     for msg in msgs do
-      dispatch msg
+      loop.Dispatch(msg)
 
   /// <summary>Advance the simulation by one frame with the given delta time.</summary>
   /// <param name="elapsed">Frame delta (e.g. TimeSpan.FromMilliseconds(16) for 60fps). Negative values are clamped to zero.</param>
@@ -229,7 +175,7 @@ type HeadlessRunner<'Model, 'Msg>
   /// — they all advance the simulation and using them together will produce simulation corruption.
   /// </remarks>
   member _.Step(elapsed: TimeSpan) =
-    if shouldQuit then
+    if loop.ShouldQuit then
       ()
     else
 
@@ -238,59 +184,14 @@ type HeadlessRunner<'Model, 'Msg>
       gameTime <- {
         TotalTime = gameTime.TotalTime + elapsed
         ElapsedGameTime = elapsed
-
       }
 
-      if deferredEffs.Count <> 0 then
-        deferredEffsRun.Clear()
-        deferredEffsRun.AddRange(deferredEffs)
-        deferredEffs.Clear()
+      loop.TickFrame(elapsed, gameTime) |> ignore
 
-        for i = 0 to deferredEffsRun.Count - 1 do
-          deferredEffsRun[i].Invoke(dispatch)
-
-      match program.FixedStep with
-      | ValueNone -> ()
-      | ValueSome cfg ->
-        let maxFrame = cfg.MaxFrameSeconds |> ValueOption.defaultValue 0.25f
-        let deltaSeconds = float32 elapsed.TotalSeconds
-
-        let struct (acc2, steps, _dropped) =
-          FixedStep.compute
-            cfg.StepSeconds
-            cfg.MaxStepsPerFrame
-            maxFrame
-            fixedAccSeconds
-            deltaSeconds
-
-        fixedAccSeconds <- acc2
-
-        for _i = 1 to steps do
-          dispatch(cfg.Map cfg.StepSeconds)
-
-      program.Tick |> ValueOption.iter(fun map -> dispatch(map gameTime))
-
-      let mutable stateChanged = false
-      let mutable msg = Unchecked.defaultof<'Msg>
-      msgQueue.StartBatch()
-
-      while msgQueue.TryDequeue(&msg) do
-        let struct (newState, cmds) = program.Update msg state
-        state <- newState
-        execCmd cmds
-        stateChanged <- true
-
-      msgQueue.EndBatch()
-
-      if stateChanged then
-        match ctxOpt with
-        | ValueSome ctx -> updateSubs ctx
-        | ValueNone -> ()
-
-      match ctxOpt with
+      match loop.Context with
       | ValueSome ctx ->
         for i = 0 to observers.Count - 1 do
-          observers[i].OnNext(ctx, state, gameTime)
+          observers[i].OnNext(ctx, loop.Model, gameTime)
       | ValueNone -> ()
 
   /// <summary>Advance the simulation by N frames.</summary>
@@ -422,10 +323,7 @@ type HeadlessRunner<'Model, 'Msg>
 
   /// <summary>Dispose active subscriptions, observers, and clean up resources.</summary>
   member _.Dispose() =
-    for KeyValue(_key, disp) in activeSubs do
-      disp.Dispose()
-
-    activeSubs.Clear()
+    loop.DisposeSubs()
 
     for i = 0 to observers.Count - 1 do
       match observers[i] with

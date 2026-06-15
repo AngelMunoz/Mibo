@@ -270,5 +270,26 @@ program
 |> Program.withRenderer (fun () -> Renderer2D.create view2D)
 ```
 
+### Phase 2 - Shared ElmishLoop; HeadlessRunner/HeadlessProgram in Core
+
+**No breaking changes.** The message-processing core that was duplicated between
+`RaylibGame` and `HeadlessRunner` (the dispatch queue, `execCmd`, `updateSubs`,
+deferred-effect draining, `FixedStep` accumulation, tick dispatch, and the
+message pump) is now a shared `ElmishLoop<'Model,'Msg>` type in `Mibo.Core`.
+
+A `LoopCore<'Model,'Msg>` struct record captures the six fields that define
+message-processing behavior (Init/Update/Subscribe/Tick/FixedStep/DispatchMode).
+`Program` and `HeadlessProgram` each project to `LoopCore` without changing shape.
+
+`HeadlessProgram`, `HeadlessRunner`, and the `HeadlessProgram` builder module
+(`mkHeadless`, `withSubscribe`, `withTick`, `withFixedStep`, `withDispatchMode`,
+`withObserver`, `observe`) have moved from the raylib backend to `Mibo.Core`.
+They are pure F# with zero backend dependencies, so this is a pure relocation.
+
+All existing user code (`HeadlessProgram.mkHeadless`, `HeadlessRunner`, etc.)
+keeps working unchanged — the types stay in the `Mibo.Elmish` namespace.
+The `PingPong` server sample, which relies on `HeadlessRunner`, continues to work.
+
+
 
 
