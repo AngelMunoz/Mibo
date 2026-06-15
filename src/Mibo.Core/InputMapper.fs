@@ -181,7 +181,7 @@ module InputMapper =
     GameContext.tryGetService<IInputMapper<'Action>> ctx
 
   /// <summary>Gets the registered <see cref="T:Mibo.Input.IInputMapper`1"/> service.</summary>
-  /// <exception cref="T:System.Exception">Thrown when no IInputMapper is registered (use <see cref="M:Mibo.Elmish.Program.withInputMapper"/>).</exception>
+  /// <exception cref="T:System.Exception">Thrown when no IInputMapper is registered (use Program.withInputMapper).</exception>
   let getService<'Action when 'Action: comparison>
     (ctx: GameContext)
     : IInputMapper<'Action> =
@@ -189,4 +189,4 @@ module InputMapper =
     | ValueSome m -> m
     | ValueNone ->
       failwith
-        "IInputMapper service not registered. Add Program.withInputMapper to your program."
+        "IInputMapper service not registered. Add RaylibProgram.withInputMapper or MonoGameProgram.withInputMapper to your program."
