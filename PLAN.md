@@ -32,16 +32,16 @@ backend enum/handle stays in the backend.
 
 ## Phase status
 
-| Phase | Scope | Breaking? | Status |
-|-------|-------|-----------|--------|
-| 1a | Move framework-free files (Time, Commands, System, Subscriptions, Rendering, ProgramTypes) into `Mibo.Core` | No | ✅ Done (`#20`) |
-| 1b | Input abstraction: Core key/mouse/gamepad/gesture codes, `IInput`/`IInputMapper` contracts + delta types in Core | Yes | ✅ Done (`#20`) |
-| 1c | `IAssetCache` split: generic asset cache in Core; typed loaders stay backend | No | ✅ Done (`#21`) |
-| 1d | `Program` builder moves to Core; `withInputMapper` decoupled from the backend | Yes | ✅ Done (`#21`) |
-| 2  | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core | No | ✅ Done (`#22`) |
-| 3  | `Layout` and `Layout3D` move to Core | No | ✅ Done (`#23`) |
-| 4  | Fresh `Mibo.MonoGame` backend | n/a (new project) | ⬜ Pending |
-| 5  | Parity verification (optional) | n/a | ⬜ Pending |
+| Phase | Scope                                                                                                            | Breaking?         | Status                                      |
+| ----- | ---------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------- |
+| 1a    | Move framework-free files (Time, Commands, System, Subscriptions, Rendering, ProgramTypes) into `Mibo.Core`      | No                | ✅ Done (`#20`)                             |
+| 1b    | Input abstraction: Core key/mouse/gamepad/gesture codes, `IInput`/`IInputMapper` contracts + delta types in Core | Yes               | ✅ Done (`#20`)                             |
+| 1c    | `IAssetCache` split: generic asset cache in Core; typed loaders stay backend                                     | No                | ✅ Done (`#21`)                             |
+| 1d    | `Program` builder moves to Core; `withInputMapper` decoupled from the backend                                    | Yes               | ✅ Done (`#21`)                             |
+| 2     | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core                                   | No                | ✅ Done (`#22`)                             |
+| 3     | `Layout` and `Layout3D` move to Core                                                                             | No                | ✅ Done (`#23`)                             |
+| 4     | Fresh `Mibo.MonoGame` backend                                                                                    | n/a (new project) | 🔨 In progress (`feature/monogame-backend`) |
+| 5     | Parity verification (optional)                                                                                   | n/a               | ⬜ Pending                                  |
 
 ---
 
@@ -52,6 +52,7 @@ backend enum/handle stays in the backend.
 ### Verification (done during planning)
 
 Every layout file's `open` list was audited against `src/Mibo.Raylib`. Confirmed:
+
 - **All 9 `Layout/` files** depend only on `System.Numerics`, `System.Collections.Generic`,
   `System.Buffers`, and each other (`CellGrid2D`, `HexGrid`).
 - **8 of 9 `Layout3D/` files** are equally clean (`System.Numerics`, plus internal
@@ -66,10 +67,12 @@ Every layout file's `open` list was audited against `src/Mibo.Raylib`. Confirmed
 ### What moves (17 files, clean)
 
 **`Mibo.Layout` (9 files)** — the entire folder:
+
 - `Grid2D.fs`, `HexGrid.fs`, `Spatial2D.fs`, `HexLayout.fs`, `LayeredHex.fs`,
   `Layout.fs`, `Platformer.fs`, `TopDown.fs`, `Layered.fs`
 
 **`Mibo.Layout3D` (8 of 9 files)** — everything except `Renderer3D.fs`:
+
 - `Grid3D.fs`, `HexGrid3D.fs`, `Spatial3D.fs`, `Layout3D.fs`, `HexLayout3D.fs`,
   `LayeredHex3D.fs`, `Interior.fs`, `Terrain.fs`
 
@@ -86,7 +89,7 @@ Every layout file's `open` list was audited against `src/Mibo.Raylib`. Confirmed
   > Rationale: moving `Renderer3D.fs` would require first abstracting
   > `Command3D`/`RenderBuffer3D`/`Material3D`/native `Mesh` into Core contracts.
   > That is a much larger, separately-scoped effort and out of scope for Phase 3.
-  > The layout *geometry* (grids, hexes, spatial queries, terrain) is what's
+  > The layout _geometry_ (grids, hexes, spatial queries, terrain) is what's
   > portable; the instanced draw bridge stays backend-side.
 
 ### Internal dependency note
@@ -128,6 +131,49 @@ Phase 4 also targets `net8.0`, matching the upstream Mibo repo.)
 
 **Breaking:** n/a — new project.
 
+### Status (in progress — `feature/monogame-backend`)
+
+Implemented and compiling (whole solution builds with 0 errors):
+
+- `MiboGame : Game` host — drives `ElmishLoop` from `Update`/`Draw`, applies
+  `GameConfig`, registers MonoGame handles + `IAssets` + `IInput` + service
+  registrations, reflects window resize into `GameContext` dimensions.
+- `MonoGameGameContext` — registers `GraphicsDevice`/`ContentManager`/`Game` into
+  the Core service registry (decision 5); typed `getGraphicsDevice`/
+  `getContentManager`/`getGame` accessors.
+- `Input.fs` — `KeyCode.ofMonoGameKey`/`toMonoGameKey`,
+  `GamepadButtonCode.ofMonoGameButton`/`toMonoGameButton`, whole-state pollers
+  (keyboard/mouse/touch/gamepad), `Input.create`. Matches the raylib 80/20
+  surface (decision 3).
+- `InputMapper.fs` — `buildActions` (shared logic) + `subscribe`/
+  `subscribeStatic` + `createService`, mirroring raylib.
+- `Assets.fs` — `IAssets` over `ContentManager` (typed loaders cached in
+  dictionaries), extending Core `IAssetCache`.
+- `Program.fs` — `MonoGameProgram.withInputMapper`.
+
+Parity notes surfaced during implementation:
+
+- **MonoGame gives whole-state snapshots** (`KeyboardState`/`MouseState`/
+  `GamePadState`), unlike raylib's per-query functions. Pollers diff against
+  the previous frame's state via `byref`/array fields.
+- **D-pad lives on `GamePadState.DPad`, not `GamePadButtons`** — a real API
+  difference from what the `Buttons` enum suggests.
+- **Triggers exposed digitally at a 0.5 threshold** (analog via `GamepadAnalog`).
+- **No `RightSuper` mapping** — MonoGame has only `LeftWindows`.
+- **No separate numpad Enter** — MonoGame shares `Keys.Enter`.
+- **Gestures are a known 80/20 gap** — MonoGame has no built-in high-level
+  gesture detection matching raylib's; the `GestureDelta` stream stays empty
+  until a recognizer is layered on.
+- **`IInputMapper` service path is registered but not ticked** — this matches
+  the raylib backend exactly (raylib also registers but never calls `Update()`;
+  the working path is the subscription `InputMapper.subscribeStatic`). Not a
+  regression; consistent with raylib.
+
+Remaining before merge: runtime smoke test (a `MiboGame` that boots, processes
+one tick, and exits cleanly without a window in CI is non-trivial — MonoGame
+needs a real `GraphicsDevice`). The library compiles and is API-complete; a
+manual boot test on a desktop is the verification step.
+
 ### Upstream reference: `E:\Mibo` (the original MonoGame Mibo)
 
 The original MonoGame Mibo lives at `E:\Mibo` (`net8.0`, `MonoGame.Framework.Native`
@@ -138,13 +184,14 @@ behavior and API shape.
 
 **What `E:\Mibo` contains** (`src/Mibo`, `net8.0`, 49 .fs files; tests/samples
 target `net10.0`):
+
 - Elmish core: `Elmish.{Time,Commands,Subscriptions,Rendering,ProgramTypes,Runtime}.fs`
-  + `Program.fs` (builder) + `System.fs` — **superseded by `Mibo.Core`**; do not port.
-  The `Elmish.Runtime.fs` message-pump *body* (deferred-effect drain, fixed-step,
-  tick, batched drain in `StartBatch`/`EndBatch`) is backend-agnostic and is the
-  spec for how the new host should order work — but Core's shared `ElmishLoop`
-  (Phase 2) already encapsulates this, so the new host delegates rather than
-  reimplements.
+  - `Program.fs` (builder) + `System.fs` — **superseded by `Mibo.Core`**; do not port.
+    The `Elmish.Runtime.fs` message-pump _body_ (deferred-effect drain, fixed-step,
+    tick, batched drain in `StartBatch`/`EndBatch`) is backend-agnostic and is the
+    spec for how the new host should order work — but Core's shared `ElmishLoop`
+    (Phase 2) already encapsulates this, so the new host delegates rather than
+    reimplements.
 - Input: `Input.fs` (`IInput` + `InputPolling` + `Input.create` returning a
   `GameComponent`) + `InputMapper.fs` (`Trigger`/`InputMap`/`ActionState`/
   `InputMapperService`) — **superseded by Core contracts**; rewrite the impl
@@ -176,6 +223,7 @@ target `net10.0`):
 
 The original Mibo was the **pre-abstraction** shape. Its core types embed
 MonoGame handles directly:
+
 - `GameContext` holds `GraphicsDevice`, `ContentManager`, `Game` (MonoGame types).
 - `KeyboardDelta.Pressed: Keys[]` uses `Microsoft.Xna.Framework.Input.Keys`.
 - `MouseDelta.Position: Point` uses MonoGame's `Point`.
@@ -196,15 +244,36 @@ callbacks. Porting the Mibo types would reintroduce the coupling Phases 1–3 re
 if the MonoGame backend wants JSON asset decoding, add `JDeck` to that backend
 only — not to Core.
 
+### Reference guidance for steps 4–7 (the MonoGame-specific implementations)
+
+The original `E:\Mibo` is the **reference for _what MonoGame surface to cover_**,
+not portable code. For steps 4–7, duplicate the patterns from `E:\Mibo\src\Mibo`
+_as long as they are backend-specific and do not break Core code_:
+
+- **Step 4 (IInput):** mirror `E:\Mibo\src\Mibo\Input.fs`'s polling shape
+  (`Keyboard.GetState`/`Mouse.GetState`/`GamePad.GetState`/`TouchPanel.GetState`)
+  and the set of `Keys`/`Buttons` it maps. Translate onto Core's
+  `KeyCode`/`MouseButtonCode`/`GamepadButtonCode`/delta structs — do **not**
+  reuse the MonoGame-typed delta records.
+- **Step 5 (IInputMapper):** the pure `InputMap`/`ActionState` core is already in
+  `Mibo.Core`; only the per-frame ticking impl is backend-specific.
+- **Step 6 (IAssets):** mirror `E:\Mibo\src\Mibo\Assets.fs`'s `ContentManager.Load`
+  caching pattern and the typed loaders it exposes
+  (`Texture2D`/`SpriteFont`/`SoundEffect`/`Model`/`Effect`). Implement against
+  Core's `IAssetCache` + a MonoGame `IAssets` that extends it.
+- **Step 7 (withInputMapper):** mirror `RaylibProgram.withInputMapper`'s
+  `ServiceRegistrations` shape; the upstream `E:\Mibo` version wraps `Init`
+  instead, which is the older pattern — follow the raylib one.
+
 ### What the new backend must provide
 
-| Core contract | MonoGame implementation |
-|---------------|-------------------------|
-| Runtime host | `MiboGame : Microsoft.Xna.Framework.Game`, overriding `Update`/`Draw` to drive the shared `ElmishLoop` (Phase 2). Owns the architecture — no `GameComponent` hosting (see Decisions §2). Use `E:\Mibo\src\Mibo\Elmish.Runtime.fs` as the spec for work ordering (deferred-effect drain → fixed-step → tick → batched message drain → renderers), but delegate the mechanics to `ElmishLoop` rather than reimplementing the queue. |
-| `IInput` (`Mibo.Input`) | Translate MonoGame `KeyboardState`/`MouseState`/`GamePadState`/`TouchPanel` → Core `KeyCode`/`MouseButtonCode`/`GamepadButtonCode` + Core delta structs |
-| `IInputMapper<'Action>` | `InputMapper.createService` over the MonoGame `IInput` |
-| `IAssetCache` + `IAssets` | Cache over `ContentManager`; typed loaders (`Texture2D`/`SpriteFont`/`SoundEffect`/`Model`/`Effect`) stay in the MonoGame backend |
-| `MonoGameProgram.withInputMapper` | Per-backend `withInputMapper` mirroring `RaylibProgram.withInputMapper`, registering via `ServiceRegistrations` |
+| Core contract                     | MonoGame implementation                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime host                      | `MiboGame : Microsoft.Xna.Framework.Game`, overriding `Update`/`Draw` to drive the shared `ElmishLoop` (Phase 2). Owns the architecture — no `GameComponent` hosting (see Decisions §2). Use `E:\Mibo\src\Mibo\Elmish.Runtime.fs` as the spec for work ordering (deferred-effect drain → fixed-step → tick → batched message drain → renderers), but delegate the mechanics to `ElmishLoop` rather than reimplementing the queue. |
+| `IInput` (`Mibo.Input`)           | Translate MonoGame `KeyboardState`/`MouseState`/`GamePadState`/`TouchPanel` → Core `KeyCode`/`MouseButtonCode`/`GamepadButtonCode` + Core delta structs                                                                                                                                                                                                                                                                           |
+| `IInputMapper<'Action>`           | `InputMapper.createService` over the MonoGame `IInput`                                                                                                                                                                                                                                                                                                                                                                            |
+| `IAssetCache` + `IAssets`         | Cache over `ContentManager`; typed loaders (`Texture2D`/`SpriteFont`/`SoundEffect`/`Model`/`Effect`) stay in the MonoGame backend                                                                                                                                                                                                                                                                                                 |
+| `MonoGameProgram.withInputMapper` | Per-backend `withInputMapper` mirroring `RaylibProgram.withInputMapper`, registering via `ServiceRegistrations`                                                                                                                                                                                                                                                                                                                   |
 
 ### Out of scope for Phase 4
 
@@ -228,18 +297,18 @@ only — not to Core.
      the `Game` itself, `Components`), so the MonoGame `GameContext` exposes those
      directly — mirroring the original `E:\Mibo` `GameContext` shape.
    - **The constraint: the two `GameContext` types must not diverge too far.**
-     Keep the *portable* fields identical (window width/height, the service
+     Keep the _portable_ fields identical (window width/height, the service
      registry, `IServiceProvider`-style `getService`/`tryGetService`), and let
      each backend add its own strongly-typed handle properties. Portable code
      written against the shared fields works on both; backend-specific code takes
      the backend's `GameContext`. This may mean two concrete `GameContext` types
      (one per backend) — the exact sharing mechanism is settled in decision 5
      below (Core contract + backend inheritance, same as `IAssets`/`IAssetCache`).
-     The *intent* is: same portable surface, backend adds handles on top.
+     The _intent_ is: same portable surface, backend adds handles on top.
 2. **Own the architecture: `MiboGame : Game`.** The MonoGame backend hosts the
    loop by inheriting `Microsoft.Xna.Framework.Game` and overriding `Update`/
    `Draw` — not by running on a `GameComponent`. The `ElmishLoop` (Phase 2) is
-   driven from those overrides. Whether a loop can *also* run hosted in a
+   driven from those overrides. Whether a loop can _also_ run hosted in a
    `GameComponent` is a separate, unrelated feature and is **not** part of this
    split-and-port effort.
 3. **Input translation: match the raylib surface (80/20).** The MonoGame backend
@@ -273,6 +342,17 @@ only — not to Core.
 
    This resolves the "sharing mechanism" question: it's the established
    inheritance pattern, not a new interface/base-record debate.
+
+   **Refinement (resolved during Phase 4 scaffolding):** `LoopCore.Init` is
+   typed to the Core `GameContext` class (not an interface), and that class has
+   no backend-handle slot and an `internal` constructor. Rather than widen the
+   Core type (out of Phase 4's "new backend only" scope) or introduce a wrapper,
+   the MonoGame backend follows the **raylib pattern exactly**: the host
+   registers `GraphicsDevice`, `ContentManager`, and `Game` into the Core
+   `GameContext` service registry, and user code retrieves them via
+   `GameContext.getService<GraphicsDevice>() ctx` (just as raylib registers and
+   retrieves `IInput`/`IAssets`). Zero Core changes; `InternalsVisibleTo`
+   already grants `Mibo.MonoGame` access to the internal `register`.
 
 ### Steps (high level — flesh out when Phase 4 starts)
 
