@@ -31,6 +31,8 @@ type Effect<'Msg> = delegate of ('Msg -> unit) -> unit
 type Cmd<'Msg> =
   /// No-op command (use <see cref="M:Mibo.Elmish.Cmd.none"/>)
   | Empty
+  /// A message to dispatch directly without wrapping in an effect
+  | Msg of msg: 'Msg
   /// Single effect to execute
   | Single of single: Effect<'Msg>
   /// Multiple effects to execute in this frame
@@ -65,8 +67,7 @@ module Cmd =
   /// <remarks>
   /// Useful for triggering follow-up messages from within the update cycle.
   /// </remarks>
-  let inline ofMsg(msg: 'Msg) : Cmd<'Msg> =
-    Single(Effect<'Msg>(fun dispatch -> dispatch msg))
+  let inline ofMsg(msg: 'Msg) : Cmd<'Msg> = Msg msg
 
   /// <summary>
   /// Defer command execution until the next frame.
@@ -79,6 +80,7 @@ module Cmd =
   let inline deferNextFrame(cmd: Cmd<'Msg>) : Cmd<'Msg> =
     match cmd with
     | Empty -> Empty
+    | Msg msg -> DeferNextFrame [| Effect<'Msg>(fun dispatch -> dispatch msg) |]
     | Single eff -> DeferNextFrame [| eff |]
     | Batch effs -> DeferNextFrame effs
     | DeferNextFrame effs -> DeferNextFrame effs
@@ -94,6 +96,7 @@ module Cmd =
     : struct (Effect<'Msg>[] * Effect<'Msg>[]) =
     match cmd with
     | Empty -> struct ([||], [||])
+    | Msg msg -> struct ([| Effect<'Msg>(fun dispatch -> dispatch msg) |], [||])
     | Single eff -> struct ([| eff |], [||])
     | Batch effs -> struct (effs, [||])
     | DeferNextFrame effs -> struct ([||], effs)
@@ -110,6 +113,7 @@ module Cmd =
   let map (f: 'A -> 'Msg) (cmd: Cmd<'A>) : Cmd<'Msg> =
     match cmd with
     | Empty -> Empty
+    | Msg msg -> Msg(f msg)
     | Single eff ->
       Single(
         Effect<'Msg>(fun dispatch ->
@@ -184,15 +188,16 @@ module Cmd =
       Empty
     elif nextCount = 0 then
       if nowCount = 1 then
-        let mutable eff = Unchecked.defaultof<Effect<'Msg>>
+        let mutable result = Unchecked.defaultof<Cmd<'Msg>>
 
         for c in cmds do
           match c with
-          | Single e -> eff <- e
-          | Batch b when b.Length = 1 -> eff <- b[0]
+          | Msg _ -> result <- c
+          | Single _ -> result <- c
+          | Batch b when b.Length = 1 -> result <- Single b[0]
           | _ -> ()
 
-        Single eff
+        result
       else
         let arr = Array.zeroCreate<Effect<'Msg>> nowCount
         let mutable i = 0
@@ -253,8 +258,14 @@ module Cmd =
         Empty
       elif nextCount = 0 then
         if nowCount = 1 then
-          let eff = if aNow.Length = 1 then aNow[0] else bNow[0]
-          Single eff
+          match a with
+          | Msg _ -> a
+          | _ ->
+            match b with
+            | Msg _ -> b
+            | _ ->
+              let eff = if aNow.Length = 1 then aNow[0] else bNow[0]
+              Single eff
         else
           let arr = Array.zeroCreate<Effect<'Msg>> nowCount
 

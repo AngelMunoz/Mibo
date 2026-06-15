@@ -110,6 +110,7 @@ type ElmishLoop<'Model, 'Msg> internal (core: LoopCore<'Model, 'Msg>) =
   let execCmd(cmd: Cmd<'Msg>) =
     match cmd with
     | Empty -> ()
+    | Msg msg -> dispatch msg
     | Quit -> shouldQuit <- true
     | Single eff -> eff.Invoke(dispatch)
     | Batch effs ->
