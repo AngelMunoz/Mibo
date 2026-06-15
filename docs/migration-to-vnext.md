@@ -36,7 +36,7 @@ that leaks a backend enum/handle stay in the backend.**
 |-------|-------|-----------|
 | 1a | Move framework-free files (Time, Commands, System, Subscriptions, Rendering, ProgramTypes) into `Mibo.Core` | No |
 | 1b | Input abstraction: Core key/mouse/gamepad/gesture codes, `IInput`/`IInputMapper` contracts + delta types in Core | Yes |
-| 1c | `IAssetCache` split: generic asset cache in Core; typed loaders stay backend | Yes |
+| 1c | `IAssetCache` split: generic asset cache in Core; typed loaders stay backend | No |
 | 1d | `Program` builder moves to Core; `withInputMapper` stores a factory instead of calling the backend directly | Yes |
 | 2  | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core | No |
 | 3  | `Layout` and `Layout3D` move to Core | No |
@@ -175,4 +175,100 @@ Mibo-side code that works in Core codes (e.g. `Raylib.IsKeyDown(KeyCode.toRaylib
   maps `LeftFace*` to `GamepadButtonCode.DPad*` and `RightFace*` to `Face*`.
 - Any native input with no logical Core case maps to `Unknown`. Do not assume
   `Unknown` round-trips to the same native value.
+
+### Phase 1c - `IAssetCache` split
+
+**No breaking changes.** The generic subset of asset caching - the methods that
+store arbitrary user-created assets by string key - is now a backend-neutral
+contract in `Mibo.Core`:
+
+```fsharp
+// Mibo.Elmish (in Mibo.Core)
+type IAssetCache =
+  abstract Get<'T> : key: string -> 'T voption
+  abstract Create<'T> : key: string * factory: (unit -> 'T) -> 'T
+  abstract GetOrCreate<'T> : key: string * factory: (unit -> 'T) -> 'T
+  abstract Clear: unit -> unit
+  abstract Dispose: unit -> unit
+```
+
+The raylib backend's `IAssets` now extends `IAssetCache`:
+
+```fsharp
+type IAssets =
+  inherit IAssetCache
+  abstract Texture: path: string -> Texture2D
+  abstract Font:     path: string -> Font
+  abstract Sound:    path: string -> Sound
+  abstract Model:    path: string -> Model
+  abstract ModelAnimations: path: string -> ModelAnimation[]
+```
+
+All existing code keeps working unchanged: `assets.Get<'T>(...)`,
+`assets.GetOrCreate(...)`, etc. resolve to the inherited members. The benefit
+is that portable code (and the Headless runner, once it lands in Core) can
+retrieve an `IAssetCache` from a `GameContext` and cache custom assets
+without referencing a backend:
+
+```fsharp
+let cache = GameContext.getService<IAssetCache> ctx
+let config = cache.GetOrCreate("gameConfig", fun () -> loadConfig())
+```
+
+### Phase 1d - Program builder in Core; `withInputMapper` decoupled
+
+**Breaking** (minor: only affects `withInputMapper` call sites, of which there
+are none in the samples). Two changes:
+
+**1. The framework-free `Program` builder moved to `Mibo.Core`.** `mkProgram`,
+`withConfig`, `withRenderer`, `withTick`, `withFixedStep`, `withDispatchMode`,
+`withSubscription`, `withAssets`, `withAssetsBasePath`, `withInput` now live in
+`Mibo.Core` (still `Mibo.Elmish` namespace, still `Program.withX` at call sites).
+A new `Program.withServiceRegistration` lets any builder register a callback the
+host runs before `Init`.
+
+**2. `withInputMapper` moved to a per-backend module.** Because the mapper factory
+(`InputMapper.createService`) is backend-specific, `withInputMapper` can no longer
+live in the shared Core `Program` builder. On the raylib backend it is now
+`RaylibProgram.withInputMapper` (in `Mibo.Elmish`):
+
+```fsharp
+// Before (1.3.0)
+program |> Program.withInputMapper inputMap
+
+// After (vNext, raylib backend)
+program |> RaylibProgram.withInputMapper inputMap
+```
+
+It still registers `IInput` automatically and now registers `IInputMapper` via a
+`ServiceRegistrations` callback (rather than wrapping `Init`), so the Core
+`Program` type never references the raylib factory. Each backend will expose its
+own `withInputMapper` (MonoGame: `MonoGameProgram.withInputMapper`, etc.).
+
+If you used the subscription path (`InputMapper.subscribe` / `subscribeStatic`),
+nothing changes — that API is backend-neutral and already lives in Core.
+
+#### Behavioral fix: renderer draw order
+
+**This is a behavioral breaking change that will not produce compiler errors.
+Review your renderer setup if you use multiple renderers.**
+
+The `Program.Renderers` list is built by prepending each new renderer.
+Previously, the runtime iterated the list without reversing it,
+which meant the last renderer added was the first to draw. If you added a 3D
+renderer first and a 2D UI renderer second, the 2D UI drew first and the 3D
+scene drew on top — the opposite of the expected layering.
+
+This is now fixed: the runtime reverses `program.Renderers` before iterating,
+matching the existing pattern for `Config` and `ServiceRegistrations`.
+Renderers now draw in the order you add them.
+
+```fsharp
+// This now draws the 3D scene first, then the 2D UI on top (correct)
+program
+|> Program.withRenderer (fun () -> Renderer3D.create view3D)
+|> Program.withRenderer (fun () -> Renderer2D.create view2D)
+```
+
+
 

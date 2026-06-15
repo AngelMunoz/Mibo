@@ -129,7 +129,10 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
     if config.MinWidth.IsSome || config.MinHeight.IsSome then
       Raylib.SetWindowState(ConfigFlags.ResizableWindow)
 
-    for f in program.Renderers do
+    // Reverse to match add-order (the list is ::-prepended, like Config).
+    // Without this, the last renderer added would draw first, and earlier
+    // renderers would draw on top — opposite of the expected layering.
+    for f in List.rev program.Renderers do
       renderers.Add(f())
 
     let ctx = GameContext.create(config.Width, config.Height)
@@ -145,6 +148,11 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
       let inputService = Input.create []
       GameContext.register<IInput> inputService ctx
       inputServiceOpt <- ValueSome inputService
+
+    // Run backend-specific service registrations (e.g. IInputMapper) before
+    // Init so user init code can see every registered service.
+    for register in List.rev program.ServiceRegistrations do
+      register ctx
 
     ctxOpt <- ValueSome ctx
 

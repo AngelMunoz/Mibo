@@ -7,6 +7,9 @@
 - `Mibo.Core` project: backend-agnostic home for `Cmd`/`Sub`/`GameTime`/`DispatchMode`/`FixedStep`/`System`/`RenderBuffer`/`IRenderer`/`GameContext`/`Program`/`GameConfig`. The `Mibo.Raylib` project now references `Mibo.Core`. No API changes; all types remain in the `Mibo.Elmish` namespace. See `docs/migration-to-vnext.md` for the vNext roadmap.
 - Backend-neutral input contracts in `Mibo.Core` (namespace `Mibo.Input`): `KeyCode`, `MouseButtonCode`, `GamepadButtonCode`, `GestureKind` (struct DUs, `RequireQualifiedAccess`), the delta types, the `IInput`/`IInputMapper<'Action>` contracts, `Trigger`/`InputMap<'Action>`/`ActionState<'Action>`, and the `Keyboard`/`Mouse`/`Touch`/`Gamepad`/`Gesture` subscription modules. Backends supply concrete `IInput`/`IInputMapper` implementations.
 - Raylib↔Core input translation modules in the raylib backend: `KeyCode.ofRaylibKey`/`toRaylibKey`, `MouseButtonCode.ofRaylibButton`/`toRaylibButton`, `GamepadButtonCode.ofRaylibButton`/`toRaylibButton`, `GestureKind.ofRaylibGesture`/`toRaylibGesture`.
+- `IAssetCache` interface in `Mibo.Core` (`Mibo.Elmish` namespace): the backend-neutral generic asset-cache contract (`Get<'T>`/`Create<'T>`/`GetOrCreate<'T>`/`Clear`/`Dispose`). The raylib backend's `IAssets` now extends `IAssetCache`; all existing calls compile unchanged. Portable code can retrieve an `IAssetCache` from `GameContext` to cache custom assets without referencing a backend.
+- `Program` builder functions in `Mibo.Core` (`Mibo.Elmish` namespace): `mkProgram`, `withConfig`, `withRenderer`, `withTick`, `withFixedStep`, `withDispatchMode`, `withSubscription`, `withAssets`, `withAssetsBasePath`, `withInput`, plus a new `withServiceRegistration` hook for backend-specific service registration. The `Program` record gained a `ServiceRegistrations: (GameContext -> unit) list` field that hosts invoke before `Init`.
+- `RaylibProgram.withInputMapper` in the raylib backend (`Mibo.Elmish` namespace): the raylib-specific `withInputMapper`, now decoupled from the Core `Program` builder. It registers the raylib-backed `IInputMapper` via a `ServiceRegistrations` callback so Core never references the raylib factory.
 
 ### Changed
 
@@ -15,6 +18,8 @@
   - `Trigger` cases renamed: `MouseBut of int` → `MouseButton of MouseButtonCode`; `GamepadBut` → `GamepadButton of int * GamepadButtonCode`.
   - `InputMap.mouse` takes `MouseButtonCode` instead of `int`.
   - `MouseDelta.Buttons` holds `MouseButtonCode[]`.
+- **Breaking:** `Program.withInputMapper` moved to `RaylibProgram.withInputMapper` (raylib backend only). The factory is backend-specific, so the function can no longer live in the shared Core `Program` builder. Call sites change `Program.withInputMapper map` → `RaylibProgram.withInputMapper map`. No samples used this path (they use the subscription-based `InputMapper.subscribeStatic`), so no sample changes were required. See `docs/migration-to-vnext.md` (Phase 1d).
+- **Breaking (behavioral):** renderer draw order is now correct. Previously, `withRenderer` prepended to the list but the runtime iterated without reversing, so the last renderer added drew first. Now the runtime reverses `program.Renderers` before iterating, matching the existing `Config`/`ServiceRegistrations` pattern. Renderers draw in the order you add them. This is a behavioral change that will not produce compiler errors — review your renderer setup if you use multiple renderers.
 
 ## [1.3.0] - 2026-06-13
 
