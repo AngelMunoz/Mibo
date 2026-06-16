@@ -79,5 +79,5 @@ Ordering is the whole point. Input must run before physics. Physics must run bef
 
 ## See also
 
-- [ThreeDSample/Systems.fs](https://github.com/...) — nine systems composed in a real game.
+- [Systems.fs](https://github.com/AngelMunoz/Mibo.Samples) — nine systems composed in a real game (see `ThreeDSample`).
 - [System Pipeline API](system.html) — API reference for `System.start`, `pipeMutable`, `snapshot`.

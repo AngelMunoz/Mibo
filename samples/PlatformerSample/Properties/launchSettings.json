@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "PlatformerSample": {
-      "commandName": "Project",
-      "workingDirectory": "E:\\Mibo.Raylib\\samples\\PlatformerSample"
-    }
-  }
-}

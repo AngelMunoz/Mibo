@@ -94,5 +94,5 @@ The same derived value can feed multiple consumers. Lighting affects rendering, 
 
 ## See also
 
-- [ThreeDSample/DayNight.fs](https://github.com/...) and [ThreeDSample/Lighting.fs](https://github.com/...) — day/night cycle as pre-computed state.
+- [DayNight.fs](https://github.com/AngelMunoz/Mibo.Samples) and [Lighting.fs](https://github.com/AngelMunoz/Mibo.Samples) — day/night cycle as pre-computed state (see `ThreeDSample`).
 - [Composable Systems](composable-systems.html) — how pre-computed state fits into the system pipeline.

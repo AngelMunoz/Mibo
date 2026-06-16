@@ -56,23 +56,11 @@ dotnet fsdocs build
 dotnet fsdocs watch
 ```
 
-### Run the samples
+## Samples
 
-**2D Platformer:**
+Samples live in a dedicated repository: **[Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples)**
 
-```bash
-dotnet run --project samples/PlatformerSample
-```
-
-Controls: **WASD / Arrows** to move, **Space** to jump, **R** to respawn.
-
-**3D Platformer:**
-
-```bash
-dotnet run --project samples/ThreeDSample
-```
-
-Controls: **WASD** (camera-relative), **Space** to jump.
+That repo contains platformer, space battle, ping-pong, 3D, and other sample projects targeting both the raylib and MonoGame backends. Further sample development happens there.
 
 ## License
 

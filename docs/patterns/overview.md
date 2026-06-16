@@ -32,4 +32,4 @@ Each pattern follows the same structure:
 
 ## Samples
 
-The `PlatformerSample` and `ThreeDSample` projects demonstrate these patterns in complete games. Each pattern page links to the relevant sample code.
+The [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) repository contains complete working games that demonstrate these patterns. Each pattern page links to the relevant sample code.

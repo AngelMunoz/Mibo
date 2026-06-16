@@ -295,7 +295,7 @@ They are pure F# with zero backend dependencies, so this is a pure relocation.
 
 All existing user code (`HeadlessProgram.mkHeadless`, `HeadlessRunner`, etc.)
 keeps working unchanged — the types stay in the `Mibo.Elmish` namespace.
-The `PingPong` server sample, which relies on `HeadlessRunner`, continues to work.
+The `PingPong` server sample (in the [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) repo), which relies on `HeadlessRunner`, continues to work.
 
 ### Phase 3 - `Layout` and `Layout3D` move to Core
 

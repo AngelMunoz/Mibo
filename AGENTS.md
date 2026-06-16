@@ -20,8 +20,9 @@ All of the projects live in the `src` folder:
 
 - `Mibo.Core`: Backend-agnostic core (Cmd/Sub/System/GameTime/RenderBuffer/Program/IRenderer/GameContext). No raylib dependency.
 - `Mibo.Raylib`: Main library project (raylib backend; depends on `Mibo.Core`)
-- `PlatformerSample`: Sample project showcasing 2D platformer capabilities
-- `ThreeDSample`: Sample project showcasing 3D rendering capabilities
+- `Mibo.MonoGame`: MonoGame backend (depends on `Mibo.Core`)
+
+Samples live in a separate repository: [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples)
 
 The documentation site is built using [FsDocs](https://fsprojects.github.io/FSharp.Formatting/) and lives in the `docs` folder.
 

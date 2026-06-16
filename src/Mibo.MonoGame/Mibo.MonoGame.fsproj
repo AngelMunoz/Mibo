@@ -13,6 +13,31 @@
     <Compile Include="Assets.fs" />
     <Compile Include="Runtime.fs" />
     <Compile Include="Program.fs" />
+    <Compile Include="Next/Conversions.fs" />
+    <Compile Include="Next/ResourceRegistry.fs" />
+    <Compile Include="Next/Graphics2D/State.fs" />
+    <Compile Include="Next/Graphics2D/LightContext.fs" />
+    <Compile Include="Next/Graphics2D/RenderBuffer2D.fs" />
+    <Compile Include="Next/Graphics2D/Draw.fs" />
+    <Compile Include="Next/Graphics2D/LightDraw.fs" />
+    <Compile Include="Next/Graphics2D/ParticleDraw.fs" />
+    <Compile Include="Next/Graphics2D/Renderer2D.fs" />
+  </ItemGroup>
+
+  <!--
+    To recompile shaders (requires dotnet-mgfxc local tool):
+    dotnet mgfxc Content/Shaders/LitSprite.fx Content/Shaders/LitSprite.dx.mgfx /Profile:DirectX_11
+    dotnet mgfxc Content/Shaders/LitSprite.fx Content/Shaders/LitSprite.ogl.mgfx /Profile:OpenGL /Defines:MAX_OCCLUDERS=64
+    dotnet mgfxc Content/Shaders/LitSpriteNormalMap.fx Content/Shaders/LitSpriteNormalMap.dx.mgfx /Profile:DirectX_11
+    dotnet mgfxc Content/Shaders/LitSpriteNormalMap.fx Content/Shaders/LitSpriteNormalMap.ogl.mgfx /Profile:OpenGL /Defines:MAX_OCCLUDERS=64
+    DX shaders use ps_4_0 (not ps_4_0_level_9_1) due to register pressure.
+    OGL shaders use ps_3_0 with MAX_OCCLUDERS=64 to fit 224 constant registers.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Content/Shaders/LitSprite.dx.mgfx" />
+    <EmbeddedResource Include="Content/Shaders/LitSprite.ogl.mgfx" />
+    <EmbeddedResource Include="Content/Shaders/LitSpriteNormalMap.dx.mgfx" />
+    <EmbeddedResource Include="Content/Shaders/LitSpriteNormalMap.ogl.mgfx" />
   </ItemGroup>
 
   <ItemGroup>

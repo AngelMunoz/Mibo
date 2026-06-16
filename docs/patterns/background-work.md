@@ -92,5 +92,5 @@ The Elmish `Cmd` system is the threading mechanism. You don't create threads, ma
 
 ## See also
 
-- [ThreeDSample/ChunkSystem.fs](https://github.com/...) — chunk generation and eviction in a real game.
+- [ChunkSystem.fs](https://github.com/AngelMunoz/Mibo.Samples) — chunk generation and eviction in a real game (see `ThreeDSample`).
 - [Composable Systems](composable-systems.html) — how background work fits into the system pipeline.

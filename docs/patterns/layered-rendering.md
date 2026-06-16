@@ -78,5 +78,5 @@ You can add more than two renderers. Each one composites on top of the previous.
 
 ## See also
 
-- [ThreeDSample/Program.fs](https://github.com/...) — renderer setup with 3D scene and 2D overlay.
+- [Program.fs](https://github.com/AngelMunoz/Mibo.Samples) — renderer setup with 3D scene and 2D overlay (see `ThreeDSample`).
 - [Rendering Overview](rendering.html) — API reference for renderers and render buffers.

@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="Client/Client.fsproj" Type="F#" />
-  <Project Path="Server/Server.fsproj" Type="F#" />
-  <Project Path="Shared/Shared.fsproj" Type="F#" />
-</Solution>

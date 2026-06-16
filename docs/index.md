@@ -23,7 +23,7 @@ cd MyGame
 dotnet run
 ```
 
-The projects in `samples/PlatformerSample` and `samples/ThreeDSample` show complete, working setups.
+Complete working samples are available in the [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) repository.
 
 You can then start building your game using any of the following:
 

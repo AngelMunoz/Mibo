@@ -22,6 +22,7 @@ type BlendMode =
   | AlphaPremultiply = 5
   | Custom = 6
   | CustomSeparate = 7
+  | Opaque = 8
 
 // ─────────────────────────────────────────────────────────────────
 // Everything else stays in Mibo.Elmish.Next.Graphics2D

@@ -93,5 +93,5 @@ For thousands of particles, switch from per-particle `drawBillboard` to `drawBil
 
 ## See also
 
-- [ThreeDSample/Particles.fs](https://github.com/...) — full implementation with burst spawning and billboard rendering.
+- [Particles.fs](https://github.com/AngelMunoz/Mibo.Samples) — full implementation with burst spawning and billboard rendering (see `ThreeDSample`).
 - [Composable Systems](composable-systems.html) — integrating particles into the system pipeline.

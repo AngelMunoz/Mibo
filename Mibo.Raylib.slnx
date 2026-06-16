@@ -1,9 +1,4 @@
 <Solution>
-  <Folder Name="/samples/">
-    <Project Path="samples/PlatformerSample/PlatformerSample.fsproj" />
-    <Project Path="samples/SpaceBattle/SpaceBattle.fsproj" />
-    <Project Path="samples/ThreeDSample/ThreeDSample.fsproj" />
-  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Mibo.Core/Mibo.Core.fsproj" />
     <Project Path="src/Mibo.Core.Tests/Mibo.Core.Tests.fsproj" />

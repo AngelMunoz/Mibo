@@ -96,4 +96,6 @@ module Convert =
     LanguagePrimitives.EnumOfValue(int m)
 
   let inline toRaylibBlendMode(m: BlendMode) : Raylib_cs.BlendMode =
-    LanguagePrimitives.EnumOfValue(int m)
+    match m with
+    | BlendMode.Opaque -> Raylib_cs.BlendMode.AlphaPremultiply
+    | _ -> LanguagePrimitives.EnumOfValue(int m)
