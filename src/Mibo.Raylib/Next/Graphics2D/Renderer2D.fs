@@ -515,3 +515,9 @@ module Renderer2D =
     : IRenderer<'Model> =
     new Renderer2D<'Model>(view, ValueSome Raylib_cs.Color.Black)
     :> IRenderer<'Model>
+
+  let createWith
+    (clearColor: Raylib_cs.Color voption)
+    (view: GameContext -> 'Model -> RenderBuffer2D -> unit)
+    : IRenderer<'Model> =
+    new Renderer2D<'Model>(view, clearColor) :> IRenderer<'Model>
