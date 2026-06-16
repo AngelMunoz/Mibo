@@ -37,17 +37,17 @@ that leaks a backend enum/handle stay in the backend.**
 
 ## Phased rollout
 
-| Phase | Scope | Breaking? |
-|-------|-------|-----------|
-| 1a | Move framework-free files (Time, Commands, System, Subscriptions, Rendering, ProgramTypes) into `Mibo.Core` | No |
-| 1b | Input abstraction: Core key/mouse/gamepad/gesture codes, `IInput`/`IInputMapper` contracts + delta types in Core | Yes |
-| 1c | `IAssetCache` split: generic asset cache in Core; typed loaders stay backend | No |
-| 1d | `Program` builder moves to Core; `withInputMapper` stores a factory instead of calling the backend directly | Yes |
-| 2  | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core | No |
-| 3  | `Layout` and `Layout3D` move to Core | No |
-| 3b | `Cmd<'Msg>` gains `Msg` case; `Cmd.ofMsg` is zero-alloc | Yes |
-| 4  | Fresh `Mibo.MonoGame` backend | n/a (new project) |
-| 5  | Rendering abstraction: Command2D/Command3D + buffer move to Core; backend DSL absorbs breakage | Minimal |
+| Phase | Scope                                                                                                            | Breaking?         |
+| ----- | ---------------------------------------------------------------------------------------------------------------- | ----------------- |
+| 1a    | Move framework-free files (Time, Commands, System, Subscriptions, Rendering, ProgramTypes) into `Mibo.Core`      | No                |
+| 1b    | Input abstraction: Core key/mouse/gamepad/gesture codes, `IInput`/`IInputMapper` contracts + delta types in Core | Yes               |
+| 1c    | `IAssetCache` split: generic asset cache in Core; typed loaders stay backend                                     | No                |
+| 1d    | `Program` builder moves to Core; `withInputMapper` stores a factory instead of calling the backend directly      | Yes               |
+| 2     | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core                                   | No                |
+| 3     | `Layout` and `Layout3D` move to Core                                                                             | No                |
+| 3b    | `Cmd<'Msg>` gains `Msg` case; `Cmd.ofMsg` is zero-alloc                                                          | Yes               |
+| 4     | Fresh `Mibo.MonoGame` backend                                                                                    | n/a (new project) |
+| 5     | Rendering abstraction: Command2D/Command3D + buffer move to Core; backend DSL absorbs breakage                   | Minimal           |
 
 ## Breaking changes
 
@@ -87,8 +87,8 @@ The `IInput` contract, the delta types, the subscription modules
 `IInputMapper<'Action>`, and `InputMapper.getService`/`tryGetService` all live
 in `Mibo.Core` now. `open Mibo.Input` keeps working.
 
-The raylib backend retains only: the `IInput` *implementation* (`Input.create`)
-and the `IInputMapper` *implementation* (`InputMapper.createService`), plus the
+The raylib backend retains only: the `IInput` _implementation_ (`Input.create`)
+and the `IInputMapper` _implementation_ (`InputMapper.createService`), plus the
 native↔neutral translation functions documented below.
 
 #### New backend-neutral code DUs (struct DUs, `RequireQualifiedAccess`)
@@ -138,11 +138,11 @@ fix the few cases where the name changed (notably `KeyboardKey.Zero`/`One`/…
 
 The `Trigger` DU changed cases (it now uses Core codes instead of native types):
 
-| Before (raylib)                                | After (Core)                                       |
-|------------------------------------------------|----------------------------------------------------|
-| `Key of KeyboardKey`                           | `Key of KeyCode`                                   |
-| `KeyCombo of Set<KeyboardKey>`                 | `KeyCombo of Set<KeyCode>`                         |
-| `MouseBut of int`                              | `MouseButton of MouseButtonCode`                   |
+| Before (raylib)                                     | After (Core)                                               |
+| --------------------------------------------------- | ---------------------------------------------------------- |
+| `Key of KeyboardKey`                                | `Key of KeyCode`                                           |
+| `KeyCombo of Set<KeyboardKey>`                      | `KeyCombo of Set<KeyCode>`                                 |
+| `MouseBut of int`                                   | `MouseButton of MouseButtonCode`                           |
 | `GamepadBut of player: int * button: GamepadButton` | `GamepadButton of player: int * button: GamepadButtonCode` |
 
 `InputMap.mouse` now takes a `MouseButtonCode` instead of an `int`:
@@ -305,12 +305,14 @@ preserved, so `open Mibo.Layout` / `open Mibo.Layout3D` continue to resolve
 exactly as before — all existing game code compiles unchanged.
 
 What moved (17 files, all pure F# over `System.Numerics`):
+
 - `Mibo.Layout` (9 files): `Grid2D`, `HexGrid`, `Spatial2D`, `HexLayout`,
   `LayeredHex`, `Layout`, `Platformer`, `TopDown`, `Layered`.
 - `Mibo.Layout3D` (8 files): `Grid3D`, `HexGrid3D`, `Spatial3D`, `Layout3D`,
   `HexLayout3D`, `LayeredHex3D`, `Interior`, `Terrain`.
 
 What stays in the raylib backend:
+
 - `Layout3D/Renderer3D.fs` — the instanced-draw bridge (`InstancedRenderContext`,
   `CellGridRenderer3D`, `HexGrid3DRenderer`). It depends on
   `Mibo.Elmish.Graphics3D` (`Command3D`/`RenderBuffer3D`/`Material3D`) and the
@@ -425,10 +427,12 @@ backend and absorbs all type mapping internally — users pass native types
 #### What moved to `Mibo.Core`
 
 Neutral primitives (namespace `Mibo.Elmish.Next.Graphics2D.Base`):
+
 - `Color` struct (RGBA byte) — internal only, never exposed to users.
 - `BlendMode` enum — internal only.
 
 Namespace `Mibo.Elmish.Next.Graphics2D`:
+
 - Resource handle measures: `Texture`, `Font`, `Shader`, `RenderTarget`, `Mesh`,
   `ModelAsset`, `LightContext`, `RenderLayer`.
 - `Rect` struct (float32 XYWH), `Camera2DState`, `Camera2DConfig`, `Camera`,
@@ -437,6 +441,7 @@ Namespace `Mibo.Elmish.Next.Graphics2D`:
 - `RenderBuffer2DBase` (abstract class) — ArrayPool-backed, layer sort.
 
 Namespace `Mibo.Elmish.Next.Graphics3D`:
+
 - `Command3D` DU (18 cases, struct) — uses handles + `MaterialData`.
 - `RenderBuffer3DBase` (abstract class) — ArrayPool-backed, insertion order.
 - `MaterialData`, `AmbientLight3DData`, `DirectionalLight3DData`,
@@ -497,6 +502,7 @@ The open order matters to avoid F# type shadowing:
    they win.
 
 Recommended open order:
+
 ```fsharp
 open System.*
 open Mibo.Elmish
@@ -521,5 +527,3 @@ renamed to `Graphics2D`, the following will be recorded:
 - `Renderer2D.create` / `Renderer3D.create` signatures unchanged.
 - `LightDraw` / `ParticleDraw` move from `Mibo.Elmish.Graphics2D.Lighting` to
   `Mibo.Elmish.Graphics2D` (same namespace as `Draw`).
-
-
