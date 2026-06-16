@@ -5,7 +5,6 @@ open System.Collections.Generic
 open System.Numerics
 open Raylib_cs
 open Mibo.Elmish
-open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics2D.Lighting
 open Mibo.Animation
 open PlatformerSample.Constants

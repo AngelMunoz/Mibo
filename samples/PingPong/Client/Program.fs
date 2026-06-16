@@ -2,7 +2,7 @@ module PingPong.Client.Program
 
 open System
 open Mibo.Elmish
-open Mibo.Elmish.Graphics2D
+open Mibo.Elmish.Next.Graphics2D
 open PingPong.Shared.Types
 open PingPong.Shared.Physics
 open PingPong.Shared.Serialization
