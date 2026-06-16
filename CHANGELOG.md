@@ -46,6 +46,12 @@
 - raylib `InputPolling.pollMouse` now filters `MouseButtonCode.Unknown` before adding to the pressed/released buffers, matching the existing `pollGamepad` pattern. Previously the mouse path would have leaked `Unknown` codes into the `MouseDelta` stream if raylib-cs ever added a new `MouseButton` enum value not covered by `ofRaylibButton`.
 - raylib `InputMapper.createService.Update` now binds `let rk = KeyCode.toRaylibKey k` once per key trigger instead of calling the mapper three times (pressed/released/down), matching the existing `MouseButton` branch's pattern.
 - `RenderBuffer<'Key,'Cmd>` now implements `IDisposable`. The backing array rented from `ArrayPool.Shared` is returned to the pool on `Dispose`. Non-breaking: callers that don't dispose keep the current behavior; callers that use `use` (and renderers whose `Dispose` chains to the buffer) now release the terminal array on shutdown.
+- `RenderBuffer3DBase.ensureCapacity` now passes `clearArray = true` when returning old arrays to `ArrayPool`, matching the 2D base. Previously, live command references (closures, arrays) leaked into the pool on buffer growth.
+- `Draw.sprite` no longer registers the normal map texture handle into the `Textures` registry — the handle was never stored in `Command2D.Sprite` (normal maps are only used via `LightDraw.litSprite` → `Command2D.LitSprite`). Removes a wasted registry slot per sprite with a normal map.
+- Particle rendering now uses `SourceRect` and `Rotation` from the particle data instead of ignoring them (hardcoded full-texture rect and zero rotation). Fixes sprite-sheet sub-rectangles and non-zero rotation particles in both the original and prototype renderers.
+- `Renderer2D<'Model>` (prototype) now implements `IDisposable`, disposing the `RenderBuffer2D` on shutdown to release `ArrayPool` rentals.
+- `Convert.toCamera` now delegates to `Convert.toCameraPlanes` which accepts configurable `nearPlane` and `farPlane` parameters. The default `toCamera` uses `0.01f`/`1000.0f` for backward compatibility.
+- `RaylibMeshRegistry` and `RaylibModelRegistry` document that `GenericHash` is a temporary measure (expensive, collision-prone) and will be replaced with proper identity tokens (`Mesh.VaoId`, etc.) when the 3D pipeline is ported.
 
 ### Removed
 

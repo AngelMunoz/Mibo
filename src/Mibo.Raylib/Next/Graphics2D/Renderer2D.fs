@@ -440,7 +440,7 @@ module private CommandHandlers =
           let halfW = p.Size.X * 0.5f
           let halfH = p.Size.Y * 0.5f
 
-          let src = Rectangle(0.f, 0.f, float32 tex.Width, float32 tex.Height)
+          let src = Convert.toRaylibRect p.SourceRect
 
           let dst =
             Rectangle(
@@ -454,8 +454,8 @@ module private CommandHandlers =
             tex,
             src,
             dst,
-            Vector2.Zero,
-            0.f,
+            Vector2(halfW, halfH),
+            p.Rotation,
             Convert.toRaylibColor p.Color
           )
 
@@ -497,6 +497,9 @@ type Renderer2D<'Model>
       _camera <- state.Camera
       _shader <- state.Shader
       _hasViewport <- state.HasViewport
+
+  interface IDisposable with
+    member _.Dispose() = buffer.Dispose()
 
 module Renderer2D =
 

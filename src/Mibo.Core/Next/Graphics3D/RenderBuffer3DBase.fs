@@ -28,7 +28,7 @@ type RenderBuffer3DBase(?capacity: int) =
       let newArr = ArrayPool<Command3D>.Shared.Rent(newSize)
 
       Array.Copy(items, newArr, count)
-      ArrayPool<Command3D>.Shared.Return(items)
+      ArrayPool<Command3D>.Shared.Return(items, true)
       items <- newArr
 
   /// <summary>The number of commands currently in the buffer.</summary>

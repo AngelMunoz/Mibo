@@ -26,11 +26,6 @@ module Draw =
   let inline sprite (state: SpriteState) (buffer: RenderBuffer2D) =
     let hTex = buffer.Textures.Register state.Texture
 
-    let hNorm =
-      match state.NormalMap with
-      | ValueSome nm -> ValueSome(buffer.Textures.Register nm)
-      | ValueNone -> ValueNone
-
     buffer.Add(
       Command2D.Sprite(
         hTex,

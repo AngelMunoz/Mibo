@@ -57,7 +57,12 @@ module Convert =
 
   // ── Camera3D → Camera (View/Projection matrices) ─────────────
 
-  let toCamera (aspectRatio: float32) (c: Raylib_cs.Camera3D) : Camera =
+  let toCameraPlanes
+    (aspectRatio: float32)
+    (nearPlane: float32)
+    (farPlane: float32)
+    (c: Raylib_cs.Camera3D)
+    : Camera =
     let view = Matrix4x4.CreateLookAt(c.Position, c.Target, c.Up)
 
     let proj =
@@ -66,15 +71,24 @@ module Convert =
         Matrix4x4.CreatePerspectiveFieldOfView(
           c.FovY * (MathF.PI / 180.0f),
           aspectRatio,
-          0.01f,
-          1000.0f
+          nearPlane,
+          farPlane
         )
       | _ ->
         let halfH = c.FovY
         let halfW = halfH * aspectRatio
-        Matrix4x4.CreateOrthographic(halfW * 2.0f, halfH * 2.0f, 0.01f, 1000.0f)
+
+        Matrix4x4.CreateOrthographic(
+          halfW * 2.0f,
+          halfH * 2.0f,
+          nearPlane,
+          farPlane
+        )
 
     { View = view; Projection = proj }
+
+  let toCamera (aspectRatio: float32) (c: Raylib_cs.Camera3D) : Camera =
+    toCameraPlanes aspectRatio 0.01f 1000.0f c
 
   // ── BlendMode ─────────────────────────────────────────────────
 

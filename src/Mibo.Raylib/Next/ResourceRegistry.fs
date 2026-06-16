@@ -96,6 +96,9 @@ type RaylibMeshRegistry() =
   let fwd = Dictionary<int, int<Mesh>>()
   let rev = ResizeArray<Raylib_cs.Mesh>()
 
+  // TODO: GenericHash is expensive (reflection on ~20 fields incl. native pointers)
+  // and collision-prone. Replace with Mesh.VaoId or a registration wrapper when
+  // the 3D pipeline is ported. See plan §2 (handle reliability).
   member _.Register(m: Raylib_cs.Mesh) =
     let key = LanguagePrimitives.GenericHash m
 
@@ -117,6 +120,8 @@ type RaylibModelRegistry() =
   let fwd = Dictionary<int, int<ModelAsset>>()
   let rev = ResizeArray<Raylib_cs.Model>()
 
+  // TODO: GenericHash is expensive (reflection on many fields) and collision-prone.
+  // Replace with a proper identity token when the 3D pipeline is ported.
   member _.Register(m: Raylib_cs.Model) =
     let key = LanguagePrimitives.GenericHash m
 
