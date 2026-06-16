@@ -44,6 +44,15 @@
     <Compile Include="Graphics3D/Pipelines/Shaders.fs" />
     <Compile Include="Graphics3D/Pipelines/ForwardPbrPipeline.fs" />
     <Compile Include="Layout3D/Renderer3D.fs" />
+    <Compile Include="Next/Conversions.fs" />
+    <Compile Include="Next/ResourceRegistry.fs" />
+    <Compile Include="Next/Graphics2D/State.fs" />
+    <Compile Include="Next/Graphics2D/RenderBuffer2D.fs" />
+    <Compile Include="Next/Graphics3D/RenderBuffer3D.fs" />
+    <Compile Include="Next/Graphics2D/Draw.fs" />
+    <Compile Include="Next/Graphics2D/LightDraw.fs" />
+    <Compile Include="Next/Graphics2D/ParticleDraw.fs" />
+    <Compile Include="Next/Graphics2D/Renderer2D.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Mibo.Core\Mibo.Core.fsproj" />

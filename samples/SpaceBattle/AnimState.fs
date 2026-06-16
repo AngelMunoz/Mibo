@@ -225,8 +225,8 @@ module AnimState =
 
   module Debug =
 
+    open Mibo.Elmish.Next.Graphics2D
     open Raylib_cs
-    open Mibo.Elmish.Graphics2D
 
     let inline view
       (font: Font)

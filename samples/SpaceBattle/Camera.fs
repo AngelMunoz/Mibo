@@ -3,7 +3,7 @@ namespace SpaceBattle
 open System
 open System.Numerics
 open Mibo.Elmish
-open Mibo.Elmish.Graphics2D
+open Mibo.Elmish.Next.Graphics2D
 open Mibo.Layout
 open Mibo.Input
 open Raylib_cs
@@ -127,7 +127,7 @@ module Camera =
 
   module Debug =
 
-    open Mibo.Elmish.Graphics2D
+    open Mibo.Elmish.Next.Graphics2D
 
     let inline view
       (font: Raylib_cs.Font)

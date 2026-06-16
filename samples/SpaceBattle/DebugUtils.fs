@@ -1,7 +1,7 @@
 module SpaceBattle.DebugUtils
 
 open System.Numerics
-open Mibo.Elmish.Graphics2D
+open Mibo.Elmish.Next.Graphics2D
 open Raylib_cs
 
 [<Literal>]

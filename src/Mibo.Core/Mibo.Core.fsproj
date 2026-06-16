@@ -21,6 +21,12 @@
     <Compile Include="Elmish.Program.fs" />
     <Compile Include="Elmish.Loop.fs" />
     <Compile Include="Elmish.Headless.fs" />
+    <Compile Include="Next/Graphics2D/Primitives.fs" />
+    <Compile Include="Next/Graphics2D/Command2D.fs" />
+    <Compile Include="Next/Graphics2D/RenderBuffer2DBase.fs" />
+    <Compile Include="Next/Graphics3D/Primitives3D.fs" />
+    <Compile Include="Next/Graphics3D/Command3D.fs" />
+    <Compile Include="Next/Graphics3D/RenderBuffer3DBase.fs" />
     <Compile Include="Layout/Grid2D.fs" />
     <Compile Include="Layout/HexGrid.fs" />
     <Compile Include="Layout/Spatial2D.fs" />

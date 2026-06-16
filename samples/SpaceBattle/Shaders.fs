@@ -3,9 +3,9 @@ module SpaceBattle.Shaders
 open System.Diagnostics
 open System.Numerics
 open Microsoft.FSharp.NativeInterop
-open Raylib_cs
 open Mibo.Elmish
-open Mibo.Elmish.Graphics2D
+open Mibo.Elmish.Next.Graphics2D
+open Raylib_cs
 
 #nowarn "9"
 
