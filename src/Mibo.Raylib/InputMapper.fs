@@ -191,9 +191,11 @@ module InputMapper =
             let isPressed, isReleased, isDown =
               match kv.Key with
               | Key k ->
-                Raylib.IsKeyPressed(KeyCode.toRaylibKey k).AsBool(),
-                Raylib.IsKeyReleased(KeyCode.toRaylibKey k).AsBool(),
-                Raylib.IsKeyDown(KeyCode.toRaylibKey k).AsBool()
+                let rk = KeyCode.toRaylibKey k
+
+                Raylib.IsKeyPressed(rk).AsBool(),
+                Raylib.IsKeyReleased(rk).AsBool(),
+                Raylib.IsKeyDown(rk).AsBool()
               | KeyCombo keys ->
                 let allHeld =
                   keys

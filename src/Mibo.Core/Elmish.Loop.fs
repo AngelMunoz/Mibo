@@ -184,11 +184,18 @@ type ElmishLoop<'Model, 'Msg> internal (core: LoopCore<'Model, 'Msg>) =
   /// <summary>
   /// Advance the simulation by one frame: drain deferred effects, run fixed-step,
   /// dispatch the tick message, process all queued messages, and update
-  /// subscriptions if the model changed.
+  /// subscriptions if any messages were processed this frame.
   /// </summary>
+  /// <remarks>
+  /// Subscription re-evaluation is keyed on "messages were processed" rather than
+  /// "the model is structurally different", because Mibo permits in-place mutable
+  /// models (e.g. a class whose fields are mutated by each system) whose
+  /// <c>Update</c> returns the same reference every frame. Reference or structural
+  /// equality would never detect a change for those models.
+  /// </remarks>
   /// <param name="elapsed">Frame delta (e.g. <c>TimeSpan.FromMilliseconds(16)</c> for 60fps).</param>
   /// <param name="gameTime">The current game time, supplied by the host.</param>
-  /// <returns><c>true</c> if the model changed this frame; <c>false</c> otherwise.</returns>
+  /// <returns><c>true</c> if any messages were processed this frame; <c>false</c> otherwise.</returns>
   member _.TickFrame(elapsed: TimeSpan, gameTime: GameTime) : bool =
     let deltaSeconds = float32 elapsed.TotalSeconds
 

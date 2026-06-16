@@ -407,9 +407,15 @@ module InputPolling =
 
     for btn in allMouseButtons do
       if Raylib.IsMouseButtonPressed(btn).AsBool() then
-        pressedBuf.Add(MouseButtonCode.ofRaylibButton btn)
+        let code = MouseButtonCode.ofRaylibButton btn
+
+        if code <> MouseButtonCode.Unknown then
+          pressedBuf.Add code
       elif Raylib.IsMouseButtonReleased(btn).AsBool() then
-        releasedBuf.Add(MouseButtonCode.ofRaylibButton btn)
+        let code = MouseButtonCode.ofRaylibButton btn
+
+        if code <> MouseButtonCode.Unknown then
+          releasedBuf.Add code
 
     let pos = Raylib.GetMousePosition()
     let delta = Raylib.GetMouseDelta()
