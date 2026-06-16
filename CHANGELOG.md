@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+### Added
+
+- `Cmd.Msg of 'Msg` case in the `Cmd<'Msg>` struct DU: a zero-allocation alternative to `Single(Effect(...))` for `Cmd.ofMsg`. `Cmd.ofMsg` now returns `Msg msg` directly instead of wrapping the message in an `Effect` delegate. `Cmd.map` on a `Msg` stays allocation-free (`Msg(f msg)`). The runtime dispatches `Msg` directly without invoking a delegate. `batch` and `batch2` preserve the `Msg` case in their fast paths.
+- `Mibo.Core.Tests` project: 11 backend-agnostic test files extracted from `Mibo.Raylib.Tests` into a standalone project that references only `Mibo.Core` (no Raylib dependency). Covers Elmish Cmd/Sub, HeadlessLoop/GameTime, Layout, Layout3D, HexGrid, HexLayout, LayeredHex, HexGrid3D, HexLayout3D, LayeredHex3D, Spatial2D, and Spatial3D (503 tests).
+- `Mibo.Core` project: backend-agnostic home for `Cmd`/`Sub`/`GameTime`/`DispatchMode`/`FixedStep`/`System`/`RenderBuffer`/`IRenderer`/`GameContext`/`Program`/`GameConfig`. The `Mibo.Raylib` project now references `Mibo.Core`. No API changes; all types remain in the `Mibo.Elmish` namespace. See `docs/migration-to-vnext.md` for the vNext roadmap.
+- Backend-neutral input contracts in `Mibo.Core` (namespace `Mibo.Input`): `KeyCode`, `MouseButtonCode`, `GamepadButtonCode`, `GestureKind` (struct DUs, `RequireQualifiedAccess`), the delta types, the `IInput`/`IInputMapper<'Action>` contracts, `Trigger`/`InputMap<'Action>`/`ActionState<'Action>`, and the `Keyboard`/`Mouse`/`Touch`/`Gamepad`/`Gesture` subscription modules. Backends supply concrete `IInput`/`IInputMapper` implementations.
+- Raylib↔Core input translation modules in the raylib backend: `KeyCode.ofRaylibKey`/`toRaylibKey`, `MouseButtonCode.ofRaylibButton`/`toRaylibButton`, `GamepadButtonCode.ofRaylibButton`/`toRaylibButton`, `GestureKind.ofRaylibGesture`/`toRaylibGesture`.
+- `IAssetCache` interface in `Mibo.Core` (`Mibo.Elmish` namespace): the backend-neutral generic asset-cache contract (`Get<'T>`/`Create<'T>`/`GetOrCreate<'T>`/`Clear`/`Dispose`). The raylib backend's `IAssets` now extends `IAssetCache`; all existing calls compile unchanged. Portable code can retrieve an `IAssetCache` from `GameContext` to cache custom assets without referencing a backend.
+- `Program` builder functions in `Mibo.Core` (`Mibo.Elmish` namespace): `mkProgram`, `withConfig`, `withRenderer`, `withTick`, `withFixedStep`, `withDispatchMode`, `withSubscription`, `withAssets`, `withAssetsBasePath`, `withInput`, plus a new `withServiceRegistration` hook for backend-specific service registration. The `Program` record gained a `ServiceRegistrations: (GameContext -> unit) list` field that hosts invoke before `Init`.
+- `RaylibProgram.withInputMapper` in the raylib backend (`Mibo.Elmish` namespace): the raylib-specific `withInputMapper`, now decoupled from the Core `Program` builder. It registers the raylib-backed `IInputMapper` via a `ServiceRegistrations` callback so Core never references the raylib factory.
+- `ElmishLoop<'Model,'Msg>` and `LoopCore<'Model,'Msg>` in `Mibo.Core` (`Mibo.Elmish` namespace): the shared message-processing loop extracted from the duplicated code in `RaylibGame` and `HeadlessRunner`. Both hosts now delegate to `ElmishLoop`; `Program` and `HeadlessProgram` project to `LoopCore` via `ElmishLoop.coreOfProgram` / `HeadlessProgram.toLoopCore`.
+- `HeadlessProgram`, `HeadlessRunner`, and the `HeadlessProgram` builder module moved from the raylib backend to `Mibo.Core` (pure F#, no backend dependencies). All existing user code keeps working unchanged — types stay in the `Mibo.Elmish` namespace.
+- `Mibo.Layout` and `Mibo.Layout3D` modules moved from the raylib backend to `Mibo.Core`. 17 files of pure layout geometry (2D grids/hex/spatial/platformer/top-down/layered + 3D grids/hex/spatial/interior/terrain) over `System.Numerics`. Namespaces preserved; all existing code compiles unchanged. `Layout3D/Renderer3D.fs` (the raylib instanced-draw bridge) stays in the raylib backend.
+- Migration guide for Mibo (MonoGame) users: `docs/migration-from-monogame.md` — comprehensive guide covering program setup, GameContext, input types, assets, rendering, animation, camera, and a full before/after example.
+
+### Changed
+
+- **Breaking:** `Cmd<'Msg>` discriminated union has new `Msg of 'Msg` case between `Empty` and `Single`. Users with exhaustive pattern matches on `Cmd<'Msg>` must handle the new case (or add a wildcard match). `Cmd.ofMsg` now returns `Msg` instead of `Single(Effect(...))`. See `docs/migration-to-vnext.md` (Phase 3b) for the full migration guide.
+- **Breaking:** the input surface now uses backend-neutral codes instead of raylib's native enums. See `docs/migration-to-vnext.md` (Phase 1b) for the full migration guide. Highlights:
+  - `InputMap.key` takes `KeyCode` instead of `Raylib_cs.KeyboardKey`. Bindings become portable across backends.
+  - `Trigger` cases renamed: `MouseBut of int` → `MouseButton of MouseButtonCode`; `GamepadBut` → `GamepadButton of int * GamepadButtonCode`.
+  - `InputMap.mouse` takes `MouseButtonCode` instead of `int`.
+  - `MouseDelta.Buttons` holds `MouseButtonCode[]`.
+- **Breaking:** `Program.withInputMapper` moved to `RaylibProgram.withInputMapper` (raylib backend only). The factory is backend-specific, so the function can no longer live in the shared Core `Program` builder. Call sites change `Program.withInputMapper map` → `RaylibProgram.withInputMapper map`. No samples used this path (they use the subscription-based `InputMapper.subscribeStatic`), so no sample changes were required. See `docs/migration-to-vnext.md` (Phase 1d).
+- **Breaking (behavioral):** renderer draw order is now correct. Previously, `withRenderer` prepended to the list but the runtime iterated without reversing, so the last renderer added drew first. Now the runtime reverses `program.Renderers` before iterating, matching the existing `Config`/`ServiceRegistrations` pattern. Renderers draw in the order you add them. This is a behavioral change that will not produce compiler errors — review your renderer setup if you use multiple renderers.
+
+### Fixed
+
+- `Cmd.batch` silently dropped a single `NowAndDeferNextFrame([|eff|], [||])` passed as the only command. The single-effect fast path only matched `Msg`/`Single`/`Batch of 1`, so `NowAndDeferNextFrame` fell through to the wildcard and the effect was lost. Added the missing case and initialize the accumulator to `Empty` explicitly.
+- `HeadlessRunner.StepUntil` had an off-by-one: the predicate was tested *before* each `Step`, so a predicate satisfied by the final permitted step returned `false`. Also, once `met`/`ShouldQuit` became true the loop kept spinning up to `maxFrames`. Rewritten as a `while` loop that steps first and exits immediately when the predicate (or `ShouldQuit`) becomes true. The documented "quit counts as met" behaviour is preserved.
+- MonoGame `InputPolling.pollMouse` now diffs `XButton1`/`XButton2` and emits `MouseButtonCode.Extra1`/`Extra2` on the `MouseDelta` stream, matching the raylib backend. Previously, the event-driven mouse subscription path never surfaced back/forward button presses (the poll-driven `InputMapper` path handled them via `isMouseButtonDownFor`), so the two input paths within MonoGame diverged.
+- `ElmishLoop.TickFrame` XML doc corrected: the return value is `true` when any messages were processed (not when the model structurally changed), and subscriptions are re-evaluated on the same condition. The implementation is unchanged — it must support in-place mutable models (e.g. `ThreeDSample`'s `GameModel`) where `Update` returns the same reference every frame, so reference or structural equality cannot detect changes.
+- raylib `InputPolling.pollMouse` now filters `MouseButtonCode.Unknown` before adding to the pressed/released buffers, matching the existing `pollGamepad` pattern. Previously the mouse path would have leaked `Unknown` codes into the `MouseDelta` stream if raylib-cs ever added a new `MouseButton` enum value not covered by `ofRaylibButton`.
+- raylib `InputMapper.createService.Update` now binds `let rk = KeyCode.toRaylibKey k` once per key trigger instead of calling the mapper three times (pressed/released/down), matching the existing `MouseButton` branch's pattern.
+- `RenderBuffer<'Key,'Cmd>` now implements `IDisposable`. The backing array rented from `ArrayPool.Shared` is returned to the pool on `Dispose`. Non-breaking: callers that don't dispose keep the current behavior; callers that use `use` (and renderers whose `Dispose` chains to the buffer) now release the terminal array on shutdown.
+
+### Removed
+
+- 11 stale duplicate test files from `Mibo.Raylib.Tests` (`ElmishTests.fs`, `HeadlessTests.fs`, `HexGridTests.fs`, `HexLayoutTests.fs`, `LayeredHexTests.fs`, `HexGrid3DTests.fs`, `HexLayout3DTests.fs`, `LayeredHex3DTests.fs`, `LayoutTests.fs`, `Spatial2DTests.fs`, `Spatial3DTests.fs`). These were leftovers from the `Mibo.Core.Tests` extraction that were never referenced by `Mibo.Raylib.Tests.fsproj` and therefore never compiled — the canonical copies live in `Mibo.Core.Tests`.
+
 ## [1.3.0] - 2026-06-13
 
 ### Added

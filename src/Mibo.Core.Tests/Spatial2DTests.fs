@@ -1,4 +1,4 @@
-module Mibo.Raylib.Tests.Spatial2D
+module Mibo.Core.Tests.Spatial2D
 
 open Expecto
 open System.Numerics

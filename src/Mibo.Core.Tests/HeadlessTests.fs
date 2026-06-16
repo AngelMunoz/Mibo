@@ -1,4 +1,4 @@
-module Mibo.Raylib.Tests.Headless
+module Mibo.Core.Tests.Headless
 
 open System
 open System.Threading
@@ -286,6 +286,39 @@ let headlessAdversarial =
       let met = runner.StepUntil(neverTrue, TimeSpan.FromMilliseconds(16), 5)
 
       Expect.isFalse met "Should return false when maxFrames reached"
+
+    testCase "StepUntil detects predicate met on final permitted frame"
+    <| fun _ ->
+      use runner =
+        new HeadlessRunner<_, _>(HeadlessProgram.mkHeadless init update)
+
+      runner.Dispatch(Increment)
+
+      let stopAtOne model = model.Count >= 1
+
+      let met = runner.StepUntil(stopAtOne, TimeSpan.FromMilliseconds(16), 1)
+
+      Expect.isTrue met "Should detect predicate on the last permitted frame"
+      Expect.equal runner.Model.Count 1 "Model count should be 1"
+
+    testCase "StepUntil stops stepping once predicate met (multi-frame)"
+    <| fun _ ->
+      let program =
+        HeadlessProgram.mkHeadless init update
+        |> HeadlessProgram.withTick(fun _gt -> Increment)
+
+      use runner = new HeadlessRunner<_, _>(program)
+
+      let stopAtThree model = model.Count >= 3
+
+      let met = runner.StepUntil(stopAtThree, TimeSpan.FromMilliseconds(16), 10)
+
+      Expect.isTrue met "Should have met predicate within 10 frames"
+
+      Expect.equal
+        runner.Model.Count
+        3
+        "Should stop at 3, not keep stepping to 10"
 
     testCase "StepUntil returns immediately when condition already true"
     <| fun _ ->
@@ -729,6 +762,33 @@ let headlessObserver =
         snapshotsA[1]
         snapshotsB[1]
         "Second snapshot should be identical"
+
+    testCase "Observers are notified in registration order"
+    <| fun _ ->
+      // withObserver prepends, so the runner must reverse the list before
+      // iterating or observers fire in reverse-registration order.
+      let order = ResizeArray<int>()
+
+      use runner =
+        new HeadlessRunner<_, _>(
+          HeadlessProgram.mkHeadless init update
+          |> HeadlessProgram.withObserver(fun () ->
+            HeadlessProgram.observe(fun struct (_, _: TestModel, _) ->
+              order.Add(1)))
+          |> HeadlessProgram.withObserver(fun () ->
+            HeadlessProgram.observe(fun struct (_, _: TestModel, _) ->
+              order.Add(2)))
+          |> HeadlessProgram.withObserver(fun () ->
+            HeadlessProgram.observe(fun struct (_, _: TestModel, _) ->
+              order.Add(3)))
+        )
+
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal order.Count 3 "All three observers should fire once"
+      Expect.equal order[0] 1 "First-registered observer fires first"
+      Expect.equal order[1] 2 "Second-registered observer fires second"
+      Expect.equal order[2] 3 "Third-registered observer fires third"
 
     testCase "Observer fires after ShouldQuit with frozen model"
     <| fun _ ->

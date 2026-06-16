@@ -29,7 +29,7 @@ module GameConfig =
   let defaultConfig = {
     Width = 800
     Height = 600
-    Title = "Mibo Raylib"
+    Title = "Mibo F#"
     TargetFPS = 60
     MinWidth = ValueNone
     MinHeight = ValueNone
@@ -89,6 +89,16 @@ type Program<'Model, 'Msg> = {
   AssetsBasePath: string voption
   /// <summary>Whether the input service is enabled. Set via <see cref="M:Mibo.Elmish.Program.withInput"/>.</summary>
   HasInput: bool
-  /// <summary>Whether an input mapper service is enabled. Set via <see cref="M:Mibo.Elmish.Program.withInputMapper"/>.</summary>
+  /// <summary>Whether an input mapper service is enabled. Set via a backend-specific <c>withInputMapper</c> function (e.g. <c>RaylibProgram.withInputMapper</c>).</summary>
   HasInputMapper: bool
+  /// <summary>
+  /// Service-registration callbacks invoked by the runtime host after core services
+  /// (assets, input) are registered but before <see cref="F:Mibo.Elmish.Program.Init"/>.
+  /// </summary>
+  /// <remarks>
+  /// Used by backend-specific builder functions (e.g. <c>withInputMapper</c>)
+  /// to register backend-specific services without the Core Program builder
+  /// referencing a backend factory directly.
+  /// </remarks>
+  ServiceRegistrations: (GameContext -> unit) list
 }

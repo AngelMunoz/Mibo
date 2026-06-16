@@ -75,6 +75,7 @@ type RenderBuffer<'Key, 'Cmd when 'Key: comparison>
     System.Buffers.ArrayPool<struct ('Key * 'Cmd)>.Shared.Rent initialCapacity
 
   let mutable count = 0
+  let mutable disposed = false
   let keyComparer = defaultArg keyComparer Comparer<'Key>.Default
 
   let sortComparer =
@@ -112,3 +113,16 @@ type RenderBuffer<'Key, 'Cmd when 'Key: comparison>
 
   /// Gets the command at the specified index as a (key, command) struct tuple.
   member _.Item(i) = items[i]
+
+  /// <summary>
+  /// Returns the rented backing array to <see cref="T:System.Buffers.ArrayPool`1"/>.
+  /// Call when the buffer is no longer needed (typically from a renderer's
+  /// <c>Dispose</c>). After disposal the buffer must not be used.
+  /// </summary>
+  member _.Dispose() =
+    if not disposed then
+      disposed <- true
+      System.Buffers.ArrayPool<struct ('Key * 'Cmd)>.Shared.Return items
+
+  interface IDisposable with
+    member this.Dispose() = this.Dispose()

@@ -102,12 +102,12 @@ let init(ctx: GameContext) =
 
   let inputMap =
     InputMap.empty
-    |> InputMap.key GameAction.MoveLeft KeyboardKey.A
-    |> InputMap.key GameAction.MoveLeft KeyboardKey.Left
-    |> InputMap.key GameAction.MoveRight KeyboardKey.D
-    |> InputMap.key GameAction.MoveRight KeyboardKey.Right
-    |> InputMap.key GameAction.Jump KeyboardKey.Space
-    |> InputMap.key GameAction.Respawn KeyboardKey.R
+    |> InputMap.key GameAction.MoveLeft KeyCode.A
+    |> InputMap.key GameAction.MoveLeft KeyCode.Left
+    |> InputMap.key GameAction.MoveRight KeyCode.D
+    |> InputMap.key GameAction.MoveRight KeyCode.Right
+    |> InputMap.key GameAction.Jump KeyCode.Space
+    |> InputMap.key GameAction.Respawn KeyCode.R
 
   let model = new Model()
   model.InputMap <- inputMap

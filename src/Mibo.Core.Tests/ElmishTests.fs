@@ -1,4 +1,4 @@
-module Mibo.Raylib.Tests.Elmish
+module Mibo.Core.Tests.Elmish
 
 open Expecto
 open Mibo.Elmish
@@ -63,6 +63,24 @@ let tests =
         | Quit -> ()
         | _ -> Tests.failtest "Expected Quit command"
 
+      testCase "Cmd.ofMsg returns Msg case"
+      <| fun _ ->
+        let cmd = Cmd.ofMsg 42
+
+        match cmd with
+        | Msg msg -> Expect.equal msg 42 "Msg should contain the value"
+        | _ -> Tests.failtest "Expected Msg command"
+
+      testCase "Cmd.map on Msg case is allocation-free"
+      <| fun _ ->
+        let cmd = Cmd.ofMsg 5
+        let mapped = Cmd.map (fun x -> x * 10) cmd
+
+        match mapped with
+        | Msg msg ->
+          Expect.equal msg 50 "Mapped Msg should contain transformed value"
+        | _ -> Tests.failtest "Expected Msg after map"
+
       testCase "Cmd.map preserves Quit"
       <| fun _ ->
         let cmd = Cmd.signalExit
@@ -80,6 +98,41 @@ let tests =
         match batched with
         | Quit -> ()
         | _ -> Tests.failtest "Expected Quit (Quit takes precedence in batch)"
+
+      testCase "Cmd.batch with single Msg uses fast path"
+      <| fun _ ->
+        let batched = Cmd.batch [ Cmd.ofMsg 42 ]
+
+        match batched with
+        | Msg msg ->
+          Expect.equal msg 42 "Single Msg in batch should stay as Msg"
+        | _ -> Tests.failtest "Expected Msg command"
+
+      testCase "Cmd.batch unwraps single-effect NowAndDeferNextFrame"
+      <| fun _ ->
+        let eff = Effect(fun dispatch -> dispatch 7)
+        let cmd: Cmd<int> = NowAndDeferNextFrame([| eff |], [||])
+        let batched = Cmd.batch [ cmd ]
+
+        match batched with
+        | Single e ->
+          let mutable got = 0
+          e.Invoke(fun v -> got <- v)
+          Expect.equal got 7 "Should preserve the now-effect"
+        | other -> Tests.failtestf "Expected Single after batch, got %A" other
+
+      testCase "Cmd.deferNextFrame on Msg produces DeferNextFrame"
+      <| fun _ ->
+        let cmd = Cmd.ofMsg 99
+        let deferred = Cmd.deferNextFrame cmd
+
+        match deferred with
+        | DeferNextFrame effs ->
+          Expect.equal effs.Length 1 "Should have 1 deferred effect"
+          let mutable result = 0
+          effs.[0].Invoke(fun x -> result <- x)
+          Expect.equal result 99 "Deferred effect should dispatch original msg"
+        | _ -> Tests.failtest "Expected DeferNextFrame"
     ]
 
     testList "Sub" [

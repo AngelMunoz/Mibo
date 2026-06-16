@@ -5,6 +5,9 @@
     <Project Path="samples/ThreeDSample/ThreeDSample.fsproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Mibo.Core/Mibo.Core.fsproj" />
+    <Project Path="src/Mibo.Core.Tests/Mibo.Core.Tests.fsproj" />
+    <Project Path="src/Mibo.MonoGame/Mibo.MonoGame.fsproj" />
     <Project Path="src/Mibo.Raylib/Mibo.Raylib.fsproj" />
     <Project Path="src/Mibo.Raylib.Tests/Mibo.Raylib.Tests.fsproj" />
     <Project Path="src/Templates/Mibo.Raylib.Templates.csproj" />

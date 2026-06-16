@@ -1,7 +1,6 @@
 module Mibo.Raylib.Tests.InputMapper
 
 open Expecto
-open Raylib_cs
 open Mibo.Input
 
 type Action =
@@ -18,14 +17,14 @@ let tests =
 
     let map =
       emptyMap
-      |> InputMap.key MoveUp KeyboardKey.W
-      |> InputMap.key MoveDown KeyboardKey.S
-      |> InputMap.key Jump KeyboardKey.Space
+      |> InputMap.key MoveUp KeyCode.W
+      |> InputMap.key MoveDown KeyCode.S
+      |> InputMap.key Jump KeyCode.Space
 
     testCase "ActionState.update starts an action"
     <| fun _ ->
       let state = ActionState.empty
-      let newState = ActionState.update map true (Key KeyboardKey.W) state
+      let newState = ActionState.update map true (Key KeyCode.W) state
 
       Expect.contains newState.Started MoveUp "MoveUp should have started"
       Expect.contains newState.Held MoveUp "MoveUp should be held"
@@ -40,10 +39,10 @@ let tests =
       let state = {
         ActionState.empty with
             Held = Set.singleton MoveUp
-            HeldTriggers = Set.singleton(Key KeyboardKey.W)
+            HeldTriggers = Set.singleton(Key KeyCode.W)
       }
 
-      let newState = ActionState.update map false (Key KeyboardKey.W) state
+      let newState = ActionState.update map false (Key KeyCode.W) state
 
       Expect.isFalse (newState.Held.Contains MoveUp) "MoveUp should not be held"
 
@@ -59,20 +58,23 @@ let tests =
     testCase "ActionState.update handles multiple triggers for same action"
     <| fun _ ->
       let map =
-        emptyMap |> InputMap.key Jump KeyboardKey.Space |> InputMap.mouse Jump 0
+        emptyMap
+        |> InputMap.key Jump KeyCode.Space
+        |> InputMap.mouse Jump MouseButtonCode.Left
 
       let state = ActionState.empty
       // Press Space
-      let state2 = ActionState.update map true (Key KeyboardKey.Space) state
+      let state2 = ActionState.update map true (Key KeyCode.Space) state
       Expect.contains state2.Held Jump "Jump should be held by Space"
 
       // Left mouse click
-      let state3 = ActionState.update map true (MouseBut 0) state2
+      let state3 =
+        ActionState.update map true (MouseButton MouseButtonCode.Left) state2
 
       Expect.contains state3.Held Jump "Jump should still be held"
 
       // Release Space (Jump still held by Mouse)
-      let state4 = ActionState.update map false (Key KeyboardKey.Space) state3
+      let state4 = ActionState.update map false (Key KeyCode.Space) state3
       Expect.contains state4.Held Jump "Jump should still be held by Mouse"
 
       Expect.isFalse
@@ -80,7 +82,8 @@ let tests =
         "Jump should NOT be released yet"
 
       // Release Mouse
-      let state5 = ActionState.update map false (MouseBut 0) state4
+      let state5 =
+        ActionState.update map false (MouseButton MouseButtonCode.Left) state4
 
       Expect.isFalse
         (state5.Held.Contains Jump)
@@ -103,7 +106,7 @@ let tests =
 
     testCase "KeyCombo starts when all keys are held"
     <| fun _ ->
-      let combo = Set [ KeyboardKey.LeftControl; KeyboardKey.S ]
+      let combo = Set [ KeyCode.LeftControl; KeyCode.S ]
 
       let map = emptyMap |> InputMap.keyCombo Save combo
 
@@ -121,7 +124,7 @@ let tests =
 
     testCase "KeyCombo releases when any key is released"
     <| fun _ ->
-      let combo = Set [ KeyboardKey.LeftControl; KeyboardKey.S ]
+      let combo = Set [ KeyCode.LeftControl; KeyCode.S ]
 
       let map = emptyMap |> InputMap.keyCombo Save combo
 
@@ -140,14 +143,13 @@ let tests =
 
     testCase "KeyCombo does not start when only some keys are held"
     <| fun _ ->
-      let combo = Set [ KeyboardKey.LeftControl; KeyboardKey.S ]
+      let combo = Set [ KeyCode.LeftControl; KeyCode.S ]
 
       let map = emptyMap |> InputMap.keyCombo Save combo
 
       let state = ActionState.empty
       // Only Ctrl is down, not the full combo
-      let state2 =
-        ActionState.update map true (Key KeyboardKey.LeftControl) state
+      let state2 = ActionState.update map true (Key KeyCode.LeftControl) state
 
       Expect.isFalse
         (state2.Held.Contains Save)
@@ -160,8 +162,8 @@ let tests =
 
     testCase "KeyCombo works with multiple combos for same action"
     <| fun _ ->
-      let combo1 = Set [ KeyboardKey.LeftControl; KeyboardKey.G ]
-      let combo2 = Set [ KeyboardKey.LeftControl; KeyboardKey.D ]
+      let combo1 = Set [ KeyCode.LeftControl; KeyCode.G ]
+      let combo2 = Set [ KeyCode.LeftControl; KeyCode.D ]
 
       let map =
         emptyMap
@@ -212,26 +214,26 @@ let tests =
 
     testCase "buildActions: KeyCombo starts when all keys pressed individually"
     <| fun _ ->
-      let combo = Set [ KeyboardKey.LeftControl; KeyboardKey.S ]
+      let combo = Set [ KeyCode.LeftControl; KeyCode.S ]
 
       let map = emptyMap |> InputMap.keyCombo Save combo
 
       let mutable heldKeys = Set.empty
 
       let isKeyDown k = heldKeys |> Set.contains k
-      let isMouseButtonDown _ = false
+      let isMouseButtonDown(_b: MouseButtonCode) = false
       let isGamepadButtonDown _ _ = false
 
       let getMap() = map
 
       // Press Ctrl
-      heldKeys <- heldKeys |> Set.add KeyboardKey.LeftControl
+      heldKeys <- heldKeys |> Set.add KeyCode.LeftControl
 
       let state1, comboStates1 =
         InputMapper.buildActions
           getMap
           Map.empty
-          [| Key KeyboardKey.LeftControl |]
+          [| Key KeyCode.LeftControl |]
           [||]
           isKeyDown
           isMouseButtonDown
@@ -246,13 +248,13 @@ let tests =
         "Save should NOT be held with only Ctrl"
 
       // Press S (now both keys held)
-      heldKeys <- heldKeys |> Set.add KeyboardKey.S
+      heldKeys <- heldKeys |> Set.add KeyCode.S
 
       let state2, _comboStates2 =
         InputMapper.buildActions
           getMap
           comboStates1
-          [| Key KeyboardKey.S |]
+          [| Key KeyCode.S |]
           [||]
           isKeyDown
           isMouseButtonDown
@@ -267,14 +269,14 @@ let tests =
 
     testCase "buildActions: KeyCombo releases when any key released"
     <| fun _ ->
-      let combo = Set [ KeyboardKey.LeftControl; KeyboardKey.S ]
+      let combo = Set [ KeyCode.LeftControl; KeyCode.S ]
 
       let map = emptyMap |> InputMap.keyCombo Save combo
 
-      let mutable heldKeys = Set [ KeyboardKey.LeftControl; KeyboardKey.S ]
+      let mutable heldKeys = Set [ KeyCode.LeftControl; KeyCode.S ]
 
       let isKeyDown k = heldKeys |> Set.contains k
-      let isMouseButtonDown _ = false
+      let isMouseButtonDown(_b: MouseButtonCode) = false
       let isGamepadButtonDown _ _ = false
 
       let getMap() = map
@@ -283,14 +285,14 @@ let tests =
       let initialComboStates = Map.empty |> Map.add combo true
 
       // Release S
-      heldKeys <- heldKeys |> Set.remove KeyboardKey.S
+      heldKeys <- heldKeys |> Set.remove KeyCode.S
 
       let state1, _comboStates1 =
         InputMapper.buildActions
           getMap
           initialComboStates
           [||]
-          [| Key KeyboardKey.S |]
+          [| Key KeyCode.S |]
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown
@@ -303,14 +305,16 @@ let tests =
 
     testCase "buildActions: KeyCombo does not trigger from mouse events"
     <| fun _ ->
-      let combo = Set [ KeyboardKey.LeftControl; KeyboardKey.S ]
+      let combo = Set [ KeyCode.LeftControl; KeyCode.S ]
 
       let map =
-        emptyMap |> InputMap.keyCombo Save combo |> InputMap.mouse Jump 0
+        emptyMap
+        |> InputMap.keyCombo Save combo
+        |> InputMap.mouse Jump MouseButtonCode.Left
 
       let isKeyDown _ = false
       let mutable mouseDown = false
-      let isMouseButtonDown _ = mouseDown
+      let isMouseButtonDown(_b: MouseButtonCode) = mouseDown
       let isGamepadButtonDown _ _ = false
 
       let getMap() = map
@@ -322,7 +326,7 @@ let tests =
         InputMapper.buildActions
           getMap
           Map.empty
-          [| MouseBut 0 |]
+          [| MouseButton MouseButtonCode.Left |]
           [||]
           isKeyDown
           isMouseButtonDown
@@ -336,8 +340,8 @@ let tests =
 
     testCase "buildActions: multiple combos with shared keys"
     <| fun _ ->
-      let combo1 = Set [ KeyboardKey.LeftControl; KeyboardKey.G ]
-      let combo2 = Set [ KeyboardKey.LeftControl; KeyboardKey.D ]
+      let combo1 = Set [ KeyCode.LeftControl; KeyCode.G ]
+      let combo2 = Set [ KeyCode.LeftControl; KeyCode.D ]
 
       let map =
         emptyMap
@@ -347,19 +351,19 @@ let tests =
       let mutable heldKeys = Set.empty
 
       let isKeyDown k = heldKeys |> Set.contains k
-      let isMouseButtonDown _ = false
+      let isMouseButtonDown(_b: MouseButtonCode) = false
       let isGamepadButtonDown _ _ = false
 
       let getMap() = map
 
       // Press Ctrl
-      heldKeys <- heldKeys |> Set.add KeyboardKey.LeftControl
+      heldKeys <- heldKeys |> Set.add KeyCode.LeftControl
 
       let state1, cs1 =
         InputMapper.buildActions
           getMap
           Map.empty
-          [| Key KeyboardKey.LeftControl |]
+          [| Key KeyCode.LeftControl |]
           [||]
           isKeyDown
           isMouseButtonDown
@@ -370,13 +374,13 @@ let tests =
         "DebugToggle should not be held with only Ctrl"
 
       // Press G (combo1 complete)
-      heldKeys <- heldKeys |> Set.add KeyboardKey.G
+      heldKeys <- heldKeys |> Set.add KeyCode.G
 
       let state2, cs2 =
         InputMapper.buildActions
           getMap
           cs1
-          [| Key KeyboardKey.G |]
+          [| Key KeyCode.G |]
           [||]
           isKeyDown
           isMouseButtonDown
@@ -388,13 +392,13 @@ let tests =
         "DebugToggle should start from combo1"
 
       // Press D (combo2 also complete)
-      heldKeys <- heldKeys |> Set.add KeyboardKey.D
+      heldKeys <- heldKeys |> Set.add KeyCode.D
 
       let state3, cs3 =
         InputMapper.buildActions
           getMap
           cs2
-          [| Key KeyboardKey.D |]
+          [| Key KeyCode.D |]
           [||]
           isKeyDown
           isMouseButtonDown
@@ -403,14 +407,14 @@ let tests =
       Expect.contains state3.Held DebugToggle "DebugToggle should still be held"
 
       // Release G (combo1 broken, but combo2 still holds Ctrl+D)
-      heldKeys <- heldKeys |> Set.remove KeyboardKey.G
+      heldKeys <- heldKeys |> Set.remove KeyCode.G
 
       let state4, cs4 =
         InputMapper.buildActions
           getMap
           cs3
           [||]
-          [| Key KeyboardKey.G |]
+          [| Key KeyCode.G |]
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown
@@ -425,14 +429,14 @@ let tests =
         "DebugToggle should NOT be released yet"
 
       // Release D (combo2 also broken)
-      heldKeys <- heldKeys |> Set.remove KeyboardKey.D
+      heldKeys <- heldKeys |> Set.remove KeyCode.D
 
       let state5, _cs5 =
         InputMapper.buildActions
           getMap
           cs4
           [||]
-          [| Key KeyboardKey.D |]
+          [| Key KeyCode.D |]
           isKeyDown
           isMouseButtonDown
           isGamepadButtonDown

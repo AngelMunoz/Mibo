@@ -1,4 +1,4 @@
-module Mibo.Raylib.Tests.Layout
+module Mibo.Core.Tests.Layout
 
 open Expecto
 open System.Numerics

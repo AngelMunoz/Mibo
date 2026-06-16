@@ -1,4 +1,4 @@
-module Mibo.Raylib.Tests.LayeredHex
+module Mibo.Core.Tests.LayeredHex
 
 open Expecto
 open System.Numerics

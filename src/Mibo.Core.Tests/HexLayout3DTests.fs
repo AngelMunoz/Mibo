@@ -1,4 +1,4 @@
-module Mibo.Raylib.Tests.HexLayout3D
+module Mibo.Core.Tests.HexLayout3D
 
 open Expecto
 open System.Numerics

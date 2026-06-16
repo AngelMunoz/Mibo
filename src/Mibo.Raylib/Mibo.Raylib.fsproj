@@ -7,21 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Properties/AssemblyInfo.fs" />
-    <Compile Include="Layout/Grid2D.fs" />
-    <Compile Include="Layout/HexGrid.fs" />
-    <Compile Include="Layout/Spatial2D.fs" />
-    <Compile Include="Layout/HexLayout.fs" />
-    <Compile Include="Layout/LayeredHex.fs" />
-    <Compile Include="Layout/Layout.fs" />
-    <Compile Include="Layout/Platformer.fs" />
-    <Compile Include="Layout/TopDown.fs" />
-    <Compile Include="Layout/Layered.fs" />
-    <Compile Include="Elmish.Time.fs" />
-    <Compile Include="Elmish.Commands.fs" />
-    <Compile Include="Elmish.System.fs" />
-    <Compile Include="Elmish.Subscriptions.fs" />
-    <Compile Include="Elmish.Rendering.fs" />
-    <Compile Include="Elmish.ProgramTypes.fs" />
     <Compile Include="RaylibHelpers.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="InputMapper.fs" />
@@ -32,7 +17,6 @@
     <Compile Include="Assets.fs" />
     <Compile Include="Elmish.Program.fs" />
     <Compile Include="Elmish.Runtime.fs" />
-    <Compile Include="Elmish.Headless.fs" />
     <Compile Include="DefaultShaders.fs" />
     <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
     <Compile Include="Graphics2D/Lighting/LitShader.fs" />
@@ -59,16 +43,12 @@
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
     <Compile Include="Graphics3D/Pipelines/Shaders.fs" />
     <Compile Include="Graphics3D/Pipelines/ForwardPbrPipeline.fs" />
-    <Compile Include="Layout3D/Grid3D.fs" />
-    <Compile Include="Layout3D/HexGrid3D.fs" />
-    <Compile Include="Layout3D/Spatial3D.fs" />
-    <Compile Include="Layout3D/Layout3D.fs" />
-    <Compile Include="Layout3D/HexLayout3D.fs" />
-    <Compile Include="Layout3D/LayeredHex3D.fs" />
-    <Compile Include="Layout3D/Interior.fs" />
-    <Compile Include="Layout3D/Terrain.fs" />
     <Compile Include="Layout3D/Renderer3D.fs" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Mibo.Core\Mibo.Core.fsproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Raylib-cs" Version="8.0.0" />
     <PackageReference Include="FSharp.UMX" Version="1.1.0" />

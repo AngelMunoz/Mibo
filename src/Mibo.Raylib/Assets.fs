@@ -6,12 +6,12 @@ open System.IO
 open Raylib_cs
 
 /// <summary>
-/// Per-game asset loader/cache service.
+/// Per-game asset loader/cache service for the raylib backend.
 /// </summary>
 /// <remarks>
 /// Provides cached loading for textures, fonts, sounds, models, and shaders
-/// from loose files (no content pipeline). Also supports generic typed cache
-/// for custom asset types.
+/// from loose files (no content pipeline). Extends <see cref="T:Mibo.Elmish.IAssetCache"/>
+/// so portable code can cache custom assets without referencing a backend.
 /// </remarks>
 /// <example>
 /// <code>
@@ -22,6 +22,8 @@ open Raylib_cs
 /// </code>
 /// </example>
 type IAssets =
+  inherit IAssetCache
+
   /// <summary>Loads and caches a <see cref="T:Raylib_cs.Texture2D"/> from file.</summary>
   abstract Texture: path: string -> Texture2D
 
@@ -40,22 +42,6 @@ type IAssets =
   /// Returns an empty array if the model has no animations.
   /// </remarks>
   abstract ModelAnimations: path: string -> ModelAnimation[]
-
-  /// <summary>Gets a previously created custom asset by key.</summary>
-  abstract Get<'T> : key: string -> 'T voption
-
-  /// <summary>Creates and caches a custom asset using the provided factory.</summary>
-  abstract Create<'T> : key: string * factory: (unit -> 'T) -> 'T
-
-  /// <summary>Gets a cached asset or creates it if not present.</summary>
-  /// <remarks>This is the preferred method for custom assets - idempotent, ensures assets are created only once.</remarks>
-  abstract GetOrCreate<'T> : key: string * factory: (unit -> 'T) -> 'T
-
-  /// <summary>Clears all caches (does not dispose GPU resources).</summary>
-  abstract Clear: unit -> unit
-
-  /// <summary>Disposes all cached assets and clears caches.</summary>
-  abstract Dispose: unit -> unit
 
 /// <summary>
 /// Implementation of <see cref="T:Mibo.Elmish.IAssets"/> with dictionary-based caches.
