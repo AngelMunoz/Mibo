@@ -3,17 +3,17 @@ module PlatformerSample.View
 open System
 open System.Collections.Generic
 open System.Numerics
-open Raylib_cs
 open Mibo.Elmish
-open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics2D.Lighting
 open Mibo.Layout
 open Mibo.Animation
 open PlatformerSample.Constants
-open PlatformerSample.Types
 open PlatformerSample.DayNight
 open PlatformerSample.WorldGen
 open PlatformerSample.Minimap
+open Mibo.Elmish.Next.Graphics2D
+open Raylib_cs
+open PlatformerSample.Types
 
 let inline r (x: int) (y: int) (w: int) (h: int) =
   Rectangle(float32 x, float32 y, float32 w, float32 h)

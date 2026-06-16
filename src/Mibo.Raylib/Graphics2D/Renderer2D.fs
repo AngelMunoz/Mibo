@@ -464,8 +464,7 @@ module private CommandHandlers =
           let halfW = p.Size.X * 0.5f
           let halfH = p.Size.Y * 0.5f
 
-          let src =
-            Rectangle(0.f, 0.f, float32 texture.Width, float32 texture.Height)
+          let src = p.SourceRect
 
           let dst =
             Rectangle(
@@ -475,7 +474,14 @@ module private CommandHandlers =
               p.Size.Y
             )
 
-          Raylib.DrawTexturePro(texture, src, dst, Vector2.Zero, 0.f, p.Color)
+          Raylib.DrawTexturePro(
+            texture,
+            src,
+            dst,
+            Vector2(halfW, halfH),
+            p.Rotation,
+            p.Color
+          )
 
     endShader &state
     endCamera &state

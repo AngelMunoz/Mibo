@@ -2,17 +2,17 @@ module ThreeDSample.Program
 
 open System
 open System.Numerics
-open Raylib_cs
 open Mibo.Elmish
-open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics3D
 open Mibo.Elmish.Graphics3D.Pipelines
 open Mibo.Animation
 open Mibo.Input
 open ThreeDSample.Constants
-open ThreeDSample.Types
 open ThreeDSample.WorldGen
 open ThreeDSample.Physics
+open Mibo.Elmish.Next.Graphics2D
+open Raylib_cs
+open ThreeDSample.Types
 
 let loadInitialChunks(model: GameModel) =
   let spawnPos = spawnPosition
@@ -97,7 +97,7 @@ let main _ =
     |> Program.withSubscription subscribe
     |> Program.withTick Tick
     |> Program.withRenderer(fun () ->
-      Renderer2D.createWith Renderer2DConfig.noClear overlayView)
+      Renderer2D.createWith ValueNone overlayView)
     |> Program.withRenderer(fun () ->
       let pipeline =
         ForwardPbrPipeline(
