@@ -108,6 +108,19 @@ let tests =
           Expect.equal msg 42 "Single Msg in batch should stay as Msg"
         | _ -> Tests.failtest "Expected Msg command"
 
+      testCase "Cmd.batch unwraps single-effect NowAndDeferNextFrame"
+      <| fun _ ->
+        let eff = Effect(fun dispatch -> dispatch 7)
+        let cmd: Cmd<int> = NowAndDeferNextFrame([| eff |], [||])
+        let batched = Cmd.batch [ cmd ]
+
+        match batched with
+        | Single e ->
+          let mutable got = 0
+          e.Invoke(fun v -> got <- v)
+          Expect.equal got 7 "Should preserve the now-effect"
+        | other -> Tests.failtestf "Expected Single after batch, got %A" other
+
       testCase "Cmd.deferNextFrame on Msg produces DeferNextFrame"
       <| fun _ ->
         let cmd = Cmd.ofMsg 99

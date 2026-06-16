@@ -188,13 +188,15 @@ module Cmd =
       Empty
     elif nextCount = 0 then
       if nowCount = 1 then
-        let mutable result = Unchecked.defaultof<Cmd<'Msg>>
+        let mutable result = Empty
 
         for c in cmds do
           match c with
           | Msg _ -> result <- c
           | Single _ -> result <- c
           | Batch b when b.Length = 1 -> result <- Single b[0]
+          | NowAndDeferNextFrame(now, _) when now.Length = 1 ->
+            result <- Single now[0]
           | _ -> ()
 
         result

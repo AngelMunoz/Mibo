@@ -25,7 +25,9 @@ namespace Mibo.Elmish
 /// </remarks>
 /// <example>
 /// <code>
-/// let cache = GameContext.getService&lt;IAssetCache&gt; ctx
+/// /// Each backend registers its own IAssets (which inherits IAssetCache)
+/// /// under the IAssets key, so resolve via the backend's IAssets type:
+/// let cache = GameContext.getService&lt;IAssets&gt; ctx
 /// let config = cache.GetOrCreate("gameConfig", fun () -> loadConfig())
 /// </code>
 /// </example>

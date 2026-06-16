@@ -28,6 +28,16 @@
 - **Breaking:** `Program.withInputMapper` moved to `RaylibProgram.withInputMapper` (raylib backend only). The factory is backend-specific, so the function can no longer live in the shared Core `Program` builder. Call sites change `Program.withInputMapper map` → `RaylibProgram.withInputMapper map`. No samples used this path (they use the subscription-based `InputMapper.subscribeStatic`), so no sample changes were required. See `docs/migration-to-vnext.md` (Phase 1d).
 - **Breaking (behavioral):** renderer draw order is now correct. Previously, `withRenderer` prepended to the list but the runtime iterated without reversing, so the last renderer added drew first. Now the runtime reverses `program.Renderers` before iterating, matching the existing `Config`/`ServiceRegistrations` pattern. Renderers draw in the order you add them. This is a behavioral change that will not produce compiler errors — review your renderer setup if you use multiple renderers.
 
+### Fixed
+
+- `Cmd.batch` silently dropped a single `NowAndDeferNextFrame([|eff|], [||])` passed as the only command. The single-effect fast path only matched `Msg`/`Single`/`Batch of 1`, so `NowAndDeferNextFrame` fell through to the wildcard and the effect was lost. Added the missing case and initialize the accumulator to `Empty` explicitly.
+- `HeadlessRunner.StepUntil` had an off-by-one: the predicate was tested *before* each `Step`, so a predicate satisfied by the final permitted step returned `false`. Also, once `met`/`ShouldQuit` became true the loop kept spinning up to `maxFrames`. Rewritten as a `while` loop that steps first and exits immediately when the predicate (or `ShouldQuit`) becomes true. The documented "quit counts as met" behaviour is preserved.
+- MonoGame `InputPolling.pollMouse` now diffs `XButton1`/`XButton2` and emits `MouseButtonCode.Extra1`/`Extra2` on the `MouseDelta` stream, matching the raylib backend. Previously, the event-driven mouse subscription path never surfaced back/forward button presses (the poll-driven `InputMapper` path handled them via `isMouseButtonDownFor`), so the two input paths within MonoGame diverged.
+
+### Removed
+
+- 11 stale duplicate test files from `Mibo.Raylib.Tests` (`ElmishTests.fs`, `HeadlessTests.fs`, `HexGridTests.fs`, `HexLayoutTests.fs`, `LayeredHexTests.fs`, `HexGrid3DTests.fs`, `HexLayout3DTests.fs`, `LayeredHex3DTests.fs`, `LayoutTests.fs`, `Spatial2DTests.fs`, `Spatial3DTests.fs`). These were leftovers from the `Mibo.Core.Tests` extraction that were never referenced by `Mibo.Raylib.Tests.fsproj` and therefore never compiled — the canonical copies live in `Mibo.Core.Tests`.
+
 ## [1.3.0] - 2026-06-13
 
 ### Added

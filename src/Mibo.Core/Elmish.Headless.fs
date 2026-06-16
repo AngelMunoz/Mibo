@@ -224,13 +224,13 @@ type HeadlessRunner<'Model, 'Msg>
     (predicate: 'Model -> bool, elapsed: TimeSpan, [<Struct>] ?maxFrames: int)
     =
     let max = defaultValueArg maxFrames 10000
-    let mutable met = false
+    let mutable steps = 0
+    let mutable met = predicate this.Model || this.ShouldQuit
 
-    for _ = 1 to max do
-      if not this.ShouldQuit && not(predicate this.Model) then
-        this.Step elapsed
-      else
-        met <- true
+    while steps < max && not met do
+      this.Step elapsed
+      steps <- steps + 1
+      met <- predicate this.Model || this.ShouldQuit
 
     met
 

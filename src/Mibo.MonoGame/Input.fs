@@ -399,6 +399,8 @@ module private InputPolling =
     deltaBtn curr.LeftButton prevMouse.LeftButton MouseButtonCode.Left
     deltaBtn curr.RightButton prevMouse.RightButton MouseButtonCode.Right
     deltaBtn curr.MiddleButton prevMouse.MiddleButton MouseButtonCode.Middle
+    deltaBtn curr.XButton1 prevMouse.XButton1 MouseButtonCode.Extra1
+    deltaBtn curr.XButton2 prevMouse.XButton2 MouseButtonCode.Extra2
 
     let hasButtonChange = pressed.Count > 0 || released.Count > 0
 
