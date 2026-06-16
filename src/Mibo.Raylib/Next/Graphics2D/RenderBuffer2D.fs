@@ -1,5 +1,26 @@
 namespace Mibo.Elmish.Next.Graphics2D
 
+open System.Buffers
+
+// ─────────────────────────────────────────────────────────────────
+// Particle pool — scoped to buffer instance, not module-level
+// ─────────────────────────────────────────────────────────────────
+
+type ParticlePool() =
+  let pool = ArrayPool<ParticleData>.Create()
+  let rented = ResizeArray<ParticleData[]>()
+
+  member _.Rent(count: int) =
+    let arr = pool.Rent count
+    rented.Add arr
+    arr
+
+  member _.ReturnAll() =
+    for arr in rented do
+      pool.Return(arr, false)
+
+    rented.Clear()
+
 // ─────────────────────────────────────────────────────────────────
 // Raylib RenderBuffer2D — subclass carrying resource registries
 // ─────────────────────────────────────────────────────────────────
@@ -18,3 +39,4 @@ type RenderBuffer2D(?capacity: int) =
   member val Shaders = Mibo.Elmish.Next.RaylibShaderRegistry()
   member val RenderTargets = Mibo.Elmish.Next.RaylibRenderTargetRegistry()
   member val LightContexts = Mibo.Elmish.Next.LightContextRegistry()
+  member val ParticlePool = ParticlePool()

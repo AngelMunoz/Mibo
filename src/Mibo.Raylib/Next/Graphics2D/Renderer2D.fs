@@ -499,7 +499,7 @@ type Renderer2D<'Model>
       | ValueNone -> ()
 
       CommandHandlers.execute(&state, buffer)
-      ParticleDraw.returnAll()
+      buffer.ParticlePool.ReturnAll()
 
       _camera <- state.Camera
       _shader <- state.Shader

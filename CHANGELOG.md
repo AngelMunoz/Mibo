@@ -54,7 +54,7 @@
 - `RaylibMeshRegistry` and `RaylibModelRegistry` document that `GenericHash` is a temporary measure (expensive, collision-prone) and will be replaced with proper identity tokens (`Mesh.VaoId`, etc.) when the 3D pipeline is ported.
 - `RenderBuffer2DBase` keys array now returned to pool with `clearArray = true` (matches the items array behavior).
 - Both `RenderBuffer2DBase` and `RenderBuffer3DBase` now expose a public `Dispose()` method (in addition to the `IDisposable` interface) and throw `ObjectDisposedException` on `Add`/`Clear`/`Sort`/`Count`/`Item` after disposal.
-- `ParticleDraw.particles` now rents `ParticleData[]` from `ArrayPool` instead of allocating with `Array.zeroCreate`. Rented arrays are returned via `ParticleDraw.returnAll()` called by the renderer after dispatch.
+- `ParticleDraw.particles` now rents `ParticleData[]` from `ArrayPool` instead of allocating with `Array.zeroCreate`. Rented arrays are tracked per-buffer via `ParticlePool` (scoped to the `RenderBuffer2D` instance, not module-level shared state) and returned via `buffer.ParticlePool.ReturnAll()` called by the renderer after dispatch.
 
 ### Removed
 
