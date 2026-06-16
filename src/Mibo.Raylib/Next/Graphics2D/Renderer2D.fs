@@ -90,6 +90,12 @@ module private CommandHandlers =
         state.Shader <- savedShader
       | ValueNone -> ()
 
+  // Known limitation: interleaved light contexts with different shaders cause
+  // redundant EndShaderMode/BeginShaderMode round-trips (each with a
+  // DrawRenderBatchActive flush), producing O(N²) batch flushes in the worst
+  // case. Mitigation: sort lit sprites by shader before dispatch, or batch
+  // sprites sharing the same light context.
+
   let private handleLitSprite
     (
       buffer: RenderBuffer2D,
@@ -493,6 +499,7 @@ type Renderer2D<'Model>
       | ValueNone -> ()
 
       CommandHandlers.execute(&state, buffer)
+      ParticleDraw.returnAll()
 
       _camera <- state.Camera
       _shader <- state.Shader

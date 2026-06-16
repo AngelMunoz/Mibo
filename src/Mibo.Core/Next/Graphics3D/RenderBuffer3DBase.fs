@@ -21,6 +21,10 @@ type RenderBuffer3DBase(?capacity: int) =
   let mutable count = 0
   let mutable disposed = false
 
+  let checkDisposed() =
+    if disposed then
+      raise(ObjectDisposedException(nameof RenderBuffer3DBase))
+
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
       let newSize = max (items.Length * 2) (count + needed)
@@ -32,13 +36,18 @@ type RenderBuffer3DBase(?capacity: int) =
       items <- newArr
 
   /// <summary>The number of commands currently in the buffer.</summary>
-  member _.Count = count
+  member _.Count =
+    checkDisposed()
+    count
 
   /// <summary>Gets the command at the specified index.</summary>
-  member _.Item(i: int) = items[i]
+  member _.Item(i: int) =
+    checkDisposed()
+    items[i]
 
   /// <summary>Adds a render command to the buffer.</summary>
   member _.Add(cmd: Command3D) =
+    checkDisposed()
     ensureCapacity 1
     items[count] <- cmd
     count <- count + 1
@@ -49,6 +58,7 @@ type RenderBuffer3DBase(?capacity: int) =
   /// Call at the start of each frame.
   /// </summary>
   member _.Clear() =
+    checkDisposed()
     Array.Clear(items, 0, count)
     count <- 0
 
@@ -57,12 +67,19 @@ type RenderBuffer3DBase(?capacity: int) =
   /// Pipelines may call this internally to optimize draw order.
   /// </summary>
   member _.Sort(comparer: IComparer<Command3D>) =
+    checkDisposed()
     Array.Sort(items, 0, count, comparer)
 
+  /// <summary>
+  /// Returns the rented backing array to <see cref="T:System.Buffers.ArrayPool`1"/>.
+  /// After disposal the buffer must not be used.
+  /// </summary>
+  member _.Dispose() =
+    if not disposed then
+      disposed <- true
+      ArrayPool<Command3D>.Shared.Return(items, true)
+      items <- Array.empty
+      count <- 0
+
   interface IDisposable with
-    member _.Dispose() =
-      if not disposed then
-        disposed <- true
-        ArrayPool<Command3D>.Shared.Return(items, clearArray = true)
-        items <- Array.empty
-        count <- 0
+    member this.Dispose() = this.Dispose()

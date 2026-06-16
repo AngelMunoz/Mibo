@@ -52,6 +52,9 @@
 - `Renderer2D<'Model>` (prototype) now implements `IDisposable`, disposing the `RenderBuffer2D` on shutdown to release `ArrayPool` rentals.
 - `Convert.toCamera` now delegates to `Convert.toCameraPlanes` which accepts configurable `nearPlane` and `farPlane` parameters. The default `toCamera` uses `0.01f`/`1000.0f` for backward compatibility.
 - `RaylibMeshRegistry` and `RaylibModelRegistry` document that `GenericHash` is a temporary measure (expensive, collision-prone) and will be replaced with proper identity tokens (`Mesh.VaoId`, etc.) when the 3D pipeline is ported.
+- `RenderBuffer2DBase` keys array now returned to pool with `clearArray = true` (matches the items array behavior).
+- Both `RenderBuffer2DBase` and `RenderBuffer3DBase` now expose a public `Dispose()` method (in addition to the `IDisposable` interface) and throw `ObjectDisposedException` on `Add`/`Clear`/`Sort`/`Count`/`Item` after disposal.
+- `ParticleDraw.particles` now rents `ParticleData[]` from `ArrayPool` instead of allocating with `Array.zeroCreate`. Rented arrays are returned via `ParticleDraw.returnAll()` called by the renderer after dispatch.
 
 ### Removed
 

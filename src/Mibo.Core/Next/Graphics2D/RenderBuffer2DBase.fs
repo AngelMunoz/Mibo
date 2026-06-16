@@ -90,6 +90,10 @@ type RenderBuffer2DBase(?capacity: int) =
   let mutable count = 0
   let mutable disposed = false
 
+  let checkDisposed() =
+    if disposed then
+      raise(ObjectDisposedException(nameof RenderBuffer2DBase))
+
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
       let newSize = max (items.Length * 2) (count + needed)
@@ -100,18 +104,23 @@ type RenderBuffer2DBase(?capacity: int) =
       Array.Copy(items, newItems, count)
       Array.Copy(keys, newKeys, count)
       ArrayPool<Command2D>.Shared.Return(items, true)
-      ArrayPool<int64>.Shared.Return(keys)
+      ArrayPool<int64>.Shared.Return(keys, true)
       items <- newItems
       keys <- newKeys
 
   /// <summary>The number of commands currently in the buffer.</summary>
-  member _.Count = count
+  member _.Count =
+    checkDisposed()
+    count
 
   /// <summary>Gets the command at the specified index.</summary>
-  member _.Item(i: int) = items[i]
+  member _.Item(i: int) =
+    checkDisposed()
+    items[i]
 
   /// <summary>Adds a render command to the buffer.</summary>
   member _.Add(cmd: Command2D) =
+    checkDisposed()
     ensureCapacity 1
     items[count] <- cmd
     keys[count] <- (int64(int(getLayer cmd)) <<< 32) ||| int64 count
@@ -123,6 +132,7 @@ type RenderBuffer2DBase(?capacity: int) =
   /// Call at the start of each frame before populating with new commands.
   /// </summary>
   member _.Clear() =
+    checkDisposed()
     Array.Clear(items, 0, count)
     count <- 0
 
@@ -130,7 +140,9 @@ type RenderBuffer2DBase(?capacity: int) =
   /// Sorts commands by layer in ascending order, preserving insertion order
   /// for same-layer commands via packed <c>int64</c> keys.
   /// </summary>
-  member _.Sort() = Array.Sort(keys, items, 0, count)
+  member _.Sort() =
+    checkDisposed()
+    Array.Sort(keys, items, 0, count)
 
   /// <summary>
   /// Returns the rented backing arrays to <see cref="T:System.Buffers.ArrayPool`1"/>.
@@ -140,7 +152,7 @@ type RenderBuffer2DBase(?capacity: int) =
     if not disposed then
       disposed <- true
       ArrayPool<Command2D>.Shared.Return(items, true)
-      ArrayPool<int64>.Shared.Return(keys)
+      ArrayPool<int64>.Shared.Return(keys, true)
       items <- Array.empty
       keys <- Array.empty
       count <- 0
