@@ -6,6 +6,7 @@ open System.Reflection
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish.Next
+open Mibo.Elmish.Next.Graphics2D.Lighting
 
 [<Struct>]
 type private EffectParams = {
@@ -70,7 +71,14 @@ type LightContext2D
   let pointLights = ResizeArray<PointLight2D>()
   let occluders = ResizeArray<Occluder2D>()
 
-  let mutable ambientColor = Color(0uy, 0uy, 0uy, 255uy)
+  let blackAmbient: Mibo.Elmish.Next.Graphics2D.Base.Color = {
+    R = 0uy
+    G = 0uy
+    B = 0uy
+    A = 255uy
+  }
+
+  let mutable ambientColor = blackAmbient
 
   // ── Cached EffectParameter references (avoid per-frame string alloc + linear search) ──
 
@@ -118,7 +126,7 @@ type LightContext2D
   let litParams = cache litEffect
   let nmParams = cache nmEffect
 
-  let colorToVec3(c: Color) : Vector3 =
+  let colorToVec3(c: Mibo.Elmish.Next.Graphics2D.Base.Color) : Vector3 =
     Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
 
   let uploadToEffect (p: EffectParams) (shadowsEnabled: bool) =
@@ -166,7 +174,7 @@ type LightContext2D
     dirLights.Clear()
     pointLights.Clear()
     occluders.Clear()
-    ambientColor <- Color(0uy, 0uy, 0uy, 255uy)
+    ambientColor <- blackAmbient
     this.ShaderActive <- false
     this.UniformsDirty <- true
     this.ShadowsEnabled <- true

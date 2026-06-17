@@ -79,10 +79,10 @@ module Rect =
 
 [<Struct>]
 type Camera2DState = {
-  Offset: Vector2
-  Target: Vector2
-  Rotation: float32
-  Zoom: float32
+  mutable Offset: Vector2
+  mutable Target: Vector2
+  mutable Rotation: float32
+  mutable Zoom: float32
 }
 
 [<Struct>]

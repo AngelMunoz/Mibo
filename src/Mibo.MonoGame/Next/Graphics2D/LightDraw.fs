@@ -3,7 +3,9 @@ namespace Mibo.Elmish.Next.Graphics2D
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish.Next
+open Mibo.Elmish.Next.Animation
 open Mibo.Elmish.Next.Graphics2D.Base
+open Mibo.Elmish.Next.Graphics2D.Lighting
 
 module LightDraw =
 
@@ -74,6 +76,44 @@ module LightDraw =
     )
 
     buffer
+
+  let litAnimatedSprite
+    (lightCtx: LightContext2D)
+    (layer: int<RenderLayer>)
+    (dest: Rectangle)
+    (animSprite: AnimatedSprite)
+    (buffer: RenderBuffer2D)
+    =
+    let src = AnimatedSprite.currentSource animSprite
+
+    let src =
+      if animSprite.FlipX then
+        { src with Width = -src.Width }
+      else
+        src
+
+    let src =
+      if animSprite.FlipY then
+        { src with Height = -src.Height }
+      else
+        src
+
+    litSprite
+      lightCtx
+      ({
+        Texture = buffer.Textures.Resolve animSprite.Sheet.Texture
+        Dest = dest
+        Source = Convert.toMgRect src
+        Origin = Convert.toMgVec2 animSprite.Sheet.Origin
+        Rotation = animSprite.Rotation
+        Color = Convert.toMgColor animSprite.Color
+        Layer = layer
+        NormalMap =
+          match animSprite.Sheet.NormalMap with
+          | ValueSome h -> ValueSome(buffer.Textures.Resolve h)
+          | ValueNone -> ValueNone
+      })
+      buffer
 
   let endLighting
     (lightCtx: LightContext2D)

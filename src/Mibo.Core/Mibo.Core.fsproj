@@ -22,6 +22,10 @@
     <Compile Include="Elmish.Loop.fs" />
     <Compile Include="Elmish.Headless.fs" />
     <Compile Include="Next/Graphics2D/Primitives.fs" />
+    <Compile Include="Next/Graphics2D/Camera2D.fs" />
+    <Compile Include="Next/Animation/Animation.fs" />
+    <Compile Include="Next/Graphics2D/Lighting/LightTypes.fs" />
+    <Compile Include="Next/Graphics2D/Lighting/ParticleTypes.fs" />
     <Compile Include="Next/Graphics2D/Command2D.fs" />
     <Compile Include="Next/Graphics2D/RenderBuffer2DBase.fs" />
     <Compile Include="Next/Graphics3D/Primitives3D.fs" />
@@ -36,6 +40,7 @@
     <Compile Include="Layout/Platformer.fs" />
     <Compile Include="Layout/TopDown.fs" />
     <Compile Include="Layout/Layered.fs" />
+    <Compile Include="Next/Graphics2D/Lighting/GridOccluders.fs" />
     <Compile Include="Layout3D/Grid3D.fs" />
     <Compile Include="Layout3D/HexGrid3D.fs" />
     <Compile Include="Layout3D/Spatial3D.fs" />
