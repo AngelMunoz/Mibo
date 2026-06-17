@@ -599,24 +599,25 @@ module Input =
 
     { new IInput with
         member _.Poll() =
-          // MonoGame's Mouse/Keyboard/Touch state queries report globally
+          // MonoGame's Mouse/Keyboard state queries report globally
           // (screen-level), not just for the focused window — matching XNA's
           // original behavior.  raylib (GLFW) only updates mouse position via
-          // a cursor callback that fires when the cursor is over the window.
-          // To match, check if the cursor is within the window client bounds
-          // before processing mouse/touch.  Keyboard still requires focus
-          // (IsActive) since GLFW keyboard events only fire for focused windows.
-          // Gamepad polling is always active (controllers are not window-scoped).
+          // a cursor callback that fires when the cursor is over the window,
+          // and keyboard events only fire for focused windows.
+          // To match:
+          //   - Mouse: gated by cursorOverWindow (cursor within client bounds)
+          //   - Keyboard + Touch: gated by IsActive (window focus)
+          //   - Gamepad: always active (controllers are not window-scoped)
           // Users who need global input reporting should poll IInput directly
           // from a custom subscription or service.
           let curr = Mouse.GetState()
           let bounds = game.Window.ClientBounds
 
           let cursorOverWindow =
-            curr.X >= 0
-            && curr.X < bounds.Width
-            && curr.Y >= 0
-            && curr.Y < bounds.Height
+            curr.X >= bounds.X
+            && curr.X < bounds.X + bounds.Width
+            && curr.Y >= bounds.Y
+            && curr.Y < bounds.Y + bounds.Height
 
           if game.IsActive then
             InputPolling.pollKeyboard
@@ -625,9 +626,12 @@ module Input =
               releasedKeysBuf
               keyboardDelta.Trigger
 
+            InputPolling.pollTouch touchDelta.Trigger
+          else
+            prevKeyboard <- Keyboard.GetState()
+
           if cursorOverWindow then
             InputPolling.pollMouse &prevMouse mouseDelta.Trigger
-            InputPolling.pollTouch touchDelta.Trigger
           else
             // Advance previous state so there is no stale delta jump when
             // the cursor re-enters the window.
