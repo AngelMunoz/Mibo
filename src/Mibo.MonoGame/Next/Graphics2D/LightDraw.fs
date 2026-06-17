@@ -86,17 +86,11 @@ module LightDraw =
     =
     let src = AnimatedSprite.currentSource animSprite
 
-    let src =
-      if animSprite.FlipX then
-        { src with Width = -src.Width }
-      else
-        src
-
-    let src =
-      if animSprite.FlipY then
-        { src with Height = -src.Height }
-      else
-        src
+    let src = {
+      src with
+          Width = if animSprite.FlipX then -src.Width else src.Width
+          Height = if animSprite.FlipY then -src.Height else src.Height
+    }
 
     litSprite
       lightCtx
