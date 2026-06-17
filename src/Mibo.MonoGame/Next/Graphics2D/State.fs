@@ -83,6 +83,10 @@ module TextState =
         Layer = v
   }
 
+/// <summary>
+/// MonoGame-specific particle render snapshot. Converted to the neutral
+/// <see cref="T:Mibo.Elmish.Next.Graphics2D.Lighting.Particle2D"/> by the DSL.
+/// </summary>
 [<Struct>]
 type Particle2D = {
   Position: Vector2
@@ -92,26 +96,21 @@ type Particle2D = {
   Color: Color
 }
 
-[<Struct>]
-type AmbientLight2D = { Color: Color }
+module Particle2D =
 
-[<Struct>]
-type DirectionalLight2D = {
-  Direction: Vector2
-  Color: Color
-  Intensity: float32
-  CastsShadows: bool
-}
+  let create(position: Vector2, size: Vector2) : Particle2D = {
+    Position = position
+    Size = size
+    Rotation = 0.0f
+    SourceRect = Rectangle(0, 0, 0, 0)
+    Color = Microsoft.Xna.Framework.Color.White
+  }
 
-[<Struct>]
-type PointLight2D = {
-  Position: Vector2
-  Color: Color
-  Intensity: float32
-  Radius: float32
-  Falloff: float32
-  CastsShadows: bool
-}
+  let inline withRotation (v: float32) (p: Particle2D) = { p with Rotation = v }
 
-[<Struct>]
-type Occluder2D = { P1: Vector2; P2: Vector2 }
+  let inline withSourceRect (v: Rectangle) (p: Particle2D) = {
+    p with
+        SourceRect = v
+  }
+
+  let inline withColor (v: Color) (p: Particle2D) = { p with Color = v }
