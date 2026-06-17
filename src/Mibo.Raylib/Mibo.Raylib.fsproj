@@ -54,6 +54,7 @@
     <Compile Include="Next/Graphics2D/LightDraw.fs" />
     <Compile Include="Next/Graphics2D/ParticleDraw.fs" />
     <Compile Include="Next/Graphics2D/Renderer2D.fs" />
+    <Compile Include="Next/Animation.fs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Mibo.Core\Mibo.Core.fsproj" />

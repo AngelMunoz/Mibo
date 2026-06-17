@@ -3,7 +3,7 @@ namespace Mibo.Elmish.Next.Graphics2D
 open Raylib_cs
 open Mibo.Elmish.Next
 open Mibo.Elmish.Next.Graphics2D.Base
-open Mibo.Elmish.Graphics2D.Lighting
+open Mibo.Elmish.Next.Graphics2D.Lighting
 
 module ParticleDraw =
 
@@ -28,8 +28,8 @@ module ParticleDraw =
               Position = p.Position
               Size = p.Size
               Rotation = p.Rotation
-              SourceRect = Convert.toRect(p.SourceRect)
-              Color = Convert.toColor(p.Color)
+              SourceRect = p.SourceRect
+              Color = p.Color
             }
             : ParticleData)
 

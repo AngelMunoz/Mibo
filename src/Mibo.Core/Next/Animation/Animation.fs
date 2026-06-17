@@ -268,6 +268,12 @@ module SpriteSheet =
   let static' (texture: int<Texture>) (sourceRect: Rect) : SpriteSheet =
     single texture [| sourceRect |] 1.0f false
 
+  /// <summary>Get the frame width of a sprite sheet in pixels.</summary>
+  let inline frameWidth(sheet: SpriteSheet) : int = sheet.FrameSize.X
+
+  /// <summary>Get the frame height of a sprite sheet in pixels.</summary>
+  let inline frameHeight(sheet: SpriteSheet) : int = sheet.FrameSize.Y
+
   /// <summary>
   /// Try to get the index for an animation name.
   /// </summary>

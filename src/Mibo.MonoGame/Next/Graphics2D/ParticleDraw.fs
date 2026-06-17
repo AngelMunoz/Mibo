@@ -4,12 +4,13 @@ open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish.Next
 open Mibo.Elmish.Next.Graphics2D.Base
+open Mibo.Elmish.Next.Graphics2D.Lighting
 
 module ParticleDraw =
 
   let particles
     (texture: Texture2D)
-    (data: Particle2D[])
+    (data: Graphics2D.Particle2D[])
     (count: int)
     (layer: int<RenderLayer>)
     (buffer: RenderBuffer2D)
