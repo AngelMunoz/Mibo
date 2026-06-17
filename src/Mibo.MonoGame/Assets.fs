@@ -2,6 +2,7 @@ namespace Mibo.Elmish
 
 open System
 open System.Collections.Generic
+open System.IO
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Audio
 open Microsoft.Xna.Framework.Content
@@ -43,11 +44,17 @@ type IAssets =
   /// <summary>Loads and caches a <see cref="T:Microsoft.Xna.Framework.Graphics.Texture2D"/> from the content pipeline.</summary>
   abstract Texture: path: string -> Texture2D
 
+  /// <summary>Loads and caches a <see cref="T:Microsoft.Xna.Framework.Graphics.Texture2D"/> from a loose file.</summary>
+  abstract TextureFromFile: path: string -> Texture2D
+
   /// <summary>Loads and caches a <see cref="T:Microsoft.Xna.Framework.Graphics.SpriteFont"/> from the content pipeline.</summary>
   abstract Font: path: string -> SpriteFont
 
   /// <summary>Loads and caches a <see cref="T:Microsoft.Xna.Framework.Audio.SoundEffect"/> from the content pipeline.</summary>
   abstract Sound: path: string -> SoundEffect
+
+  /// <summary>Loads and caches a <see cref="T:Microsoft.Xna.Framework.Audio.SoundEffect"/> from a loose file.</summary>
+  abstract SoundFromFile: path: string -> SoundEffect
 
   /// <summary>Loads and caches a 3D <see cref="T:Microsoft.Xna.Framework.Graphics.Model"/> from the content pipeline.</summary>
   abstract Model: path: string -> Model
@@ -60,18 +67,24 @@ type IAssets =
 /// <c>ContentManager</c>, with dictionary-based caches per asset type.
 /// </summary>
 /// <param name="content">The MonoGame content manager used to load XNB assets.</param>
-type AssetsService(content: ContentManager) =
+type AssetsService
+  (content: ContentManager, graphicsDevice: GraphicsDevice voption) =
 
   let typedCache = Dictionary<string, obj>()
 
   let textures = Dictionary<string, Texture2D>()
+  let fileTextures = Dictionary<string, Texture2D>()
   let fonts = Dictionary<string, SpriteFont>()
   let sounds = Dictionary<string, SoundEffect>()
+  let fileSounds = Dictionary<string, SoundEffect>()
   let models = Dictionary<string, Model>()
   let effects = Dictionary<string, Effect>()
 
   /// <summary>The <c>ContentManager</c> this service loads from.</summary>
   member _.Content = content
+
+  /// <summary>The graphics device used for loose-file texture loading.</summary>
+  member _.GraphicsDevice = graphicsDevice
 
   interface IAssets with
     member _.Texture(path) =
@@ -81,6 +94,20 @@ type AssetsService(content: ContentManager) =
         let tex = content.Load<Texture2D>(path)
         textures.Add(path, tex)
         tex
+
+    member _.TextureFromFile(path) =
+      match fileTextures.TryGetValue(path) with
+      | true, tex -> tex
+      | _ ->
+        match graphicsDevice with
+        | ValueNone ->
+          invalidOp
+            $"TextureFromFile requires a GraphicsDevice. Use AssetsService.createFromContext or provide a device."
+        | ValueSome gd ->
+          use stream = File.OpenRead(path)
+          let tex = Texture2D.FromStream(gd, stream)
+          fileTextures.Add(path, tex)
+          tex
 
     member _.Font(path) =
       match fonts.TryGetValue(path) with
@@ -96,6 +123,15 @@ type AssetsService(content: ContentManager) =
       | _ ->
         let sound = content.Load<SoundEffect>(path)
         sounds.Add(path, sound)
+        sound
+
+    member _.SoundFromFile(path) =
+      match fileSounds.TryGetValue(path) with
+      | true, sound -> sound
+      | _ ->
+        use stream = File.OpenRead(path)
+        let sound = SoundEffect.FromStream(stream)
+        fileSounds.Add(path, sound)
         sound
 
     member _.Model(path) =
@@ -135,8 +171,10 @@ type AssetsService(content: ContentManager) =
     member _.Clear() =
       typedCache.Clear()
       textures.Clear()
+      fileTextures.Clear()
       fonts.Clear()
       sounds.Clear()
+      fileSounds.Clear()
       models.Clear()
       effects.Clear()
 
@@ -151,21 +189,33 @@ type AssetsService(content: ContentManager) =
 
       typedCache.Clear()
       textures.Clear()
+      fileTextures.Clear()
       fonts.Clear()
       sounds.Clear()
+      fileSounds.Clear()
       models.Clear()
       effects.Clear()
 
 /// Factory for <see cref="T:Mibo.Elmish.IAssets"/> implementations.
 module AssetsService =
-  /// <summary>Creates an asset service over the given <c>ContentManager</c>.</summary>
+  /// <summary>Creates an asset service over the given <c>ContentManager</c>.
+  /// Loose-file texture loading requires a GraphicsDevice; use createFromContext for full support.
+  /// </summary>
   let create(content: ContentManager) : IAssets =
-    new AssetsService(content) :> IAssets
+    new AssetsService(content, ValueNone) :> IAssets
+
+  /// <summary>Creates an asset service with an explicit graphics device for loose-file texture loading.</summary>
+  let createWithDevice
+    (content: ContentManager)
+    (graphicsDevice: GraphicsDevice)
+    : IAssets =
+    new AssetsService(content, ValueSome graphicsDevice) :> IAssets
 
   /// <summary>
   /// Creates an asset service from a <see cref="T:Mibo.Elmish.GameContext"/>,
-  /// resolving the registered <c>ContentManager</c> (registered by the host).
+  /// resolving the registered <c>ContentManager</c> and <c>GraphicsDevice</c>.
   /// </summary>
   let createFromContext(ctx: GameContext) : IAssets =
     let content = MonoGameGameContext.getContentManager ctx
-    create content
+    let gd = MonoGameGameContext.getGraphicsDevice ctx
+    new AssetsService(content, ValueSome gd) :> IAssets

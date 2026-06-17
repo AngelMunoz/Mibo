@@ -5,16 +5,14 @@ open Mibo.Elmish.Next.Graphics2D.Base
 open System.Numerics
 open Raylib_cs
 open Mibo.Elmish.Next
-open Mibo.Animation
+open Mibo.Elmish.Next.Animation
+open Mibo.Elmish.Next.Graphics2D.Lighting
 
 module LightDraw =
 
   let inline setAmbient
-    (lightCtx: Mibo.Elmish.Graphics2D.Lighting.LightContext2D)
-    (
-      layer: int<RenderLayer>,
-      ambient: Mibo.Elmish.Graphics2D.Lighting.AmbientLight2D
-    )
+    (lightCtx: LightContext2D)
+    (layer: int<RenderLayer>, ambient: AmbientLight2D)
     (buffer: RenderBuffer2D)
     =
     lightCtx.Ambient <- ambient.Color
@@ -22,9 +20,9 @@ module LightDraw =
     buffer
 
   let inline addPointLight
-    (lightCtx: Mibo.Elmish.Graphics2D.Lighting.LightContext2D)
+    (lightCtx: LightContext2D)
     (layer: int<RenderLayer>)
-    (light: Mibo.Elmish.Graphics2D.Lighting.PointLight2D)
+    (light: PointLight2D)
     (buffer: RenderBuffer2D)
     =
     lightCtx.PointLights.Add light
@@ -32,9 +30,9 @@ module LightDraw =
     buffer
 
   let inline addDirectionalLight
-    (lightCtx: Mibo.Elmish.Graphics2D.Lighting.LightContext2D)
+    (lightCtx: LightContext2D)
     (layer: int<RenderLayer>)
-    (light: Mibo.Elmish.Graphics2D.Lighting.DirectionalLight2D)
+    (light: DirectionalLight2D)
     (buffer: RenderBuffer2D)
     =
     lightCtx.DirLights.Add light
@@ -42,9 +40,9 @@ module LightDraw =
     buffer
 
   let inline addOccluder
-    (lightCtx: Mibo.Elmish.Graphics2D.Lighting.LightContext2D)
+    (lightCtx: LightContext2D)
     (layer: int<RenderLayer>)
-    (occluder: Mibo.Elmish.Graphics2D.Lighting.Occluder2D)
+    (occluder: Occluder2D)
     (buffer: RenderBuffer2D)
     =
     lightCtx.Occluders.Add occluder
@@ -52,7 +50,7 @@ module LightDraw =
     buffer
 
   let inline litSprite
-    (lightCtx: Mibo.Elmish.Graphics2D.Lighting.LightContext2D)
+    (lightCtx: LightContext2D)
     (sprite: SpriteState)
     (buffer: RenderBuffer2D)
     =
@@ -81,7 +79,7 @@ module LightDraw =
     buffer
 
   let inline litAnimatedSprite
-    (lightCtx: Mibo.Elmish.Graphics2D.Lighting.LightContext2D)
+    (lightCtx: LightContext2D)
     (layer: int<RenderLayer>)
     (dest: Rectangle)
     (animSprite: AnimatedSprite)
@@ -89,34 +87,29 @@ module LightDraw =
     =
     let src = AnimatedSprite.currentSource animSprite
 
-    let src =
-      if animSprite.FlipX then
-        Rectangle(src.X, src.Y, -src.Width, src.Height)
-      else
-        src
-
-    let src =
-      if animSprite.FlipY then
-        Rectangle(src.X, src.Y, src.Width, -src.Height)
-      else
-        src
+    let src = {
+      src with
+          Width = if animSprite.FlipX then -src.Width else src.Width
+          Height = if animSprite.FlipY then -src.Height else src.Height
+    }
 
     litSprite
       lightCtx
       ({
-        Texture = animSprite.Sheet.Texture
+        Texture = buffer.Textures.Resolve animSprite.Sheet.Texture
         Dest = dest
-        Source = src
+        Source = Convert.toRaylibRect src
         Origin = animSprite.Sheet.Origin
         Rotation = animSprite.Rotation
-        Color = animSprite.Color
+        Color = Convert.toRaylibColor animSprite.Color
         Layer = layer
-        NormalMap = animSprite.Sheet.NormalMap
+        NormalMap =
+          animSprite.Sheet.NormalMap |> ValueOption.map buffer.Textures.Resolve
       })
       buffer
 
   let inline endLighting
-    (lightCtx: Mibo.Elmish.Graphics2D.Lighting.LightContext2D)
+    (lightCtx: LightContext2D)
     (layer: int<RenderLayer>)
     (buffer: RenderBuffer2D)
     =
@@ -127,7 +120,7 @@ module LightDraw =
     buffer
 
   let inline enableShadows
-    (lightCtx: Mibo.Elmish.Graphics2D.Lighting.LightContext2D)
+    (lightCtx: LightContext2D)
     (layer: int<RenderLayer>)
     (buffer: RenderBuffer2D)
     =
@@ -140,7 +133,7 @@ module LightDraw =
     buffer
 
   let inline disableShadows
-    (lightCtx: Mibo.Elmish.Graphics2D.Lighting.LightContext2D)
+    (lightCtx: LightContext2D)
     (layer: int<RenderLayer>)
     (buffer: RenderBuffer2D)
     =

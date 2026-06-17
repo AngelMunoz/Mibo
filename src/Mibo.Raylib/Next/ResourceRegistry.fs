@@ -141,9 +141,9 @@ type RaylibModelRegistry() =
 
 type LightContextRegistry() =
   let fwd = Dictionary<obj, int<LightContext>>()
-  let rev = ResizeArray<Mibo.Elmish.Graphics2D.Lighting.LightContext2D>()
+  let rev = ResizeArray<Mibo.Elmish.Next.Graphics2D.Lighting.LightContext2D>()
 
-  member _.Register(ctx: Mibo.Elmish.Graphics2D.Lighting.LightContext2D) =
+  member _.Register(ctx: Mibo.Elmish.Next.Graphics2D.Lighting.LightContext2D) =
     let key = box ctx
 
     match fwd.TryGetValue key with

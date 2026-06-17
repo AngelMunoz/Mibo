@@ -4,6 +4,18 @@
 
 ### Added
 
+- MonoGame 2D renderer implements the full Core.Next `Command2D` surface, using `SpriteBatch` for textured work and `BasicEffect` vertex geometry for primitives.
+- MonoGame 2D camera transform support (`BeginCamera` / `BeginCameraConfig`) using a `Matrix` built from `Camera2DState`.
+- MonoGame loose-file asset loading helpers: `IAssets.TextureFromFile` and `IAssets.SoundFromFile`.
+- Raylib Next `LightContext2D` implemented in `Mibo.Elmish.Next.Graphics2D.Lighting`, using Core.Next light data types and its own SDF shadow raymarching shader state.
+
+### Changed
+
+- Raylib Next `LightDraw` DSL now consumes Core.Next `Animation` and `Lighting` types, while legacy Raylib namespaces remain untouched.
+- MonoGame `AssetsService.createFromContext` now resolves the registered `GraphicsDevice` so loose-file texture loading works out of the box.
+
+### Added
+
 - Shared backend-neutral 2D lighting types in `Mibo.Core` (`Mibo.Elmish.Next.Graphics2D.Lighting`): `AmbientLight2D`, `DirectionalLight2D`, `PointLight2D`, `Occluder2D` using neutral `Base.Color` and `System.Numerics.Vector2`. These let both Raylib and MonoGame backends speak the same command language without each backend duplicating the data model.
 - Shared particle types in `Mibo.Core` (`Mibo.Elmish.Next.Graphics2D`): `Particle2D` render snapshot and `ParticleSimulation.fadeAndCompact` helper, using neutral `Rect`/`Color`. Backends expose their own native `Particle2D` structs and the DSL converts into this neutral payload.
 - `GridOccluders` helper moved to `Mibo.Core` (`Mibo.Elmish.Next.Graphics2D.Lighting`), operating only on `CellGrid2D` and `Vector2` so it is backend-agnostic.

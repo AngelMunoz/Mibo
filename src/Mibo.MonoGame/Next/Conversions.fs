@@ -54,7 +54,21 @@ module Convert =
 
   let inline toSysVec2(v: Vector2) : System.Numerics.Vector2 = v.ToNumerics()
 
-// Matrix interop deferred to camera phase.
-// MonoGame provides: Matrix.op_Implicit(m: Matrix4x4) and m.ToNumerics()
-// let inline toMgMatrix(m: System.Numerics.Matrix4x4) : Matrix = Matrix.op_Implicit m
-// let inline toSysMatrix(m: Matrix) : System.Numerics.Matrix4x4 = m.ToNumerics()
+  let inline toMgMatrix(m: System.Numerics.Matrix4x4) : Matrix =
+    Matrix.op_Implicit m
+
+  let inline toSysMatrix(m: Matrix) : System.Numerics.Matrix4x4 = m.ToNumerics()
+
+  let cameraTransform(camera: Graphics2D.Camera2DState) : Matrix =
+    // MonoGame / XNA 2D camera convention:
+    // Translate world by -Target, scale by Zoom, rotate by -Rotation,
+    // then translate by Offset (viewport center).
+    let t = toMgVec2 camera.Target
+    let o = toMgVec2 camera.Offset
+
+    Matrix.CreateTranslation(-t.X, -t.Y, 0.0f)
+    * Matrix.CreateRotationZ(float32 -camera.Rotation)
+    * Matrix.CreateScale(camera.Zoom, camera.Zoom, 1.0f)
+    * Matrix.CreateTranslation(o.X, o.Y, 0.0f)
+
+  let inline mgRect(x, y, w, h) = Rectangle(x, y, w, h)

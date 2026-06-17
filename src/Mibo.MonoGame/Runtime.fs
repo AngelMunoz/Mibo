@@ -98,7 +98,7 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
 
     // Register the MonoGame asset service (always, mirroring RaylibGame which
     // registers IAssets unconditionally). Built over the host's ContentManager.
-    let assets = AssetsService.create this.Content
+    let assets = AssetsService.createFromContext ctx
     GameContext.register<IAssets> assets ctx
 
     if program.HasInput then
