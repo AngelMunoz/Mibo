@@ -10,6 +10,32 @@ open Raylib_cs
 open Mibo.Elmish.Next
 open Mibo.Elmish.Next.Graphics2D.Base
 
+// All uniform locations for one shader variant. Held in a mutable record so
+// the lit and normal-map shaders share a single caching/upload path instead
+// of duplicating ~100 lines of GetShaderLocation + setShader* calls.
+[<Struct>]
+type ShaderUniformLocations = {
+  mutable Cached: bool
+  mutable AmbientColor: int
+  mutable DirCount: int
+  DirDirs: int[]
+  DirColors: int[]
+  DirIntensities: int[]
+  DirShadowIdx: int[]
+  mutable PointCount: int
+  PointPos: int[]
+  PointColors: int[]
+  PointIntensities: int[]
+  PointRadii: int[]
+  PointFalloffs: int[]
+  PointShadowIdx: int[]
+  Occluders: int[]
+  mutable OccluderCount: int
+  mutable Softness: int
+  mutable MaxDist: int
+  mutable NormalMap: int
+}
+
 /// <summary>
 /// Raylib Next light context. Accepts the Core.Next backend-neutral light types
 /// and uploads them to the built-in SDF shadow raymarching shader.
@@ -28,6 +54,11 @@ type LightContext2D
   let maxDir = defaultArg maxDirLights 4
   let maxPoint = defaultArg maxPointLights 16
   let maxOccluderCount = defaultArg maxOccluders 128
+  // Track ownership so Dispose only unloads shaders this context created via
+  // the default loaders. User-supplied shaders may be shared across contexts or
+  // managed elsewhere, so unloading them risks double-free / use-after-free.
+  let ownsLitShader = litShader.IsNone
+  let ownsNmShader = litNormalMapShader.IsNone
 
   let litShader =
     defaultArg litShader (Mibo.Elmish.Graphics2D.Lighting.LitShader.load())
@@ -49,155 +80,83 @@ type LightContext2D
   let colorToVec3(c: Color) =
     Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
 
-  // ------------------------------------------------------------------
-  // Uniform locations
-  // ------------------------------------------------------------------
+  let mkLocations() : ShaderUniformLocations = {
+    Cached = false
+    AmbientColor = -1
+    DirCount = -1
+    DirDirs = Array.zeroCreate<int> maxDir
+    DirColors = Array.zeroCreate<int> maxDir
+    DirIntensities = Array.zeroCreate<int> maxDir
+    DirShadowIdx = Array.zeroCreate<int> maxDir
+    PointCount = -1
+    PointPos = Array.zeroCreate<int> maxPoint
+    PointColors = Array.zeroCreate<int> maxPoint
+    PointIntensities = Array.zeroCreate<int> maxPoint
+    PointRadii = Array.zeroCreate<int> maxPoint
+    PointFalloffs = Array.zeroCreate<int> maxPoint
+    PointShadowIdx = Array.zeroCreate<int> maxPoint
+    Occluders = Array.zeroCreate<int> maxOccluderCount
+    OccluderCount = -1
+    Softness = -1
+    MaxDist = -1
+    NormalMap = -1
+  }
 
-  let mutable locsCached = false
+  let litLocs = mkLocations()
+  let nmLocs = mkLocations()
 
-  let mutable locAmbientColor = -1
-  let mutable locDirCount = -1
-  let locDirDirs = Array.zeroCreate<int> maxDir
-  let locDirColors = Array.zeroCreate<int> maxDir
-  let locDirIntensities = Array.zeroCreate<int> maxDir
-  let locDirShadowIdx = Array.zeroCreate<int> maxDir
+  let cacheLocationsFor (shader: Shader) (locs: ShaderUniformLocations) =
+    let mutable locs = locs
 
-  let mutable locPointCount = -1
-  let locPointPos = Array.zeroCreate<int> maxPoint
-  let locPointColors = Array.zeroCreate<int> maxPoint
-  let locPointIntensities = Array.zeroCreate<int> maxPoint
-  let locPointRadii = Array.zeroCreate<int> maxPoint
-  let locPointFalloffs = Array.zeroCreate<int> maxPoint
-  let locPointShadowIdx = Array.zeroCreate<int> maxPoint
-
-  let locOccluders = Array.zeroCreate<int> maxOccluderCount
-  let mutable locOccluderCount = -1
-  let mutable locSoftness = -1
-  let mutable locMaxDist = -1
-  let mutable locNormalMap = -1
-
-  let mutable nmLocsCached = false
-
-  let mutable nmLocAmbientColor = -1
-  let mutable nmLocDirCount = -1
-  let nmLocDirDirs = Array.zeroCreate<int> maxDir
-  let nmLocDirColors = Array.zeroCreate<int> maxDir
-  let nmLocDirIntensities = Array.zeroCreate<int> maxDir
-  let nmLocDirShadowIdx = Array.zeroCreate<int> maxDir
-
-  let mutable nmLocPointCount = -1
-  let nmLocPointPos = Array.zeroCreate<int> maxPoint
-  let nmLocPointColors = Array.zeroCreate<int> maxPoint
-  let nmLocPointIntensities = Array.zeroCreate<int> maxPoint
-  let nmLocPointRadii = Array.zeroCreate<int> maxPoint
-  let nmLocPointFalloffs = Array.zeroCreate<int> maxPoint
-  let nmLocPointShadowIdx = Array.zeroCreate<int> maxPoint
-
-  let nmLocOccluders = Array.zeroCreate<int> maxOccluderCount
-  let mutable nmLocOccluderCount = -1
-  let mutable nmLocSoftness = -1
-  let mutable nmLocMaxDist = -1
-  let mutable nmLocNormalMap = -1
-
-  let cacheLocations() =
-    if not locsCached then
-      locAmbientColor <- Raylib.GetShaderLocation(litShader, "ambientColor")
-      locDirCount <- Raylib.GetShaderLocation(litShader, "dirLightCount")
+    if not locs.Cached then
+      locs.AmbientColor <- Raylib.GetShaderLocation(shader, "ambientColor")
+      locs.DirCount <- Raylib.GetShaderLocation(shader, "dirLightCount")
 
       for i = 0 to maxDir - 1 do
-        locDirDirs[i] <-
-          Raylib.GetShaderLocation(litShader, $"dirLightDirs[{i}]")
+        locs.DirDirs[i] <-
+          Raylib.GetShaderLocation(shader, $"dirLightDirs[{i}]")
 
-        locDirColors[i] <-
-          Raylib.GetShaderLocation(litShader, $"dirLightColors[{i}]")
+        locs.DirColors[i] <-
+          Raylib.GetShaderLocation(shader, $"dirLightColors[{i}]")
 
-        locDirIntensities[i] <-
-          Raylib.GetShaderLocation(litShader, $"dirLightIntensities[{i}]")
+        locs.DirIntensities[i] <-
+          Raylib.GetShaderLocation(shader, $"dirLightIntensities[{i}]")
 
-        locDirShadowIdx[i] <-
-          Raylib.GetShaderLocation(litShader, $"dirLightShadowIdx[{i}]")
+        locs.DirShadowIdx[i] <-
+          Raylib.GetShaderLocation(shader, $"dirLightShadowIdx[{i}]")
 
-      locPointCount <- Raylib.GetShaderLocation(litShader, "pointLightCount")
-
-      for i = 0 to maxPoint - 1 do
-        locPointPos[i] <-
-          Raylib.GetShaderLocation(litShader, $"pointLightPos[{i}]")
-
-        locPointColors[i] <-
-          Raylib.GetShaderLocation(litShader, $"pointLightColors[{i}]")
-
-        locPointIntensities[i] <-
-          Raylib.GetShaderLocation(litShader, $"pointLightIntensities[{i}]")
-
-        locPointRadii[i] <-
-          Raylib.GetShaderLocation(litShader, $"pointLightRadii[{i}]")
-
-        locPointFalloffs[i] <-
-          Raylib.GetShaderLocation(litShader, $"pointLightFalloffs[{i}]")
-
-        locPointShadowIdx[i] <-
-          Raylib.GetShaderLocation(litShader, $"pointLightShadowIdx[{i}]")
-
-      for i = 0 to maxOccluderCount - 1 do
-        locOccluders[i] <-
-          Raylib.GetShaderLocation(litShader, $"occluders[{i}]")
-
-      locOccluderCount <- Raylib.GetShaderLocation(litShader, "occluderCount")
-      locSoftness <- Raylib.GetShaderLocation(litShader, "shadowSoftness")
-      locMaxDist <- Raylib.GetShaderLocation(litShader, "shadowMaxDistance")
-      locNormalMap <- Raylib.GetShaderLocation(litShader, "normalMap")
-
-      locsCached <- true
-
-  let cacheNmLocations() =
-    if not nmLocsCached then
-      nmLocAmbientColor <- Raylib.GetShaderLocation(nmShader, "ambientColor")
-      nmLocDirCount <- Raylib.GetShaderLocation(nmShader, "dirLightCount")
-
-      for i = 0 to maxDir - 1 do
-        nmLocDirDirs[i] <-
-          Raylib.GetShaderLocation(nmShader, $"dirLightDirs[{i}]")
-
-        nmLocDirColors[i] <-
-          Raylib.GetShaderLocation(nmShader, $"dirLightColors[{i}]")
-
-        nmLocDirIntensities[i] <-
-          Raylib.GetShaderLocation(nmShader, $"dirLightIntensities[{i}]")
-
-        nmLocDirShadowIdx[i] <-
-          Raylib.GetShaderLocation(nmShader, $"dirLightShadowIdx[{i}]")
-
-      nmLocPointCount <- Raylib.GetShaderLocation(nmShader, "pointLightCount")
+      locs.PointCount <- Raylib.GetShaderLocation(shader, "pointLightCount")
 
       for i = 0 to maxPoint - 1 do
-        nmLocPointPos[i] <-
-          Raylib.GetShaderLocation(nmShader, $"pointLightPos[{i}]")
+        locs.PointPos[i] <-
+          Raylib.GetShaderLocation(shader, $"pointLightPos[{i}]")
 
-        nmLocPointColors[i] <-
-          Raylib.GetShaderLocation(nmShader, $"pointLightColors[{i}]")
+        locs.PointColors[i] <-
+          Raylib.GetShaderLocation(shader, $"pointLightColors[{i}]")
 
-        nmLocPointIntensities[i] <-
-          Raylib.GetShaderLocation(nmShader, $"pointLightIntensities[{i}]")
+        locs.PointIntensities[i] <-
+          Raylib.GetShaderLocation(shader, $"pointLightIntensities[{i}]")
 
-        nmLocPointRadii[i] <-
-          Raylib.GetShaderLocation(nmShader, $"pointLightRadii[{i}]")
+        locs.PointRadii[i] <-
+          Raylib.GetShaderLocation(shader, $"pointLightRadii[{i}]")
 
-        nmLocPointFalloffs[i] <-
-          Raylib.GetShaderLocation(nmShader, $"pointLightFalloffs[{i}]")
+        locs.PointFalloffs[i] <-
+          Raylib.GetShaderLocation(shader, $"pointLightFalloffs[{i}]")
 
-        nmLocPointShadowIdx[i] <-
-          Raylib.GetShaderLocation(nmShader, $"pointLightShadowIdx[{i}]")
+        locs.PointShadowIdx[i] <-
+          Raylib.GetShaderLocation(shader, $"pointLightShadowIdx[{i}]")
 
       for i = 0 to maxOccluderCount - 1 do
-        nmLocOccluders[i] <-
-          Raylib.GetShaderLocation(nmShader, $"occluders[{i}]")
+        locs.Occluders[i] <- Raylib.GetShaderLocation(shader, $"occluders[{i}]")
 
-      nmLocOccluderCount <- Raylib.GetShaderLocation(nmShader, "occluderCount")
-      nmLocSoftness <- Raylib.GetShaderLocation(nmShader, "shadowSoftness")
-      nmLocMaxDist <- Raylib.GetShaderLocation(nmShader, "shadowMaxDistance")
-      nmLocNormalMap <- Raylib.GetShaderLocation(nmShader, "normalMap")
+      locs.OccluderCount <- Raylib.GetShaderLocation(shader, "occluderCount")
+      locs.Softness <- Raylib.GetShaderLocation(shader, "shadowSoftness")
+      locs.MaxDist <- Raylib.GetShaderLocation(shader, "shadowMaxDistance")
+      locs.NormalMap <- Raylib.GetShaderLocation(shader, "normalMap")
+      locs.Cached <- true
 
-      nmLocsCached <- true
+  let cacheLocations() = cacheLocationsFor litShader litLocs
+  let cacheNmLocations() = cacheLocationsFor nmShader nmLocs
 
   // ------------------------------------------------------------------
   // Upload helpers (DisableRuntimeMarshalling safe)
@@ -255,51 +214,39 @@ type LightContext2D
 
   let uploadToShader
     (shader: Shader)
-    (locAmbientColor: int)
-    (locDirCount: int)
-    (locDirDirs: int[])
-    (locDirColors: int[])
-    (locDirIntensities: int[])
-    (locDirShadowIdx: int[])
-    (locPointCount: int)
-    (locPointPos: int[])
-    (locPointColors: int[])
-    (locPointIntensities: int[])
-    (locPointRadii: int[])
-    (locPointFalloffs: int[])
-    (locPointShadowIdx: int[])
-    (locOccluders: int[])
-    (locOccluderCount: int)
-    (locSoftness: int)
-    (locMaxDist: int)
+    (locs: ShaderUniformLocations)
     (shadowsEnabled: bool)
     =
-    setShaderVec3 shader locAmbientColor (colorToVec3 ambientColor)
+    setShaderVec3 shader locs.AmbientColor (colorToVec3 ambientColor)
 
     let dirCount = min dirLights.Count maxDir
-    setShaderInt shader locDirCount dirCount
+    setShaderInt shader locs.DirCount dirCount
 
     for i = 0 to dirCount - 1 do
       let l = dirLights[i]
-      setShaderVec2 shader locDirDirs[i] l.Direction
-      setShaderVec3 shader locDirColors[i] (colorToVec3 l.Color)
-      setShaderFloat shader locDirIntensities[i] l.Intensity
-      setShaderInt shader locDirShadowIdx[i] (if l.CastsShadows then 0 else -1)
-
-    let ptCount = min pointLights.Count maxPoint
-    setShaderInt shader locPointCount ptCount
-
-    for i = 0 to ptCount - 1 do
-      let l = pointLights[i]
-      setShaderVec2 shader locPointPos[i] l.Position
-      setShaderVec3 shader locPointColors[i] (colorToVec3 l.Color)
-      setShaderFloat shader locPointIntensities[i] l.Intensity
-      setShaderFloat shader locPointRadii[i] l.Radius
-      setShaderFloat shader locPointFalloffs[i] l.Falloff
+      setShaderVec2 shader locs.DirDirs[i] l.Direction
+      setShaderVec3 shader locs.DirColors[i] (colorToVec3 l.Color)
+      setShaderFloat shader locs.DirIntensities[i] l.Intensity
 
       setShaderInt
         shader
-        locPointShadowIdx[i]
+        locs.DirShadowIdx[i]
+        (if l.CastsShadows then 0 else -1)
+
+    let ptCount = min pointLights.Count maxPoint
+    setShaderInt shader locs.PointCount ptCount
+
+    for i = 0 to ptCount - 1 do
+      let l = pointLights[i]
+      setShaderVec2 shader locs.PointPos[i] l.Position
+      setShaderVec3 shader locs.PointColors[i] (colorToVec3 l.Color)
+      setShaderFloat shader locs.PointIntensities[i] l.Intensity
+      setShaderFloat shader locs.PointRadii[i] l.Radius
+      setShaderFloat shader locs.PointFalloffs[i] l.Falloff
+
+      setShaderInt
+        shader
+        locs.PointShadowIdx[i]
         (if l.CastsShadows then 0 else -1)
 
     let ocCount =
@@ -308,18 +255,18 @@ type LightContext2D
       else
         0
 
-    setShaderInt shader locOccluderCount ocCount
+    setShaderInt shader locs.OccluderCount ocCount
 
     for i = 0 to ocCount - 1 do
       let o = occluders[i]
 
       setShaderVec4
         shader
-        locOccluders[i]
+        locs.Occluders[i]
         (Vector4(o.P1.X, o.P1.Y, o.P2.X, o.P2.Y))
 
-    setShaderFloat shader locSoftness shadowSoftness
-    setShaderFloat shader locMaxDist shadowMaxDist
+    setShaderFloat shader locs.Softness shadowSoftness
+    setShaderFloat shader locs.MaxDist shadowMaxDist
 
   /// <summary>Whether the lit shader is currently active. Managed by commands.</summary>
   member val ShaderActive = false with get, set
@@ -366,56 +313,19 @@ type LightContext2D
   member _.NormalMapShader = nmShader
 
   /// <summary>Uniform location for the normalMap sampler in the normal-map shader.</summary>
-  member _.LocNormalMap = nmLocNormalMap
+  member _.LocNormalMap = nmLocs.NormalMap
 
   /// <summary>Uploads all accumulated light data to the GPU for both shader variants.</summary>
   member this.UploadUniforms() =
     cacheLocations()
     cacheNmLocations()
-
-    uploadToShader
-      litShader
-      locAmbientColor
-      locDirCount
-      locDirDirs
-      locDirColors
-      locDirIntensities
-      locDirShadowIdx
-      locPointCount
-      locPointPos
-      locPointColors
-      locPointIntensities
-      locPointRadii
-      locPointFalloffs
-      locPointShadowIdx
-      locOccluders
-      locOccluderCount
-      locSoftness
-      locMaxDist
-      this.ShadowsEnabled
-
-    uploadToShader
-      nmShader
-      nmLocAmbientColor
-      nmLocDirCount
-      nmLocDirDirs
-      nmLocDirColors
-      nmLocDirIntensities
-      nmLocDirShadowIdx
-      nmLocPointCount
-      nmLocPointPos
-      nmLocPointColors
-      nmLocPointIntensities
-      nmLocPointRadii
-      nmLocPointFalloffs
-      nmLocPointShadowIdx
-      nmLocOccluders
-      nmLocOccluderCount
-      nmLocSoftness
-      nmLocMaxDist
-      this.ShadowsEnabled
+    uploadToShader litShader litLocs this.ShadowsEnabled
+    uploadToShader nmShader nmLocs this.ShadowsEnabled
 
   interface IDisposable with
     member _.Dispose() =
-      Raylib.UnloadShader(litShader)
-      Raylib.UnloadShader(nmShader)
+      if ownsLitShader then
+        Raylib.UnloadShader(litShader)
+
+      if ownsNmShader then
+        Raylib.UnloadShader(nmShader)

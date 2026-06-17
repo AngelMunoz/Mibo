@@ -34,6 +34,36 @@ module private Geometry =
 
     arr
 
+  // Circle sector (pie slice) as an explicit TriangleList: center vertex plus
+  // one triangle per angular step over [startAngle, endAngle]. This honors the
+  // sector angles that `circleTriangles` ignores.
+  let sectorTriangles
+    (center: System.Numerics.Vector2)
+    (radius: float32)
+    (startAngle: float32)
+    (endAngle: float32)
+    (c: Color)
+    (segments: int)
+    =
+    let centerV = v3 center.X center.Y
+    let steps = max 1 segments
+    let arr = Array.zeroCreate<VertexPositionColor>(steps * 3)
+    let span = endAngle - startAngle
+    let step = span / float32 steps
+
+    for i = 0 to steps - 1 do
+      let a0 = startAngle + float32 i * step
+      let a1 = startAngle + float32(i + 1) * step
+      let x0 = center.X + cos a0 * radius
+      let y0 = center.Y + sin a0 * radius
+      let x1 = center.X + cos a1 * radius
+      let y1 = center.Y + sin a1 * radius
+      arr.[i * 3] <- VertexPositionColor(centerV, c)
+      arr.[i * 3 + 1] <- VertexPositionColor(v3 x0 y0, c)
+      arr.[i * 3 + 2] <- VertexPositionColor(v3 x1 y1, c)
+
+    arr
+
   let ringTriangles
     (center: System.Numerics.Vector2)
     (innerR: float32)
@@ -94,6 +124,45 @@ module private Geometry =
         )
 
     arr
+
+  // Inner and outer outline polylines for a ring, as separate closed
+  // LineStrip arrays (steps + 1 points each: one per step plus the closing
+  // point that repeats the first). Reads directly from `ringTriangles`'s
+  // stable vertex layout (outer at +0, inner at +2 per quad) without
+  // re-tessellating.
+  let ringOutlines
+    (center: System.Numerics.Vector2)
+    (innerR: float32)
+    (outerR: float32)
+    (startAngle: float32)
+    (endAngle: float32)
+    (segments: int)
+    (c: Color)
+    =
+    let steps = max 1 segments
+    let span = endAngle - startAngle
+    let step = span / float32 steps
+    let inner = Array.zeroCreate<VertexPositionColor>(steps + 1)
+    let outer = Array.zeroCreate<VertexPositionColor>(steps + 1)
+
+    for i = 0 to steps do
+      let a = startAngle + float32 i * step
+      let ca = cos a
+      let sa = sin a
+
+      inner.[i] <-
+        VertexPositionColor(
+          v3 (center.X + ca * innerR) (center.Y + sa * innerR),
+          c
+        )
+
+      outer.[i] <-
+        VertexPositionColor(
+          v3 (center.X + ca * outerR) (center.Y + sa * outerR),
+          c
+        )
+
+    inner, outer
 
   let ellipseTriangles
     (centerX: int)
@@ -175,7 +244,8 @@ module private Geometry =
     let h = rect.Height
     let r = MathF.Min(roundness * 0.5f, MathF.Min(w * 0.5f, h * 0.5f))
     let cornerSegs = max 2 segmentsPerCorner
-    let totalVerts = 4 + cornerSegs * 4
+    // 8 explicit edge midpoints + 4 corners * (cornerSegs + 1) arc points.
+    let totalVerts = 12 + cornerSegs * 4
     let arr = Array.zeroCreate<VertexPositionColor>(totalVerts)
     let mutable idx = 0
 
@@ -203,6 +273,33 @@ module private Geometry =
     add(0.0f, r)
     corner(r, r, MathF.PI)
     arr
+
+  // Fan-triangulate the outline produced by `roundedRect` into an explicit
+  // TriangleList: one center vertex, then (verts.Length - 1) triangles formed
+  // by the center + each perimeter edge. Matches the `circleTriangles`/
+  // `polyTriangles` center+pair idiom so callers can use a plain
+  // `TriangleList` with `primitiveCount = verts.Length / 3`.
+  let roundedRectFill
+    (rect: Mibo.Elmish.Next.Graphics2D.Rect)
+    (roundness: float32)
+    (c: Color)
+    (segmentsPerCorner: int)
+    =
+    let outline = roundedRect rect roundness c segmentsPerCorner
+    let centerV = v3 (rect.X + rect.Width * 0.5f) (rect.Y + rect.Height * 0.5f)
+    let center = VertexPositionColor(centerV, c)
+    // Close the perimeter loop by repeating the first point at the end.
+    let triangles = Array.zeroCreate<VertexPositionColor>(outline.Length * 3)
+    let mutable idx = 0
+
+    for i = 0 to outline.Length - 1 do
+      let next = outline.[(i + 1) % outline.Length]
+      triangles.[idx] <- center
+      triangles.[idx + 1] <- outline.[i]
+      triangles.[idx + 2] <- next
+      idx <- idx + 3
+
+    triangles
 
   let lineTriangles
     (points: System.Numerics.Vector2[])
@@ -236,7 +333,8 @@ module private Geometry =
           arr.[idx + 5] <- VertexPositionColor(v3 p2.X p2.Y, c)
           idx <- idx + 6
 
-      arr
+      // Slice off the uninitialized tail left by skipped degenerate segments.
+      if idx = arr.Length then arr else arr.[.. idx - 1]
 
   let triangleFanAsTriangles
     (center: System.Numerics.Vector2)
@@ -711,7 +809,7 @@ type Renderer2D<'Model>
           flush()
 
           let verts =
-            Geometry.roundedRect
+            Geometry.roundedRectFill
               rect
               roundness
               (Convert.toMgColor color)
@@ -721,7 +819,7 @@ type Renderer2D<'Model>
             device
             verts
             PrimitiveType.TriangleList
-            (verts.Length - 2)
+            (verts.Length / 3)
         | Command2D.RectRoundedOutline(rect,
                                        roundness,
                                        segments,
@@ -738,14 +836,14 @@ type Renderer2D<'Model>
               (Convert.toMgColor color)
               segments
 
-          let edges =
-            Array.zeroCreate<VertexPositionColor>((verts.Length - 1) * 2)
+          let edges = Array.zeroCreate<VertexPositionColor>(verts.Length * 2)
 
-          for j = 1 to verts.Length - 1 do
-            edges.[(j - 1) * 2] <- verts.[j]
-            edges.[(j - 1) * 2 + 1] <- verts.[j % (verts.Length - 1) + 1]
+          // Closed perimeter: edge i connects verts.[i] to verts.[(i+1) % len].
+          for j = 0 to verts.Length - 1 do
+            edges.[j * 2] <- verts.[j]
+            edges.[j * 2 + 1] <- verts.[(j + 1) % verts.Length]
 
-          drawPrimitives device edges PrimitiveType.LineList (edges.Length / 2)
+          drawPrimitives device edges PrimitiveType.LineList (verts.Length)
         | Command2D.RectGradientV(x, y, w, h, top, bottom, _) ->
           flush()
 
@@ -817,9 +915,11 @@ type Renderer2D<'Model>
           flush()
 
           let verts =
-            Geometry.circleTriangles
+            Geometry.sectorTriangles
               center
               radius
+              startAngle
+              endAngle
               (Convert.toMgColor color)
               (max 1 segments)
 
@@ -899,26 +999,20 @@ type Renderer2D<'Model>
                                 _) ->
           flush()
           let color = Convert.toMgColor color
+          let steps = max 1 segments
 
-          let verts =
-            Geometry.ringTriangles
+          let inner, outer =
+            Geometry.ringOutlines
               center
               innerR
               outerR
               startAngle
               endAngle
-              (max 1 segments)
+              steps
               color
 
-          let inner = Array.zeroCreate<VertexPositionColor>(segments + 1)
-          let outer = Array.zeroCreate<VertexPositionColor>(segments + 1)
-
-          for j = 0 to segments do
-            inner.[j] <- verts.[j * 6 + 2]
-            outer.[j] <- verts.[j * 6]
-
-          drawPrimitives device inner PrimitiveType.LineStrip segments
-          drawPrimitives device outer PrimitiveType.LineStrip segments
+          drawPrimitives device inner PrimitiveType.LineStrip steps
+          drawPrimitives device outer PrimitiveType.LineStrip steps
         | Command2D.FillEllipse(centerX, centerY, radiusH, radiusV, color, _) ->
           flush()
 

@@ -8,14 +8,6 @@
 - MonoGame 2D camera transform support (`BeginCamera` / `BeginCameraConfig`) using a `Matrix` built from `Camera2DState`.
 - MonoGame loose-file asset loading helpers: `IAssets.TextureFromFile` and `IAssets.SoundFromFile`.
 - Raylib Next `LightContext2D` implemented in `Mibo.Elmish.Next.Graphics2D.Lighting`, using Core.Next light data types and its own SDF shadow raymarching shader state.
-
-### Changed
-
-- Raylib Next `LightDraw` DSL now consumes Core.Next `Animation` and `Lighting` types, while legacy Raylib namespaces remain untouched.
-- MonoGame `AssetsService.createFromContext` now resolves the registered `GraphicsDevice` so loose-file texture loading works out of the box.
-
-### Added
-
 - Shared backend-neutral 2D lighting types in `Mibo.Core` (`Mibo.Elmish.Next.Graphics2D.Lighting`): `AmbientLight2D`, `DirectionalLight2D`, `PointLight2D`, `Occluder2D` using neutral `Base.Color` and `System.Numerics.Vector2`. These let both Raylib and MonoGame backends speak the same command language without each backend duplicating the data model.
 - Shared particle types in `Mibo.Core` (`Mibo.Elmish.Next.Graphics2D`): `Particle2D` render snapshot and `ParticleSimulation.fadeAndCompact` helper, using neutral `Rect`/`Color`. Backends expose their own native `Particle2D` structs and the DSL converts into this neutral payload.
 - `GridOccluders` helper moved to `Mibo.Core` (`Mibo.Elmish.Next.Graphics2D.Lighting`), operating only on `CellGrid2D` and `Vector2` so it is backend-agnostic.
@@ -30,7 +22,7 @@
 - Raylib backend `RenderBuffer2D`/`RenderBuffer3D` subclasses carrying registries as `member val` properties (assigned once at construction, never reassigned). The DSL reaches registries through the buffer instance — no global state, no partial application.
 - Raylib backend DSL: `Draw.*` (37 functions), `LightDraw.*` (9 functions), `ParticleDraw.*` — pipe-friendly, take native raylib types, resolve handles via `buffer.Textures.Register`/etc., construct Core `Command2D` directly. Same call-site signatures as the old `Draw.*`. The intermediate `Command2D.*` factory module is eliminated.
 - Prototype `Renderer2D<'Model>` in the raylib backend dispatching Core `Command2D` to raylib draw calls via handle resolution and neutral→raylib type conversion.
-- `SpriteState` and `TextState` in `Mibo.Elmish.Next.Graphics2D` — same fields as the old types (native `Texture2D`/`Font`/`Color`/`Rectangle`), using the new `RenderLayer` measure. Builder modules (`SpriteState.create`/`withLayer`/etc., `TextState.create`/`withFontSize`/etc.) unchanged.
+- `SpriteState` and `TextState` in `Mibo.Elmish.Next.Graphics2D` — same fields as the old types (native `Texture2D`/`Font`/`Color`/`Rectangle`), using the new `RenderLayer` measure. Builder modules (`SpriteState.create`/`withLayer`/etc., `TextState.create`/withFontSize`/etc.) unchanged.
 - `ParticleData` struct in Core (`Mibo.Elmish.Next.Graphics2D`) — neutral particle payload (`Vector2` position/size, `float32` rotation, `Rect` source, `Color`).
 - `Cmd.Msg of 'Msg` case in the `Cmd<'Msg>` struct DU: a zero-allocation alternative to `Single(Effect(...))` for `Cmd.ofMsg`. `Cmd.ofMsg` now returns `Msg msg` directly instead of wrapping the message in an `Effect` delegate. `Cmd.map` on a `Msg` stays allocation-free (`Msg(f msg)`). The runtime dispatches `Msg` directly without invoking a delegate. `batch` and `batch2` preserve the `Msg` case in their fast paths.
 - `Mibo.Core.Tests` project: 11 backend-agnostic test files extracted from `Mibo.Raylib.Tests` into a standalone project that references only `Mibo.Core` (no Raylib dependency). Covers Elmish Cmd/Sub, HeadlessLoop/GameTime, Layout, Layout3D, HexGrid, HexLayout, LayeredHex, HexGrid3D, HexLayout3D, LayeredHex3D, Spatial2D, and Spatial3D (503 tests).
@@ -47,6 +39,8 @@
 
 ### Changed
 
+- Raylib Next `LightDraw` DSL now consumes Core.Next `Animation` and `Lighting` types, while legacy Raylib namespaces remain untouched.
+- MonoGame `AssetsService.createFromContext` now resolves the registered `GraphicsDevice` so loose-file texture loading works out of the box.
 - **Breaking:** `Cmd<'Msg>` discriminated union has new `Msg of 'Msg` case between `Empty` and `Single`. Users with exhaustive pattern matches on `Cmd<'Msg>` must handle the new case (or add a wildcard match). `Cmd.ofMsg` now returns `Msg` instead of `Single(Effect(...))`. See `docs/migration-to-vnext.md` (Phase 3b) for the full migration guide.
 - **Breaking:** the input surface now uses backend-neutral codes instead of raylib's native enums. See `docs/migration-to-vnext.md` (Phase 1b) for the full migration guide. Highlights:
   - `InputMap.key` takes `KeyCode` instead of `Raylib_cs.KeyboardKey`. Bindings become portable across backends.
@@ -58,6 +52,11 @@
 
 ### Fixed
 
+- MonoGame 2D renderer geometry crashes flagged in PR #32 review: `roundedRect` vertex allocation was undersized (`4 + 4*seg` written as `12 + 4*seg`), `FillRectRounded` passed an overflowing `primitiveCount` and had no center vertex for fan triangulation, `RingOutline` read `verts.[j*6+2]` out of bounds at `j = segments`, and `CircleSector` ignored its `startAngle`/`endAngle` (drew a full circle). Added `roundedRectFill`, `sectorTriangles`, and `ringOutlines` helpers and corrected all call sites.
+- MonoGame `AssetsService` leaked loose-file assets: `TextureFromFile`/`SoundFromFile` (loaded via `FromStream`, not owned by `ContentManager`) were dropped from `Clear()`/`Dispose()` without being disposed. Both paths now dispose `fileTextures`/`fileSounds` before clearing.
+- MonoGame `lineTriangles` returned a pre-allocated array with uninitialized trailing elements when degenerate segments were skipped; it now slices to the actual written length.
+- MonoGame `RectRoundedOutline` closing edge connected the last perimeter vertex to index 1 instead of index 0; the edge loop now closes the perimeter correctly.
+- Raylib Next `LightContext2D.Dispose()` unconditionally called `UnloadShader` on both shaders, risking double-free when user-supplied (possibly shared) shaders were passed in. It now tracks ownership and only unloads internally-loaded shaders. The duplicated lit/normal-map uniform-location caching was also collapsed into a single `ShaderUniformLocations` record + shared `cacheLocationsFor` path (public API unchanged).
 - `Cmd.batch` silently dropped a single `NowAndDeferNextFrame([|eff|], [||])` passed as the only command. The single-effect fast path only matched `Msg`/`Single`/`Batch of 1`, so `NowAndDeferNextFrame` fell through to the wildcard and the effect was lost. Added the missing case and initialize the accumulator to `Empty` explicitly.
 - `HeadlessRunner.StepUntil` had an off-by-one: the predicate was tested _before_ each `Step`, so a predicate satisfied by the final permitted step returned `false`. Also, once `met`/`ShouldQuit` became true the loop kept spinning up to `maxFrames`. Rewritten as a `while` loop that steps first and exits immediately when the predicate (or `ShouldQuit`) becomes true. The documented "quit counts as met" behaviour is preserved.
 - MonoGame `InputPolling.pollMouse` now diffs `XButton1`/`XButton2` and emits `MouseButtonCode.Extra1`/`Extra2` on the `MouseDelta` stream, matching the raylib backend. Previously, the event-driven mouse subscription path never surfaced back/forward button presses (the poll-driven `InputMapper` path handled them via `isMouseButtonDownFor`), so the two input paths within MonoGame diverged.

@@ -169,6 +169,15 @@ type AssetsService
         value
 
     member _.Clear() =
+      // Loose-file assets are loaded via Texture2D.FromStream / SoundEffect.FromStream
+      // and are NOT owned by ContentManager, so they must be disposed here
+      // (the XNB-loaded caches below are left for ContentManager.Unload).
+      for kvp in fileTextures do
+        kvp.Value.Dispose()
+
+      for kvp in fileSounds do
+        kvp.Value.Dispose()
+
       typedCache.Clear()
       textures.Clear()
       fileTextures.Clear()
@@ -182,10 +191,18 @@ type AssetsService
       // Dispose user-created IDisposable assets. ContentManager owns the
       // XNB-loaded textures/fonts/etc., so the typed-loader caches below are
       // left for ContentManager.Unload — only the generic typedCache is ours.
+      // Loose-file assets (FromStream) are unmanaged by ContentManager too,
+      // so they are disposed here as well.
       for kvp in typedCache do
         match kvp.Value with
         | :? IDisposable as d -> d.Dispose()
         | _ -> ()
+
+      for kvp in fileTextures do
+        kvp.Value.Dispose()
+
+      for kvp in fileSounds do
+        kvp.Value.Dispose()
 
       typedCache.Clear()
       textures.Clear()
