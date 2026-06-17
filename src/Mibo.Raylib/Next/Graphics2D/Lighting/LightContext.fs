@@ -102,11 +102,10 @@ type LightContext2D
     NormalMap = -1
   }
 
-  let litLocs = mkLocations()
-  let nmLocs = mkLocations()
+  let mutable litLocs = mkLocations()
+  let mutable nmLocs = mkLocations()
 
-  let cacheLocationsFor (shader: Shader) (locs: ShaderUniformLocations) =
-    let mutable locs = locs
+  let cacheLocationsFor (shader: Shader) (locs: byref<ShaderUniformLocations>) =
 
     if not locs.Cached then
       locs.AmbientColor <- Raylib.GetShaderLocation(shader, "ambientColor")
@@ -155,8 +154,8 @@ type LightContext2D
       locs.NormalMap <- Raylib.GetShaderLocation(shader, "normalMap")
       locs.Cached <- true
 
-  let cacheLocations() = cacheLocationsFor litShader litLocs
-  let cacheNmLocations() = cacheLocationsFor nmShader nmLocs
+  let cacheLocations() = cacheLocationsFor litShader &litLocs
+  let cacheNmLocations() = cacheLocationsFor nmShader &nmLocs
 
   // ------------------------------------------------------------------
   // Upload helpers (DisableRuntimeMarshalling safe)
