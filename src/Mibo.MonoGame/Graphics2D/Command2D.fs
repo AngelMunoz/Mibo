@@ -64,6 +64,24 @@ type TextState = {
 /// This is the MonoGame backend's equivalent of the raylib <c>Command2D</c> DU,
 /// using MonoGame types (<c>Texture2D</c>, <c>SpriteFont</c>, <c>Rectangle</c>, etc.).
 /// </remarks>
+/// <summary>
+/// MonoGame-native blend-mode abstraction. Maps to <see cref="T:Microsoft.Xna.Framework.Graphics.BlendState"/>.
+/// </summary>
+type BlendMode =
+  | AlphaBlend
+  | NonPremultiplied
+  | Additive
+  | Opaque
+
+/// <summary>
+/// Closed set of 2D render commands. Stored in <see cref="T:Mibo.Elmish.Graphics2D.RenderBuffer2D"/>
+/// and dispatched via pattern matching — no interface boxing.
+/// </summary>
+/// <remarks>
+/// Each case carries a <c>layer: int&lt;RenderLayer&gt;</c> for stable layer sorting.
+/// This is the MonoGame backend's equivalent of the raylib <c>Command2D</c> DU,
+/// using MonoGame types (<c>Texture2D</c>, <c>SpriteFont</c>, <c>Rectangle</c>, etc.).
+/// </remarks>
 [<RequireQualifiedAccess; Struct>]
 type Command2D =
   // Sprite & Text
@@ -244,9 +262,32 @@ type Command2D =
     polyOutThickness: float32 *
     polyOutColor: Color *
     layer: int<RenderLayer>
-  // Camera
+  // Camera & Targets
   | BeginCamera of beginCameraCam: Camera2D * layer: int<RenderLayer>
+  | BeginCameraConfig of config: Camera2DConfig * layer: int<RenderLayer>
   | EndCamera of layer: int<RenderLayer>
+  // Shaders
+  | BeginShader of shader: Effect * layer: int<RenderLayer>
+  | EndShader of layer: int<RenderLayer>
+  // Render Targets
+  | BeginTarget of target: RenderTarget2D * layer: int<RenderLayer>
+  | EndTarget of layer: int<RenderLayer>
+  // Render State
+  | SetBlend of blend: BlendMode * layer: int<RenderLayer>
+  | SetScissor of
+    scissorX: int *
+    scissorY: int *
+    scissorW: int *
+    scissorH: int *
+    layer: int<RenderLayer>
+  | ClearScissor of layer: int<RenderLayer>
+  | SetLineWidth of lineWidth: float32 * layer: int<RenderLayer>
+  | SetViewport of
+    viewportX: int *
+    viewportY: int *
+    viewportW: int *
+    viewportH: int *
+    layer: int<RenderLayer>
   // Escape Hatches
   | DrawImmediate of action: (unit -> unit) * layer: int<RenderLayer>
   | Clear of clearColor: Color * layer: int<RenderLayer>
@@ -545,14 +586,67 @@ module Command2D =
       layer
     )
 
-  // Camera
+  // Camera & Config
 
   /// <summary>Begins a 2D camera transform. (layer) can be partially applied.</summary>
   let inline beginCamera (layer: int<RenderLayer>) (camera: Camera2D) =
     Command2D.BeginCamera(camera, layer)
 
+  /// <summary>Begins a 2D camera with viewport/clear config. (layer) can be partially applied.</summary>
+  let inline beginCameraConfig
+    (layer: int<RenderLayer>)
+    (config: Camera2DConfig)
+    =
+    Command2D.BeginCameraConfig(config, layer)
+
   /// <summary>Ends the current 2D camera transform.</summary>
   let inline endCamera(layer: int<RenderLayer>) = Command2D.EndCamera(layer)
+
+  // Shaders
+
+  /// <summary>Begins a custom shader/effect block. (layer) can be partially applied.</summary>
+  let inline beginShader (layer: int<RenderLayer>) (shader: Effect) =
+    Command2D.BeginShader(shader, layer)
+
+  /// <summary>Ends the current shader block.</summary>
+  let inline endShader(layer: int<RenderLayer>) = Command2D.EndShader(layer)
+
+  // Render Targets
+
+  /// <summary>Begins rendering to a render target. (layer) can be partially applied.</summary>
+  let inline beginTarget (layer: int<RenderLayer>) (target: RenderTarget2D) =
+    Command2D.BeginTarget(target, layer)
+
+  /// <summary>Ends the current render target and resumes back-buffer rendering.</summary>
+  let inline endTarget(layer: int<RenderLayer>) = Command2D.EndTarget(layer)
+
+  // Render State
+
+  /// <summary>Sets the active blend mode. (layer) can be partially applied.</summary>
+  let inline setBlend (layer: int<RenderLayer>) (mode: BlendMode) =
+    Command2D.SetBlend(mode, layer)
+
+  /// <summary>Enables a scissor rectangle. (layer) can be partially applied.</summary>
+  let inline setScissor
+    (layer: int<RenderLayer>)
+    (x: int, y: int, w: int, h: int)
+    =
+    Command2D.SetScissor(x, y, w, h, layer)
+
+  /// <summary>Disables the scissor rectangle.</summary>
+  let inline clearScissor(layer: int<RenderLayer>) =
+    Command2D.ClearScissor(layer)
+
+  /// <summary>Sets the default line width for thick line primitives.</summary>
+  let inline setLineWidth (layer: int<RenderLayer>) (width: float32) =
+    Command2D.SetLineWidth(width, layer)
+
+  /// <summary>Sets the device viewport. (layer) can be partially applied.</summary>
+  let inline setViewport
+    (layer: int<RenderLayer>)
+    (x: int, y: int, w: int, h: int)
+    =
+    Command2D.SetViewport(x, y, w, h, layer)
 
   // Escape Hatches
 

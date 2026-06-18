@@ -39,42 +39,86 @@ module Renderer2DConfig =
 
 module private CommandHandlers =
 
+  /// <summary>
+  /// Saved renderer frame pushed onto the stack on BeginCamera/BeginShader/BeginTarget
+  /// and popped on the corresponding End, mirroring raylib's mode-stack.
+  /// </summary>
+  [<Struct>]
+  type internal CameraFrame = {
+    Camera: Camera2D voption
+    Viewport: Viewport
+    HasCustomViewport: bool
+    HasScissor: bool
+    ScissorRect: Rectangle
+    Blend: BlendMode
+    Shader: Effect voption
+    HasRenderTarget: bool
+    RenderTarget: RenderTarget2D voption
+  }
+
   /// <summary>Mutable renderer state threaded through command dispatch byref.</summary>
   [<Struct>]
   type RendererState = {
     mutable Camera: Camera2D voption
+    mutable Viewport: Viewport
+    mutable HasCustomViewport: bool
+    mutable HasScissor: bool
+    mutable ScissorRect: Rectangle
+    mutable Blend: BlendMode
+    mutable Shader: Effect voption
+    mutable HasRenderTarget: bool
+    mutable RenderTarget: RenderTarget2D voption
     WindowWidth: int
     WindowHeight: int
   }
 
   /// <summary>
   /// Backend resources the command handlers close over. The MonoGame analog
-  /// of raylib's implicit global batch + primitives. Mirrors how the raylib
-  /// handlers reach raylib's batch without it being passed in — here the
-  /// SpriteBatch, PrimitiveBatch, and procedural textures are captured once
-  /// per frame.
+  /// of raylib's implicit global batch + primitives.
   /// </summary>
-  [<Struct>]
   type RenderResources = {
     SpriteBatch: SpriteBatch
     PrimitiveBatch: PrimitiveBatch
     WhitePixel: Texture2D
+    mutable Stack: CameraFrame list
   }
 
-  // ── Batch lifecycle ─────────────────────────────────────────────
-  // The SpriteBatch state (blend/sampler/depth/rasterizer) is renderer-internal:
-  // userland only expresses intent via Draw.* commands, never framework state
-  // objects. Consolidated here so there is a single source of truth. This is
-  // the MonoGame analog of raylib's implicit batch defaults.
+  // ── BlendMode helpers ─────────────────────────────────────────
 
-  let beginSpriteBatch(sb: SpriteBatch, matrix: Matrix) =
+  let toBlendState(mode: BlendMode) : BlendState =
+    match mode with
+    | BlendMode.AlphaBlend -> BlendState.AlphaBlend
+    | BlendMode.NonPremultiplied -> BlendState.NonPremultiplied
+    | BlendMode.Additive -> BlendState.Additive
+    | BlendMode.Opaque -> BlendState.Opaque
+
+  let defaultRasterizer = RasterizerState.CullNone
+
+  let scissorRasterizer =
+    let r = new RasterizerState()
+    r.ScissorTestEnable <- true
+    r.CullMode <- CullMode.None
+    r
+
+  // ── Batch lifecycle ───────────────────────────────────────────
+
+  let beginSpriteBatch
+    (
+      sb: SpriteBatch,
+      matrix: Matrix,
+      blend: BlendMode,
+      rasterizer: RasterizerState,
+      effect: Effect voption
+    ) =
     sb.Begin(
       SpriteSortMode.Deferred,
-      BlendState.NonPremultiplied,
+      toBlendState blend,
       SamplerState.LinearClamp,
       DepthStencilState.None,
-      RasterizerState.CullNone,
-      null,
+      rasterizer,
+      (match effect with
+       | ValueSome e -> e
+       | ValueNone -> null),
       matrix
     )
 
@@ -83,83 +127,153 @@ module private CommandHandlers =
     | ValueSome c -> Camera2D.toMatrix c
     | ValueNone -> Matrix.Identity
 
+  let inline private currentRasterizer
+    (state: byref<RendererState>)
+    : RasterizerState =
+    if state.HasScissor then
+      scissorRasterizer
+    else
+      defaultRasterizer
+
   let inline private flushBatches(res: RenderResources) =
     res.SpriteBatch.End()
     res.PrimitiveBatch.Flush()
 
+  let inline private restartBatches
+    (res: RenderResources)
+    (state: byref<RendererState>)
+    =
+    let matrix = currentMatrix &state
+    let raster = currentRasterizer &state
+    beginSpriteBatch(res.SpriteBatch, matrix, state.Blend, raster, state.Shader)
+    res.PrimitiveBatch.SetTransform(matrix)
+    res.PrimitiveBatch.SetBlendState(toBlendState state.Blend)
+    res.PrimitiveBatch.SetRasterizerState(raster)
+    res.PrimitiveBatch.SetEffect(state.Shader)
+
   let inline private endAndRestart
     (res: RenderResources)
     (state: byref<RendererState>)
-    (newCamera: Camera2D voption)
     =
     flushBatches res
+    restartBatches res &state
 
-    beginSpriteBatch(
-      res.SpriteBatch,
-      match newCamera with
-      | ValueSome c -> Camera2D.toMatrix c
-      | ValueNone -> Matrix.Identity
-    )
+  // ── Camera / viewport stack ───────────────────────────────────
 
-    res.PrimitiveBatch.SetTransform(
-      match newCamera with
-      | ValueSome c -> Camera2D.toMatrix c
-      | ValueNone -> Matrix.Identity
-    )
+  let private pushFrame (res: RenderResources) (state: byref<RendererState>) =
+    res.Stack <-
+      {
+        Camera = state.Camera
+        Viewport = state.Viewport
+        HasCustomViewport = state.HasCustomViewport
+        HasScissor = state.HasScissor
+        ScissorRect = state.ScissorRect
+        Blend = state.Blend
+        Shader = state.Shader
+        HasRenderTarget = state.HasRenderTarget
+        RenderTarget = state.RenderTarget
+      }
+      :: res.Stack
 
-  // ── Camera state management ─────────────────────────────────────
-  // Analog of raylib's beginCamera/endCamera, which flush the active batch
-  // (Rlgl.DrawRenderBatchActive) and re-enter BeginMode2D. Here we End the
-  // SpriteBatch + PrimitiveBatch and re-Begin with the camera's transform matrix.
+  let private popFrame
+    (gd: GraphicsDevice)
+    (res: RenderResources)
+    (state: byref<RendererState>)
+    =
+    match res.Stack with
+    | [] -> ()
+    | frame :: rest ->
+      res.Stack <- rest
+      state.Camera <- frame.Camera
+      state.Viewport <- frame.Viewport
+      state.HasCustomViewport <- frame.HasCustomViewport
+      state.HasScissor <- frame.HasScissor
+      state.ScissorRect <- frame.ScissorRect
+      state.Blend <- frame.Blend
+      state.Shader <- frame.Shader
+      state.HasRenderTarget <- frame.HasRenderTarget
+      state.RenderTarget <- frame.RenderTarget
+      gd.Viewport <- frame.Viewport
+
+      if frame.HasScissor then
+        gd.ScissorRectangle <- frame.ScissorRect
+
+      if frame.HasRenderTarget then
+        match frame.RenderTarget with
+        | ValueSome rt -> gd.SetRenderTarget(rt)
+        | ValueNone -> gd.SetRenderTarget(null)
+      else
+        gd.SetRenderTarget(null)
+
+  // ── Camera state management ───────────────────────────────────
 
   let private beginCamera
     (c: Camera2D)
     (state: byref<RendererState>)
     (res: RenderResources)
+    (gd: GraphicsDevice)
     =
-    endAndRestart res &state (ValueSome c)
+    pushFrame res &state
     state.Camera <- ValueSome c
+    endAndRestart res &state
 
-  let private endCamera(state: byref<RendererState>, res: RenderResources) =
-    match state.Camera with
-    | ValueSome _ ->
-      endAndRestart res &state ValueNone
-      state.Camera <- ValueNone
+  let private beginCameraConfig
+    (config: Camera2DConfig)
+    (state: byref<RendererState>)
+    (res: RenderResources)
+    (gd: GraphicsDevice)
+    =
+    flushBatches res
+    pushFrame res &state
+    state.Camera <- ValueSome config.Camera
+
+    match config.Viewport with
+    | ValueSome vp ->
+      gd.Viewport <- Viewport(vp.X, vp.Y, vp.Width, vp.Height)
+      state.Viewport <- gd.Viewport
+      state.HasCustomViewport <- true
     | ValueNone -> ()
 
-  // ── Escape hatch ────────────────────────────────────────────────
-  // Analog of raylib's drawImmediate: flush the batches, exit camera,
-  // run the action, then restore. MVP has no shader, so only camera is saved.
+    match config.ClearColor with
+    | ValueSome c -> gd.Clear(c)
+    | ValueNone -> ()
+
+    restartBatches res &state
+
+  let private endCamera
+    (state: byref<RendererState>)
+    (res: RenderResources)
+    (gd: GraphicsDevice)
+    =
+    flushBatches res
+    popFrame gd res &state
+    restartBatches res &state
+
+  // ── Escape hatch ──────────────────────────────────────────────
 
   let private drawImmediate
     (action: unit -> unit)
     (state: byref<RendererState>)
     (res: RenderResources)
+    (gd: GraphicsDevice)
     =
     flushBatches res
-    let savedCam = state.Camera
+    pushFrame res &state
+    state.Camera <- ValueNone
+    state.Shader <- ValueNone
+    gd.SetRenderTarget(null)
+
+    match state.RenderTarget with
+    | ValueSome _ -> state.HasRenderTarget <- false
+    | ValueNone -> ()
 
     try
       action()
     finally
-      beginSpriteBatch(
-        res.SpriteBatch,
-        match savedCam with
-        | ValueSome c -> Camera2D.toMatrix c
-        | ValueNone -> Matrix.Identity
-      )
+      popFrame gd res &state
+      restartBatches res &state
 
-      res.PrimitiveBatch.SetTransform(
-        match savedCam with
-        | ValueSome c -> Camera2D.toMatrix c
-        | ValueNone -> Matrix.Identity
-      )
-
-      state.Camera <- savedCam
-
-  // ── Primitive tessellation helpers ──────────────────────────────
-  // These mirror raylib's DrawCircleV / DrawRectangleLinesEx etc. by
-  // decomposing high-level shapes into PrimitiveBatch calls.
+  // ── Primitive tessellation helpers ────────────────────────────
 
   let inline private vpc(position: Vector2, color: Color) =
     VertexPositionColor(Vector3(position.X, position.Y, 0.0f), color)
@@ -822,11 +936,15 @@ module private CommandHandlers =
       pb.AddLineThick(!prev, p, thickness, color)
       prev := p
 
-  // ── Main dispatch ───────────────────────────────────────────────
+  // ── Main dispatch ─────────────────────────────────────────────
 
   let execute
-    (state: byref<RendererState>, buffer: RenderBuffer2D, res: RenderResources)
-    =
+    (
+      state: byref<RendererState>,
+      buffer: RenderBuffer2D,
+      res: RenderResources,
+      gd: GraphicsDevice
+    ) =
     let sb = res.SpriteBatch
     let pb = res.PrimitiveBatch
 
@@ -982,19 +1100,71 @@ module private CommandHandlers =
                               _) ->
         polyOutline pb center sides radius rotation thickness color
 
-      // Camera
-      | Command2D.BeginCamera(camera, _) -> beginCamera camera &state res
-      | Command2D.EndCamera _ -> endCamera(&state, res)
+      // Camera & Targets
+      | Command2D.BeginCamera(camera, _) -> beginCamera camera &state res gd
+
+      | Command2D.BeginCameraConfig(config, _) ->
+        beginCameraConfig config &state res gd
+
+      | Command2D.EndCamera _ -> endCamera &state res gd
+
+      // Shaders
+      | Command2D.BeginShader(shader, _) ->
+        pushFrame res &state
+        state.Shader <- ValueSome shader
+        endAndRestart res &state
+
+      | Command2D.EndShader _ ->
+        flushBatches res
+        popFrame gd res &state
+        restartBatches res &state
+
+      // Render Targets
+      | Command2D.BeginTarget(target, _) ->
+        pushFrame res &state
+        state.HasRenderTarget <- true
+        state.RenderTarget <- ValueSome target
+        flushBatches res
+        gd.SetRenderTarget(target)
+        restartBatches res &state
+
+      | Command2D.EndTarget _ ->
+        flushBatches res
+        popFrame gd res &state
+        restartBatches res &state
+
+      // Render State
+      | Command2D.SetBlend(mode, _) ->
+        state.Blend <- mode
+        endAndRestart res &state
+
+      | Command2D.SetScissor(x, y, w, h, _) ->
+        flushBatches res
+        state.HasScissor <- true
+        state.ScissorRect <- Rectangle(x, y, w, h)
+        gd.ScissorRectangle <- state.ScissorRect
+        restartBatches res &state
+
+      | Command2D.ClearScissor _ ->
+        state.HasScissor <- false
+        endAndRestart res &state
+
+      | Command2D.SetLineWidth(width, _) -> pb.LineWidth <- width
+
+      | Command2D.SetViewport(x, y, w, h, _) ->
+        flushBatches res
+        state.HasCustomViewport <- true
+        gd.Viewport <- Viewport(x, y, w, h)
+        state.Viewport <- gd.Viewport
+        restartBatches res &state
 
       // Escape Hatches
-      | Command2D.DrawImmediate(action, _) -> drawImmediate action &state res
-      | Command2D.Clear(color, _) ->
-        res.SpriteBatch.End()
-        res.PrimitiveBatch.Flush()
-        sb.GraphicsDevice.Clear(color)
-        beginSpriteBatch(sb, currentMatrix &state)
+      | Command2D.DrawImmediate(action, _) -> drawImmediate action &state res gd
 
-    state.Camera <- ValueNone
+      | Command2D.Clear(color, _) ->
+        flushBatches res
+        sb.GraphicsDevice.Clear(color)
+        restartBatches res &state
 
 /// <summary>
 /// A deferred 2D renderer that sorts commands by layer and executes them
@@ -1009,8 +1179,9 @@ module private CommandHandlers =
 /// <para>
 /// The renderer owns one <c>SpriteBatch</c> and one <c>PrimitiveBatch</c> (created lazily
 /// from the <c>GraphicsDevice</c> registered in the <see cref="T:Mibo.Elmish.GameContext"/>).
-/// State-transition commands (<c>BeginCamera</c>, <c>EndCamera</c>, <c>DrawImmediate</c>)
-/// flush both batches and re-open them with updated transform settings.
+/// State-transition commands (<c>BeginCamera</c>, <c>EndCamera</c>, <c>DrawImmediate</c>,
+/// <c>BeginShader</c>, <c>BeginTarget</c>, <c>SetBlend</c>, <c>SetScissor</c>, etc.)
+/// flush both batches and re-open them with updated settings.
 /// </para>
 /// <para>
 /// Register via <c>Program.withRenderer</c>:
@@ -1074,11 +1245,26 @@ type Renderer2D<'Model>
         | ValueSome c -> Camera2D.toMatrix c
         | ValueNone -> Matrix.Identity
 
-      CommandHandlers.beginSpriteBatch(sb, initialMatrix)
+      CommandHandlers.beginSpriteBatch(
+        sb,
+        initialMatrix,
+        BlendMode.NonPremultiplied,
+        CommandHandlers.defaultRasterizer,
+        ValueNone
+      )
+
       pb.Begin(initialMatrix)
 
       let mutable state: CommandHandlers.RendererState = {
         Camera = _camera
+        Viewport = gd.Viewport
+        HasCustomViewport = false
+        HasScissor = false
+        ScissorRect = Rectangle.Empty
+        Blend = BlendMode.NonPremultiplied
+        Shader = ValueNone
+        HasRenderTarget = false
+        RenderTarget = ValueNone
         WindowWidth = _windowWidth
         WindowHeight = _windowHeight
       }
@@ -1087,9 +1273,10 @@ type Renderer2D<'Model>
         SpriteBatch = sb
         PrimitiveBatch = pb
         WhitePixel = _whitePixel.Value
+        Stack = []
       }
 
-      CommandHandlers.execute(&state, buffer, res)
+      CommandHandlers.execute(&state, buffer, res, gd)
 
       sb.End()
       pb.End()

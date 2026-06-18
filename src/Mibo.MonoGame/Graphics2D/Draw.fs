@@ -379,9 +379,99 @@ module Draw =
     buffer.Add(Command2D.beginCamera layer camera)
     buffer
 
+  /// <summary>Begins a 2D camera with viewport/clear config. (layer) can be partially applied.</summary>
+  let inline beginCameraWith
+    (layer: int<RenderLayer>)
+    (config: Camera2DConfig)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(Command2D.beginCameraConfig layer config)
+    buffer
+
   /// <summary>Ends the current 2D camera transform.</summary>
   let inline endCamera (layer: int<RenderLayer>) (buffer: RenderBuffer2D) =
     buffer.Add(Command2D.endCamera layer)
+    buffer
+
+  // ──────────────────────────────────────────────
+  // Shaders
+  // ──────────────────────────────────────────────
+
+  /// <summary>Begins a custom shader/effect block. (layer) can be partially applied.</summary>
+  let inline beginShader
+    (layer: int<RenderLayer>)
+    (shader: Effect)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(Command2D.beginShader layer shader)
+    buffer
+
+  /// <summary>Ends the current shader block.</summary>
+  let inline endShader (layer: int<RenderLayer>) (buffer: RenderBuffer2D) =
+    buffer.Add(Command2D.endShader layer)
+    buffer
+
+  // ──────────────────────────────────────────────
+  // Render Targets
+  // ──────────────────────────────────────────────
+
+  /// <summary>Begins rendering to a render target. (layer) can be partially applied.</summary>
+  let inline beginTarget
+    (layer: int<RenderLayer>)
+    (target: RenderTarget2D)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(Command2D.beginTarget layer target)
+    buffer
+
+  /// <summary>Ends the current render target and resumes back-buffer rendering.</summary>
+  let inline endTarget (layer: int<RenderLayer>) (buffer: RenderBuffer2D) =
+    buffer.Add(Command2D.endTarget layer)
+    buffer
+
+  // ──────────────────────────────────────────────
+  // Render State
+  // ──────────────────────────────────────────────
+
+  /// <summary>Sets the active blend mode. (layer) can be partially applied.</summary>
+  let inline setBlend
+    (layer: int<RenderLayer>)
+    (mode: BlendMode)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(Command2D.setBlend layer mode)
+    buffer
+
+  /// <summary>Enables a scissor rectangle. (layer) can be partially applied.</summary>
+  let inline setScissor
+    (layer: int<RenderLayer>)
+    (x: int, y: int, w: int, h: int)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(Command2D.setScissor layer (x, y, w, h))
+    buffer
+
+  /// <summary>Disables the scissor rectangle.</summary>
+  let inline clearScissor (layer: int<RenderLayer>) (buffer: RenderBuffer2D) =
+    buffer.Add(Command2D.clearScissor layer)
+    buffer
+
+  /// <summary>Sets the default line width for thick line primitives.</summary>
+  let inline setLineWidth
+    (layer: int<RenderLayer>)
+    (width: float32)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(Command2D.setLineWidth layer width)
+    buffer
+
+  /// <summary>Sets the device viewport. (layer) can be partially applied.</summary>
+  let inline setViewport
+    (layer: int<RenderLayer>)
+    (x: int, y: int, w: int, h: int)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(Command2D.setViewport layer (x, y, w, h))
     buffer
 
   // ──────────────────────────────────────────────

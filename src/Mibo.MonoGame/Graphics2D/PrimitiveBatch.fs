@@ -34,7 +34,8 @@ type private PrimitiveGroup = {
 /// </remarks>
 type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
   let gd = graphicsDevice
-  let effect = new BasicEffect(graphicsDevice)
+  let basicEffect = new BasicEffect(graphicsDevice)
+  let mutable customEffect: Effect voption = ValueNone
   let vertices = ResizeArray<VertexPositionColor>(1024)
   let groups = ResizeArray<PrimitiveGroup>(64)
   let mutable projectionDirty = true
@@ -42,13 +43,16 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
   let mutable currentMatrix = Matrix.Identity
   let mutable currentViewportWidth = 0
   let mutable currentViewportHeight = 0
+  let mutable currentBlend = BlendState.NonPremultiplied
+  let mutable currentRasterizer = RasterizerState.CullNone
+  let mutable currentLineWidth = 1.0f
 
   do
-    effect.VertexColorEnabled <- true
-    effect.TextureEnabled <- false
-    effect.Projection <- Matrix.Identity
-    effect.View <- Matrix.Identity
-    effect.World <- Matrix.Identity
+    basicEffect.VertexColorEnabled <- true
+    basicEffect.TextureEnabled <- false
+    basicEffect.Projection <- Matrix.Identity
+    basicEffect.View <- Matrix.Identity
+    basicEffect.World <- Matrix.Identity
 
   let ensureProjection() =
     let w = gd.Viewport.Width
@@ -61,7 +65,7 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
       currentViewportHeight <- h
       projectionDirty <- false
 
-      effect.Projection <-
+      let proj =
         Matrix.CreateOrthographicOffCenter(
           0.0f,
           float32 w,
@@ -70,6 +74,16 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
           0.0f,
           -1.0f
         )
+
+      basicEffect.Projection <- proj
+
+      match customEffect with
+      | ValueSome effect ->
+        let p = effect.Parameters["MatrixTransform"]
+
+        if p <> null then
+          p.SetValue(currentMatrix * proj)
+      | ValueNone -> ()
 
   let closeCurrentGroupIfDifferent(pt: PrimitiveType) =
     if groups.Count > 0 then
@@ -108,15 +122,28 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
   let flush() =
     if vertices.Count > 0 && groups.Count > 0 then
       ensureProjection()
-      effect.World <- currentMatrix
+
+      let activeEffect =
+        match customEffect with
+        | ValueSome e -> e
+        | ValueNone -> basicEffect :> Effect
+
+      // BasicEffect has .World directly; custom effects may use a MatrixTransform parameter.
+      match customEffect with
+      | ValueSome e ->
+        let p = e.Parameters["World"]
+
+        if p <> null then
+          p.SetValue(currentMatrix)
+      | ValueNone -> basicEffect.World <- currentMatrix
 
       let gdPrevBlend = gd.BlendState
       let gdPrevDepth = gd.DepthStencilState
       let gdPrevRaster = gd.RasterizerState
 
-      gd.BlendState <- BlendState.NonPremultiplied
+      gd.BlendState <- currentBlend
       gd.DepthStencilState <- DepthStencilState.None
-      gd.RasterizerState <- RasterizerState.CullNone
+      gd.RasterizerState <- currentRasterizer
 
       let vertexArr = vertices.ToArray()
 
@@ -125,7 +152,7 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
         let count = primitiveCountOf g
 
         if count > 0 then
-          for pass in effect.CurrentTechnique.Passes do
+          for pass in activeEffect.CurrentTechnique.Passes do
             pass.Apply()
 
             gd.DrawUserPrimitives(
@@ -142,6 +169,11 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
 
       vertices.Clear()
       groups.Clear()
+
+  /// <summary>Gets or sets the default thick-line width used by SetLineWidth.</summary>
+  member _.LineWidth
+    with get () = currentLineWidth
+    and set (value: float32) = currentLineWidth <- value
 
   /// <summary>Begins a batch with the given world/camera transform.</summary>
   member _.Begin(matrix: Matrix) =
@@ -170,6 +202,22 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
 
     flush()
     currentMatrix <- matrix
+
+  /// <summary>Replaces the effect used during flush.</summary>
+  /// <remarks>ValueNone restores the internal BasicEffect.</remarks>
+  member _.SetEffect(effect: Effect voption) =
+    if isInBatch then
+      flush()
+
+    customEffect <- effect
+    projectionDirty <- true
+
+  /// <summary>Changes the blend state applied during flush.</summary>
+  member _.SetBlendState(blend: BlendState) = currentBlend <- blend
+
+  /// <summary>Changes the rasterizer state applied during flush.</summary>
+  member _.SetRasterizerState(rasterizer: RasterizerState) =
+    currentRasterizer <- rasterizer
 
   /// <summary>Flushes all buffered primitive groups to the GPU.</summary>
   member _.Flush() =
@@ -283,7 +331,9 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
           VertexPositionColor(Vector3(points[i].X, points[i].Y, 0.0f), color)
         )
 
-  /// <summary>Adds a thick line as a quad (two triangles) with the given thickness and color.</summary>
+  /// <summary>
+  /// Adds a thick line as a quad (two triangles) with the given thickness and color.
+  /// </summary>
   member this.AddLineThick
     (start: Vector2, ``end``: Vector2, thickness: float32, color: Color)
     =
@@ -328,6 +378,7 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
 
   interface IDisposable with
     member _.Dispose() =
-      effect.Dispose()
+      basicEffect.Dispose()
+      customEffect <- ValueNone
       vertices.Clear()
       groups.Clear()
