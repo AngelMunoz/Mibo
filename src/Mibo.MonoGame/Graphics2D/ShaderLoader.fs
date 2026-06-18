@@ -21,15 +21,14 @@ open MonoGame.Framework.Utilities
 /// to pick the DirectX (<c>.dx.mgfx</c>) or OpenGL (<c>.ogl.mgfx</c>) variant.
 /// </para>
 /// <para>
-/// This loader is not yet consumed by the renderer; it exists so the
-/// lighting phase can call <c>ShaderLoader.loadEffect gd "LitSprite"</c>
-/// without managing the platform-switching boilerplate.
+/// Compiled shader bytes are cached; a new <c>Effect</c> is instantiated per
+/// call so each <c>LightContext2D</c> owns and disposes its own instance.
 /// </para>
 /// </remarks>
 module ShaderLoader =
 
   let private assembly = Assembly.GetExecutingAssembly()
-  let private cache = Dictionary<string, Effect>()
+  let private cache = Dictionary<string, byte[]>()
 
   let private backendSuffix() =
     match PlatformInfo.GraphicsBackend with
@@ -56,17 +55,17 @@ module ShaderLoader =
   /// </summary>
   /// <param name="gd">The graphics device to create the effect on.</param>
   /// <param name="name">Base name of the effect (e.g. <c>"LitSprite"</c> or <c>"LitSpriteNormalMap"</c>).</param>
-  /// <returns>The <see cref="Effect"/>, or <c>ValueNone</c> if the resource is missing.</returns>
+  /// <returns>A new <see cref="Effect"/>, or <c>ValueNone</c> if the resource is missing.</returns>
+  /// <remarks>Each call returns a fresh <c>Effect</c> owned by the caller; cached bytes are reused.</remarks>
   let loadEffect (gd: GraphicsDevice) (name: string) : Effect voption =
     let suffix = backendSuffix()
     let key = name + suffix
 
     match cache.TryGetValue(key) with
-    | true, cached -> ValueSome cached
+    | true, bytes -> ValueSome(new Effect(gd, bytes))
     | false, _ ->
       match tryReadResource(name, suffix) with
       | ValueNone -> ValueNone
       | ValueSome bytes ->
-        let effect = new Effect(gd, bytes)
-        cache[key] <- effect
-        ValueSome effect
+        cache[key] <- bytes
+        ValueSome(new Effect(gd, bytes))

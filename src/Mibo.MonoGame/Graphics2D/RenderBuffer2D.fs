@@ -75,6 +75,12 @@ type RenderBuffer2D
     // Escape Hatches
     | Command2D.DrawImmediate(_, layer) -> layer
     | Command2D.Clear(_, layer) -> layer
+    // Lighting
+    | Command2D.NoopLight layer -> layer
+    | Command2D.LitSprite(_, sprite) -> sprite.Layer
+    | Command2D.EndLighting(_, layer) -> layer
+    | Command2D.EnableShadows(_, layer) -> layer
+    | Command2D.DisableShadows(_, layer) -> layer
 
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
