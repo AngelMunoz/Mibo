@@ -224,6 +224,7 @@ module private CommandHandlers =
     (res: RenderResources)
     (gd: GraphicsDevice)
     =
+    flushBatches res
     pushFrame res &state
     state.Camera <- ValueSome config.Camera
 
@@ -238,16 +239,16 @@ module private CommandHandlers =
     | ValueSome c -> gd.Clear(c)
     | ValueNone -> ()
 
-    endAndRestart res &state
+    restartBatches res &state
 
   let private endCamera
     (state: byref<RendererState>)
     (res: RenderResources)
     (gd: GraphicsDevice)
     =
-    endAndRestart res &state
+    flushBatches res
     popFrame gd res &state
-    endAndRestart res &state
+    restartBatches res &state
 
   // ── Escape hatch ──────────────────────────────────────────────
 
@@ -267,20 +268,9 @@ module private CommandHandlers =
     | ValueSome _ -> state.HasRenderTarget <- false
     | ValueNone -> ()
 
-    beginSpriteBatch(
-      res.SpriteBatch,
-      Matrix.Identity,
-      state.Blend,
-      currentRasterizer &state,
-      ValueNone
-    )
-
-    res.PrimitiveBatch.SetTransform(Matrix.Identity)
-
     try
       action()
     finally
-      flushBatches res
       popFrame gd res &state
       restartBatches res &state
 
@@ -952,6 +942,10 @@ module private CommandHandlers =
   // and DrawUserPrimitives so the shader gets world-position + texture
   // + normal-map binding. Mirrors raylib's handleLitSprite.
 
+  // Reusable quad vertex buffer (two triangles = 6 verts) — avoids per-draw
+  // heap allocation in the hot path (AGENTS.md: avoid allocations in hot paths).
+  let private quadVerts = Array.zeroCreate<VertexPositionColorTexture> 6
+
   let private handleLitSprite
     (lightCtx: LightContext2D)
     (sprite: SpriteState)
@@ -1043,38 +1037,47 @@ module private CommandHandlers =
     let bl = transformCorner(0.0f, float32 dest.Height)
     let br = transformCorner(float32 dest.Width, float32 dest.Height)
 
-    let verts = [|
+    quadVerts[0] <-
       VertexPositionColorTexture(
         Vector3(tl.X, tl.Y, 0.0f),
         color,
         Vector2(u0, v0)
       )
+
+    quadVerts[1] <-
       VertexPositionColorTexture(
         Vector3(tr.X, tr.Y, 0.0f),
         color,
         Vector2(u1, v0)
       )
+
+    quadVerts[2] <-
       VertexPositionColorTexture(
         Vector3(br.X, br.Y, 0.0f),
         color,
         Vector2(u1, v1)
       )
+
+    quadVerts[3] <-
       VertexPositionColorTexture(
         Vector3(tl.X, tl.Y, 0.0f),
         color,
         Vector2(u0, v0)
       )
+
+    quadVerts[4] <-
       VertexPositionColorTexture(
         Vector3(br.X, br.Y, 0.0f),
         color,
         Vector2(u1, v1)
       )
+
+    quadVerts[5] <-
       VertexPositionColorTexture(
         Vector3(bl.X, bl.Y, 0.0f),
         color,
         Vector2(u0, v1)
       )
-    |]
 
     // 7. Draw with the lit effect
     let prevBlend = gd.BlendState
@@ -1087,7 +1090,9 @@ module private CommandHandlers =
 
     for pass in effect.CurrentTechnique.Passes do
       pass.Apply()
-      gd.DrawUserPrimitives(PrimitiveType.TriangleList, verts, 0, 2) |> ignore
+
+      gd.DrawUserPrimitives(PrimitiveType.TriangleList, quadVerts, 0, 2)
+      |> ignore
 
     gd.BlendState <- prevBlend
     gd.DepthStencilState <- prevDepth
@@ -1300,11 +1305,6 @@ module private CommandHandlers =
       | Command2D.EndTarget _ ->
         flushBatches res
         popFrame gd res &state
-
-        match state.RenderTarget with
-        | ValueSome rt -> gd.SetRenderTarget(rt)
-        | ValueNone -> gd.SetRenderTarget(null)
-
         restartBatches res &state
 
       // Render State
@@ -1313,10 +1313,11 @@ module private CommandHandlers =
         endAndRestart res &state
 
       | Command2D.SetScissor(x, y, w, h, _) ->
+        flushBatches res
         state.HasScissor <- true
         state.ScissorRect <- Rectangle(x, y, w, h)
         gd.ScissorRectangle <- state.ScissorRect
-        endAndRestart res &state
+        restartBatches res &state
 
       | Command2D.ClearScissor _ ->
         state.HasScissor <- false
@@ -1325,10 +1326,11 @@ module private CommandHandlers =
       | Command2D.SetLineWidth(width, _) -> pb.LineWidth <- width
 
       | Command2D.SetViewport(x, y, w, h, _) ->
+        flushBatches res
         state.HasCustomViewport <- true
         gd.Viewport <- Viewport(x, y, w, h)
         state.Viewport <- gd.Viewport
-        endAndRestart res &state
+        restartBatches res &state
 
       // Escape Hatches
       | Command2D.DrawImmediate(action, _) -> drawImmediate action &state res gd

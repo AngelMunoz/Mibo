@@ -82,7 +82,7 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
         let p = effect.Parameters["MatrixTransform"]
 
         if p <> null then
-          p.SetValue(proj)
+          p.SetValue(currentMatrix * proj)
       | ValueNone -> ()
 
   let closeCurrentGroupIfDifferent(pt: PrimitiveType) =
@@ -379,10 +379,6 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
   interface IDisposable with
     member _.Dispose() =
       basicEffect.Dispose()
-
-      match customEffect with
-      | ValueSome e -> e.Dispose()
-      | ValueNone -> ()
-
+      customEffect <- ValueNone
       vertices.Clear()
       groups.Clear()
