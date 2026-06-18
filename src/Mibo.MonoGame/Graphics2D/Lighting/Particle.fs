@@ -67,10 +67,16 @@ module ParticleSimulation =
 
     for readIdx = 0 to count - 1 do
       let p = particles[readIdx]
+      // Compute the faded alpha in float space, then decide keep/drop on the
+      // float value (matching the documented "alpha <= 0 are removed" contract).
+      // Dropping based on the byte-rounded value (newAlphaByte >= 1) would
+      // prematurely remove particles whose alpha is > 0 but rounds to 0 in 8 bits.
       let newAlpha = MathF.Max(0.0f, float32 p.Color.A - fadeAmount)
 
-      if newAlpha >= 1.0f then
-        let newColor = Color(p.Color.R, p.Color.G, p.Color.B, byte newAlpha)
+      if newAlpha > 0.0f then
+        // Clamp to the 8-bit range when packing back into the Color's byte.
+        let newAlphaByte = byte(MathF.Min(255.0f, newAlpha))
+        let newColor = Color(p.Color.R, p.Color.G, p.Color.B, newAlphaByte)
 
         particles[writeIdx] <- { p with Color = newColor }
         writeIdx <- writeIdx + 1

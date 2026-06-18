@@ -41,22 +41,25 @@ type LightContext2D
   let shadowSoftness = defaultArg softness 0.05f
   let shadowMaxDist = defaultArg maxShadowDistance 5000.0f
 
-  // Load effects from embedded resources if not user-supplied
-  let litFx =
+  // Load effects from embedded resources if not user-supplied. Track which
+  // ones we created so Dispose only releases effects we own — disposing a
+  // caller-supplied Effect would cause a double-dispose / ObjectDisposedException
+  // when the caller later disposes it themselves.
+  let (litFx, ownsLitFx) =
     match litEffect with
-    | Some e -> e
+    | Some e -> (e, false)
     | None ->
       match ShaderLoader.loadEffect gd "LitSprite" with
-      | ValueSome e -> e
+      | ValueSome e -> (e, true)
       | ValueNone ->
         failwith "LightContext2D: embedded LitSprite effect not found"
 
-  let nmFx =
+  let (nmFx, ownsNmFx) =
     match litNormalMapEffect with
-    | Some e -> e
+    | Some e -> (e, false)
     | None ->
       match ShaderLoader.loadEffect gd "LitSpriteNormalMap" with
-      | ValueSome e -> e
+      | ValueSome e -> (e, true)
       | ValueNone ->
         failwith "LightContext2D: embedded LitSpriteNormalMap effect not found"
 
@@ -202,20 +205,21 @@ type LightContext2D
 
       nmLocsCached <- true
 
-  // Upload a single occluder as Vector4 (P1.X, P1.Y, P2.X, P2.Y)
+  // Upload occluders element-by-element via the parameter's Elements indexer,
+  // avoiding the per-frame Vector4[] allocation that Array.zeroCreate + SetValue
+  // would incur (AGENTS.md: avoid heap allocations in hot paths). Mirrors the
+  // dir/point light upload style used elsewhere in this file.
   let uploadOccluderArray
     (param: EffectParameter)
     (ocs: ResizeArray<Occluder2D>)
     (count: int)
     =
     if param <> null && count > 0 then
-      let arr = Array.zeroCreate<Vector4> count
+      let elems = param.Elements
 
       for i = 0 to count - 1 do
         let o = ocs[i]
-        arr[i] <- Vector4(o.P1.X, o.P1.Y, o.P2.X, o.P2.Y)
-
-      param.SetValue(arr)
+        elems[i].SetValue(Vector4(o.P1.X, o.P1.Y, o.P2.X, o.P2.Y))
 
   // Upload uniforms to one effect
   let uploadToShader
@@ -392,5 +396,10 @@ type LightContext2D
 
   interface IDisposable with
     member _.Dispose() =
-      litFx.Dispose()
-      nmFx.Dispose()
+      // Only dispose effects this context created from embedded resources;
+      // caller-supplied effects remain owned by the caller.
+      if ownsLitFx then
+        litFx.Dispose()
+
+      if ownsNmFx then
+        nmFx.Dispose()

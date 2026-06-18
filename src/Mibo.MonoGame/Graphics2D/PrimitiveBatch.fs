@@ -277,8 +277,21 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
       for i = 0 to verts.Length - 1 do
         vertices.Add(verts[i])
 
-  /// <summary>Adds a triangle fan by decomposing into triangle list.</summary>
-  member _.AddTriangleFan(points: Vector2[], color: Color) =
+  /// <summary>Adds a triangle fan by decomposing into a triangle list.</summary>
+  /// <param name="points">
+  /// <c>points[0]</c> is the fan center; <c>points[1..]</c> are the rim vertices
+  /// in order. <c>points.Length</c> must be at least 3.
+  /// </param>
+  /// <param name="color">Vertex color applied to every generated vertex.</param>
+  /// <param name="closeLoop">
+  /// When <c>true</c> (default), the last rim vertex is connected back to
+  /// <c>points[1]</c>, closing the fan into a loop. Use <c>false</c> for open
+  /// arcs (e.g. a partial circle sector) where connecting the ends would draw
+  /// an unwanted chord across the mouth.
+  /// </param>
+  member _.AddTriangleFan(points: Vector2[], color: Color, ?closeLoop: bool) =
+    let close = defaultArg closeLoop true
+
     if points.Length < 3 then
       ()
     else
@@ -289,13 +302,17 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
 
       let last = groups[groups.Count - 1]
 
+      // Each rim vertex (1..rimCount-1) emits one triangle. When closing, an
+      // extra triangle connects the last rim vertex back to points[1].
+      let triCount = if close && rimCount >= 2 then rimCount else rimCount - 1
+
       groups[groups.Count - 1] <- {
         last with
-            VertexCount = last.VertexCount + rimCount * 3
+            VertexCount = last.VertexCount + triCount * 3
       }
 
-      for i = 1 to rimCount do
-        let next = if i = rimCount then 1 else i + 1
+      for i = 1 to rimCount - 1 do
+        let nextIdx = i + 1
 
         vertices.Add(
           VertexPositionColor(Vector3(center.X, center.Y, 0.0f), color)
@@ -307,9 +324,25 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
 
         vertices.Add(
           VertexPositionColor(
-            Vector3(points[next].X, points[next].Y, 0.0f),
+            Vector3(points[nextIdx].X, points[nextIdx].Y, 0.0f),
             color
           )
+        )
+
+      if close && rimCount >= 2 then
+        vertices.Add(
+          VertexPositionColor(Vector3(center.X, center.Y, 0.0f), color)
+        )
+
+        vertices.Add(
+          VertexPositionColor(
+            Vector3(points[rimCount].X, points[rimCount].Y, 0.0f),
+            color
+          )
+        )
+
+        vertices.Add(
+          VertexPositionColor(Vector3(points[1].X, points[1].Y, 0.0f), color)
         )
 
   /// <summary>Adds a triangle strip with the given color.</summary>

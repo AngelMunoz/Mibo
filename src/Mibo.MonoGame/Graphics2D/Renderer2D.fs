@@ -63,31 +63,46 @@ module PostProcess2D =
       | ValueSome f -> f pass.Effect ctx
       | ValueNone -> ()
 
-      pass.Effect.CurrentTechnique.Passes.[0].Apply()
+      // Apply every pass in the technique (multi-pass effects are supported).
+      // Use SpriteSortMode.Immediate so each Draw is flushed with the effect's
+      // current technique/pass applied; SpriteBatch re-applies the active effect
+      // on each Draw in Immediate mode, so iterating the passes here drives the
+      // effect's multi-pass logic correctly. Guard against empty techniques.
+      let techniquePasses = pass.Effect.CurrentTechnique.Passes
 
-      let srcRect = Rectangle(0, 0, w, h)
-      let destRect = Rectangle(0, 0, w, h)
+      if techniquePasses.Count > 0 then
+        let srcRect = Rectangle(0, 0, w, h)
+        let destRect = Rectangle(0, 0, w, h)
 
-      spriteBatch.Begin(
-        SpriteSortMode.Immediate,
-        BlendState.Opaque,
-        SamplerState.LinearClamp,
-        DepthStencilState.None,
-        RasterizerState.CullNone
-      )
+        // MonoGame stores RenderTarget2D data upside-down relative to normal
+        // textures and the back buffer, so copying RT -> RT/back buffer via
+        // SpriteBatch requires FlipVertically. This is consistent across the
+        // DirectX and OpenGL backends (SpriteBatch normalizes orientation),
+        // so the flip is unconditional here on purpose.
+        spriteBatch.Begin(
+          SpriteSortMode.Immediate,
+          BlendState.Opaque,
+          SamplerState.LinearClamp,
+          DepthStencilState.None,
+          RasterizerState.CullNone,
+          pass.Effect
+        )
 
-      spriteBatch.Draw(
-        src,
-        destRect,
-        srcRect,
-        Color.White,
-        0.0f,
-        Vector2.Zero,
-        SpriteEffects.FlipVertically,
-        0.0f
-      )
+        for pIdx = 0 to techniquePasses.Count - 1 do
+          techniquePasses.[pIdx].Apply()
 
-      spriteBatch.End()
+          spriteBatch.Draw(
+            src,
+            destRect,
+            srcRect,
+            Color.White,
+            0.0f,
+            Vector2.Zero,
+            SpriteEffects.FlipVertically,
+            0.0f
+          )
+
+        spriteBatch.End()
 
       match dst with
       | ValueSome target -> src <- target
@@ -182,6 +197,10 @@ module private CommandHandlers =
     PrimitiveBatch: PrimitiveBatch
     WhitePixel: Texture2D
     mutable Stack: CameraFrame list
+    /// Per-renderer scratch buffer for the lit-sprite quad draw. Kept on the
+    /// resources struct (rather than a module-level mutable) so layered/stacked
+    /// Renderer2D instances don't clobber each other's in-progress quad.
+    QuadVerts: VertexPositionColorTexture[]
   }
 
   // ── BlendMode helpers ─────────────────────────────────────────
@@ -448,7 +467,9 @@ module private CommandHandlers =
     let endRad = MathHelper.ToRadians(endAngle)
     let sweep = endRad - startRad
     let step = sweep / float32 segments
-    let points = Array.zeroCreate<Vector2>(segments + 3)
+    // Open fan: center + rim points from startAngle to endAngle (inclusive).
+    // We do NOT close the loop — closing would draw a chord across the arc mouth.
+    let points = Array.zeroCreate<Vector2>(segments + 2)
     points[0] <- center
 
     for i = 0 to segments + 1 do
@@ -460,7 +481,7 @@ module private CommandHandlers =
           center.Y + MathF.Sin(angle) * radius
         )
 
-    pb.AddTriangleFan(points, color)
+    pb.AddTriangleFan(points, color, closeLoop = false)
 
   let private circleSectorOutline
     (pb: PrimitiveBatch)
@@ -885,7 +906,22 @@ module private CommandHandlers =
       )
     else
       let path = roundedRectPath rect roundness segments
-      pb.AddTriangleFan(path, color)
+      // AddTriangleFan treats points[0] as the fan center, but roundedRectPath
+      // returns only the perimeter. Prepend the rect centroid so the fan
+      // radiates from the center, filling the rounded rectangle correctly.
+      let center =
+        Vector2(
+          float32 rect.X + float32 rect.Width * 0.5f,
+          float32 rect.Y + float32 rect.Height * 0.5f
+        )
+
+      let fan = Array.zeroCreate<Vector2>(path.Length + 1)
+      fan[0] <- center
+
+      for i = 0 to path.Length - 1 do
+        fan[i + 1] <- path[i]
+
+      pb.AddTriangleFan(fan, color)
 
   let private rectRoundedOutline
     (pb: PrimitiveBatch)
@@ -1042,10 +1078,6 @@ module private CommandHandlers =
   // and DrawUserPrimitives so the shader gets world-position + texture
   // + normal-map binding. Mirrors raylib's handleLitSprite.
 
-  // Reusable quad vertex buffer (two triangles = 6 verts) — avoids per-draw
-  // heap allocation in the hot path (AGENTS.md: avoid allocations in hot paths).
-  let private quadVerts = Array.zeroCreate<VertexPositionColorTexture> 6
-
   let private handleLitSprite
     (lightCtx: LightContext2D)
     (sprite: SpriteState)
@@ -1136,6 +1168,11 @@ module private CommandHandlers =
     let tr = transformCorner(float32 dest.Width, 0.0f)
     let bl = transformCorner(0.0f, float32 dest.Height)
     let br = transformCorner(float32 dest.Width, float32 dest.Height)
+
+    // Per-renderer scratch quad buffer (res.QuadVerts) — avoids per-draw heap
+    // allocation in the hot path (AGENTS.md: avoid allocations in hot paths)
+    // while keeping each Renderer2D instance isolated.
+    let quadVerts = res.QuadVerts
 
     quadVerts[0] <-
       VertexPositionColorTexture(
@@ -1525,6 +1562,10 @@ type Renderer2D<'Model>
   let mutable _whitePixel: Texture2D voption = ValueNone
   let mutable _rtPool: IRenderTargetPool voption = ValueNone
 
+  // Per-instance lit-sprite quad scratch buffer (two triangles = 6 verts).
+  // Instance-scoped so stacked Renderer2D instances don't clobber each other.
+  let _quadVerts = Array.zeroCreate<VertexPositionColorTexture> 6
+
   let mutable _camera: Camera2D voption = ValueNone
   let mutable _windowWidth = 0
   let mutable _windowHeight = 0
@@ -1592,6 +1633,7 @@ type Renderer2D<'Model>
         PrimitiveBatch = pb
         WhitePixel = _whitePixel.Value
         Stack = []
+        QuadVerts = _quadVerts
       }
 
       match config.PostProcess with
@@ -1600,10 +1642,15 @@ type Renderer2D<'Model>
         | ValueSome c -> gd.Clear(c)
         | ValueNone -> ()
 
-        CommandHandlers.execute(&state, buffer, res, gd)
-
-        sb.End()
-        pb.End()
+        // Always close both batches even if execute throws — otherwise a single
+        // bad frame (e.g. a throwing DrawImmediate callback) leaves the batches
+        // open and every subsequent Draw fails with "Begin called while already
+        // in a batch".
+        try
+          CommandHandlers.execute(&state, buffer, res, gd)
+        finally
+          sb.End()
+          pb.End()
       | ValueSome passes ->
         let pool = _rtPool.Value
         let sceneRT = pool.Acquire(ctx.WindowWidth, ctx.WindowHeight)
@@ -1615,15 +1662,30 @@ type Renderer2D<'Model>
         | ValueSome c -> gd.Clear(c)
         | ValueNone -> ()
 
-        CommandHandlers.execute(&state, buffer, res, gd)
+        // Render the scene to the render target, then run post-processing.
+        // Wrapped in try/finally so pooled render targets are always released
+        // (and the back-buffer restored) even if execute or a post-process pass
+        // throws — otherwise an exception leaks the sceneRT and any RTs acquired
+        // by PostProcess2D.apply forever, growing GPU memory each frame.
+        let mutable sceneDone = false
 
-        sb.End()
-        pb.End()
+        try
+          CommandHandlers.execute(&state, buffer, res, gd)
+          sb.End()
+          pb.End()
+          sceneDone <- true
+          gd.SetRenderTarget(null)
+          PostProcess2D.apply(ctx, sceneRT, passes, pool, sb)
+        finally
+          // If execute threw before the batches were ended, close them so the
+          // renderer stays usable next frame (Begin guards against re-entrancy).
+          if not sceneDone then
+            sb.End()
+            pb.End()
 
-        gd.SetRenderTarget(null)
-
-        PostProcess2D.apply(ctx, sceneRT, passes, pool, sb)
-        pool.ReleaseAll()
+          // Always return to the back-buffer and release pooled targets.
+          gd.SetRenderTarget(null)
+          pool.ReleaseAll()
 
       _camera <- state.Camera
 
