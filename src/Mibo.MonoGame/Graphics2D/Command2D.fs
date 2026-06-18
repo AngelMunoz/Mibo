@@ -304,6 +304,12 @@ type Command2D =
   | EndLighting of lightCtx: LightContext2D * layer: int<RenderLayer>
   | EnableShadows of lightCtx: LightContext2D * layer: int<RenderLayer>
   | DisableShadows of lightCtx: LightContext2D * layer: int<RenderLayer>
+  // Particles
+  | Particle of
+    particleTexture: Texture2D *
+    particleData: Particle2D[] *
+    particleCount: int *
+    layer: int<RenderLayer>
 
 /// <summary>
 /// Factory functions that create <see cref="T:Mibo.Elmish.Graphics2D.Command2D"/> values.
@@ -673,6 +679,17 @@ module Command2D =
   /// <summary>Clears the current framebuffer to the given color.</summary>
   let inline clear (layer: int<RenderLayer>) (color: Color) =
     Command2D.Clear(color, layer)
+
+  // Particles
+
+  /// <summary>Creates a batched particle render command.</summary>
+  let inline particles
+    (layer: int<RenderLayer>)
+    (texture: Texture2D)
+    (particleData: Particle2D[])
+    (particleCount: int)
+    =
+    Command2D.Particle(texture, particleData, particleCount, layer)
 
 /// <summary>Convenience builders for <see cref="T:Mibo.Elmish.Graphics2D.SpriteState"/>.</summary>
 module SpriteState =

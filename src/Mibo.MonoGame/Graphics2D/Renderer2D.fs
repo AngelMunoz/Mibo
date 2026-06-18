@@ -6,9 +6,103 @@ open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D.Lighting
 
+/// <summary>A single post-processing pass applied to the rendered scene.</summary>
+[<Struct>]
+type PostProcessPass = {
+
+  /// <summary>Effect used for this pass. Receives the scene/render-target as the active texture.</summary>
+  Effect: Effect
+
+  /// <summary>
+  /// Optional callback to set effect parameters before rendering the fullscreen quad.
+  /// Called once per frame when this pass executes. The <see cref="T:Microsoft.Xna.Framework.Graphics.Effect"/>
+  /// technique pass is already applied when this callback runs.
+  /// </summary>
+  OnSetup: (Effect -> GameContext -> unit) voption
+}
+
+/// <summary>Post-processing chain for 2D rendering.</summary>
+module PostProcess2D =
+
+  /// <summary>
+  /// Applies a chain of post-processing passes via ping-pong render targets.
+  /// The scene is already rendered to <paramref name="sceneTarget"/>. Each pass
+  /// renders to a pooled RT (except the last, which renders to the backbuffer).
+  /// </summary>
+  let apply
+    (
+      ctx: GameContext,
+      sceneTarget: RenderTarget2D,
+      passes: PostProcessPass[],
+      rtPool: IRenderTargetPool,
+      spriteBatch: SpriteBatch
+    ) =
+    let mutable src: Texture2D = sceneTarget
+    let w = ctx.WindowWidth
+    let h = ctx.WindowHeight
+
+    for i = 0 to passes.Length - 1 do
+      let pass = passes[i]
+      let isLast = i = passes.Length - 1
+
+      let dst: RenderTarget2D voption =
+        if isLast then
+          ValueNone
+        else
+          ValueSome(rtPool.Acquire(w, h))
+
+      let gd = sceneTarget.GraphicsDevice
+
+      match dst with
+      | ValueSome target ->
+        gd.SetRenderTarget(target)
+        gd.Clear(Color.Black)
+      | ValueNone -> gd.SetRenderTarget(null)
+
+      pass.Effect.CurrentTechnique.Passes.[0].Apply()
+
+      match pass.OnSetup with
+      | ValueSome f -> f pass.Effect ctx
+      | ValueNone -> ()
+
+      let srcRect = Rectangle(0, 0, w, h)
+      let destRect = Rectangle(0, 0, w, h)
+
+      spriteBatch.Begin(
+        SpriteSortMode.Immediate,
+        BlendState.Opaque,
+        SamplerState.LinearClamp,
+        DepthStencilState.None,
+        RasterizerState.CullNone
+      )
+
+      spriteBatch.Draw(
+        src,
+        destRect,
+        srcRect,
+        Color.White,
+        0.0f,
+        Vector2.Zero,
+        SpriteEffects.FlipVertically,
+        0.0f
+      )
+
+      spriteBatch.End()
+
+      match dst with
+      | ValueSome target -> src <- target
+      | ValueNone -> ()
+
 /// <summary>Configuration for the <see cref="T:Mibo.Elmish.Graphics2D.Renderer2D`1"/></summary>
 [<Struct>]
 type Renderer2DConfig = {
+
+  /// <summary>
+  /// Optional post-processing passes. Applied in order after the scene is rendered
+  /// to a render target, chaining via pooled render targets between passes.
+  /// The last pass renders directly to the backbuffer.
+  /// </summary>
+  PostProcess: PostProcessPass[] voption
 
   /// <summary>
   /// Background clear color applied before rendering commands.
@@ -23,16 +117,22 @@ type Renderer2DConfig = {
 module Renderer2DConfig =
 
   /// <summary>
-  /// Default configuration: black clear color.
+  /// Default configuration: no post-processing, black clear color.
   /// Suitable for most 2D games that don't need screen-space effects.
   /// </summary>
-  let defaults: Renderer2DConfig = { ClearColor = ValueSome Color.Black }
+  let defaults: Renderer2DConfig = {
+    PostProcess = ValueNone
+    ClearColor = ValueSome Color.Black
+  }
 
   /// <summary>
   /// Configuration that skips clearing the background.
   /// Use when this renderer composites on top of another renderer's output.
   /// </summary>
-  let noClear: Renderer2DConfig = { ClearColor = ValueNone }
+  let noClear: Renderer2DConfig = {
+    PostProcess = ValueNone
+    ClearColor = ValueNone
+  }
 
 // ═══════════════════════════════════════════════════════════════════
 // Private command handlers — extracted from Renderer2D for readability
@@ -1352,6 +1452,33 @@ module private CommandHandlers =
       | Command2D.EnableShadows(lightCtx, _) -> lightCtx.UniformsDirty <- true
 
       | Command2D.DisableShadows(lightCtx, _) -> lightCtx.UniformsDirty <- true
+      // Particles
+      | Command2D.Particle(texture, particles, count, _) ->
+        let srcRect = Rectangle(0, 0, texture.Width, texture.Height)
+
+        for j = 0 to count - 1 do
+          let p = particles[j]
+          let halfW = p.Size.X * 0.5f
+          let halfH = p.Size.Y * 0.5f
+
+          let dst =
+            Rectangle(
+              int(p.Position.X - halfW),
+              int(p.Position.Y - halfH),
+              int p.Size.X,
+              int p.Size.Y
+            )
+
+          sb.Draw(
+            texture,
+            dst,
+            Nullable srcRect,
+            p.Color,
+            0.0f,
+            Vector2.Zero,
+            SpriteEffects.None,
+            0.0f
+          )
 
 /// <summary>
 /// A deferred 2D renderer that sorts commands by layer and executes them
@@ -1390,6 +1517,7 @@ type Renderer2D<'Model>
   let mutable _spriteBatch: SpriteBatch voption = ValueNone
   let mutable _primitiveBatch: PrimitiveBatch voption = ValueNone
   let mutable _whitePixel: Texture2D voption = ValueNone
+  let mutable _rtPool: IRenderTargetPool voption = ValueNone
 
   let mutable _camera: Camera2D voption = ValueNone
   let mutable _windowWidth = 0
@@ -1406,6 +1534,7 @@ type Renderer2D<'Model>
       _spriteBatch <- ValueSome(new SpriteBatch(gd))
       _primitiveBatch <- ValueSome(new PrimitiveBatch(gd))
       _whitePixel <- ValueSome(createWhitePixel gd)
+      _rtPool <- ValueSome(new RenderTargetPool(gd))
     | ValueSome _ -> ()
 
   interface IRenderer<'Model> with
@@ -1419,10 +1548,6 @@ type Renderer2D<'Model>
 
       let gd = MonoGameGameContext.getGraphicsDevice ctx
       ensureDevice gd
-
-      match config.ClearColor with
-      | ValueSome c -> gd.Clear(c)
-      | ValueNone -> ()
 
       let sb = _spriteBatch.Value
       let pb = _primitiveBatch.Value
@@ -1463,10 +1588,34 @@ type Renderer2D<'Model>
         Stack = []
       }
 
-      CommandHandlers.execute(&state, buffer, res, gd)
+      match config.PostProcess with
+      | ValueNone ->
+        match config.ClearColor with
+        | ValueSome c -> gd.Clear(c)
+        | ValueNone -> ()
 
-      sb.End()
-      pb.End()
+        CommandHandlers.execute(&state, buffer, res, gd)
+
+        sb.End()
+        pb.End()
+      | ValueSome passes ->
+        let pool = _rtPool.Value
+        let sceneRT = pool.Acquire(ctx.WindowWidth, ctx.WindowHeight)
+        gd.SetRenderTarget(sceneRT)
+
+        match config.ClearColor with
+        | ValueSome c -> gd.Clear(c)
+        | ValueNone -> ()
+
+        CommandHandlers.execute(&state, buffer, res, gd)
+
+        sb.End()
+        pb.End()
+
+        gd.SetRenderTarget(null)
+
+        PostProcess2D.apply(ctx, sceneRT, passes, pool, sb)
+        pool.ReleaseAll()
 
       _camera <- state.Camera
 
@@ -1482,6 +1631,13 @@ type Renderer2D<'Model>
 
       match _whitePixel with
       | ValueSome t -> t.Dispose()
+      | ValueNone -> ()
+
+      match _rtPool with
+      | ValueSome pool ->
+        match pool with
+        | :? IDisposable as d -> d.Dispose()
+        | _ -> ()
       | ValueNone -> ()
 
       (buffer :> IDisposable).Dispose()

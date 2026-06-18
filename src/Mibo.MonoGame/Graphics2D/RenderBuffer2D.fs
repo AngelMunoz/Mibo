@@ -81,6 +81,7 @@ type RenderBuffer2D
     | Command2D.EndLighting(_, layer) -> layer
     | Command2D.EnableShadows(_, layer) -> layer
     | Command2D.DisableShadows(_, layer) -> layer
+    | Command2D.Particle(_, _, _, layer) -> layer
 
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
