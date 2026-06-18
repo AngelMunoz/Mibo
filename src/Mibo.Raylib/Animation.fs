@@ -113,7 +113,7 @@ module SpriteSheet =
       if animations.Length > 0 then
         let struct (_, firstAnim) = animations.[0]
 
-        if firstAnim.Frames.Length > 0 then
+        if firstAnim.Frames <> null && firstAnim.Frames.Length > 0 then
           let f = firstAnim.Frames.[0]
           { X = int f.Width; Y = int f.Height }
         else
@@ -195,13 +195,13 @@ module SpriteSheet =
     (loop: bool)
     : SpriteSheet =
     let origin =
-      if frames.Length > 0 then
+      if frames <> null && frames.Length > 0 then
         Vector2(frames.[0].Width / 2.0f, frames.[0].Height / 2.0f)
       else
         Vector2.Zero
 
     let frameSize =
-      if frames.Length > 0 then
+      if frames <> null && frames.Length > 0 then
         {
           X = int frames.[0].Width
           Y = int frames.[0].Height
@@ -349,10 +349,19 @@ module AnimatedSprite =
   let update (deltaSeconds: float32) (sprite: AnimatedSprite) : AnimatedSprite =
     if sprite.Finished then
       sprite
+    elif
+      sprite.AnimationIndex < 0
+      || sprite.AnimationIndex >= sprite.Sheet.AnimationsByIndex.Length
+    then
+      sprite
     else
       let anim = sprite.Sheet.AnimationsByIndex.[sprite.AnimationIndex]
 
-      if anim.Frames.Length = 0 || anim.FrameDuration <= 0.0f then
+      if
+        anim.Frames = null
+        || anim.Frames.Length = 0
+        || anim.FrameDuration <= 0.0f
+      then
         sprite
       else
         let totalTime = sprite.TimeInFrame + deltaSeconds
@@ -386,12 +395,18 @@ module AnimatedSprite =
 
   /// <summary>Get the current source rectangle for rendering.</summary>
   let inline currentSource(sprite: AnimatedSprite) : Rectangle =
-    let anim = sprite.Sheet.AnimationsByIndex.[sprite.AnimationIndex]
-
-    if anim.Frames.Length = 0 then
+    if
+      sprite.AnimationIndex < 0
+      || sprite.AnimationIndex >= sprite.Sheet.AnimationsByIndex.Length
+    then
       Rectangle()
     else
-      anim.Frames.[min sprite.CurrentFrame (anim.Frames.Length - 1)]
+      let anim = sprite.Sheet.AnimationsByIndex.[sprite.AnimationIndex]
+
+      if anim.Frames = null || anim.Frames.Length = 0 then
+        Rectangle()
+      else
+        anim.Frames.[min sprite.CurrentFrame (anim.Frames.Length - 1)]
 
   /// <summary>Is the current animation finished? (always false for looping animations).</summary>
   let inline isFinished(sprite: AnimatedSprite) = sprite.Finished
@@ -404,7 +419,13 @@ module AnimatedSprite =
 
   /// <summary>Get the total duration of the current animation.</summary>
   let inline duration(sprite: AnimatedSprite) =
-    Animation.duration sprite.Sheet.AnimationsByIndex.[sprite.AnimationIndex]
+    if
+      sprite.AnimationIndex < 0
+      || sprite.AnimationIndex >= sprite.Sheet.AnimationsByIndex.Length
+    then
+      0.0f
+    else
+      Animation.duration sprite.Sheet.AnimationsByIndex.[sprite.AnimationIndex]
 
   let inline withColor
     (color: Color)
