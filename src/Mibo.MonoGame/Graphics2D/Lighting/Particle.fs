@@ -69,7 +69,7 @@ module ParticleSimulation =
       let p = particles[readIdx]
       let newAlpha = MathF.Max(0.0f, float32 p.Color.A - fadeAmount)
 
-      if newAlpha > 0.0f then
+      if newAlpha >= 1.0f then
         let newColor = Color(p.Color.R, p.Color.G, p.Color.B, byte newAlpha)
 
         particles[writeIdx] <- { p with Color = newColor }

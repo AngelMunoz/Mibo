@@ -59,11 +59,11 @@ module PostProcess2D =
         gd.Clear(Color.Black)
       | ValueNone -> gd.SetRenderTarget(null)
 
-      pass.Effect.CurrentTechnique.Passes.[0].Apply()
-
       match pass.OnSetup with
       | ValueSome f -> f pass.Effect ctx
       | ValueNone -> ()
+
+      pass.Effect.CurrentTechnique.Passes.[0].Apply()
 
       let srcRect = Rectangle(0, 0, w, h)
       let destRect = Rectangle(0, 0, w, h)
@@ -1454,7 +1454,7 @@ module private CommandHandlers =
       | Command2D.DisableShadows(lightCtx, _) -> lightCtx.UniformsDirty <- true
       // Particles
       | Command2D.Particle(texture, particles, count, _) ->
-        let srcRect = Rectangle(0, 0, texture.Width, texture.Height)
+        let fullSrc = Rectangle(0, 0, texture.Width, texture.Height)
 
         for j = 0 to count - 1 do
           let p = particles[j]
@@ -1469,10 +1469,16 @@ module private CommandHandlers =
               int p.Size.Y
             )
 
+          let src =
+            if p.SourceRect.Width > 0 && p.SourceRect.Height > 0 then
+              p.SourceRect
+            else
+              fullSrc
+
           sb.Draw(
             texture,
             dst,
-            Nullable srcRect,
+            Nullable src,
             p.Color,
             0.0f,
             Vector2.Zero,
@@ -1602,6 +1608,8 @@ type Renderer2D<'Model>
         let pool = _rtPool.Value
         let sceneRT = pool.Acquire(ctx.WindowWidth, ctx.WindowHeight)
         gd.SetRenderTarget(sceneRT)
+        state.HasRenderTarget <- true
+        state.RenderTarget <- ValueSome sceneRT
 
         match config.ClearColor with
         | ValueSome c -> gd.Clear(c)
