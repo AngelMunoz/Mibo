@@ -12,6 +12,7 @@
     <Compile Include="InputMapper.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Runtime.fs" />
+    <Compile Include="Animation.fs" />
     <Compile Include="Graphics2D/Camera2D.fs" />
     <Compile Include="Graphics2D/ShaderLoader.fs" />
     <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
@@ -24,6 +25,7 @@
     <Compile Include="Graphics2D/Renderer2D.fs" />
     <Compile Include="Graphics2D/Draw.fs" />
     <Compile Include="Graphics2D/Lighting/LightCommands.fs" />
+    <Compile Include="Graphics2D/Lighting/GridOccluders.fs" />
     <Compile Include="Graphics2D/Lighting/Particle.fs" />
     <Compile Include="Program.fs" />
     <EmbeddedResource Include="Shaders\LitSprite.dx.mgfx" />
