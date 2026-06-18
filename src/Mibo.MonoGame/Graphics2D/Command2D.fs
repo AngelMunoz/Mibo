@@ -84,11 +84,165 @@ type Command2D =
     layer: int<RenderLayer>
   // Rectangles
   | FillRect of fillRect: Rectangle * fillColor: Color * layer: int<RenderLayer>
-  // Circles
+  | RectOutline of
+    outlineRect: Rectangle *
+    outlineThickness: float32 *
+    outlineColor: Color *
+    layer: int<RenderLayer>
+  | FillRectRounded of
+    roundedRect: Rectangle *
+    roundedFillRoundness: float32 *
+    roundedFillSegments: int *
+    roundedFillColor: Color *
+    layer: int<RenderLayer>
+  | RectRoundedOutline of
+    roundedOutlineRect: Rectangle *
+    roundedOutlineRoundness: float32 *
+    roundedOutlineSegments: int *
+    roundedOutlineThickness: float32 *
+    roundedOutlineColor: Color *
+    layer: int<RenderLayer>
+  | RectGradientV of
+    gradVX: int *
+    gradVY: int *
+    gradVW: int *
+    gradVH: int *
+    gradVTop: Color *
+    gradVBottom: Color *
+    layer: int<RenderLayer>
+  | RectGradientH of
+    gradHX: int *
+    gradHY: int *
+    gradHW: int *
+    gradHH: int *
+    gradHLeft: Color *
+    gradHRight: Color *
+    layer: int<RenderLayer>
+  | RectGradient of
+    gradRect: Rectangle *
+    gradTL: Color *
+    gradBL: Color *
+    gradTR: Color *
+    gradBR: Color *
+    layer: int<RenderLayer>
+  // Circles & Ellipses
   | FillCircle of
     circleCenter: Vector2 *
     circleRadius: float32 *
     circleColor: Color *
+    layer: int<RenderLayer>
+  | CircleOutline of
+    circleOutCenter: Vector2 *
+    circleOutRadius: float32 *
+    circleOutColor: Color *
+    layer: int<RenderLayer>
+  | CircleSector of
+    sectorCenter: Vector2 *
+    sectorRadius: float32 *
+    sectorStartAngle: float32 *
+    sectorEndAngle: float32 *
+    sectorSegments: int *
+    sectorColor: Color *
+    layer: int<RenderLayer>
+  | CircleSectorOutline of
+    sectorOutCenter: Vector2 *
+    sectorOutRadius: float32 *
+    sectorOutStartAngle: float32 *
+    sectorOutEndAngle: float32 *
+    sectorOutSegments: int *
+    sectorOutColor: Color *
+    layer: int<RenderLayer>
+  | CircleGradient of
+    circleGradCenterX: int *
+    circleGradCenterY: int *
+    circleGradRadius: float32 *
+    circleGradInner: Color *
+    circleGradOuter: Color *
+    layer: int<RenderLayer>
+  | FillRing of
+    ringCenter: Vector2 *
+    ringInnerR: float32 *
+    ringOuterR: float32 *
+    ringStartAngle: float32 *
+    ringEndAngle: float32 *
+    ringSegments: int *
+    ringColor: Color *
+    layer: int<RenderLayer>
+  | RingOutline of
+    ringOutCenter: Vector2 *
+    ringOutInnerR: float32 *
+    ringOutOuterR: float32 *
+    ringOutStartAngle: float32 *
+    ringOutEndAngle: float32 *
+    ringOutSegments: int *
+    ringOutColor: Color *
+    layer: int<RenderLayer>
+  | FillEllipse of
+    ellipseCenterX: int *
+    ellipseCenterY: int *
+    ellipseRadiusH: float32 *
+    ellipseRadiusV: float32 *
+    ellipseColor: Color *
+    layer: int<RenderLayer>
+  | EllipseOutline of
+    ellipseOutCenterX: int *
+    ellipseOutCenterY: int *
+    ellipseOutRadiusH: float32 *
+    ellipseOutRadiusV: float32 *
+    ellipseOutColor: Color *
+    layer: int<RenderLayer>
+  // Lines & Curves
+  | Line of
+    lineStart: Vector2 *
+    lineFinish: Vector2 *
+    lineColor: Color *
+    layer: int<RenderLayer>
+  | LineThick of
+    lineThickStart: Vector2 *
+    lineThickFinish: Vector2 *
+    lineThickThickness: float32 *
+    lineThickColor: Color *
+    layer: int<RenderLayer>
+  | LineStrip of
+    stripPoints: Vector2[] *
+    stripColor: Color *
+    layer: int<RenderLayer>
+  | Bezier of
+    bezierStart: Vector2 *
+    bezierControl: Vector2 *
+    bezierFinish: Vector2 *
+    bezierThickness: float32 *
+    bezierColor: Color *
+    layer: int<RenderLayer>
+  // Triangles & Polygons
+  | Triangle of
+    triV1: Vector2 *
+    triV2: Vector2 *
+    triV3: Vector2 *
+    triColor: Color *
+    layer: int<RenderLayer>
+  | TriangleFan of
+    fanPoints: Vector2[] *
+    fanColor: Color *
+    layer: int<RenderLayer>
+  | TriangleStrip of
+    stripTriPoints: Vector2[] *
+    stripTriColor: Color *
+    layer: int<RenderLayer>
+  | FillPoly of
+    polyCenter: Vector2 *
+    polySides: int *
+    polyRadius: float32 *
+    polyRotation: float32 *
+    polyColor: Color *
+    layer: int<RenderLayer>
+  | PolyOutline of
+    polyOutCenter: Vector2 *
+    polyOutSides: int *
+    polyOutRadius: float32 *
+    polyOutRotation: float32 *
+    polyOutThickness: float32 *
+    polyOutColor: Color *
     layer: int<RenderLayer>
   // Camera
   | BeginCamera of beginCameraCam: Camera2D * layer: int<RenderLayer>
@@ -140,7 +294,62 @@ module Command2D =
     =
     Command2D.FillRect(rect, color, layer)
 
-  // Circles
+  /// <summary>Rectangle outline with thickness. (layer, color, thickness) can be partially applied.</summary>
+  let inline rectOutline
+    (layer: int<RenderLayer>, color: Color, thickness: float32)
+    (rect: Rectangle)
+    =
+    Command2D.RectOutline(rect, thickness, color, layer)
+
+  /// <summary>Filled rounded rectangle. (layer, color, roundness, segments) can be partially applied.</summary>
+  let inline fillRectRounded
+    (layer: int<RenderLayer>, color: Color, roundness: float32, segments: int)
+    (rect: Rectangle)
+    =
+    Command2D.FillRectRounded(rect, roundness, segments, color, layer)
+
+  /// <summary>Rounded rectangle outline with thickness. (layer, color, roundness, segments, thickness) can be partially applied.</summary>
+  let inline rectRoundedOutline
+    (
+      layer: int<RenderLayer>,
+      color: Color,
+      roundness: float32,
+      segments: int,
+      thickness: float32
+    )
+    (rect: Rectangle)
+    =
+    Command2D.RectRoundedOutline(
+      rect,
+      roundness,
+      segments,
+      thickness,
+      color,
+      layer
+    )
+
+  /// <summary>Vertical gradient rectangle. (layer) can be partially applied.</summary>
+  let inline rectGradientV
+    (layer: int<RenderLayer>)
+    (x: int, y: int, w: int, h: int, top: Color, bottom: Color)
+    =
+    Command2D.RectGradientV(x, y, w, h, top, bottom, layer)
+
+  /// <summary>Horizontal gradient rectangle. (layer) can be partially applied.</summary>
+  let inline rectGradientH
+    (layer: int<RenderLayer>)
+    (x: int, y: int, w: int, h: int, left: Color, right: Color)
+    =
+    Command2D.RectGradientH(x, y, w, h, left, right, layer)
+
+  /// <summary>4-corner gradient rectangle. (layer) can be partially applied.</summary>
+  let inline rectGradient
+    (layer: int<RenderLayer>)
+    (rect: Rectangle, tl: Color, bl: Color, tr: Color, br: Color)
+    =
+    Command2D.RectGradient(rect, tl, bl, tr, br, layer)
+
+  // Circles & Ellipses
 
   /// <summary>Filled circle. (layer, color) can be partially applied.</summary>
   let inline fillCircle
@@ -148,6 +357,193 @@ module Command2D =
     (center: Vector2, radius: float32)
     =
     Command2D.FillCircle(center, radius, color, layer)
+
+  /// <summary>Circle outline. (layer, color) can be partially applied.</summary>
+  let inline circleOutline
+    (layer: int<RenderLayer>, color: Color)
+    (center: Vector2, radius: float32)
+    =
+    Command2D.CircleOutline(center, radius, color, layer)
+
+  /// <summary>Filled circle sector (pie slice). (layer, color) can be partially applied.</summary>
+  let inline circleSector
+    (layer: int<RenderLayer>, color: Color)
+    (
+      center: Vector2,
+      radius: float32,
+      startAngle: float32,
+      endAngle: float32,
+      segments: int
+    ) =
+    Command2D.CircleSector(
+      center,
+      radius,
+      startAngle,
+      endAngle,
+      segments,
+      color,
+      layer
+    )
+
+  /// <summary>Circle sector outline. (layer, color) can be partially applied.</summary>
+  let inline circleSectorOutline
+    (layer: int<RenderLayer>, color: Color)
+    (
+      center: Vector2,
+      radius: float32,
+      startAngle: float32,
+      endAngle: float32,
+      segments: int
+    ) =
+    Command2D.CircleSectorOutline(
+      center,
+      radius,
+      startAngle,
+      endAngle,
+      segments,
+      color,
+      layer
+    )
+
+  /// <summary>Gradient circle. (layer) can be partially applied.</summary>
+  let inline circleGradient
+    (layer: int<RenderLayer>)
+    (centerX: int, centerY: int, radius: float32, inner: Color, outer: Color)
+    =
+    Command2D.CircleGradient(centerX, centerY, radius, inner, outer, layer)
+
+  /// <summary>Filled ring / arc. (layer, color) can be partially applied.</summary>
+  let inline fillRing
+    (layer: int<RenderLayer>, color: Color)
+    (
+      center: Vector2,
+      innerR: float32,
+      outerR: float32,
+      startAngle: float32,
+      endAngle: float32,
+      segments: int
+    ) =
+    Command2D.FillRing(
+      center,
+      innerR,
+      outerR,
+      startAngle,
+      endAngle,
+      segments,
+      color,
+      layer
+    )
+
+  /// <summary>Ring / arc outline. (layer, color) can be partially applied.</summary>
+  let inline ringOutline
+    (layer: int<RenderLayer>, color: Color)
+    (
+      center: Vector2,
+      innerR: float32,
+      outerR: float32,
+      startAngle: float32,
+      endAngle: float32,
+      segments: int
+    ) =
+    Command2D.RingOutline(
+      center,
+      innerR,
+      outerR,
+      startAngle,
+      endAngle,
+      segments,
+      color,
+      layer
+    )
+
+  /// <summary>Filled ellipse. (layer, color) can be partially applied.</summary>
+  let inline fillEllipse
+    (layer: int<RenderLayer>, color: Color)
+    (centerX: int, centerY: int, radiusH: float32, radiusV: float32)
+    =
+    Command2D.FillEllipse(centerX, centerY, radiusH, radiusV, color, layer)
+
+  /// <summary>Ellipse outline. (layer, color) can be partially applied.</summary>
+  let inline ellipseOutline
+    (layer: int<RenderLayer>, color: Color)
+    (centerX: int, centerY: int, radiusH: float32, radiusV: float32)
+    =
+    Command2D.EllipseOutline(centerX, centerY, radiusH, radiusV, color, layer)
+
+  // Lines & Curves
+
+  /// <summary>1-pixel line. (layer, color) can be partially applied.</summary>
+  let inline line
+    (layer: int<RenderLayer>, color: Color)
+    (start: Vector2, finish: Vector2)
+    =
+    Command2D.Line(start, finish, color, layer)
+
+  /// <summary>Line with custom thickness. (layer, color, thickness) can be partially applied.</summary>
+  let inline lineThick
+    (layer: int<RenderLayer>, color: Color, thickness: float32)
+    (start: Vector2, finish: Vector2)
+    =
+    Command2D.LineThick(start, finish, thickness, color, layer)
+
+  /// <summary>Connected line segments. (layer, color) can be partially applied.</summary>
+  let inline lineStrip
+    (layer: int<RenderLayer>, color: Color)
+    (points: Vector2[])
+    =
+    Command2D.LineStrip(points, color, layer)
+
+  /// <summary>Quadratic bezier curve. (layer, color, thickness) can be partially applied.</summary>
+  let inline bezier
+    (layer: int<RenderLayer>, color: Color, thickness: float32)
+    (start: Vector2, control: Vector2, finish: Vector2)
+    =
+    Command2D.Bezier(start, control, finish, thickness, color, layer)
+
+  // Triangles & Polygons
+
+  /// <summary>Filled triangle from 3 vertices. (layer, color) can be partially applied.</summary>
+  let inline triangle
+    (layer: int<RenderLayer>, color: Color)
+    (v1: Vector2, v2: Vector2, v3: Vector2)
+    =
+    Command2D.Triangle(v1, v2, v3, color, layer)
+
+  /// <summary>Filled triangle fan. (layer, color) can be partially applied.</summary>
+  let inline triangleFan
+    (layer: int<RenderLayer>, color: Color)
+    (points: Vector2[])
+    =
+    Command2D.TriangleFan(points, color, layer)
+
+  /// <summary>Filled triangle strip. (layer, color) can be partially applied.</summary>
+  let inline triangleStrip
+    (layer: int<RenderLayer>, color: Color)
+    (points: Vector2[])
+    =
+    Command2D.TriangleStrip(points, color, layer)
+
+  /// <summary>Filled regular polygon. (layer, color) can be partially applied.</summary>
+  let inline fillPoly
+    (layer: int<RenderLayer>, color: Color)
+    (center: Vector2, sides: int, radius: float32, rotation: float32)
+    =
+    Command2D.FillPoly(center, sides, radius, rotation, color, layer)
+
+  /// <summary>Regular polygon outline with thickness. (layer, color, thickness) can be partially applied.</summary>
+  let inline polyOutline
+    (layer: int<RenderLayer>, color: Color, thickness: float32)
+    (center: Vector2, sides: int, radius: float32, rotation: float32)
+    =
+    Command2D.PolyOutline(
+      center,
+      sides,
+      radius,
+      rotation,
+      thickness,
+      color,
+      layer
+    )
 
   // Camera
 

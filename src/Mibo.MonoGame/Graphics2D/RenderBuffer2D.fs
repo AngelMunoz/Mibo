@@ -30,8 +30,36 @@ type RenderBuffer2D
     match cmd with
     | Command2D.Sprite(_, _, _, _, _, _, layer) -> layer
     | Command2D.Text(_, _, _, _, _, layer) -> layer
+    // Rectangles
     | Command2D.FillRect(_, _, layer) -> layer
+    | Command2D.RectOutline(_, _, _, layer) -> layer
+    | Command2D.FillRectRounded(_, _, _, _, layer) -> layer
+    | Command2D.RectRoundedOutline(_, _, _, _, _, layer) -> layer
+    | Command2D.RectGradientV(_, _, _, _, _, _, layer) -> layer
+    | Command2D.RectGradientH(_, _, _, _, _, _, layer) -> layer
+    | Command2D.RectGradient(_, _, _, _, _, layer) -> layer
+    // Circles & Ellipses
     | Command2D.FillCircle(_, _, _, layer) -> layer
+    | Command2D.CircleOutline(_, _, _, layer) -> layer
+    | Command2D.CircleSector(_, _, _, _, _, _, layer) -> layer
+    | Command2D.CircleSectorOutline(_, _, _, _, _, _, layer) -> layer
+    | Command2D.CircleGradient(_, _, _, _, _, layer) -> layer
+    | Command2D.FillRing(_, _, _, _, _, _, _, layer) -> layer
+    | Command2D.RingOutline(_, _, _, _, _, _, _, layer) -> layer
+    | Command2D.FillEllipse(_, _, _, _, _, layer) -> layer
+    | Command2D.EllipseOutline(_, _, _, _, _, layer) -> layer
+    // Lines & Curves
+    | Command2D.Line(_, _, _, layer) -> layer
+    | Command2D.LineThick(_, _, _, _, layer) -> layer
+    | Command2D.LineStrip(_, _, layer) -> layer
+    | Command2D.Bezier(_, _, _, _, _, layer) -> layer
+    // Triangles & Polygons
+    | Command2D.Triangle(_, _, _, _, layer) -> layer
+    | Command2D.TriangleFan(_, _, layer) -> layer
+    | Command2D.TriangleStrip(_, _, layer) -> layer
+    | Command2D.FillPoly(_, _, _, _, _, layer) -> layer
+    | Command2D.PolyOutline(_, _, _, _, _, _, layer) -> layer
+    // Camera, Escape Hatches
     | Command2D.BeginCamera(_, layer) -> layer
     | Command2D.EndCamera layer -> layer
     | Command2D.DrawImmediate(_, layer) -> layer
