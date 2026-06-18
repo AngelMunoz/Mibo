@@ -59,9 +59,20 @@ type RenderBuffer2D
     | Command2D.TriangleStrip(_, _, layer) -> layer
     | Command2D.FillPoly(_, _, _, _, _, layer) -> layer
     | Command2D.PolyOutline(_, _, _, _, _, _, layer) -> layer
-    // Camera, Escape Hatches
+    // Camera, Targets, Shaders, State
     | Command2D.BeginCamera(_, layer) -> layer
+    | Command2D.BeginCameraConfig(_, layer) -> layer
     | Command2D.EndCamera layer -> layer
+    | Command2D.BeginShader(_, layer) -> layer
+    | Command2D.EndShader layer -> layer
+    | Command2D.BeginTarget(_, layer) -> layer
+    | Command2D.EndTarget layer -> layer
+    | Command2D.SetBlend(_, layer) -> layer
+    | Command2D.SetScissor(_, _, _, _, layer) -> layer
+    | Command2D.ClearScissor layer -> layer
+    | Command2D.SetLineWidth(_, layer) -> layer
+    | Command2D.SetViewport(_, _, _, _, layer) -> layer
+    // Escape Hatches
     | Command2D.DrawImmediate(_, layer) -> layer
     | Command2D.Clear(_, layer) -> layer
 

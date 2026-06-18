@@ -16,9 +16,15 @@
     <Compile Include="Graphics2D/Command2D.fs" />
     <Compile Include="Graphics2D/RenderBuffer2D.fs" />
     <Compile Include="Graphics2D/PrimitiveBatch.fs" />
+    <Compile Include="Graphics2D/ShaderLoader.fs" />
     <Compile Include="Graphics2D/Renderer2D.fs" />
     <Compile Include="Graphics2D/Draw.fs" />
     <Compile Include="Program.fs" />
+    <EmbeddedResource Include="Shaders\LitSprite.dx.mgfx" />
+    <EmbeddedResource Include="Shaders\LitSprite.ogl.mgfx" />
+    <EmbeddedResource Include="Shaders\LitSpriteNormalMap.dx.mgfx" />
+    <EmbeddedResource Include="Shaders\LitSpriteNormalMap.ogl.mgfx" />
+    <None Include="Shaders\*.fx" CopyToOutputDirectory="Never" />
   </ItemGroup>
 
   <ItemGroup>

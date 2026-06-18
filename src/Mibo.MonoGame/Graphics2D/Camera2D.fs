@@ -61,3 +61,62 @@ module Camera2D =
     * Matrix.CreateRotationZ(c.Rotation)
     * Matrix.CreateScale(c.Zoom)
     * Matrix.CreateTranslation(c.Origin.X, c.Origin.Y, 0.0f)
+
+/// <summary>
+/// Camera rendering configuration for 2D multi-camera support.
+/// MonoGame analogue of the raylib-side <c>Camera2DConfig</c>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Unlike the raylib version, <c>Viewport</c> is expressed in **pixels**
+/// as a <see cref="T:Microsoft.Xna.Framework.Rectangle"/>, since MonoGame’s
+/// <c>GraphicsDevice.Viewport</c> and scissor rectangles are pixel-based.
+/// <c>ValueNone</c> means fullscreen (no custom viewport).
+/// </para>
+/// <para>
+/// <c>ClearColor</c> doubles as the clear signal:
+/// <c>ValueNone</c> = don’t clear (overlay on existing content),
+/// <c>ValueSome color</c> = clear with this color before rendering.
+/// </para>
+/// </remarks>
+[<Struct>]
+type Camera2DConfig = {
+  /// <summary>The MonoGame 2D camera for rendering.</summary>
+  Camera: Camera2D
+  /// <summary>Viewport in pixel coordinates. ValueNone = fullscreen.</summary>
+  Viewport: Rectangle voption
+  /// <summary>Clear color before rendering. ValueNone = don’t clear.</summary>
+  ClearColor: Color voption
+}
+
+/// <summary>Convenience values and modifiers for <see cref="T:Mibo.Elmish.Camera2DConfig"/>.</summary>
+module Camera2DConfig =
+
+  /// <summary>Default configuration: fullscreen, no clear.</summary>
+  let defaults: Camera2DConfig = {
+    Camera = Camera2D.create Vector2.Zero 1.0f (Vector2(800.0f, 600.0f))
+    Viewport = ValueNone
+    ClearColor = ValueNone
+  }
+
+  /// <summary>Sets the pixel viewport.</summary>
+  let withViewport
+    (viewport: Rectangle)
+    (config: Camera2DConfig)
+    : Camera2DConfig =
+    {
+      config with
+          Viewport = ValueSome viewport
+    }
+
+  /// <summary>Sets the clear color.</summary>
+  let withClearColor (color: Color) (config: Camera2DConfig) : Camera2DConfig = {
+    config with
+        ClearColor = ValueSome color
+  }
+
+  /// <summary>Disables clearing.</summary>
+  let noClear(config: Camera2DConfig) : Camera2DConfig = {
+    config with
+        ClearColor = ValueNone
+  }
