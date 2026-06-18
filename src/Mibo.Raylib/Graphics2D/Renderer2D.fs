@@ -459,13 +459,19 @@ module private CommandHandlers =
       | Command2D.DisableShadows(lightCtx, _) -> lightCtx.UniformsDirty <- true
       // Particles
       | Command2D.Particle(texture, particles, count, _) ->
+        let fullSrc =
+          Rectangle(0.f, 0.f, float32 texture.Width, float32 texture.Height)
+
         for j = 0 to count - 1 do
           let p = particles[j]
           let halfW = p.Size.X * 0.5f
           let halfH = p.Size.Y * 0.5f
 
           let src =
-            Rectangle(0.f, 0.f, float32 texture.Width, float32 texture.Height)
+            if p.SourceRect.Width > 0.f && p.SourceRect.Height > 0.f then
+              p.SourceRect
+            else
+              fullSrc
 
           let dst =
             Rectangle(
