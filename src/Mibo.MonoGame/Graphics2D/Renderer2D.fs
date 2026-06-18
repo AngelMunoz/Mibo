@@ -380,7 +380,7 @@ module private CommandHandlers =
     let endRad = MathHelper.ToRadians(endAngle)
     let sweep = endRad - startRad
     let step = sweep / float32 segments
-    let points = Array.zeroCreate<Vector2>((segments + 1) * 2 + 2)
+    let points = Array.zeroCreate<Vector2>((segments + 1) * 2)
     let mutable idx = 0
 
     for i = 0 to segments do
@@ -609,8 +609,8 @@ module private CommandHandlers =
     let r = MathHelper.Clamp(roundness, 0.0f, 1.0f) * min w h * 0.5f
     let segments = max 1 segments
     let quarter = segments
-    let total = quarter * 4
-    let path = Array.zeroCreate<Vector2>(total + 1)
+    let total = (quarter + 1) * 4
+    let path = Array.zeroCreate<Vector2>(total)
 
     let cornerCenters = [|
       Vector2(float32 rect.X + w - r, float32 rect.Y + r)
@@ -834,13 +834,22 @@ module private CommandHandlers =
       match buffer[i] with
       // Sprite & Text
       | Command2D.Sprite(texture, dest, source, origin, rotation, color, _) ->
+        let srcOrigin =
+          if dest.Width > 0 && dest.Height > 0 then
+            Vector2(
+              origin.X * (float32 source.Width / float32 dest.Width),
+              origin.Y * (float32 source.Height / float32 dest.Height)
+            )
+          else
+            origin
+
         sb.Draw(
           texture,
           dest,
           Nullable source,
           color,
           rotation,
-          origin,
+          srcOrigin,
           SpriteEffects.None,
           0.0f
         )
@@ -979,7 +988,11 @@ module private CommandHandlers =
 
       // Escape Hatches
       | Command2D.DrawImmediate(action, _) -> drawImmediate action &state res
-      | Command2D.Clear(color, _) -> sb.GraphicsDevice.Clear(color)
+      | Command2D.Clear(color, _) ->
+        res.SpriteBatch.End()
+        res.PrimitiveBatch.Flush()
+        sb.GraphicsDevice.Clear(color)
+        beginSpriteBatch(sb, currentMatrix &state)
 
     state.Camera <- ValueNone
 
@@ -1019,7 +1032,6 @@ type Renderer2D<'Model>
   let mutable _spriteBatch: SpriteBatch voption = ValueNone
   let mutable _primitiveBatch: PrimitiveBatch voption = ValueNone
   let mutable _whitePixel: Texture2D voption = ValueNone
-  let mutable _gd: GraphicsDevice voption = ValueNone
 
   let mutable _camera: Camera2D voption = ValueNone
   let mutable _windowWidth = 0
@@ -1036,7 +1048,6 @@ type Renderer2D<'Model>
       _spriteBatch <- ValueSome(new SpriteBatch(gd))
       _primitiveBatch <- ValueSome(new PrimitiveBatch(gd))
       _whitePixel <- ValueSome(createWhitePixel gd)
-      _gd <- ValueSome gd
     | ValueSome _ -> ()
 
   interface IRenderer<'Model> with

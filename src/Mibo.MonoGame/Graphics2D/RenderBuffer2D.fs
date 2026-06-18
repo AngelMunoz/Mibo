@@ -109,5 +109,10 @@ type RenderBuffer2D
 
   interface IDisposable with
     member _.Dispose() =
-      ArrayPool<Command2D>.Shared.Return(items, true)
-      ArrayPool<int64>.Shared.Return(keys)
+      if items.Length > 0 then
+        let toReturnItems = items
+        let toReturnKeys = keys
+        items <- Array.empty<Command2D>
+        keys <- Array.empty<int64>
+        ArrayPool<Command2D>.Shared.Return(toReturnItems, true)
+        ArrayPool<int64>.Shared.Return(toReturnKeys)
