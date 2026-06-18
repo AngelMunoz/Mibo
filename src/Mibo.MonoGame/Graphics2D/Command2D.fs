@@ -3,6 +3,7 @@ namespace Mibo.Elmish.Graphics2D
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
+open Mibo.Elmish.Graphics2D.Lighting
 
 /// <summary>Unit of measure for 2D render layer ordering.</summary>
 [<Measure>]
@@ -31,6 +32,12 @@ type SpriteState = {
 
   /// <summary>Render layer for ordering.</summary>
   Layer: int<RenderLayer>
+
+  /// <summary>
+  /// Optional normal map for per-pixel lighting. When <c>ValueSome</c>, the lit
+  /// shader uses the normal-map variant; when <c>ValueNone</c>, the plain variant.
+  /// </summary>
+  NormalMap: Texture2D voption
 }
 
 /// <summary>State required to render 2D text via SpriteBatch.DrawString.</summary>
@@ -291,6 +298,12 @@ type Command2D =
   // Escape Hatches
   | DrawImmediate of action: (unit -> unit) * layer: int<RenderLayer>
   | Clear of clearColor: Color * layer: int<RenderLayer>
+  // Lighting
+  | NoopLight of layer: int<RenderLayer>
+  | LitSprite of lightCtx: LightContext2D * sprite: SpriteState
+  | EndLighting of lightCtx: LightContext2D * layer: int<RenderLayer>
+  | EnableShadows of lightCtx: LightContext2D * layer: int<RenderLayer>
+  | DisableShadows of lightCtx: LightContext2D * layer: int<RenderLayer>
 
 /// <summary>
 /// Factory functions that create <see cref="T:Mibo.Elmish.Graphics2D.Command2D"/> values.
@@ -679,6 +692,7 @@ module SpriteState =
       Rotation = 0.0f
       Color = Color.White
       Layer = 0<RenderLayer>
+      NormalMap = ValueNone
     }
 
   /// <summary>Sets the origin point for rotation/positioning.</summary>
@@ -697,6 +711,12 @@ module SpriteState =
   let inline withLayer (v: int<RenderLayer>) (s: SpriteState) = {
     s with
         Layer = v
+  }
+
+  /// <summary>Sets the normal map texture for per-pixel lighting.</summary>
+  let inline withNormalMap (v: Texture2D) (s: SpriteState) = {
+    s with
+        NormalMap = ValueSome v
   }
 
 /// <summary>Convenience builders for <see cref="T:Mibo.Elmish.Graphics2D.TextState"/>.</summary>
