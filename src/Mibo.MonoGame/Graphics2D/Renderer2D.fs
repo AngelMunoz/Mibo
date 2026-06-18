@@ -4,6 +4,7 @@ open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
+open Mibo.Elmish.Graphics2D.Lighting
 
 /// <summary>Configuration for the <see cref="T:Mibo.Elmish.Graphics2D.Renderer2D`1"/></summary>
 [<Struct>]
@@ -936,6 +937,164 @@ module private CommandHandlers =
       pb.AddLineThick(!prev, p, thickness, color)
       prev := p
 
+  // ── Lit sprite draw path ────────────────────────────────────────
+  // Bypasses SpriteBatch: draws the sprite directly with the lit Effect
+  // and DrawUserPrimitives so the shader gets world-position + texture
+  // + normal-map binding. Mirrors raylib's handleLitSprite.
+
+  let private handleLitSprite
+    (lightCtx: LightContext2D)
+    (sprite: SpriteState)
+    (state: byref<RendererState>)
+    (res: RenderResources)
+    (gd: GraphicsDevice)
+    =
+    // 1. Flush both batches — lit sprite draws outside the batch pipeline
+    flushBatches res
+
+    // 2. Select effect (plain vs normal-map)
+    let effect =
+      match sprite.NormalMap with
+      | ValueSome _ -> lightCtx.NormalMapEffect
+      | ValueNone -> lightCtx.Effect
+
+    lightCtx.ShaderActive <- true
+
+    // 3. Lazy uniform upload (once per frame on first lit sprite)
+    if lightCtx.UniformsDirty then
+      lightCtx.UploadUniforms()
+      lightCtx.UniformsDirty <- false
+
+    lightCtx.EnsureLocationsCached()
+
+    // 4. Set MatrixTransform = projection * view (camera)
+    let vp = gd.Viewport
+
+    let projection =
+      Matrix.CreateOrthographicOffCenter(
+        0.0f,
+        float32 vp.Width,
+        float32 vp.Height,
+        0.0f,
+        0.0f,
+        -1.0f
+      )
+
+    let view = currentMatrix &state
+    let matrixTransform = projection * view
+
+    let param = effect.Parameters["MatrixTransform"]
+
+    if param <> null then
+      param.SetValue(matrixTransform)
+
+    // 5. Set texture and normal map
+    let texParam = effect.Parameters["Texture"]
+
+    if texParam <> null then
+      texParam.SetValue(sprite.Texture)
+
+    match sprite.NormalMap with
+    | ValueSome nm ->
+      let nmParam = lightCtx.NormalMapParameter
+
+      if nmParam <> null then
+        nmParam.SetValue(nm)
+    | ValueNone -> ()
+
+    // 6. Build quad vertices (two triangles) in screen space
+    let dest = sprite.Dest
+    let src = sprite.Source
+    let origin = sprite.Origin
+    let rotation = sprite.Rotation
+    let color = sprite.Color
+
+    // Compute UVs from source rect (normalized to texture size)
+    let texW = float32 sprite.Texture.Width
+    let texH = float32 sprite.Texture.Height
+    let u0 = float32 src.X / texW
+    let v0 = float32 src.Y / texH
+    let u1 = float32(src.X + src.Width) / texW
+    let v1 = float32(src.Y + src.Height) / texH
+
+    // Compute 4 corners with origin/rotation applied
+    let cosR = cos rotation
+    let sinR = sin rotation
+
+    let transformCorner(lx: float32, ly: float32) =
+      let tx = lx - origin.X
+      let ty = ly - origin.Y
+      let rx = tx * cosR - ty * sinR
+      let ry = tx * sinR + ty * cosR
+      Vector2(float32 dest.X + rx + origin.X, float32 dest.Y + ry + origin.Y)
+
+    let tl = transformCorner(0.0f, 0.0f)
+    let tr = transformCorner(float32 dest.Width, 0.0f)
+    let bl = transformCorner(0.0f, float32 dest.Height)
+    let br = transformCorner(float32 dest.Width, float32 dest.Height)
+
+    let verts = [|
+      VertexPositionColorTexture(
+        Vector3(tl.X, tl.Y, 0.0f),
+        color,
+        Vector2(u0, v0)
+      )
+      VertexPositionColorTexture(
+        Vector3(tr.X, tr.Y, 0.0f),
+        color,
+        Vector2(u1, v0)
+      )
+      VertexPositionColorTexture(
+        Vector3(br.X, br.Y, 0.0f),
+        color,
+        Vector2(u1, v1)
+      )
+      VertexPositionColorTexture(
+        Vector3(tl.X, tl.Y, 0.0f),
+        color,
+        Vector2(u0, v0)
+      )
+      VertexPositionColorTexture(
+        Vector3(br.X, br.Y, 0.0f),
+        color,
+        Vector2(u1, v1)
+      )
+      VertexPositionColorTexture(
+        Vector3(bl.X, bl.Y, 0.0f),
+        color,
+        Vector2(u0, v1)
+      )
+    |]
+
+    // 7. Draw with the lit effect
+    let prevBlend = gd.BlendState
+    let prevDepth = gd.DepthStencilState
+    let prevRaster = gd.RasterizerState
+
+    gd.BlendState <- toBlendState state.Blend
+    gd.DepthStencilState <- DepthStencilState.None
+    gd.RasterizerState <- currentRasterizer &state
+
+    for pass in effect.CurrentTechnique.Passes do
+      pass.Apply()
+      gd.DrawUserPrimitives(PrimitiveType.TriangleList, verts, 0, 2) |> ignore
+
+    gd.BlendState <- prevBlend
+    gd.DepthStencilState <- prevDepth
+    gd.RasterizerState <- prevRaster
+
+    // 8. Re-begin both batches for subsequent non-lit commands
+    restartBatches res &state
+
+  let private handleEndLighting
+    (lightCtx: LightContext2D)
+    (state: byref<RendererState>)
+    (res: RenderResources)
+    =
+    if lightCtx.ShaderActive then
+      lightCtx.ShaderActive <- false
+      lightCtx.UniformsDirty <- true
+
   // ── Main dispatch ─────────────────────────────────────────────
 
   let execute
@@ -1165,6 +1324,19 @@ module private CommandHandlers =
         flushBatches res
         sb.GraphicsDevice.Clear(color)
         restartBatches res &state
+
+      // Lighting
+      | Command2D.NoopLight _ -> ()
+
+      | Command2D.LitSprite(lightCtx, sprite) ->
+        handleLitSprite lightCtx sprite &state res gd
+
+      | Command2D.EndLighting(lightCtx, _) ->
+        handleEndLighting lightCtx &state res
+
+      | Command2D.EnableShadows(lightCtx, _) -> lightCtx.UniformsDirty <- true
+
+      | Command2D.DisableShadows(lightCtx, _) -> lightCtx.UniformsDirty <- true
 
 /// <summary>
 /// A deferred 2D renderer that sorts commands by layer and executes them

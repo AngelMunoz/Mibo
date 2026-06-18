@@ -13,12 +13,15 @@
     <Compile Include="Assets.fs" />
     <Compile Include="Runtime.fs" />
     <Compile Include="Graphics2D/Camera2D.fs" />
+    <Compile Include="Graphics2D/ShaderLoader.fs" />
+    <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
+    <Compile Include="Graphics2D/Lighting/LightContext.fs" />
     <Compile Include="Graphics2D/Command2D.fs" />
     <Compile Include="Graphics2D/RenderBuffer2D.fs" />
     <Compile Include="Graphics2D/PrimitiveBatch.fs" />
-    <Compile Include="Graphics2D/ShaderLoader.fs" />
     <Compile Include="Graphics2D/Renderer2D.fs" />
     <Compile Include="Graphics2D/Draw.fs" />
+    <Compile Include="Graphics2D/Lighting/LightCommands.fs" />
     <Compile Include="Program.fs" />
     <EmbeddedResource Include="Shaders\LitSprite.dx.mgfx" />
     <EmbeddedResource Include="Shaders\LitSprite.ogl.mgfx" />
