@@ -1,5 +1,7 @@
 namespace Mibo.Elmish.Graphics2D.Lighting
 
+open Microsoft.Xna.Framework
+open Mibo.Animation
 open Mibo.Elmish.Graphics2D
 
 /// <summary>
@@ -47,6 +49,46 @@ module LightCommands =
   /// <summary>Creates a lit-sprite command.</summary>
   let inline litSprite (lightCtx: LightContext2D) (sprite: SpriteState) =
     Command2D.LitSprite(lightCtx, sprite)
+
+  /// <summary>
+  /// Draws an animated sprite with the current lighting state.
+  /// Automatically extracts texture, source rect, origin, rotation, color,
+  /// and normal map from the AnimatedSprite and its SpriteSheet.
+  /// Handles FlipX/FlipY by negating the source rect width/height.
+  /// </summary>
+  let inline litAnimatedSprite
+    (lightCtx: LightContext2D)
+    (layer: int<RenderLayer>)
+    (dest: Rectangle)
+    (animSprite: AnimatedSprite)
+    =
+    let src = AnimatedSprite.currentSource animSprite
+
+    let src =
+      if animSprite.FlipX then
+        Rectangle(src.X, src.Y, -src.Width, src.Height)
+      else
+        src
+
+    let src =
+      if animSprite.FlipY then
+        Rectangle(src.X, src.Y, src.Width, -src.Height)
+      else
+        src
+
+    Command2D.LitSprite(
+      lightCtx,
+      {
+        Texture = animSprite.Sheet.Texture
+        Dest = dest
+        Source = src
+        Origin = animSprite.Sheet.Origin
+        Rotation = animSprite.Rotation
+        Color = animSprite.Color
+        Layer = layer
+        NormalMap = animSprite.Sheet.NormalMap
+      }
+    )
 
   /// <summary>Ends the current lighting block, marking uniforms dirty.</summary>
   let inline endLighting (lightCtx: LightContext2D) (layer: int<RenderLayer>) =
@@ -121,6 +163,17 @@ module LightDraw =
     (buffer: RenderBuffer2D)
     =
     buffer.Add(LightCommands.litSprite lightCtx sprite)
+    buffer
+
+  /// <summary>Draws a lit animated sprite.</summary>
+  let inline litAnimatedSprite
+    (lightCtx: LightContext2D)
+    (layer: int<RenderLayer>)
+    (dest: Rectangle)
+    (animSprite: AnimatedSprite)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(LightCommands.litAnimatedSprite lightCtx layer dest animSprite)
     buffer
 
   /// <summary>Ends the current lighting block.</summary>
