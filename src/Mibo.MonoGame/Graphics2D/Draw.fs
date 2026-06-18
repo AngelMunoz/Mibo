@@ -3,6 +3,7 @@ namespace Mibo.Elmish.Graphics2D
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
+open Mibo.Elmish.Graphics2D.Lighting
 
 /// <summary>
 /// Pipe-friendly drawing DSL. Each function takes a <see cref="T:Mibo.Elmish.Graphics2D.RenderBuffer2D"/>
@@ -497,6 +498,21 @@ module Draw =
     (buffer: RenderBuffer2D)
     =
     buffer.Add(Command2D.clear layer color)
+    buffer
+
+  // ──────────────────────────────────────────────
+  // Particles
+  // ──────────────────────────────────────────────
+
+  /// <summary>Adds a batched particle render command to the buffer.</summary>
+  let inline particles
+    (layer: int<RenderLayer>)
+    (texture: Texture2D)
+    (particleData: Particle2D[])
+    (particleCount: int)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(Command2D.particles layer texture particleData particleCount)
     buffer
 
   /// <summary>
