@@ -4,8 +4,11 @@ open System
 open System.IO
 open System.Reflection
 open Microsoft.Xna.Framework.Graphics
+open MonoGame.Framework.Utilities
 
 /// <summary>
+open System.Collections.Generic
+
 /// Loads compiled MonoGame effect (.mgfx) files from embedded resources.
 /// </summary>
 /// <remarks>
@@ -27,17 +30,19 @@ open Microsoft.Xna.Framework.Graphics
 module ShaderLoader =
 
   let private assembly = Assembly.GetExecutingAssembly()
-  let private cache = System.Collections.Generic.Dictionary<string, Effect>()
+  let private cache = Dictionary<string, Effect>()
 
   let private backendSuffix() =
     try
-      let platform = MonoGame.Framework.Utilities.PlatformInfo.MonoGamePlatform
-      let name = platform.ToString()
+      let backend = PlatformInfo.GraphicsBackend
 
-      if name.Contains("WindowsDX") || name.Contains("UWP") then
-        ".dx.mgfx"
-      else
-        ".ogl.mgfx"
+      match backend with
+      | GraphicsBackend.DirectX
+      | GraphicsBackend.DirectX12 -> ".dx.mgfx"
+      | GraphicsBackend.OpenGL -> ".ogl.mgfx"
+      | GraphicsBackend.Vulkan
+      | GraphicsBackend.Metal
+      | _ -> failwith "Vulcan, Metal and others are not supported at this time."
     with _ ->
       ".ogl.mgfx"
 
