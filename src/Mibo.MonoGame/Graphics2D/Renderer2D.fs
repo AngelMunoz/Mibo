@@ -223,6 +223,7 @@ module private CommandHandlers =
     (res: RenderResources)
     (gd: GraphicsDevice)
     =
+    flushBatches res
     pushFrame res &state
     state.Camera <- ValueSome config.Camera
 
@@ -237,16 +238,16 @@ module private CommandHandlers =
     | ValueSome c -> gd.Clear(c)
     | ValueNone -> ()
 
-    endAndRestart res &state
+    restartBatches res &state
 
   let private endCamera
     (state: byref<RendererState>)
     (res: RenderResources)
     (gd: GraphicsDevice)
     =
-    endAndRestart res &state
+    flushBatches res
     popFrame gd res &state
-    endAndRestart res &state
+    restartBatches res &state
 
   // ── Escape hatch ──────────────────────────────────────────────
 
@@ -266,20 +267,9 @@ module private CommandHandlers =
     | ValueSome _ -> state.HasRenderTarget <- false
     | ValueNone -> ()
 
-    beginSpriteBatch(
-      res.SpriteBatch,
-      Matrix.Identity,
-      state.Blend,
-      currentRasterizer &state,
-      ValueNone
-    )
-
-    res.PrimitiveBatch.SetTransform(Matrix.Identity)
-
     try
       action()
     finally
-      flushBatches res
       popFrame gd res &state
       restartBatches res &state
 
@@ -1141,11 +1131,6 @@ module private CommandHandlers =
       | Command2D.EndTarget _ ->
         flushBatches res
         popFrame gd res &state
-
-        match state.RenderTarget with
-        | ValueSome rt -> gd.SetRenderTarget(rt)
-        | ValueNone -> gd.SetRenderTarget(null)
-
         restartBatches res &state
 
       // Render State
@@ -1154,10 +1139,11 @@ module private CommandHandlers =
         endAndRestart res &state
 
       | Command2D.SetScissor(x, y, w, h, _) ->
+        flushBatches res
         state.HasScissor <- true
         state.ScissorRect <- Rectangle(x, y, w, h)
         gd.ScissorRectangle <- state.ScissorRect
-        endAndRestart res &state
+        restartBatches res &state
 
       | Command2D.ClearScissor _ ->
         state.HasScissor <- false
@@ -1166,10 +1152,11 @@ module private CommandHandlers =
       | Command2D.SetLineWidth(width, _) -> pb.LineWidth <- width
 
       | Command2D.SetViewport(x, y, w, h, _) ->
+        flushBatches res
         state.HasCustomViewport <- true
         gd.Viewport <- Viewport(x, y, w, h)
         state.Viewport <- gd.Viewport
-        endAndRestart res &state
+        restartBatches res &state
 
       // Escape Hatches
       | Command2D.DrawImmediate(action, _) -> drawImmediate action &state res gd

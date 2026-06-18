@@ -1,14 +1,13 @@
 namespace Mibo.Elmish.Graphics2D
 
 open System
+open System.Collections.Generic
 open System.IO
 open System.Reflection
 open Microsoft.Xna.Framework.Graphics
 open MonoGame.Framework.Utilities
 
 /// <summary>
-open System.Collections.Generic
-
 /// Loads compiled MonoGame effect (.mgfx) files from embedded resources.
 /// </summary>
 /// <remarks>
@@ -33,18 +32,13 @@ module ShaderLoader =
   let private cache = Dictionary<string, Effect>()
 
   let private backendSuffix() =
-    try
-      let backend = PlatformInfo.GraphicsBackend
-
-      match backend with
-      | GraphicsBackend.DirectX
-      | GraphicsBackend.DirectX12 -> ".dx.mgfx"
-      | GraphicsBackend.OpenGL -> ".ogl.mgfx"
-      | GraphicsBackend.Vulkan
-      | GraphicsBackend.Metal
-      | _ -> failwith "Vulcan, Metal and others are not supported at this time."
-    with _ ->
-      ".ogl.mgfx"
+    match PlatformInfo.GraphicsBackend with
+    | GraphicsBackend.DirectX
+    | GraphicsBackend.DirectX12 -> ".dx.mgfx"
+    | GraphicsBackend.OpenGL -> ".ogl.mgfx"
+    | GraphicsBackend.Vulkan
+    | GraphicsBackend.Metal
+    | _ -> failwith "Vulkan, Metal and others are not supported at this time."
 
   let private tryReadResource(name: string, suffix: string) : byte[] voption =
     let fullName = sprintf "Mibo.MonoGame.Shaders.%s%s" name suffix
