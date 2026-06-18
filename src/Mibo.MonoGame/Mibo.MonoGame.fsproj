@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
     <OutputType>Library</OutputType>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
@@ -12,6 +12,12 @@
     <Compile Include="InputMapper.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Runtime.fs" />
+    <Compile Include="Graphics2D/Camera2D.fs" />
+    <Compile Include="Graphics2D/Command2D.fs" />
+    <Compile Include="Graphics2D/RenderBuffer2D.fs" />
+    <Compile Include="Graphics2D/PrimitiveBatch.fs" />
+    <Compile Include="Graphics2D/Renderer2D.fs" />
+    <Compile Include="Graphics2D/Draw.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

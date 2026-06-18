@@ -44,6 +44,18 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
   let mutable inputServiceOpt: IInput voption = ValueNone
   let mutable ctxOpt: GameContext voption = ValueNone
 
+  // Target frame interval for the software FPS cap (TimeSpan.Zero = uncapped).
+  let mutable targetInterval = TimeSpan.Zero
+
+  // Stopwatch for the software FPS cap. We measure from an absolute reference
+  // timestamp (nextFrameTime) and advance it by exactly targetInterval each
+  // frame, drift-correcting — the same approach raylib's SetTargetFPS uses
+  // (accumulate toward an absolute target, not "sleep for target - now").
+  // This avoids the jitter/chop that "sleep for (target - elapsed)" produces,
+  // because Thread.Sleep oversleeps by 1-4ms and relative sleeps drift.
+  let stopWatch = System.Diagnostics.Stopwatch.StartNew()
+  let mutable nextFrameTime = 0.0 // seconds, on the stopwatch timeline
+
   // ── Config: apply the cumulative GameConfig callbacks once, in the ctor,
   // before Initialize runs (mirrors RaylibGame applying config before InitWindow).
   do
@@ -56,15 +68,23 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     graphics.PreferredBackBufferWidth <- config.Width
     graphics.PreferredBackBufferHeight <- config.Height
 
-    graphics.SynchronizeWithVerticalRetrace <- config.TargetFPS <= 0
-
-    // Disable MG fixed timestep when TargetFPS <= 0 (unlocked/VSync intent).
-    // MG defaults IsFixedTimeStep=true (fixed 60fps), which would override VSync.
-    this.IsFixedTimeStep <- config.TargetFPS > 0
+    // Always run a variable-timestep loop, matching the raylib host's
+    // SetTargetFPS behavior (frame-rate-capped, but each frame steps the
+    // simulation by real elapsed time). With IsFixedTimeStep=true + VSync
+    // off, MonoGame clamps ElapsedGameTime to TargetElapsedTime and may run
+    // 0 or N Updates per Draw, causing stutter. Variable timestep gives one
+    // Update per Draw with real elapsed time — same shape as RaylibGame.
+    graphics.SynchronizeWithVerticalRetrace <- false
+    this.IsFixedTimeStep <- false
 
     if config.TargetFPS > 0 then
-      this.TargetElapsedTime <-
-        TimeSpan.FromSeconds(1.0 / float config.TargetFPS)
+      // Cap the frame rate without forcing fixed-step. MonoGame has no
+      // native FPS cap, so we apply a Thread.Sleep at the end of Update
+      // when the host is running faster than TargetFPS (see Update below).
+      targetInterval <- TimeSpan.FromSeconds(1.0 / float config.TargetFPS)
+    else
+      // Unlocked: enable VSync instead of sleeping.
+      graphics.SynchronizeWithVerticalRetrace <- true
 
     this.Window.Title <- config.Title
     this.IsMouseVisible <- true
@@ -142,6 +162,34 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
 
     if loop.ShouldQuit then
       this.Exit()
+
+    // Software FPS cap using an absolute reference timestamp, mirroring
+    // raylib's SetTargetFPS: advance nextFrameTime by exactly targetInterval
+    // each frame and sleep until that absolute point on the stopwatch timeline.
+    // This is drift-free and avoids the chop that "sleep for (target - now)"
+    // produces (Thread.Sleep oversleeps 1-4ms and relative sleeps accumulate
+    // drift). If we fell behind by more than one interval (a hiccup), we resync
+    // to now rather than burst-catch-up. TargetFPS <= 0 is uncapped (VSync).
+    if targetInterval > TimeSpan.Zero then
+      let now = stopWatch.Elapsed.TotalSeconds
+      // Initialize the reference on the first capped frame.
+      if nextFrameTime = 0.0 then
+        nextFrameTime <- now
+
+      let target = nextFrameTime + targetInterval.TotalSeconds
+
+      if now < target then
+        // On pace: sleep the remainder, capped to one interval to avoid
+        // pathological oversleeps compounding.
+        let remaining = target - now
+        let maxSleep = targetInterval.TotalSeconds
+        let sleepSec = min remaining maxSleep
+        System.Threading.Thread.Sleep(int(sleepSec * 1000.0))
+        nextFrameTime <- target
+      else
+        // Fell behind (work or a hiccup took longer than the interval):
+        // resync to now so we don't try to catch up in a burst.
+        nextFrameTime <- now
 
   // ── Draw: render in add-order. Mibo.MonoGame ships no default renderers;
   // users implement IRenderer<'Model> against SpriteBatch/draw calls.
