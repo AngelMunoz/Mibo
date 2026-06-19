@@ -1265,11 +1265,23 @@ module private CommandHandlers =
       match buffer[i] with
       // Sprite & Text
       | Command2D.Sprite(texture, dest, source, origin, rotation, color, _) ->
+        // Translate negative source rect dimensions into SpriteEffects
+        let mutable effects = SpriteEffects.None
+        let mutable src = source
+
+        if src.Width < 0 then
+          effects <- effects ||| SpriteEffects.FlipHorizontally
+          src <- Rectangle(src.X, src.Y, -src.Width, src.Height)
+
+        if src.Height < 0 then
+          effects <- effects ||| SpriteEffects.FlipVertically
+          src <- Rectangle(src.X, src.Y, src.Width, -src.Height)
+
         let srcOrigin =
           if dest.Width > 0 && dest.Height > 0 then
             Vector2(
-              origin.X * (float32 source.Width / float32 dest.Width),
-              origin.Y * (float32 source.Height / float32 dest.Height)
+              origin.X * (float32 src.Width / float32 dest.Width),
+              origin.Y * (float32 src.Height / float32 dest.Height)
             )
           else
             origin
@@ -1277,11 +1289,11 @@ module private CommandHandlers =
         sb.Draw(
           texture,
           dest,
-          Nullable source,
+          Nullable src,
           color,
           rotation,
           srcOrigin,
-          SpriteEffects.None,
+          effects,
           0.0f
         )
 
