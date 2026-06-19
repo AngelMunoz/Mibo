@@ -37,7 +37,8 @@ open Mibo.Input
 type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
   inherit Game()
 
-  let graphics = new GraphicsDeviceManager(this)
+  let graphics =
+    new GraphicsDeviceManager(this, GraphicsProfile = GraphicsProfile.HiDef)
 
   let loop = ElmishLoop.create(ElmishLoop.coreOfProgram program)
   let renderers = ResizeArray<IRenderer<'Model>>()

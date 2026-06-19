@@ -1,16 +1,15 @@
 #if OPENGL
   #define VS_SHADERMODEL vs_3_0
   #define PS_SHADERMODEL ps_3_0
+  #define MAX_OCCLUDERS 32
 #else
-  #define VS_SHADERMODEL vs_4_0_level_9_1
-  #define PS_SHADERMODEL ps_4_0_level_9_1
+  #define VS_SHADERMODEL vs_5_0
+  #define PS_SHADERMODEL ps_5_0
+  #define MAX_OCCLUDERS 128
 #endif
 
 #define MAX_DIR_LIGHTS 4
 #define MAX_POINT_LIGHTS 16
-#ifndef MAX_OCCLUDERS
-  #define MAX_OCCLUDERS 128
-#endif
 
 float4x4 MatrixTransform;
 sampler2D Texture : register(s0);

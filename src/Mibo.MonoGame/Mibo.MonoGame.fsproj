@@ -40,7 +40,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="MonoGame.Framework.Native" Version="3.8.4.1" />
+    <PackageReference Include="MonoGame.Framework.Native" Version="3.8.4.1" PrivateAssets="all" />
     <PackageReference Include="FSharp.UMX" Version="1.1.0" />
   </ItemGroup>
 
