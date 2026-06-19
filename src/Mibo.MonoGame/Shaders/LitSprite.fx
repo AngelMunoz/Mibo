@@ -2,10 +2,8 @@
   #define VS_SHADERMODEL vs_3_0
   #define PS_SHADERMODEL ps_3_0
 #else
-  // ps_4_0_level_9_1 has only 32 float4 registers — insufficient for
-  // 128 occluders + 16 point lights. Using ps_4_0 (4096 registers).
-  #define VS_SHADERMODEL vs_4_0
-  #define PS_SHADERMODEL ps_4_0
+  #define VS_SHADERMODEL vs_4_0_level_9_1
+  #define PS_SHADERMODEL ps_4_0_level_9_1
 #endif
 
 #define MAX_DIR_LIGHTS 4
