@@ -136,24 +136,24 @@ type LightContext2D
       let p = fx.Parameters[name]
       p
 
-    setAmbient(tryGet "ambientColor")
-    setDirCount(tryGet "dirLightCount")
-    setDirDirs(tryGet "dirLightDirs")
-    setDirColors(tryGet "dirLightColors")
-    setDirIntensities(tryGet "dirLightIntensities")
-    setDirShadowIdx(tryGet "dirLightShadowIdx")
-    setPointCount(tryGet "pointLightCount")
-    setPointPos(tryGet "pointLightPos")
-    setPointColors(tryGet "pointLightColors")
-    setPointIntensities(tryGet "pointLightIntensities")
-    setPointRadii(tryGet "pointLightRadii")
-    setPointFalloffs(tryGet "pointLightFalloffs")
-    setPointShadowIdx(tryGet "pointLightShadowIdx")
-    setOccluders(tryGet "occluders")
-    setOccluderCount(tryGet "occluderCount")
-    setSoftness(tryGet "shadowSoftness")
-    setMaxDist(tryGet "shadowMaxDistance")
-    setNormalMap(tryGet "normalMap")
+    setAmbient(tryGet "AmbientColor")
+    setDirCount(tryGet "DirLightCount")
+    setDirDirs(tryGet "DirLightDirs")
+    setDirColors(tryGet "DirLightColors")
+    setDirIntensities(tryGet "DirLightIntensities")
+    setDirShadowIdx(tryGet "DirLightShadowIdx")
+    setPointCount(tryGet "PointLightCount")
+    setPointPos(tryGet "PointLightPos")
+    setPointColors(tryGet "PointLightColors")
+    setPointIntensities(tryGet "PointLightIntensities")
+    setPointRadii(tryGet "PointLightRadii")
+    setPointFalloffs(tryGet "PointLightFalloffs")
+    setPointShadowIdx(tryGet "PointLightShadowIdx")
+    setOccluders(tryGet "Occluders")
+    setOccluderCount(tryGet "OccluderCount")
+    setSoftness(tryGet "ShadowSoftness")
+    setMaxDist(tryGet "ShadowMaxDistance")
+    setNormalMap(tryGet "NormalMap")
 
   let cacheLocations() =
     if not locsCached then
@@ -216,8 +216,9 @@ type LightContext2D
     =
     if param <> null && count > 0 then
       let elems = param.Elements
+      let n = min count elems.Count
 
-      for i = 0 to count - 1 do
+      for i = 0 to n - 1 do
         let o = ocs[i]
         elems[i].SetValue(Vector4(o.P1.X, o.P1.Y, o.P2.X, o.P2.Y))
 
