@@ -472,7 +472,9 @@ module private CommandHandlers =
     let points = Array.zeroCreate<Vector2>(segments + 2)
     points[0] <- center
 
-    for i = 0 to segments + 1 do
+    // Rim points run from startAngle to endAngle inclusive: that's segments+1
+    // points (indices 0..segments), stored at points[1..segments+1].
+    for i = 0 to segments do
       let angle = startRad + float32 i * step
 
       points[i + 1] <-
