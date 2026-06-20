@@ -345,29 +345,32 @@ module Cmd =
   /// Creates a command from a .NET Task.
   /// </summary>
   /// <remarks>
+  /// The arguments are passed separately due tasks being hot by nature.
+  /// This guarantees that the execution is not made in the loop's thread.
   /// The task result is awaited and mapped to a message.
   /// If the task throws, the error handler is invoked instead.
   /// </remarks>
   /// <example>
   /// <code>
-  /// Cmd.ofTask (httpClient.GetAsync url) ResponseReceived RequestFailed
+  /// let work url =
+  ///   httpClient.GetAsync
+  /// Cmd.ofTask work url ResponseReceived RequestFailed
   /// </code>
   /// </example>
   let ofTask
-    (tsk: 'Args -> Threading.Tasks.Task<'T>)
+    (tsk: 'Args -> Task<'T>)
     (args: 'Args)
     (ofSuccess: 'T -> 'Msg)
     (ofError: exn -> 'Msg)
     : Cmd<'Msg> =
     Single(
       Effect<'Msg>(fun dispatch ->
-        task {
+        async {
           try
-            let! result = tsk args
+            let! result = tsk args |> Async.AwaitTask
             result |> ofSuccess |> dispatch
           with ex ->
             ofError ex |> dispatch
         }
-        :> Task
-        |> ignore)
+        |> Async.Start)
     )
