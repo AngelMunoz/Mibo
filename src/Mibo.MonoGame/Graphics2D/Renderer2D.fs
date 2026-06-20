@@ -1105,7 +1105,13 @@ module private CommandHandlers =
 
     lightCtx.EnsureLocationsCached()
 
-    // 4. Set MatrixTransform = projection * view (camera)
+    // 4. Set MatrixTransform = view * projection (camera * ortho).
+    //    XNA/MonoGame row-vector convention: A * B applies A first, so the
+    //    correct world -> clip chain is world -> screen (view) -> clip
+    //    (projection). This MUST match PrimitiveBatch.ensureProjection
+    //    (currentMatrix * proj) and the SpriteBatch transform composition;
+    //    using projection * view sends vertices to garbage clip coords and
+    //    the sprite gets clipped away entirely (invisible).
     let vp = gd.Viewport
 
     let projection =
@@ -1119,7 +1125,7 @@ module private CommandHandlers =
       )
 
     let view = currentMatrix &state
-    let matrixTransform = projection * view
+    let matrixTransform = view * projection
 
     let param = effect.Parameters["MatrixTransform"]
 
@@ -1147,13 +1153,33 @@ module private CommandHandlers =
     let rotation = sprite.Rotation
     let color = sprite.Color
 
-    // Compute UVs from source rect (normalized to texture size)
+    // Compute UVs from source rect (normalized to texture size).
+    // Negative source width/height signal a flip — same convention the unlit
+    // SpriteBatch path turns into FlipHorizontally/FlipVertically and that
+    // LightCommands.litAnimatedSprite derives from AnimatedSprite.FlipX/FlipY.
+    // Use the absolute extent so the UVs stay in the valid [0,1] range, and
+    // fold the flip into u0/u1 (v0/v1) by swapping the axis coordinate.
+    // Computing u1 from a negative width yields out-of-range UVs that sample
+    // the wrong texels every frame, making flipped animations flicker/blink.
     let texW = float32 sprite.Texture.Width
     let texH = float32 sprite.Texture.Height
-    let u0 = float32 src.X / texW
-    let v0 = float32 src.Y / texH
-    let u1 = float32(src.X + src.Width) / texW
-    let v1 = float32(src.Y + src.Height) / texH
+
+    let flipX = src.Width < 0
+    let flipY = src.Height < 0
+    let srcW = if flipX then -src.Width else src.Width
+    let srcH = if flipY then -src.Height else src.Height
+
+    let uLeft = float32 src.X / texW
+    let uRight = float32(src.X + srcW) / texW
+    let vTop = float32 src.Y / texH
+    let vBot = float32(src.Y + srcH) / texH
+
+    // u0/v0 map to the TL corner, u1 to the right column, v1 to the bottom row
+    // (see the quad assembly below); swapping on the flipped axis mirrors it.
+    let u0 = if flipX then uRight else uLeft
+    let u1 = if flipX then uLeft else uRight
+    let v0 = if flipY then vBot else vTop
+    let v1 = if flipY then vTop else vBot
 
     // Compute 4 corners with origin/rotation applied
     let cosR = cos rotation
