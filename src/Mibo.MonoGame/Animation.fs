@@ -2,8 +2,8 @@ namespace Mibo.Animation
 
 open System
 open System.Collections.Generic
-open System.Numerics
-open Raylib_cs
+open Microsoft.Xna.Framework
+open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
 
 /// <summary>A 2D point with integer coordinates.</summary>
@@ -107,15 +107,15 @@ module SpriteSheet =
       let struct (name, anim) = animations.[i]
       dict.[name] <- anim
       indices.[name] <- i
-      arr.[i] <- anim
+      arr[i] <- anim
 
     let frameSize =
       if animations.Length > 0 then
-        let struct (_, firstAnim) = animations.[0]
+        let struct (_, firstAnim) = animations[0]
 
         if firstAnim.Frames <> null && firstAnim.Frames.Length > 0 then
           let f = firstAnim.Frames.[0]
-          { X = int f.Width; Y = int f.Height }
+          { X = f.Width; Y = f.Height }
         else
           { X = 0; Y = 0 }
       else
@@ -161,10 +161,10 @@ module SpriteSheet =
 
         frames[j] <-
           Rectangle(
-            float32(col * frameWidth),
-            float32(actualRow * frameHeight),
-            float32 frameWidth,
-            float32 frameHeight
+            col * frameWidth,
+            actualRow * frameHeight,
+            frameWidth,
+            frameHeight
           )
 
       let anim = {
@@ -196,15 +196,18 @@ module SpriteSheet =
     : SpriteSheet =
     let origin =
       if frames <> null && frames.Length > 0 then
-        Vector2(frames.[0].Width / 2.0f, frames.[0].Height / 2.0f)
+        Vector2(
+          float32 frames.[0].Width / 2.0f,
+          float32 frames.[0].Height / 2.0f
+        )
       else
         Vector2.Zero
 
     let frameSize =
       if frames <> null && frames.Length > 0 then
         {
-          X = int frames.[0].Width
-          Y = int frames.[0].Height
+          X = frames.[0].Width
+          Y = frames.[0].Height
         }
       else
         { X = 0; Y = 0 }

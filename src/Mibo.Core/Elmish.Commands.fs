@@ -1,6 +1,7 @@
 namespace Mibo.Elmish
 
 open System
+open System.Threading.Tasks
 
 /// <summary>
 /// Represents a side effect that can dispatch messages to the Elmish runtime.
@@ -337,23 +338,28 @@ module Cmd =
           with ex ->
             dispatch(ofError ex)
         }
-        |> Async.StartImmediate)
+        |> Async.Start)
     )
 
   /// <summary>
   /// Creates a command from a .NET Task.
   /// </summary>
   /// <remarks>
+  /// The arguments are passed separately due to tasks being hot by nature.
+  /// This guarantees that the execution is not made in the loop's thread.
   /// The task result is awaited and mapped to a message.
   /// If the task throws, the error handler is invoked instead.
   /// </remarks>
   /// <example>
   /// <code>
-  /// Cmd.ofTask (httpClient.GetAsync url) ResponseReceived RequestFailed
+  /// let work url =
+  ///   httpClient.GetAsync url
+  /// Cmd.ofTask work url ResponseReceived RequestFailed
   /// </code>
   /// </example>
   let ofTask
-    (task: Threading.Tasks.Task<'T>)
+    (tsk: 'Args -> Task<'T>)
+    (args: 'Args)
     (ofSuccess: 'T -> 'Msg)
     (ofError: exn -> 'Msg)
     : Cmd<'Msg> =
@@ -361,10 +367,10 @@ module Cmd =
       Effect<'Msg>(fun dispatch ->
         async {
           try
-            let! result = task |> Async.AwaitTask
-            dispatch(ofSuccess result)
+            let! result = tsk args |> Async.AwaitTask
+            result |> ofSuccess |> dispatch
           with ex ->
-            dispatch(ofError ex)
+            ofError ex |> dispatch
         }
-        |> Async.StartImmediate)
+        |> Async.Start)
     )

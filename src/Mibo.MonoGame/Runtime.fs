@@ -37,7 +37,8 @@ open Mibo.Input
 type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
   inherit Game()
 
-  let graphics = new GraphicsDeviceManager(this)
+  let graphics =
+    new GraphicsDeviceManager(this, GraphicsProfile = GraphicsProfile.HiDef)
 
   let loop = ElmishLoop.create(ElmishLoop.coreOfProgram program)
   let renderers = ResizeArray<IRenderer<'Model>>()
@@ -56,18 +57,19 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
     graphics.PreferredBackBufferWidth <- config.Width
     graphics.PreferredBackBufferHeight <- config.Height
 
-    graphics.SynchronizeWithVerticalRetrace <- config.TargetFPS <= 0
-
-    // Disable MG fixed timestep when TargetFPS <= 0 (unlocked/VSync intent).
-    // MG defaults IsFixedTimeStep=true (fixed 60fps), which would override VSync.
-    this.IsFixedTimeStep <- config.TargetFPS > 0
-
-    if config.TargetFPS > 0 then
-      this.TargetElapsedTime <-
-        TimeSpan.FromSeconds(1.0 / float config.TargetFPS)
-
     this.Window.Title <- config.Title
     this.IsMouseVisible <- true
+
+    if config.TargetFPS > 0 then
+      // Use MonoGame's native fixed timestep for FPS capping.
+      // IsFixedTimeStep=true calls Update at a fixed rate with consistent
+      // ElapsedGameTime, matching raylib's SetTargetFPS behavior.
+      this.IsFixedTimeStep <- true
+
+      this.TargetElapsedTime <-
+        TimeSpan.FromSeconds(1.0 / float config.TargetFPS)
+    else
+      this.IsFixedTimeStep <- false
 
   // ── Initialize: build renderers (the MG GraphicsDevice exists by now).
   // LoadContent (below) finishes wiring and starts the loop.
