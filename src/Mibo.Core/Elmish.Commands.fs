@@ -345,7 +345,7 @@ module Cmd =
   /// Creates a command from a .NET Task.
   /// </summary>
   /// <remarks>
-  /// The arguments are passed separately due tasks being hot by nature.
+  /// The arguments are passed separately due to tasks being hot by nature.
   /// This guarantees that the execution is not made in the loop's thread.
   /// The task result is awaited and mapped to a message.
   /// If the task throws, the error handler is invoked instead.
@@ -353,7 +353,7 @@ module Cmd =
   /// <example>
   /// <code>
   /// let work url =
-  ///   httpClient.GetAsync
+  ///   httpClient.GetAsync url
   /// Cmd.ofTask work url ResponseReceived RequestFailed
   /// </code>
   /// </example>
