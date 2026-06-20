@@ -68,6 +68,33 @@ type LightContext2D
   let occluders = ResizeArray<Occluder2D>()
   let mutable ambientColor = Color(0uy, 0uy, 0uy, 255uy)
 
+  // Pre-allocated scratch arrays for whole-array uniform uploads.
+  //
+  // MonoGame's EffectPass.Apply() only re-uploads constant buffers that are
+  // marked dirty, and per-element writes through param.Elements[i].SetValue(...)
+  // do not reliably mark the parent buffer dirty. As a result shader *array*
+  // uniforms (e.g. the directional light direction) would stick at their
+  // first-frame values — the sun's shadow rendered but never swept, while the
+  // scalar AmbientColor (set via the top-level SetValue) kept updating. raylib
+  // is unaffected because SetShaderValue writes through imperatively every
+  // call.
+  //
+  // Uploading each array via the top-level param.SetValue(array) overload
+  // always marks the buffer dirty and re-uploads every frame. These scratch
+  // buffers are reused per upload to avoid per-frame heap allocation
+  // (AGENTS.md: avoid heap allocations in hot paths). Each is sized to its
+  // shader-side MAX_* constant; the shader bounds its loops by the *Count
+  // uniforms, so the unused tail is never sampled.
+  let dirDirsBuf = Array.zeroCreate<Vector2> maxDir
+  let dirColorsBuf = Array.zeroCreate<Vector3> maxDir
+  let dirIntsBuf = Array.zeroCreate<float32> maxDir
+  let pointPosBuf = Array.zeroCreate<Vector2> maxPoint
+  let pointColorsBuf = Array.zeroCreate<Vector3> maxPoint
+  let pointIntsBuf = Array.zeroCreate<float32> maxPoint
+  let pointRadiiBuf = Array.zeroCreate<float32> maxPoint
+  let pointFalloffsBuf = Array.zeroCreate<float32> maxPoint
+  let occludersBuf = Array.zeroCreate<Vector4> maxOcclud
+
   // Uniform parameter caches — plain effect
   let mutable locsCached = false
   let mutable paramAmbient: EffectParameter = null
@@ -205,22 +232,24 @@ type LightContext2D
 
       nmLocsCached <- true
 
-  // Upload occluders element-by-element via the parameter's Elements indexer,
-  // avoiding the per-frame Vector4[] allocation that Array.zeroCreate + SetValue
-  // would incur (AGENTS.md: avoid heap allocations in hot paths). Mirrors the
-  // dir/point light upload style used elsewhere in this file.
+  // Upload the whole occluder array via the top-level SetValue(array) overload
+  // so the constant buffer is marked dirty and re-uploaded every frame (per-
+  // element Elements[i].SetValue does not reliably do so). The shader bounds
+  // its SDF loop by OccluderCount, so the unused tail beyond `count` is never
+  // sampled. occludersBuf is reused each upload (AGENTS.md).
   let uploadOccluderArray
     (param: EffectParameter)
     (ocs: ResizeArray<Occluder2D>)
     (count: int)
     =
-    if param <> null && count > 0 then
-      let elems = param.Elements
-      let n = min count elems.Count
+    if param <> null then
+      let n = min count occludersBuf.Length
 
       for i = 0 to n - 1 do
         let o = ocs[i]
-        elems[i].SetValue(Vector4(o.P1.X, o.P1.Y, o.P2.X, o.P2.Y))
+        occludersBuf[i] <- Vector4(o.P1.X, o.P1.Y, o.P2.X, o.P2.Y)
+
+      param.SetValue(occludersBuf)
 
   // Upload uniforms to one effect
   let uploadToShader
@@ -255,18 +284,25 @@ type LightContext2D
 
     for i = 0 to dirCount - 1 do
       let l = dirLights[i]
+      dirDirsBuf[i] <- l.Direction
+      dirColorsBuf[i] <- colorToVec3 l.Color
+      dirIntsBuf[i] <- l.Intensity
 
-      if pDirDirs <> null then
-        pDirDirs.Elements[i].SetValue(l.Direction)
-
-      if pDirColors <> null then
-        pDirColors.Elements[i].SetValue(colorToVec3 l.Color)
-
-      if pDirInts <> null then
-        pDirInts.Elements[i].SetValue(l.Intensity)
-
+      // DirLightShadowIdx is static per light (CastsShadows never changes
+      // frame-to-frame), so the per-element path is sufficient here.
       if pDirShadow <> null then
         pDirShadow.Elements[i].SetValue(if l.CastsShadows then 0 else -1)
+
+    // Whole-array uploads force the constant buffer dirty and re-upload every
+    // frame — see the scratch-buffer note above.
+    if pDirDirs <> null then
+      pDirDirs.SetValue(dirDirsBuf)
+
+    if pDirColors <> null then
+      pDirColors.SetValue(dirColorsBuf)
+
+    if pDirInts <> null then
+      pDirInts.SetValue(dirIntsBuf)
 
     let ptCount = min pointLights.Count maxPoint
 
@@ -275,24 +311,30 @@ type LightContext2D
 
     for i = 0 to ptCount - 1 do
       let l = pointLights[i]
+      pointPosBuf[i] <- l.Position
+      pointColorsBuf[i] <- colorToVec3 l.Color
+      pointIntsBuf[i] <- l.Intensity
+      pointRadiiBuf[i] <- l.Radius
+      pointFalloffsBuf[i] <- l.Falloff
 
-      if pPointPos <> null then
-        pPointPos.Elements[i].SetValue(l.Position)
-
-      if pPointColors <> null then
-        pPointColors.Elements[i].SetValue(colorToVec3 l.Color)
-
-      if pPointInts <> null then
-        pPointInts.Elements[i].SetValue(l.Intensity)
-
-      if pPointRadii <> null then
-        pPointRadii.Elements[i].SetValue(l.Radius)
-
-      if pPointFalloffs <> null then
-        pPointFalloffs.Elements[i].SetValue(l.Falloff)
-
+      // PointLightShadowIdx is static per light; per-element upload is fine.
       if pPointShadow <> null then
         pPointShadow.Elements[i].SetValue(if l.CastsShadows then 0 else -1)
+
+    if pPointPos <> null then
+      pPointPos.SetValue(pointPosBuf)
+
+    if pPointColors <> null then
+      pPointColors.SetValue(pointColorsBuf)
+
+    if pPointInts <> null then
+      pPointInts.SetValue(pointIntsBuf)
+
+    if pPointRadii <> null then
+      pPointRadii.SetValue(pointRadiiBuf)
+
+    if pPointFalloffs <> null then
+      pPointFalloffs.SetValue(pointFalloffsBuf)
 
     let ocCount = if shadowsEnabled then min occluders.Count maxOcclud else 0
 
