@@ -823,8 +823,6 @@ module private CommandHandlers =
       let tr = Vector2(x1, y0)
       let br = Vector2(x1, y1)
       let bl = Vector2(x0, y1)
-      // Outer rect
-      let outer = [| tl; tr; br; bl; tl |]
       let x0i = float32 rect.X + half
       let y0i = float32 rect.Y + half
       let x1i = x0i + float32 rect.Width - thickness
@@ -833,9 +831,14 @@ module private CommandHandlers =
       let tri = Vector2(x1i, y0i)
       let bri = Vector2(x1i, y1i)
       let bli = Vector2(x0i, y1i)
-      // Inner rect (reversed winding so the whole outline is one continuous strip)
-      let inner = [| tli; bli; bri; tri; tli |]
-      pb.AddTriangleStrip(Array.append outer inner, color)
+      // Interleave outer and inner corners around the perimeter so the strip
+      // forms a hollow ring (the border). The previous outer-then-inner
+      // ordering made the strip's leading triangles span the full outer rect,
+      // filling it solid instead of outlining it (visible as a filled square
+      // where a border was expected — e.g. the minimap frame covering the map).
+      let ring = [| tl; tli; tr; tri; br; bri; bl; bli; tl; tli |]
+
+      pb.AddTriangleStrip(ring, color)
 
   let private roundedRectPath
     (rect: Rectangle)

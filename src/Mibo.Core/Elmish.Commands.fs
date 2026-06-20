@@ -1,6 +1,7 @@
 namespace Mibo.Elmish
 
 open System
+open System.Threading.Tasks
 
 /// <summary>
 /// Represents a side effect that can dispatch messages to the Elmish runtime.
@@ -337,7 +338,7 @@ module Cmd =
           with ex ->
             dispatch(ofError ex)
         }
-        |> Async.StartImmediate)
+        |> Async.Start)
     )
 
   /// <summary>
@@ -353,18 +354,20 @@ module Cmd =
   /// </code>
   /// </example>
   let ofTask
-    (task: Threading.Tasks.Task<'T>)
+    (tsk: 'Args -> Threading.Tasks.Task<'T>)
+    (args: 'Args)
     (ofSuccess: 'T -> 'Msg)
     (ofError: exn -> 'Msg)
     : Cmd<'Msg> =
     Single(
       Effect<'Msg>(fun dispatch ->
-        async {
+        task {
           try
-            let! result = task |> Async.AwaitTask
-            dispatch(ofSuccess result)
+            let! result = tsk args
+            result |> ofSuccess |> dispatch
           with ex ->
-            dispatch(ofError ex)
+            ofError ex |> dispatch
         }
-        |> Async.StartImmediate)
+        :> Task
+        |> ignore)
     )

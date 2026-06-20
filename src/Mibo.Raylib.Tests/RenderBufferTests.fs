@@ -7,7 +7,7 @@ open Mibo.Elmish
 let tests =
   testList "RenderBuffer Tests" [
     test "Sort should sort items by key" {
-      let buffer = RenderBuffer<int, string>()
+      use buffer = new RenderBuffer<int, string>()
       buffer.Add(2, "Second")
       buffer.Add(1, "First")
       buffer.Add(3, "Third")
