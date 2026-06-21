@@ -1,9 +1,9 @@
 <Project>
     <PropertyGroup>
-        <RepositoryUrl>https://github.com/AngelMunoz/Mibo.Raylib</RepositoryUrl>
-        <FsDocsLicenseLink>https://github.com/AngelMunoz/Mibo.Raylib/blob/main/LICENSE</FsDocsLicenseLink>
-        <FsDocsReleaseNotesLink>https://github.com/AngelMunoz/Mibo.Raylib/blob/main/CHANGELOG.md</FsDocsReleaseNotesLink>
-        <PackageProjectUrl>https://AngelMunoz.github.io/Mibo.Raylib</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/AngelMunoz/Mibo</RepositoryUrl>
+        <FsDocsLicenseLink>https://github.com/AngelMunoz/Mibo/blob/main/LICENSE</FsDocsLicenseLink>
+        <FsDocsReleaseNotesLink>https://github.com/AngelMunoz/Mibo/blob/main/CHANGELOG.md</FsDocsReleaseNotesLink>
+        <PackageProjectUrl>https://AngelMunoz.github.io/Mibo</PackageProjectUrl>
         <PackageLicenseFile>LICENSE</PackageLicenseFile>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <ChangelogFile>$(SolutionDir)/CHANGELOG.md</ChangelogFile>

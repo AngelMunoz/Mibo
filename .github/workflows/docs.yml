@@ -4,7 +4,7 @@ on:
   push:
     branches: [master, main]
     paths:
-      - "src/Mibo.Raylib/**"
+      - "src/Mibo.*/**"
       - "docs/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
         run: dotnet test --configuration Release --no-restore
 
       - name: Build Library
-        run: dotnet build src/Mibo.Raylib -c Release
+        run: dotnet build -c Release
 
       - name: Build Documentation
         run: |
