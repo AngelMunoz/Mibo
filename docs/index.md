@@ -23,8 +23,6 @@ cd MyGame
 dotnet run
 ```
 
-The projects in `samples/PlatformerSample` and `samples/ThreeDSample` show complete, working setups.
-
 You can then start building your game using any of the following:
 
 - [VsCode](https://code.visualstudio.com/) with the
@@ -32,6 +30,30 @@ You can then start building your game using any of the following:
   - [Ionide extension](https://open-vsx.org/extension/Ionide/Ionide-fsharp) (Open VSX Registry)
 - [JetBrains Rider](https://www.jetbrains.com/rider/)
 - [Visual Studio](https://visualstudio.microsoft.com/)
+
+## Samples
+
+The samples developed for the initial Raylib version and the new MonoGame Samples are being stored in its own repository
+[Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) is the place to visit.
+
+You'll find examples of
+
+**2D:**:
+
+- Platformer - A simple platformer featuring lights, normal maps, occluders and particles
+  - Sample Mibo.Raylib targeting Desktop OpenGL
+  - Sample Mibo.MonoGame targeting Windows Desktop DirectX11
+- Space Battle - A minimalistic hex grid strategy game a'la Wargroove or Advanced Wars
+  - Sample Mibo.Raylib targeting Desktop OpenGL
+- Ping Pong - A Small client-server example
+  - Mibo.Raylib Client
+  - Mibo.MonoGame Client
+  - dotnet app acting as a server running Mibo.Core's headless support
+
+**3D:**
+
+- Platformer - A simple platformer with 3D models, lights, shadows, particles, and skeletal animation
+  - Mibo.Raylib targeting Desktop OpenGL
 
 ## Why Mibo.Raylib?
 

@@ -13,7 +13,7 @@
 
 Following that spirit, Mibo.Raylib keeps it lean, just F# and the Elmish loop with a handful of commodities to get out of your way and let you enjoy the craft.
 
-Mibo.Raylib is a port of my first attempt at this [Mibo](https://github.com/AngelMunoz/Mibo) micro-framework from **MonoGame** to **raylib-cs**, designed to allow **F#** developers to write games using familiar Elmish patterns for all kinds of game genres and sizes.
+Mibo.Raylib is a port of my first attempt at this [Mibo_monogame](https://github.com/AngelMunoz/Mibo_monogame) micro-framework from **MonoGame** to **raylib-cs**, designed to allow **F#** developers to write games using familiar Elmish patterns for all kinds of game genres and sizes.
 
 Mibo aims to solve 80/20 of use cases for enabling developers to focus on game logic rather than boilerplate code, providing guidelines and architecture for structuring game code, handling input, rendering, asset management, and time management among others.
 
@@ -56,23 +56,29 @@ dotnet fsdocs build
 dotnet fsdocs watch
 ```
 
-### Run the samples
+## Samples
 
-**2D Platformer:**
+The samples developed for the initial Raylib version and the new MonoGame Samples are being stored in its own repository
+[Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) is the place to visit.
 
-```bash
-dotnet run --project samples/PlatformerSample
-```
+You'll find examples of
 
-Controls: **WASD / Arrows** to move, **Space** to jump, **R** to respawn.
+**2D:**:
 
-**3D Platformer:**
+- Platformer - A simple platformer featuring lights, normal maps, occluders and particles
+  - Sample Mibo.Raylib targeting Desktop OpenGL
+  - Sample Mibo.MonoGame targeting Windows Desktop DirectX11
+- Space Battle - A minimalistic hex grid strategy game a'la Wargroove or Advanced Wars
+  - Sample Mibo.Raylib targeting Desktop OpenGL
+- Ping Pong - A Small client-server example
+  - Mibo.Raylib Client
+  - Mibo.MonoGame Client
+  - dotnet app acting as a server running Mibo.Core's headless support
 
-```bash
-dotnet run --project samples/ThreeDSample
-```
+**3D:**
 
-Controls: **WASD** (camera-relative), **Space** to jump.
+- Platformer - A simple platformer with 3D models, lights, shadows, particles, and skeletal animation
+  - Mibo.Raylib targeting Desktop OpenGL
 
 ## License
 
