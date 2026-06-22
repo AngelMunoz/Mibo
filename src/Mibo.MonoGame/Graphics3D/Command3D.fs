@@ -16,10 +16,11 @@ open Mibo.Elmish
 /// </remarks>
 [<RequireQualifiedAccess; Struct>]
 type Command3D =
-  | DrawMesh of
+  | DrawMesh of meshPart: ModelMeshPart * transform: Matrix
+  | DrawMeshEffect of
     meshPart: ModelMeshPart *
     transform: Matrix *
-    material: Material3D
+    effect: Effect
   | DrawModel of model: Model * transform: Matrix
   | DrawBillboard of
     texture: Texture2D *
@@ -30,13 +31,7 @@ type Command3D =
   | DrawSkinnedMesh of
     meshPart: ModelMeshPart *
     transform: Matrix *
-    material: Material3D *
     bones: Matrix[]
-  | DrawMeshInstanced of
-    meshPart: ModelMeshPart *
-    transforms: Matrix[] *
-    material: Material3D *
-    instanceCount: int
   | DrawBillboardBatch of
     textures: Texture2D[] *
     positions: Vector3[] *
@@ -65,12 +60,15 @@ type Command3D =
 /// </remarks>
 module Command3D =
 
-  let inline drawMesh
+  let inline drawMesh (meshPart: ModelMeshPart) (transform: Matrix) =
+    Command3D.DrawMesh(meshPart, transform)
+
+  let inline drawMeshEffect
     (meshPart: ModelMeshPart)
     (transform: Matrix)
-    (material: Material3D)
+    (effect: Effect)
     =
-    Command3D.DrawMesh(meshPart, transform, material)
+    Command3D.DrawMeshEffect(meshPart, transform, effect)
 
   let inline drawModel (model: Model) (transform: Matrix) =
     Command3D.DrawModel(model, transform)
@@ -89,18 +87,9 @@ module Command3D =
   let inline drawSkinnedMesh
     (meshPart: ModelMeshPart)
     (transform: Matrix)
-    (material: Material3D)
     (bones: Matrix[])
     =
-    Command3D.DrawSkinnedMesh(meshPart, transform, material, bones)
-
-  let inline drawMeshInstanced
-    (meshPart: ModelMeshPart)
-    (transforms: Matrix[])
-    (material: Material3D)
-    (instanceCount: int)
-    =
-    Command3D.DrawMeshInstanced(meshPart, transforms, material, instanceCount)
+    Command3D.DrawSkinnedMesh(meshPart, transform, bones)
 
   let inline drawBillboardBatch
     (textures: Texture2D[])

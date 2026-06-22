@@ -19,7 +19,7 @@ open Mibo.Elmish
 /// buffer
 /// |> Draw3D.beginCamera worldCamera
 /// |> Draw3D.drawModel model transform
-/// |> Draw3D.addPointLight { Position = pos; Color = Color.White; Intensity = 1f; Radius = 10f; CastsShadows = false; ShadowBias = ValueNone }
+/// |> Draw3D.addPointLight { Position = pos; Color = Color.White; Intensity = 1f; Radius = 10f; Falloff = 2f; CastsShadows = false; ShadowBias = ValueNone }
 /// |> Draw3D.endCamera
 /// |> Draw3D.drop
 /// </code>
@@ -31,20 +31,34 @@ module Draw3D =
   // Geometry
   // ──────────────────────────────────────────────
 
-  /// <summary>Draws a mesh part with a world transform and material.</summary>
+  /// <summary>Draws a mesh part with a world transform, binding the part's own native effect.</summary>
   let inline drawMesh
     (meshPart: ModelMeshPart)
     (transform: Matrix)
-    (material: Material3D)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.drawMesh meshPart transform material)
+    buffer.Add(Command3D.drawMesh meshPart transform)
+    buffer
+
+  /// <summary>
+  /// Draws a mesh part with a world transform using a user-supplied <see cref="T:Microsoft.Xna.Framework.Graphics.Effect"/>.
+  /// The pipeline sets <c>World</c> from the transform and <c>View</c>/<c>Projection</c> from
+  /// the active camera, applies the effect's current technique pass, and draws the part.
+  /// The caller owns lighting and material parameters on the effect.
+  /// </summary>
+  let inline drawMeshEffect
+    (meshPart: ModelMeshPart)
+    (transform: Matrix)
+    (effect: Effect)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(Command3D.drawMeshEffect meshPart transform effect)
     buffer
 
   /// <summary>
   /// Draws a MonoGame model with a world transform.
-  /// Each sub-mesh is drawn with its corresponding effect,
-  /// converted to <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/> automatically where possible.
+  /// Each sub-mesh is drawn with its own native effect (e.g. <c>BasicEffect</c>),
+  /// which the pipeline configures with the active camera and lights.
   /// </summary>
   let inline drawModel
     (model: Model)
@@ -75,32 +89,14 @@ module Draw3D =
     buffer.Add(Command3D.drawLine3D start finish color)
     buffer
 
-  /// <summary>Draws a skinned mesh part with bone matrix data.</summary>
+  /// <summary>Draws a skinned mesh part with bone matrix data, binding the part's own native effect.</summary>
   let inline drawSkinnedMesh
     (meshPart: ModelMeshPart)
     (transform: Matrix)
-    (material: Material3D)
     (bones: Matrix[])
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.drawSkinnedMesh meshPart transform material bones)
-    buffer
-
-  /// <summary>
-  /// Draws multiple instances of the same mesh part with different transforms.
-  /// Prefer this over individual <c>drawMesh</c> calls for many copies of the same mesh.
-  /// </summary>
-  let inline drawMeshInstanced
-    (meshPart: ModelMeshPart)
-    (transforms: Matrix[])
-    (material: Material3D)
-    (instanceCount: int)
-    (buffer: RenderBuffer3D)
-    =
-    buffer.Add(
-      Command3D.drawMeshInstanced meshPart transforms material instanceCount
-    )
-
+    buffer.Add(Command3D.drawSkinnedMesh meshPart transform bones)
     buffer
 
   /// <summary>
