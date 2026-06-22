@@ -52,10 +52,6 @@ module private ForwardHelpers =
     lights.PointLights.Clear()
     lights.SpotLights.Clear()
 
-  /// <summary>Converts a Mibo <see cref="T:Microsoft.Xna.Framework.Color"/> to a normalized 0–1 <see cref="T:Microsoft.Xna.Framework.Vector3"/>.</summary>
-  let inline colorToVector3(c: Color) : Vector3 =
-    Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
-
   /// <summary>Builds the view + projection matrices for a MonoGame <see cref="T:Mibo.Elmish.Camera3D"/>.</summary>
   /// <remarks>
   /// Uses native XNA <c>CreateLookAt</c> / <c>CreatePerspectiveFieldOfView</c> /
@@ -97,33 +93,49 @@ module private ForwardHelpers =
   /// Unused directional slots are disabled. Fog is off. This is the documented limitation
   /// upgraded in B9.
   /// </remarks>
+  /// <remarks>
+  /// Hot path: the three light slots are unrolled (not looped over a temporary array) and
+  /// <see cref="M:Microsoft.Xna.Framework.Color.ToVector3"/> is used directly, so this
+  /// function performs zero per-call heap allocations.
+  /// </remarks>
   let applyLighting(effect: BasicEffect, lights: LightBuffers) =
     // Ambient.
     match lights.Ambient with
     | ValueSome a ->
-      effect.AmbientLightColor <- colorToVector3 a.Color * a.Intensity
+      effect.AmbientLightColor <- a.Color.ToVector3() * a.Intensity
     | ValueNone -> effect.AmbientLightColor <- Vector3.Zero
 
-    // Up to 3 directional lights — clamp; disable the rest.
+    // Up to 3 directional lights — clamp; disable the rest. Slots unrolled (no temp array)
+    // because this runs once per BasicEffect draw on the hot path.
     let dirs = lights.DirLights
-    let count = min dirs.Count 3
+    let count = dirs.Count
 
-    let slots = [|
-      effect.DirectionalLight0
-      effect.DirectionalLight1
-      effect.DirectionalLight2
-    |]
+    // Slot 0
+    if count > 0 then
+      let d = dirs[0]
+      effect.DirectionalLight0.Enabled <- true
+      effect.DirectionalLight0.Direction <- d.Direction
+      effect.DirectionalLight0.DiffuseColor <- d.Color.ToVector3() * d.Intensity
+    else
+      effect.DirectionalLight0.Enabled <- false
 
-    for i = 0 to 2 do
-      let slot = slots[i]
+    // Slot 1
+    if count > 1 then
+      let d = dirs[1]
+      effect.DirectionalLight1.Enabled <- true
+      effect.DirectionalLight1.Direction <- d.Direction
+      effect.DirectionalLight1.DiffuseColor <- d.Color.ToVector3() * d.Intensity
+    else
+      effect.DirectionalLight1.Enabled <- false
 
-      if i < count then
-        let d = dirs[i]
-        slot.Enabled <- true
-        slot.Direction <- d.Direction
-        slot.DiffuseColor <- colorToVector3 d.Color * d.Intensity
-      else
-        slot.Enabled <- false
+    // Slot 2
+    if count > 2 then
+      let d = dirs[2]
+      effect.DirectionalLight2.Enabled <- true
+      effect.DirectionalLight2.Direction <- d.Direction
+      effect.DirectionalLight2.DiffuseColor <- d.Color.ToVector3() * d.Intensity
+    else
+      effect.DirectionalLight2.Enabled <- false
 
     effect.FogEnabled <- false
     effect.PreferPerPixelLighting <- true
@@ -216,8 +228,10 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
     SpotLights = ResizeArray<SpotLight3D>(4)
   }
 
-  // Reused each frame to avoid per-frame allocation. Sized generously; grows if needed.
-  let boneTransforms = ResizeArray<Matrix>(64)
+  // Reused each frame to avoid per-frame allocation. Sized generously; grows if a larger
+  // model is seen. A raw array (not ResizeArray) so we can pass it directly to
+  // Model.CopyAbsoluteBoneTransformsTo with zero per-frame allocation or copying.
+  let mutable boneTransforms = Array.zeroCreate<Matrix> 64
 
   // ----------------------------------------------------------------
   // Dispatch helpers
@@ -274,26 +288,15 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       model: Model,
       transform: Matrix
     ) =
-    // Grow the bone array if necessary (mirrors Model.Draw's sharedDrawBoneMatrices).
+    // Grow the pre-allocated bone array if this model has more bones than we've seen.
+    // Reused across frames; never shrinks. Passed directly to CopyAbsoluteBoneTransformsTo
+    // with zero per-frame allocation.
     let boneCount = model.Bones.Count
 
-    if boneTransforms.Count < boneCount then
-      while boneTransforms.Count < boneCount do
-        boneTransforms.Add(Matrix.Identity)
-    else if boneTransforms.Count > boneCount then
-      // Trim to exact size so indexing matches model.Bones.
-      boneTransforms.RemoveRange(boneCount, boneTransforms.Count - boneCount)
+    if boneTransforms.Length < boneCount then
+      boneTransforms <- Array.zeroCreate<Matrix> boneCount
 
-    let boneArr =
-      // ResizeArray backs an array; copy absolute transforms into it.
-      let arr = Array.zeroCreate<Matrix> boneCount
-
-      model.CopyAbsoluteBoneTransformsTo(arr)
-
-      for i = 0 to boneCount - 1 do
-        boneTransforms[i] <- arr[i]
-
-      boneTransforms
+    model.CopyAbsoluteBoneTransformsTo(boneTransforms)
 
     for mesh in model.Meshes do
       let world = boneTransforms[mesh.ParentBone.Index] * transform
