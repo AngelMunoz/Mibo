@@ -60,7 +60,7 @@ VS_OUTPUT VS_Main(VS_INPUT input) {
 
 float4 PS_Main(VS_OUTPUT input) : COLOR0 {
   float3 N = normalize(input.Normal);
-  float3 L = normalize(DirLightDir);
+  float3 L = normalize(-DirLightDir);
   float diffuse = max(dot(N, L), 0.0);
   float3 lighting = AmbientColor + DirLightColor * diffuse;
   return float4(AlbedoColor * lighting, 1.0);
