@@ -14,6 +14,7 @@
     <Compile Include="Runtime.fs" />
     <Compile Include="Animation.fs" />
     <Compile Include="Camera3D.fs" />
+    <Compile Include="Culling.fs" />
     <Compile Include="Graphics3D/Conversions.fs" />
     <Compile Include="Graphics3D/Light3D.fs" />
     <Compile Include="Graphics3D/Material3D.fs" />
