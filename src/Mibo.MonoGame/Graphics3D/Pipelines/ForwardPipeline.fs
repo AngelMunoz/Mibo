@@ -186,6 +186,306 @@ module private ForwardHelpers =
           part.PrimitiveCount
         )
 
+  // ----------------------------------------------------------------
+  // PBR (B9): Cook-Torrance effect parameter cache + upload helpers
+  // ----------------------------------------------------------------
+
+  /// <summary>
+  /// Structural identity key for a <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/> —
+  /// texture map references + scalar/color fields. Used to skip uniform re-uploads when
+  /// consecutive PBR draws share the same material (mirrors the canonical raylib
+  /// <c>MaterialKey</c> short-circuit). Texture fields use reference equality (a
+  /// <c>Texture2D</c> has no stable numeric ID on MonoGame, unlike raylib's <c>.Id</c>).
+  /// </summary>
+  [<Struct>]
+  type MaterialKey = {
+    AlbedoMap: Texture2D
+    RoughnessMap: Texture2D
+    MetallicMap: Texture2D
+    NormalMap: Texture2D
+    EmissionMap: Texture2D
+    AlbedoColor: Color
+    Roughness: float32
+    Metallic: float32
+    EmissionColor: Color
+    Opacity: float32
+    TilingX: float32
+    TilingY: float32
+  }
+
+  /// <summary>Builds a <see cref="MaterialKey"/> from a material (null for absent maps).</summary>
+  let inline materialKey(mat: inref<Material3D>) : MaterialKey =
+    let texOrNull(t: Texture2D voption) =
+      match t with
+      | ValueSome x -> x
+      | ValueNone -> null
+
+    {
+      AlbedoMap = texOrNull mat.AlbedoMap
+      RoughnessMap = texOrNull mat.RoughnessMap
+      MetallicMap = texOrNull mat.MetallicMap
+      NormalMap = texOrNull mat.NormalMap
+      EmissionMap = texOrNull mat.EmissionMap
+      AlbedoColor = mat.AlbedoColor
+      Roughness = mat.Roughness
+      Metallic = mat.Metallic
+      EmissionColor = mat.EmissionColor
+      Opacity = mat.Opacity
+      TilingX = mat.Tiling.X
+      TilingY = mat.Tiling.Y
+    }
+
+  /// <summary>
+  /// Cached <see cref="T:Microsoft.Xna.Framework.Graphics.EffectParameter"/> handles for the
+  /// PBR effect, resolved once on load. <c>null</c> entries are valid (absent uniform) and
+  /// are skipped on upload — MonoGame returns <c>null</c> from <c>Parameters["name"]</c> when
+  /// the uniform is optimized out, unlike raylib's <c>-1</c> silent no-op.
+  /// </summary>
+  [<Struct>]
+  type PbrEffectParams = {
+    // Matrices
+    MatModel: EffectParameter
+    ViewProj: EffectParameter
+    NormalMatrix: EffectParameter
+    CameraPos: EffectParameter
+    // Material scalars/colors
+    AlbedoColor: EffectParameter
+    Roughness: EffectParameter
+    Metallic: EffectParameter
+    EmissionColor: EffectParameter
+    Opacity: EffectParameter
+    Tiling: EffectParameter
+    UseNormalMap: EffectParameter
+    // Ambient
+    AmbientColor: EffectParameter
+    AmbientIntensity: EffectParameter
+    // Directional
+    DirLightDir: EffectParameter
+    DirLightColor: EffectParameter
+    DirLightIntensity: EffectParameter
+    // Point lights (array params; null if MAX_POINT_LIGHTS sized out)
+    PointLightCount: EffectParameter
+    PointLightPos: EffectParameter
+    PointLightColor: EffectParameter
+    PointLightIntensity: EffectParameter
+    PointLightRadius: EffectParameter
+    PointLightFalloff: EffectParameter
+    // Spot lights
+    SpotLightCount: EffectParameter
+    SpotLightPos: EffectParameter
+    SpotLightDir: EffectParameter
+    SpotLightColor: EffectParameter
+    SpotLightIntensity: EffectParameter
+    SpotLightRadius: EffectParameter
+    SpotLightInnerCutoff: EffectParameter
+    SpotLightOuterCutoff: EffectParameter
+  }
+
+  let private param (e: Effect) (name: string) : EffectParameter =
+    e.Parameters[name] // null when absent — callers null-check before SetValue.
+
+  /// <summary>Resolves all PBR effect parameter handles once after load.</summary>
+  let buildPbrParams(e: Effect) : PbrEffectParams = {
+    MatModel = param e "matModel"
+    ViewProj = param e "viewProj"
+    NormalMatrix = param e "normalMatrix"
+    CameraPos = param e "cameraPos"
+    AlbedoColor = param e "albedoColor"
+    Roughness = param e "roughness"
+    Metallic = param e "metallic"
+    EmissionColor = param e "emissionColor"
+    Opacity = param e "opacity"
+    Tiling = param e "tiling"
+    UseNormalMap = param e "useNormalMap"
+    AmbientColor = param e "ambientColor"
+    AmbientIntensity = param e "ambientIntensity"
+    DirLightDir = param e "dirLightDir"
+    DirLightColor = param e "dirLightColor"
+    DirLightIntensity = param e "dirLightIntensity"
+    PointLightCount = param e "pointLightCount"
+    PointLightPos = param e "pointLightPos"
+    PointLightColor = param e "pointLightColor"
+    PointLightIntensity = param e "pointLightIntensity"
+    PointLightRadius = param e "pointLightRadius"
+    PointLightFalloff = param e "pointLightFalloff"
+    SpotLightCount = param e "spotLightCount"
+    SpotLightPos = param e "spotLightPos"
+    SpotLightDir = param e "spotLightDir"
+    SpotLightColor = param e "spotLightColor"
+    SpotLightIntensity = param e "spotLightIntensity"
+    SpotLightRadius = param e "spotLightRadius"
+    SpotLightInnerCutoff = param e "spotLightInnerCutoff"
+    SpotLightOuterCutoff = param e "spotLightOuterCutoff"
+  }
+
+  let inline setVec2 (p: EffectParameter) (v: Vector2) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  let inline setVec3 (p: EffectParameter) (v: Vector3) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  let inline setVec4 (p: EffectParameter) (v: Vector4) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  let inline setFloat (p: EffectParameter) (v: float32) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  let inline setInt (p: EffectParameter) (v: int) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  let inline setMatrix (p: EffectParameter) (m: Matrix) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue m
+
+  let inline setVec3Array (p: EffectParameter) (v: Vector3[]) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  let inline setFloatArray (p: EffectParameter) (v: float32[]) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  /// <summary>Converts an XNA <see cref="T:Microsoft.Xna.Framework.Color"/> to a normalized <see cref="T:Microsoft.Xna.Framework.Vector4"/>.</summary>
+  let inline colorToVec4(c: Color) : Vector4 =
+    Vector4(
+      float32 c.R / 255.0f,
+      float32 c.G / 255.0f,
+      float32 c.B / 255.0f,
+      float32 c.A / 255.0f
+    )
+
+  // Pooled staging arrays for light uploads — sized to the shader's MAX_* constants,
+  // reused across frames (no per-draw allocation on the hot path).
+  let mutable private pointLightPosScratch = Array.zeroCreate<Vector3> 8
+
+  let mutable private pointLightColorScratch = Array.zeroCreate<Vector3> 8
+
+  let mutable private pointLightIntensityScratch = Array.zeroCreate<float32> 8
+
+  let mutable private pointLightRadiusScratch = Array.zeroCreate<float32> 8
+
+  let mutable private pointLightFalloffScratch = Array.zeroCreate<float32> 8
+
+  let mutable private spotLightPosScratch = Array.zeroCreate<Vector3> 4
+
+  let mutable private spotLightDirScratch = Array.zeroCreate<Vector3> 4
+
+  let mutable private spotLightColorScratch = Array.zeroCreate<Vector3> 4
+
+  let mutable private spotLightIntensityScratch = Array.zeroCreate<float32> 4
+
+  let mutable private spotLightRadiusScratch = Array.zeroCreate<float32> 4
+
+  let mutable private spotLightInnerScratch = Array.zeroCreate<float32> 4
+
+  let mutable private spotLightOuterScratch = Array.zeroCreate<float32> 4
+
+  /// <summary>
+  /// Uploads accumulated lights (ambient + 1 directional + N point + M spot) to the PBR effect.
+  /// Point/spot arrays upload only the active count; the shader early-outs via <c>*Count</c>.
+  /// </summary>
+  let uploadPbrLights(p: inref<PbrEffectParams>, lights: LightBuffers) =
+    // Ambient (single slot; zeroes when absent).
+    match lights.Ambient with
+    | ValueSome a ->
+      setVec3 p.AmbientColor (a.Color.ToVector3())
+      setFloat p.AmbientIntensity a.Intensity
+    | ValueNone ->
+      setVec3 p.AmbientColor Vector3.Zero
+      setFloat p.AmbientIntensity 0.0f
+
+    // Directional (single slot; zeroes when absent).
+    match lights.DirLights.Count with
+    | 0 ->
+      setVec3 p.DirLightDir Vector3.Forward
+      setVec3 p.DirLightColor Vector3.Zero
+      setFloat p.DirLightIntensity 0.0f
+    | _ ->
+      let d = lights.DirLights[0]
+      setVec3 p.DirLightDir d.Direction
+      setVec3 p.DirLightColor (d.Color.ToVector3())
+      setFloat p.DirLightIntensity d.Intensity
+
+    // Point lights — upload active count slots.
+    let ptCount = min lights.PointLights.Count pointLightPosScratch.Length
+    setInt p.PointLightCount ptCount
+
+    for i = 0 to ptCount - 1 do
+      let l = lights.PointLights[i]
+      pointLightPosScratch[i] <- l.Position
+      pointLightColorScratch[i] <- l.Color.ToVector3()
+      pointLightIntensityScratch[i] <- l.Intensity
+      pointLightRadiusScratch[i] <- l.Radius
+      pointLightFalloffScratch[i] <- l.Falloff
+
+    setVec3Array p.PointLightPos pointLightPosScratch
+    setVec3Array p.PointLightColor pointLightColorScratch
+    setFloatArray p.PointLightIntensity pointLightIntensityScratch
+    setFloatArray p.PointLightRadius pointLightRadiusScratch
+    setFloatArray p.PointLightFalloff pointLightFalloffScratch
+
+    // Spot lights — upload active count slots.
+    let spCount = min lights.SpotLights.Count spotLightPosScratch.Length
+    setInt p.SpotLightCount spCount
+
+    for i = 0 to spCount - 1 do
+      let l = lights.SpotLights[i]
+      spotLightPosScratch[i] <- l.Position
+      spotLightDirScratch[i] <- l.Direction
+      spotLightColorScratch[i] <- l.Color.ToVector3()
+      spotLightIntensityScratch[i] <- l.Intensity
+      spotLightRadiusScratch[i] <- l.Radius
+      spotLightInnerScratch[i] <- l.InnerCutoff
+      spotLightOuterScratch[i] <- l.OuterCutoff
+
+    setVec3Array p.SpotLightPos spotLightPosScratch
+    setVec3Array p.SpotLightDir spotLightDirScratch
+    setVec3Array p.SpotLightColor spotLightColorScratch
+    setFloatArray p.SpotLightIntensity spotLightIntensityScratch
+    setFloatArray p.SpotLightRadius spotLightRadiusScratch
+    setFloatArray p.SpotLightInnerCutoff spotLightInnerScratch
+    setFloatArray p.SpotLightOuterCutoff spotLightOuterScratch
+
+  /// <summary>
+  /// Uploads material scalars/colors + normal matrix. Callers gate this on a <c>MaterialKey</c>
+  /// change to avoid re-uploading when consecutive draws share a material.
+  /// </summary>
+  let uploadPbrMaterial
+    (p: inref<PbrEffectParams>, mat: inref<Material3D>, normalMatrix: Matrix)
+    =
+    setVec4 p.AlbedoColor (colorToVec4 mat.AlbedoColor)
+    setFloat p.Roughness mat.Roughness
+    setFloat p.Metallic mat.Metallic
+    setVec4 p.EmissionColor (colorToVec4 mat.EmissionColor)
+    setFloat p.Opacity mat.Opacity
+    setVec2 p.Tiling mat.Tiling
+
+    let useNormal =
+      match mat.NormalMap with
+      | ValueSome _ -> 1
+      | ValueNone -> 0
+
+    setInt p.UseNormalMap useNormal
+    setMatrix p.NormalMatrix normalMatrix
+
+  /// <summary>Binds a material's 5 texture maps to sampler slots 0..4 (null = unbound).</summary>
+  let bindPbrTextures(gd: GraphicsDevice, mat: inref<Material3D>) =
+    let slot i (t: Texture2D voption) =
+      match t with
+      | ValueSome tex -> gd.Textures[i] <- tex
+      | ValueNone -> gd.Textures[i] <- null
+
+    slot 0 mat.AlbedoMap
+    slot 1 mat.RoughnessMap
+    slot 2 mat.NormalMap
+    slot 3 mat.MetallicMap
+    slot 4 mat.EmissionMap
+
 // ------------------------------------------------------------------
 // ForwardPipeline
 // ------------------------------------------------------------------
@@ -234,11 +534,18 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
   // Model.CopyAbsoluteBoneTransformsTo with zero per-frame allocation or copying.
   let mutable boneTransforms = Array.zeroCreate<Matrix> 64
 
-  // Lazily-created BasicEffect for the DrawMeshPBR fallback path (until B9 lands the custom
-  // PBR shader). Created on first DrawMeshPBR against the actual GraphicsDevice passed to
-  // Execute — BasicEffect's ctor requires a real device (it tracks the resource), so we can't
-  // build it in Initialize() (no device is passed there) or capture one in a `lazy`.
+  // Lazily-created BasicEffect for the DrawMeshPBR fallback path (used when the custom
+  // PBR effect can't be loaded — e.g. missing embedded resource). Created on first
+  // DrawMeshPBR against the actual GraphicsDevice passed to Execute.
   let mutable pbrFallbackEffect: BasicEffect voption = ValueNone
+
+  // B9 PBR: the custom Cook-Torrance effect (loads from embedded .mgfx via ShaderLoader)
+  // + its cached parameter handles + a MaterialKey short-circuit to skip uniform re-uploads
+  // across consecutive draws sharing the same material. Created on first PBR draw.
+  let mutable pbrEffect: Effect voption = ValueNone
+  let mutable pbrParams: PbrEffectParams voption = ValueNone
+  let mutable pbrHasLastMaterial = false
+  let mutable pbrLastKey: MaterialKey = Unchecked.defaultof<MaterialKey>
 
   // B7 instancing: the custom Instanced effect (loads from embedded .mgfx via ShaderLoader)
   // and a growable per-instance vertex buffer. The effect has instance input semantics
@@ -363,17 +670,33 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
     drawPart(gd, part)
 
   /// <summary>
+  /// Lazily loads the custom PBR <c>Effect</c> on first PBR draw against the real device.
+  /// Returns <c>true</c> when <c>pbrEffect</c>/<c>pbrParams</c> are usable; <c>false</c> when
+  /// the embedded resource is missing (caller falls back to <c>BasicEffect</c>).
+  /// </summary>
+  member private _.ensurePbrEffect(gd: GraphicsDevice) : bool =
+    match pbrEffect with
+    | ValueSome _ -> true
+    | ValueNone ->
+      match ShaderLoader.loadEffect gd "ForwardPbr" with
+      | ValueSome e ->
+        pbrParams <- ValueSome(buildPbrParams e)
+        pbrEffect <- ValueSome e
+        true
+      | ValueNone -> false
+
+  /// <summary>
   /// Handles <c>DrawMeshPBR</c>: draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/>
   /// with a <c>Material3D</c>. Per §4.1, this is the only place <c>Material3D</c> is consumed.
   /// </summary>
   /// <remarks>
-  /// <b>B5/B6 fallback:</b> until B9 lands the custom PBR HLSL, the material's PBR maps
-  /// (albedo/normal/metallic/roughness/emission) are ignored and a lazily-created
-  /// <c>BasicEffect</c> renders the albedo color with the pipeline's accumulated lighting.
-  /// This keeps the PBR command path usable today (smoke-testable) and gives B9 a concrete
-  /// dispatch site to replace with the PBR <c>Effect</c>.
+  /// B9 binds the custom Cook-Torrance <c>ForwardPbr.fx</c> (ambient + directional + point +
+  /// spot, emission, opacity, tiling, optional normal map) with a <c>MaterialKey</c> short-circuit
+  /// to skip uniform re-uploads across consecutive draws sharing a material. When the PBR effect
+  /// can't be loaded (missing embedded resource), it falls back to the B5/B6 <c>BasicEffect</c>
+  /// path that maps the albedo color only — preserving the smoke-testable floor.
   /// </remarks>
-  member private _.handleDrawMeshPBR
+  member private this.handleDrawMeshPBR
     (
       gd: GraphicsDevice,
       state: byref<ForwardState>,
@@ -381,52 +704,82 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       transform: Matrix,
       material: Material3D
     ) =
-    // Create the fallback BasicEffect on first use against the real device. Pattern-match
-    // rather than .Value — AGENTS.md imperative #4 bans unchecked voption unwraps.
-    let effect =
-      match pbrFallbackEffect with
-      | ValueSome e -> e
-      | ValueNone ->
-        let e = new BasicEffect(gd)
-        pbrFallbackEffect <- ValueSome e
-        e
+    if this.ensurePbrEffect gd then
+      match pbrEffect, pbrParams with
+      | ValueSome e, ValueSome p ->
+        // Technique: Standard (non-instanced, non-skinned).
+        e.CurrentTechnique <- e.Techniques["Standard"]
 
-    // Map the Material3D's albedo color → BasicEffect.DiffuseColor. Normalized to 0–1.
-    // PBR maps, roughness/metallic, emission, opacity are B9's job; ignored here.
-    let c = material.AlbedoColor
+        // Normal matrix = transpose(inverse(world)) (RH; §6.2).
+        let mutable t = transform
+        let mutable inv = Matrix.Identity
+        Matrix.Invert(&t, &inv) |> ignore
+        let normalMatrix = Matrix.Transpose inv
 
-    effect.DiffuseColor <-
-      Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
+        setMatrix p.MatModel transform
+        setMatrix p.ViewProj (state.View * state.Projection)
+        setVec3 p.CameraPos state.CurrentCamera.Position
 
-    effect.Alpha <- material.Opacity
-    effect.Texture <- null
-    effect.TextureEnabled <- false
-    effect.VertexColorEnabled <- false
-    effect.World <- transform
-    effect.View <- state.View
-    effect.Projection <- state.Projection
-    applyLighting(effect, lights)
-    mesh.Draw(gd, effect)
+        // Upload material uniforms only when the material changes (MaterialKey short-circuit).
+        let key = materialKey &material
+
+        if not pbrHasLastMaterial || key <> pbrLastKey then
+          uploadPbrMaterial(&p, &material, normalMatrix)
+          bindPbrTextures(gd, &material)
+          pbrLastKey <- key
+          pbrHasLastMaterial <- true
+
+        uploadPbrLights(&p, lights)
+
+        mesh.Draw(gd, e)
+      | _ -> () // unreachable (ensurePbrEffect set both)
+    else
+      // ── BasicEffect fallback (B5/B6 floor) — albedo color only. ──
+      let effect =
+        match pbrFallbackEffect with
+        | ValueSome e -> e
+        | ValueNone ->
+          let e = new BasicEffect(gd)
+          pbrFallbackEffect <- ValueSome e
+          e
+
+      let c = material.AlbedoColor
+
+      effect.DiffuseColor <-
+        Vector3(
+          float32 c.R / 255.0f,
+          float32 c.G / 255.0f,
+          float32 c.B / 255.0f
+        )
+
+      effect.Alpha <- material.Opacity
+      effect.Texture <- null
+      effect.TextureEnabled <- false
+      effect.VertexColorEnabled <- false
+      effect.World <- transform
+      effect.View <- state.View
+      effect.Projection <- state.Projection
+      applyLighting(effect, lights)
+      mesh.Draw(gd, effect)
 
   /// <summary>
   /// Handles <c>DrawMeshInstanced</c>: native hardware instancing via two vertex streams
   /// (stream 0 = the mesh's <c>VertexPositionNormalTexture</c>, stream 1 = per-instance
-  /// world matrices) and <see cref="M:Microsoft.Xna.Framework.Graphics.GraphicsDevice.DrawInstancedPrimitives"/>.
+  /// world matrices packed as <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/>
+  /// TEXCOORD1..4 rows) and <see cref="M:Microsoft.Xna.Framework.Graphics.GraphicsDevice.DrawInstancedPrimitives"/>.
   /// </summary>
   /// <remarks>
-  /// <b>B7 minimal instanced effect.</b> Instancing needs a vertex shader that declares
-  /// instance input semantics; no stock MonoGame effect (<c>BasicEffect</c> etc.) does, so
-  /// B7 ships <c>Shaders/Instanced.fx</c> (compiled to both OGL/DX per §6). The effect applies
-  /// ambient + 1 directional light over a flat albedo — the lighting floor for instanced
-  /// geometry. B9 replaces this with the full PBR instanced variant (plan §B9: "Vertex
-  /// shaders: standard + instanced variant (from B7)").
+  /// B9 prefers the PBR <c>Instanced</c> technique (full Cook-Torrance lighting, all light
+  /// types). When the PBR effect can't be loaded, it falls back to the B7 minimal
+  /// <c>Instanced.fx</c> (flat albedo + 1 directional light).
   /// <para>
   /// Per §6.1, matrices upload as plain <c>float4x4</c> with <c>mul(position, matrix)</c>
-  /// (vector LEFT). The per-instance world rows are packed as <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/>
-  /// (TEXCOORD1..4) so they don't collide with the mesh's own TEXCOORD0.
+  /// (vector LEFT). For the PBR instanced technique, <c>matModel</c> is unused (per-instance
+  /// transform replaces it); <c>normalMatrix</c> is set to <c>Identity</c> because primitives
+  /// are uniform-scale.
   /// </para>
   /// </remarks>
-  member private _.handleDrawMeshInstanced
+  member private this.handleDrawMeshInstanced
     (
       gd: GraphicsDevice,
       state: byref<ForwardState>,
@@ -438,126 +791,149 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
     if instanceCount <= 0 then
       () // Nothing to draw.
     else
-      // Lazily load the Instanced effect on first use (§6.4: ShaderLoader picks OGL/DX by backend).
-      let effect =
-        match instancedEffect with
-        | ValueSome e -> e
-        | ValueNone ->
-          // If the embedded resource is missing (e.g. shader not compiled in), bail cleanly.
-          match ShaderLoader.loadEffect gd "Instanced" with
-          | ValueSome e ->
-            instancedEffect <- ValueSome e
-            e
-          | ValueNone -> Unchecked.defaultof<_>
-      // If the effect couldn't be loaded, skip the draw (don't crash on a null effect).
+      // The instance staging array grows only when a larger batch is seen.
+      if instanceStaging.Length < instanceCount then
+        instanceStaging <- Array.zeroCreate<VertexInstanceWorld> instanceCount
 
-      if obj.ReferenceEquals(effect, null) then
-        ()
-      else
-        // The instance staging array grows only when a larger batch is seen.
-        if instanceStaging.Length < instanceCount then
-          instanceStaging <- Array.zeroCreate<VertexInstanceWorld> instanceCount
+      for i = 0 to instanceCount - 1 do
+        instanceStaging[i] <- VertexInstanceWorld.Create transforms[i]
 
-        for i = 0 to instanceCount - 1 do
-          instanceStaging[i] <- VertexInstanceWorld.Create transforms[i]
+      // Lazily create / resize the instance vertex buffer.
+      match instanceVertexBuffer with
+      | ValueNone ->
+        let vb =
+          new VertexBuffer(
+            gd,
+            typeof<VertexInstanceWorld>,
+            instanceCount,
+            BufferUsage.WriteOnly
+          )
 
-        // Lazily create / resize the instance vertex buffer.
+        instanceVertexBuffer <- ValueSome vb
+      | ValueSome vb when vb.VertexCount < instanceCount ->
+        vb.Dispose()
+
+        let vb' =
+          new VertexBuffer(
+            gd,
+            typeof<VertexInstanceWorld>,
+            instanceCount,
+            BufferUsage.WriteOnly
+          )
+
+        instanceVertexBuffer <- ValueSome vb'
+      | _ -> ()
+
+      let instVB =
         match instanceVertexBuffer with
-        | ValueNone ->
-          let vb =
-            new VertexBuffer(
-              gd,
-              typeof<VertexInstanceWorld>,
-              instanceCount,
-              BufferUsage.WriteOnly
+        | ValueSome vb -> vb
+        | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable (created above)
+
+      instVB.SetData(instanceStaging, 0, instanceCount)
+
+      // Bind two streams: mesh (per-vertex, freq 0) + instance (per-instance, freq 1).
+      gd.SetVertexBuffers(
+        VertexBufferBinding(mesh.Vertices, 0, 0),
+        VertexBufferBinding(instVB, 0, 1)
+      )
+
+      gd.Indices <- mesh.Indices
+
+      let viewProj = state.View * state.Projection
+
+      if this.ensurePbrEffect gd then
+        match pbrEffect, pbrParams with
+        | ValueSome e, ValueSome p ->
+          e.CurrentTechnique <- e.Techniques["Instanced"]
+
+          // matModel unused for instancing; normalMatrix = Identity (uniform-scale primitives).
+          setMatrix p.ViewProj viewProj
+          setMatrix p.NormalMatrix Matrix.Identity
+          setVec3 p.CameraPos state.CurrentCamera.Position
+
+          // Instanced draws always upload the material (no MaterialKey short-circuit — the
+          // batch is one material across all instances).
+          uploadPbrMaterial(&p, &material, Matrix.Identity)
+          bindPbrTextures(gd, &material)
+          uploadPbrLights(&p, lights)
+
+          for pass in e.CurrentTechnique.Passes do
+            pass.Apply()
+
+            gd.DrawInstancedPrimitives(
+              PrimitiveType.TriangleList,
+              0, // baseVertex
+              0, // startIndex
+              mesh.PrimitiveCount,
+              instanceCount
             )
+        | _ -> () // unreachable
+      else
+        // ── B7 fallback: minimal Instanced.fx (flat albedo + 1 directional). ──
+        let effect =
+          match instancedEffect with
+          | ValueSome e -> e
+          | ValueNone ->
+            match ShaderLoader.loadEffect gd "Instanced" with
+            | ValueSome e ->
+              instancedEffect <- ValueSome e
+              e
+            | ValueNone -> Unchecked.defaultof<_>
 
-          instanceVertexBuffer <- ValueSome vb
-        | ValueSome vb when vb.VertexCount < instanceCount ->
-          vb.Dispose()
+        if obj.ReferenceEquals(effect, null) then
+          ()
+        else
+          let c = material.AlbedoColor
 
-          let vb' =
-            new VertexBuffer(
-              gd,
-              typeof<VertexInstanceWorld>,
-              instanceCount,
-              BufferUsage.WriteOnly
-            )
-
-          instanceVertexBuffer <- ValueSome vb'
-        | _ -> ()
-
-        let instVB =
-          match instanceVertexBuffer with
-          | ValueSome vb -> vb
-          | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable (created above)
-
-        instVB.SetData(instanceStaging, 0, instanceCount)
-
-        // View-projection combined (§6.1: A * B applies A first → world then view then projection).
-        let viewProj = state.View * state.Projection
-
-        // Material → flat albedo for the minimal effect. PBR maps are B9's job.
-        let c = material.AlbedoColor
-
-        // Uniforms.
-        match effect.Parameters.["ViewProj"] with
-        | null -> ()
-        | p -> p.SetValue viewProj
-
-        match effect.Parameters.["AlbedoColor"] with
-        | null -> ()
-        | p ->
-          p.SetValue(
-            Vector3(
-              float32 c.R / 255.0f,
-              float32 c.G / 255.0f,
-              float32 c.B / 255.0f
-            )
-          )
-
-        match effect.Parameters.["AmbientColor"] with
-        | null -> ()
-        | p ->
-          let amb =
-            match lights.Ambient with
-            | ValueSome a -> a.Color.ToVector3() * a.Intensity
-            | ValueNone -> Vector3.Zero
-
-          p.SetValue amb
-
-        match effect.Parameters.["DirLightDir"], lights.DirLights with
-        | null, _ -> ()
-        | p, dl when dl.Count > 0 ->
-          let d = dl[0]
-          p.SetValue d.Direction
-
-          match effect.Parameters.["DirLightColor"] with
+          match effect.Parameters.["ViewProj"] with
           | null -> ()
-          | pc -> pc.SetValue(d.Color.ToVector3() * d.Intensity)
-        | _, _ ->
-          match effect.Parameters.["DirLightColor"] with
+          | pp -> pp.SetValue viewProj
+
+          match effect.Parameters.["AlbedoColor"] with
           | null -> ()
-          | pc -> pc.SetValue Vector3.Zero
+          | p ->
+            p.SetValue(
+              Vector3(
+                float32 c.R / 255.0f,
+                float32 c.G / 255.0f,
+                float32 c.B / 255.0f
+              )
+            )
 
-        // Bind two streams: mesh (per-vertex, freq 0) + instance (per-instance, freq 1).
-        gd.SetVertexBuffers(
-          VertexBufferBinding(mesh.Vertices, 0, 0),
-          VertexBufferBinding(instVB, 0, 1)
-        )
+          match effect.Parameters.["AmbientColor"] with
+          | null -> ()
+          | p ->
+            let amb =
+              match lights.Ambient with
+              | ValueSome a -> a.Color.ToVector3() * a.Intensity
+              | ValueNone -> Vector3.Zero
 
-        gd.Indices <- mesh.Indices
+            p.SetValue amb
 
-        for pass in effect.CurrentTechnique.Passes do
-          pass.Apply()
+          match effect.Parameters.["DirLightDir"], lights.DirLights with
+          | null, _ -> ()
+          | p, dl when dl.Count > 0 ->
+            let d = dl[0]
+            p.SetValue d.Direction
 
-          gd.DrawInstancedPrimitives(
-            PrimitiveType.TriangleList,
-            0, // baseVertex
-            0, // startIndex
-            mesh.PrimitiveCount,
-            instanceCount
-          )
+            match effect.Parameters.["DirLightColor"] with
+            | null -> ()
+            | pc -> pc.SetValue(d.Color.ToVector3() * d.Intensity)
+          | _, _ ->
+            match effect.Parameters.["DirLightColor"] with
+            | null -> ()
+            | pc -> pc.SetValue Vector3.Zero
+
+          for pass in effect.CurrentTechnique.Passes do
+            pass.Apply()
+
+            gd.DrawInstancedPrimitives(
+              PrimitiveType.TriangleList,
+              0, // baseVertex
+              0, // startIndex
+              mesh.PrimitiveCount,
+              instanceCount
+            )
 
   // ----------------------------------------------------------------
   // B8: Billboards + lines
@@ -810,10 +1186,19 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
     member _.Initialize() = ()
 
     /// <summary>
-    /// Called once at disposal. Releases lazily-created GPU resources (the PBR fallback
-    /// effect, the B7 instanced effect + instance vertex buffer). Reserved for B9 (PBR shader unload).
+    /// Called once at disposal. Releases lazily-created GPU resources: the PBR effect, the
+    /// PBR fallback effect, the B7 instanced effect + instance vertex buffer, and the B8
+    /// billboard/line effects.
     /// </summary>
     member _.Shutdown() =
+      match pbrEffect with
+      | ValueSome e ->
+        e.Dispose()
+        pbrEffect <- ValueNone
+        pbrParams <- ValueNone
+        pbrHasLastMaterial <- false
+      | ValueNone -> ()
+
       match pbrFallbackEffect with
       | ValueSome e ->
         e.Dispose()

@@ -49,6 +49,10 @@
     <EmbeddedResource Include="Shaders\LitSpriteNormalMap.ogl.mgfx" />
     <EmbeddedResource Include="Shaders\Instanced.dx.mgfx" />
     <EmbeddedResource Include="Shaders\Instanced.ogl.mgfx" />
+    <EmbeddedResource Include="Shaders\ForwardPbr.dx.mgfx" />
+    <EmbeddedResource Include="Shaders\ForwardPbr.ogl.mgfx" />
+    <EmbeddedResource Include="Shaders\DepthShadow.dx.mgfx" />
+    <EmbeddedResource Include="Shaders\DepthShadow.ogl.mgfx" />
     <None Include="Shaders\*.fx" CopyToOutputDirectory="Never" />
   </ItemGroup>
 
