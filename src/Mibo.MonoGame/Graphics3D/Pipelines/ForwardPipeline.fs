@@ -259,6 +259,9 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
     Array.zeroCreate<VertexPositionColorTexture> 256
   // Shared index pattern for N quads: [0,1,2, 0,2,3] offset by quad*4. Grown on demand.
   let mutable billboardIndices: int[] = Array.zeroCreate<int>(64 * 6)
+  // Reused across DrawLine3D calls — avoids per-call heap allocation on the hot path.
+  let mutable lineStaging: VertexPositionColorTexture[] =
+    Array.zeroCreate<VertexPositionColorTexture> 2
 
   // ----------------------------------------------------------------
   // Dispatch helpers
@@ -583,6 +586,8 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       e
 
   // Emits a single camera-facing quad into the staging array at quadIndex*4.
+  // UVs are normalized to [0,1] from the pixel-space source rect (BasicEffect samples
+  // in normalized space — the Renderer2D lit-quad path uses the same convention).
   static member private EmitQuad
     (
       staging: VertexPositionColorTexture[],
@@ -590,6 +595,8 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       world: Matrix,
       size: Vector2,
       color: Color,
+      texWidth: float32,
+      texHeight: float32,
       texRect: Rectangle
     ) =
     let halfW = size.X * 0.5f
@@ -599,10 +606,12 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
     let c1 = Vector3.Transform(Vector3(halfW, -halfH, 0.0f), world)
     let c2 = Vector3.Transform(Vector3(halfW, halfH, 0.0f), world)
     let c3 = Vector3.Transform(Vector3(-halfW, halfH, 0.0f), world)
-    let u0 = float32 texRect.X
-    let v0 = float32 texRect.Y
-    let u1 = float32(texRect.X + texRect.Width)
-    let v1 = float32(texRect.Y + texRect.Height)
+    let invW = 1.0f / texWidth
+    let invH = 1.0f / texHeight
+    let u0 = float32 texRect.X * invW
+    let v0 = float32 texRect.Y * invH
+    let u1 = float32(texRect.X + texRect.Width) * invW
+    let v1 = float32(texRect.Y + texRect.Height) * invH
 
     staging[offset + 0] <-
       VertexPositionColorTexture(c0, color, Vector2(u0, v1))
@@ -638,6 +647,8 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       world,
       size,
       color,
+      float32 texture.Width,
+      float32 texture.Height,
       Rectangle(0, 0, texture.Width, texture.Height)
     )
 
@@ -697,6 +708,8 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       let cam = state.CurrentCamera
       let camFwd = cam.Target - cam.Position
       let texture = textures[0]
+      let texW = float32 texture.Width
+      let texH = float32 texture.Height
       let texRect = Rectangle(0, 0, texture.Width, texture.Height)
 
       let vertCount = count * 4
@@ -719,6 +732,8 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
           world,
           sizes[i],
           colors[i],
+          texW,
+          texH,
           texRect
         )
 
@@ -765,7 +780,6 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       finish: Vector3,
       color: Color
     ) =
-    let lineStaging = Array.zeroCreate<VertexPositionColorTexture> 2
     lineStaging[0] <- VertexPositionColorTexture(start, color, Vector2.Zero)
     lineStaging[1] <- VertexPositionColorTexture(finish, color, Vector2.Zero)
 
