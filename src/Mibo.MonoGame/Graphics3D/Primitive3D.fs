@@ -205,9 +205,11 @@ module Primitive3D =
       for seg = 0 to segments do
         let u0 = float32 seg / float32 segments
         let theta = u0 * 2f * float32 Math.PI
-        let x = cosPhi * MathF.Sin(theta)
-        let y = sinPhi
-        let z = cosPhi * MathF.Cos(theta)
+        // Standard UV-sphere parametrization: y = cos(phi), horizontal ring scaled by sin(phi).
+        // (The earlier draft swapped sin/cos, producing only the northern hemisphere — a dome.)
+        let x = sinPhi * MathF.Sin(theta)
+        let y = cosPhi
+        let z = sinPhi * MathF.Cos(theta)
 
         verts[vi] <-
           VertexPositionNormalTexture(
@@ -242,9 +244,9 @@ module Primitive3D =
     (segments: int)
     : struct (VertexPositionNormalTexture[] * int[]) =
     // Unit radius, unit height, centered on origin (Y from -0.5 to +0.5).
-    // Side: 2 rings × (segments+1) verts. Caps: 2 fans of (segments+1) verts each.
+    // Side: 2 rings × (segments+1) verts. Caps: 2 fans, each (segments+1) ring verts + 1 center.
     let sideVerts = 2 * (segments + 1)
-    let capVerts = 2 * (segments + 1)
+    let capVerts = 2 * ((segments + 1) + 1) // +2 center verts (one per cap)
 
     let verts =
       Array.zeroCreate<VertexPositionNormalTexture>(sideVerts + capVerts)
@@ -311,14 +313,24 @@ module Primitive3D =
 
       vi <- vi + 1
 
+    // Top cap center vertex (referenced by the fan as topBase + segments + 1).
+    verts[vi] <-
+      VertexPositionNormalTexture(
+        Vector3(0f, 0.5f, 0f),
+        Vector3.UnitY,
+        Vector2(0.5f, 0.5f)
+      )
+
+    vi <- vi + 1
+
     for seg = 0 to segments - 1 do
       indices[ii + 0] <- topBase + seg
       indices[ii + 1] <- topBase + seg + 1
       indices[ii + 2] <- topBase + segments + 1 // center
       ii <- ii + 3
 
-    // Bottom cap fan (normal -Y), starting after the top cap center.
-    let botBase = topBase + segments + 2
+    // Bottom cap fan (normal -Y), starting right after the top cap center (vi is authoritative).
+    let botBase = vi
 
     for seg = 0 to segments do
       let t = float32 seg / float32 segments
@@ -334,6 +346,16 @@ module Primitive3D =
         )
 
       vi <- vi + 1
+
+    // Bottom cap center vertex (referenced by the fan as botBase + segments + 1).
+    verts[vi] <-
+      VertexPositionNormalTexture(
+        Vector3(0f, -0.5f, 0f),
+        (-Vector3.UnitY),
+        Vector2(0.5f, 0.5f)
+      )
+
+    vi <- vi + 1
 
     for seg = 0 to segments - 1 do
       indices[ii + 0] <- botBase + seg + 1
@@ -367,18 +389,14 @@ module Primitive3D =
       let theta = t * 2f * float32 Math.PI
       let bx = MathF.Sin(theta)
       let bz = MathF.Cos(theta)
-      // Side normal: approximate as the cross product of the slant edge and the tangent.
-      let side = Vector3(bx, 0f, bz)
-      let up = Vector3(0f, 1f, 0f)
-      let slope = (Vector3(0f, 1f, 0f) - side)
-      let n = Vector3.Cross(up, Vector3(bz, 0f, -bx)) // tangent × up for outward normal
-
-      let normal =
-        Vector3.Normalize(Vector3(n.X, 0.5f * MathF.Abs(n.Y) + 0.5f, n.Z))
+      // Outward side normal for a unit cone (base radius 1 at y=-0.5, apex at y=+0.5):
+      // the slant face's outward normal is (bx, 1, bz) normalized. The earlier draft used
+      // Cross(up, tangent), which produced (-bx, 0, -bz) — radially inward. Fixed.
+      let normal = Vector3.Normalize(Vector3(bx, 1f, bz))
 
       verts[vi] <-
         VertexPositionNormalTexture(
-          side * Vector3(1f, 0f, 1f) + Vector3(0f, -0.5f, 0f),
+          Vector3(bx, -0.5f, bz),
           normal,
           Vector2(t, 1f)
         )
@@ -426,6 +444,16 @@ module Primitive3D =
         )
 
       vi <- vi + 1
+
+    // Base center vertex (referenced by the fan as baseBase + segments + 1).
+    verts[vi] <-
+      VertexPositionNormalTexture(
+        Vector3(0f, -0.5f, 0f),
+        (-Vector3.UnitY),
+        Vector2(0.5f, 0.5f)
+      )
+
+    vi <- vi + 1
 
     for seg = 0 to segments - 1 do
       indices[ii + 0] <- baseBase + seg + 1

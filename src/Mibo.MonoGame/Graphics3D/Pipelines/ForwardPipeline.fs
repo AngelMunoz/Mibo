@@ -357,14 +357,15 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       transform: Matrix,
       material: Material3D
     ) =
-    // Create the fallback BasicEffect on first use against the real device.
-    match pbrFallbackEffect with
-    | ValueNone ->
-      let e = new BasicEffect(gd)
-      pbrFallbackEffect <- ValueSome e
-    | ValueSome _ -> ()
-
-    let effect = pbrFallbackEffect.Value
+    // Create the fallback BasicEffect on first use against the real device. Pattern-match
+    // rather than .Value — AGENTS.md imperative #4 bans unchecked voption unwraps.
+    let effect =
+      match pbrFallbackEffect with
+      | ValueSome e -> e
+      | ValueNone ->
+        let e = new BasicEffect(gd)
+        pbrFallbackEffect <- ValueSome e
+        e
 
     // Map the Material3D's albedo color → BasicEffect.DiffuseColor. Normalized to 0–1.
     // PBR maps, roughness/metallic, emission, opacity are B9's job; ignored here.
