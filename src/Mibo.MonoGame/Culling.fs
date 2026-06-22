@@ -24,12 +24,5 @@ module Culling =
 
   /// <summary>Checks if a 2D rectangle intersects with visible camera bounds.</summary>
   /// <remarks>Use with <see cref="M:Mibo.Elmish.Camera2D.viewportBounds"/> to get the view bounds.</remarks>
-  /// <example>
-  /// <code>
-  /// let viewBounds = Camera2D.viewportBounds camera width height
-  /// if Culling.isVisible2D viewBounds sprite.Bounds then
-  ///     // Render sprite
-  /// </code>
-  /// </example>
   let inline isVisible2D (viewBounds: Rectangle) (itemBounds: Rectangle) =
     viewBounds.Intersects(itemBounds)
