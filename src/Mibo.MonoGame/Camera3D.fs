@@ -8,6 +8,8 @@ open Microsoft.Xna.Framework
 /// </summary>
 /// <remarks>
 /// This struct is renderer-agnostic — both 2D and 3D renderers use the same concept.
+/// It is a struct (not a reference record) because it flows through the view function
+/// every frame; keeping it stack-allocated avoids per-frame Gen0 pressure on the hot path.
 /// Use the <see cref="T:Mibo.Elmish.Camera2D"/> or <see cref="T:Mibo.Elmish.Camera3D"/> modules to create cameras.
 /// </remarks>
 /// <example>
@@ -19,6 +21,7 @@ open Microsoft.Xna.Framework
 /// let camera = Camera3D.lookAt position Vector3.Zero Vector3.Up fov aspect 0.1f 1000f
 /// </code>
 /// </example>
+[<Struct>]
 type Camera = {
   /// <summary>The view matrix (camera position/rotation, transforms world to view space).</summary>
   View: Matrix
@@ -286,21 +289,69 @@ module Camera3D =
 
   // ── Convenience Constructors ──
 
-  /// <summary>Split-screen left half. Clears with given color.</summary>
-  let splitScreenLeft (camera: Camera3D) (clearColor: Color) =
-    render camera |> withViewport(Rectangle(0, 0, 0, 0)) |> withClear clearColor
+  /// <summary>
+  /// Split-screen left half. Clears with given color.
+  /// </summary>
+  /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
+  let splitScreenLeft
+    (camera: Camera3D)
+    (clearColor: Color)
+    (bounds: Rectangle)
+    =
+    let halfWidth = bounds.Width / 2
 
-  /// <summary>Split-screen right half. Clears with given color.</summary>
-  let splitScreenRight (camera: Camera3D) (clearColor: Color) =
-    render camera |> withViewport(Rectangle(0, 0, 0, 0)) |> withClear clearColor
+    render camera
+    |> withViewport(Rectangle(bounds.X, bounds.Y, halfWidth, bounds.Height))
+    |> withClear clearColor
 
-  /// <summary>Split-screen top half. Clears with given color.</summary>
-  let splitScreenTop (camera: Camera3D) (clearColor: Color) =
-    render camera |> withViewport(Rectangle(0, 0, 0, 0)) |> withClear clearColor
+  /// <summary>
+  /// Split-screen right half. Clears with given color.
+  /// </summary>
+  /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
+  let splitScreenRight
+    (camera: Camera3D)
+    (clearColor: Color)
+    (bounds: Rectangle)
+    =
+    let halfWidth = bounds.Width / 2
 
-  /// <summary>Split-screen bottom half. Clears with given color.</summary>
-  let splitScreenBottom (camera: Camera3D) (clearColor: Color) =
-    render camera |> withViewport(Rectangle(0, 0, 0, 0)) |> withClear clearColor
+    render camera
+    |> withViewport(
+      Rectangle(bounds.X + halfWidth, bounds.Y, halfWidth, bounds.Height)
+    )
+    |> withClear clearColor
+
+  /// <summary>
+  /// Split-screen top half. Clears with given color.
+  /// </summary>
+  /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
+  let splitScreenTop
+    (camera: Camera3D)
+    (clearColor: Color)
+    (bounds: Rectangle)
+    =
+    let halfHeight = bounds.Height / 2
+
+    render camera
+    |> withViewport(Rectangle(bounds.X, bounds.Y, bounds.Width, halfHeight))
+    |> withClear clearColor
+
+  /// <summary>
+  /// Split-screen bottom half. Clears with given color.
+  /// </summary>
+  /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
+  let splitScreenBottom
+    (camera: Camera3D)
+    (clearColor: Color)
+    (bounds: Rectangle)
+    =
+    let halfHeight = bounds.Height / 2
+
+    render camera
+    |> withViewport(
+      Rectangle(bounds.X, bounds.Y + halfHeight, bounds.Width, halfHeight)
+    )
+    |> withClear clearColor
 
   /// <summary>Picture-in-picture overlay. No post-process by default.</summary>
   let overlay (camera: Camera3D) (bounds: Rectangle) =

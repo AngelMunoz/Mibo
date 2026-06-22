@@ -9,6 +9,8 @@ open Raylib_cs
 /// </summary>
 /// <remarks>
 /// This struct is renderer-agnostic - both 2D and 3D renderers use the same type.
+/// It is a struct (not a reference record) because it flows through the view function
+/// every frame; keeping it stack-allocated avoids per-frame Gen0 pressure on the hot path.
 /// Use the <see cref="T:Mibo.Elmish.Camera2D"/> or <see cref="T:Mibo.Elmish.Camera3D"/> modules to create cameras.
 /// </remarks>
 /// <example>
@@ -20,6 +22,7 @@ open Raylib_cs
 /// let camera = Camera3D.lookAt position Vector3.Zero Vector3.Up fov aspect 0.1f 1000f
 /// </code>
 /// </example>
+[<Struct>]
 type Camera = {
   /// The view matrix (camera position/rotation, transforms world to view space).
   View: Matrix4x4
