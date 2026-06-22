@@ -233,6 +233,12 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
   // Model.CopyAbsoluteBoneTransformsTo with zero per-frame allocation or copying.
   let mutable boneTransforms = Array.zeroCreate<Matrix> 64
 
+  // Lazily-created BasicEffect for the DrawMeshPBR fallback path (until B9 lands the custom
+  // PBR shader). Created on first DrawMeshPBR against the actual GraphicsDevice passed to
+  // Execute — BasicEffect's ctor requires a real device (it tracks the resource), so we can't
+  // build it in Initialize() (no device is passed there) or capture one in a `lazy`.
+  let mutable pbrFallbackEffect: BasicEffect voption = ValueNone
+
   // ----------------------------------------------------------------
   // Dispatch helpers
   // ----------------------------------------------------------------
@@ -332,6 +338,51 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
 
     drawPart(gd, part)
 
+  /// <summary>
+  /// Handles <c>DrawMeshPBR</c>: draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/>
+  /// with a <c>Material3D</c>. Per §4.1, this is the only place <c>Material3D</c> is consumed.
+  /// </summary>
+  /// <remarks>
+  /// <b>B5/B6 fallback:</b> until B9 lands the custom PBR HLSL, the material's PBR maps
+  /// (albedo/normal/metallic/roughness/emission) are ignored and a lazily-created
+  /// <c>BasicEffect</c> renders the albedo color with the pipeline's accumulated lighting.
+  /// This keeps the PBR command path usable today (smoke-testable) and gives B9 a concrete
+  /// dispatch site to replace with the PBR <c>Effect</c>.
+  /// </remarks>
+  member private _.handleDrawMeshPBR
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      mesh: PrimitiveMesh,
+      transform: Matrix,
+      material: Material3D
+    ) =
+    // Create the fallback BasicEffect on first use against the real device.
+    match pbrFallbackEffect with
+    | ValueNone ->
+      let e = new BasicEffect(gd)
+      pbrFallbackEffect <- ValueSome e
+    | ValueSome _ -> ()
+
+    let effect = pbrFallbackEffect.Value
+
+    // Map the Material3D's albedo color → BasicEffect.DiffuseColor. Normalized to 0–1.
+    // PBR maps, roughness/metallic, emission, opacity are B9's job; ignored here.
+    let c = material.AlbedoColor
+
+    effect.DiffuseColor <-
+      Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
+
+    effect.Alpha <- material.Opacity
+    effect.Texture <- null
+    effect.TextureEnabled <- false
+    effect.VertexColorEnabled <- false
+    effect.World <- transform
+    effect.View <- state.View
+    effect.Projection <- state.Projection
+    applyLighting(effect, lights)
+    mesh.Draw(gd, effect)
+
   // ----------------------------------------------------------------
   // IRenderPipeline3D
   // ----------------------------------------------------------------
@@ -344,8 +395,16 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
     /// </summary>
     member _.Initialize() = ()
 
-    /// <summary>Called once at disposal. Reserved for B9 (PBR shader unload).</summary>
-    member _.Shutdown() = ()
+    /// <summary>
+    /// Called once at disposal. Releases the lazily-created PBR fallback effect (if any).
+    /// Reserved for B9 (PBR shader unload).
+    /// </summary>
+    member _.Shutdown() =
+      match pbrFallbackEffect with
+      | ValueSome e ->
+        e.Dispose()
+        pbrFallbackEffect <- ValueNone
+      | ValueNone -> ()
 
     member this.Execute(gameCtx, buffer, _rtPool) =
       let gd = MonoGameGameContext.getGraphicsDevice gameCtx
@@ -421,6 +480,16 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
         | Command3D.DrawSkinnedMesh(part, transform, bones) ->
           if state.HasCamera then
             this.handleDrawSkinnedMesh(gd, &state, part, transform, bones)
+
+        | Command3D.DrawMeshPBR(mesh, transform, material) ->
+          if state.HasCamera then
+            this.handleDrawMeshPBR(gd, &state, mesh, transform, material)
+
+        // DrawMeshInstanced: stubbed — native hardware instancing is B7 (requires an instance
+        // vertex stream + a custom HLSL vertex declaration; BasicEffect has no instance
+        // semantics). The case is present in the DU so B7 wires dispatch without a breaking
+        // signature change. Until B7 this is a no-op.
+        | Command3D.DrawMeshInstanced _ -> ()
 
         // ── Billboards / lines — stubbed (full impl in B8) ──
         | Command3D.DrawBillboard _

@@ -100,6 +100,36 @@ module Draw3D =
     buffer
 
   /// <summary>
+  /// Draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/> with a PBR material.
+  /// See <c>Command3D.drawMeshPBR</c> for the §4.1 rationale and the B9 PBR-shader timeline.
+  /// </summary>
+  let inline drawMeshPBR
+    (mesh: PrimitiveMesh)
+    (transform: Matrix)
+    (material: Material3D)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(Command3D.drawMeshPBR mesh transform material)
+    buffer
+
+  /// <summary>
+  /// Draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/> instanced.
+  /// See <c>Command3D.drawMeshInstanced</c> for the B7 native-instancing timeline.
+  /// </summary>
+  let inline drawMeshInstanced
+    (mesh: PrimitiveMesh)
+    (transforms: Matrix[])
+    (material: Material3D)
+    (instanceCount: int)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(
+      Command3D.drawMeshInstanced mesh transforms material instanceCount
+    )
+
+    buffer
+
+  /// <summary>
   /// Draws multiple billboards in a single batch.
   /// Prefer this over individual <c>drawBillboard</c> calls for many sprites at once.
   /// </summary>
