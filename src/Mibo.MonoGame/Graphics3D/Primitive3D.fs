@@ -410,7 +410,10 @@ module Primitive3D =
 
       vi <- vi + 2
 
-    let sideIndexCount = segments * 3
+    // Side: 2 triangles (6 indices) per segment; base fan: 1 triangle (3 indices) per segment.
+    // (The earlier draft set sideIndexCount = segments*3 but the side loop writes 6/segment,
+    // underallocating the buffer and causing IndexOutOfRangeException in the base fan loop.)
+    let sideIndexCount = segments * 6
     let indices = Array.zeroCreate<int>(sideIndexCount + segments * 3)
     let mutable ii = 0
 
