@@ -774,9 +774,10 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
   /// <c>Instanced.fx</c> (flat albedo + 1 directional light).
   /// <para>
   /// Per §6.1, matrices upload as plain <c>float4x4</c> with <c>mul(position, matrix)</c>
-  /// (vector LEFT). For the PBR instanced technique, <c>matModel</c> is unused (per-instance
-  /// transform replaces it); <c>normalMatrix</c> is set to <c>Identity</c> because primitives
-  /// are uniform-scale.
+  /// (vector LEFT). For the PBR instanced technique, <c>matModel</c> and <c>normalMatrix</c>
+  /// are unused: <c>VS_Instanced</c> composes the per-instance world from the TEXCOORD1..4
+  /// rows and transforms normals by it directly (correct for uniform-scale instances —
+  /// rotation is orthogonal, so inverse-transpose == world).
   /// </para>
   /// </remarks>
   member private this.handleDrawMeshInstanced
