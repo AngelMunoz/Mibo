@@ -249,6 +249,17 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
   // CPU staging array — packed VertexInstanceWorld rows per instance. Grows as needed.
   let mutable instanceStaging = Array.zeroCreate<VertexInstanceWorld> 64
 
+  // B8 billboards + lines: lazily-created unlit BasicEffects (one textured+alpha for
+  // billboards, one vertex-color for lines) and a pooled CPU vertex staging array for
+  // DrawUserIndexedPrimitives. Created on first use against the real device.
+  let mutable billboardEffect: BasicEffect voption = ValueNone
+  let mutable lineEffect: BasicEffect voption = ValueNone
+
+  let mutable billboardStaging: VertexPositionColorTexture[] =
+    Array.zeroCreate<VertexPositionColorTexture> 256
+  // Shared index pattern for N quads: [0,1,2, 0,2,3] offset by quad*4. Grown on demand.
+  let mutable billboardIndices: int[] = Array.zeroCreate<int>(64 * 6)
+
   // ----------------------------------------------------------------
   // Dispatch helpers
   // ----------------------------------------------------------------
@@ -546,6 +557,233 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
           )
 
   // ----------------------------------------------------------------
+  // B8: Billboards + lines
+  // ----------------------------------------------------------------
+
+  member private _.ensureBillboardEffect(gd: GraphicsDevice) : BasicEffect =
+    match billboardEffect with
+    | ValueSome e -> e
+    | ValueNone ->
+      let e = new BasicEffect(gd)
+      e.TextureEnabled <- true
+      e.LightingEnabled <- false
+      e.VertexColorEnabled <- true
+      billboardEffect <- ValueSome e
+      e
+
+  member private _.ensureLineEffect(gd: GraphicsDevice) : BasicEffect =
+    match lineEffect with
+    | ValueSome e -> e
+    | ValueNone ->
+      let e = new BasicEffect(gd)
+      e.TextureEnabled <- false
+      e.LightingEnabled <- false
+      e.VertexColorEnabled <- true
+      lineEffect <- ValueSome e
+      e
+
+  // Emits a single camera-facing quad into the staging array at quadIndex*4.
+  static member private EmitQuad
+    (
+      staging: VertexPositionColorTexture[],
+      offset: int,
+      world: Matrix,
+      size: Vector2,
+      color: Color,
+      texRect: Rectangle
+    ) =
+    let halfW = size.X * 0.5f
+    let halfH = size.Y * 0.5f
+    // Unit quad corners (centered on origin, +Y up, +X right), transformed by the billboard matrix.
+    let c0 = Vector3.Transform(Vector3(-halfW, -halfH, 0.0f), world)
+    let c1 = Vector3.Transform(Vector3(halfW, -halfH, 0.0f), world)
+    let c2 = Vector3.Transform(Vector3(halfW, halfH, 0.0f), world)
+    let c3 = Vector3.Transform(Vector3(-halfW, halfH, 0.0f), world)
+    let u0 = float32 texRect.X
+    let v0 = float32 texRect.Y
+    let u1 = float32(texRect.X + texRect.Width)
+    let v1 = float32(texRect.Y + texRect.Height)
+
+    staging[offset + 0] <-
+      VertexPositionColorTexture(c0, color, Vector2(u0, v1))
+
+    staging[offset + 1] <-
+      VertexPositionColorTexture(c1, color, Vector2(u1, v1))
+
+    staging[offset + 2] <-
+      VertexPositionColorTexture(c2, color, Vector2(u1, v0))
+
+    staging[offset + 3] <-
+      VertexPositionColorTexture(c3, color, Vector2(u0, v0))
+
+  member private this.handleDrawBillboard
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      texture: Texture2D,
+      position: Vector3,
+      size: Vector2,
+      color: Color
+    ) =
+    let cam = state.CurrentCamera
+    let camFwd = cam.Target - cam.Position
+    let world = Matrix.CreateBillboard(position, cam.Position, cam.Up, camFwd)
+
+    if billboardStaging.Length < 4 then
+      billboardStaging <- Array.zeroCreate<VertexPositionColorTexture> 4
+
+    ForwardPipeline.EmitQuad(
+      billboardStaging,
+      0,
+      world,
+      size,
+      color,
+      Rectangle(0, 0, texture.Width, texture.Height)
+    )
+
+    let effect = this.ensureBillboardEffect gd
+    effect.Texture <- texture
+    effect.World <- Matrix.Identity
+    effect.View <- state.View
+    effect.Projection <- state.Projection
+    effect.Alpha <- 1.0f
+
+    gd.BlendState <- BlendState.AlphaBlend
+    gd.DepthStencilState <- DepthStencilState.DepthRead
+
+    if billboardIndices.Length < 6 then
+      billboardIndices <- Array.zeroCreate<int> 6
+
+    billboardIndices[0] <- 0
+    billboardIndices[1] <- 1
+    billboardIndices[2] <- 2
+    billboardIndices[3] <- 0
+    billboardIndices[4] <- 2
+    billboardIndices[5] <- 3
+
+    for p in effect.CurrentTechnique.Passes do
+      p.Apply()
+
+      gd.DrawUserIndexedPrimitives(
+        PrimitiveType.TriangleList,
+        billboardStaging,
+        0,
+        4,
+        billboardIndices,
+        0,
+        2
+      )
+
+    gd.DepthStencilState <- DepthStencilState.Default
+    gd.BlendState <- BlendState.Opaque
+
+  member private this.handleDrawBillboardBatch
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      textures: Texture2D[],
+      positions: Vector3[],
+      sizes: Vector2[],
+      colors: Color[],
+      count: int
+    ) =
+    if count <= 0 then
+      ()
+    else
+      // NOTE: This batch path uses only textures[0] — a true multi-texture batch would need
+      // a texture atlas or texture array. Splitting by texture (one draw call per distinct
+      // texture) is the standard SpriteBatch approach; the sample's particles all share one
+      // texture, so the common case is one draw call. Group by texture when that's not true.
+      let cam = state.CurrentCamera
+      let camFwd = cam.Target - cam.Position
+      let texture = textures[0]
+      let texRect = Rectangle(0, 0, texture.Width, texture.Height)
+
+      let vertCount = count * 4
+      let idxCount = count * 6
+
+      if billboardStaging.Length < vertCount then
+        billboardStaging <-
+          Array.zeroCreate<VertexPositionColorTexture> vertCount
+
+      if billboardIndices.Length < idxCount then
+        billboardIndices <- Array.zeroCreate<int> idxCount
+
+      for i = 0 to count - 1 do
+        let world =
+          Matrix.CreateBillboard(positions[i], cam.Position, cam.Up, camFwd)
+
+        ForwardPipeline.EmitQuad(
+          billboardStaging,
+          i * 4,
+          world,
+          sizes[i],
+          colors[i],
+          texRect
+        )
+
+        let b = i * 6
+        let v = i * 4
+        billboardIndices[b + 0] <- v + 0
+        billboardIndices[b + 1] <- v + 1
+        billboardIndices[b + 2] <- v + 2
+        billboardIndices[b + 3] <- v + 0
+        billboardIndices[b + 4] <- v + 2
+        billboardIndices[b + 5] <- v + 3
+
+      let effect = this.ensureBillboardEffect gd
+      effect.Texture <- texture
+      effect.World <- Matrix.Identity
+      effect.View <- state.View
+      effect.Projection <- state.Projection
+      effect.Alpha <- 1.0f
+
+      gd.BlendState <- BlendState.AlphaBlend
+      gd.DepthStencilState <- DepthStencilState.DepthRead
+
+      for p in effect.CurrentTechnique.Passes do
+        p.Apply()
+
+        gd.DrawUserIndexedPrimitives(
+          PrimitiveType.TriangleList,
+          billboardStaging,
+          0,
+          vertCount,
+          billboardIndices,
+          0,
+          count * 2
+        )
+
+      gd.DepthStencilState <- DepthStencilState.Default
+      gd.BlendState <- BlendState.Opaque
+
+  member private this.handleDrawLine3D
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      start: Vector3,
+      finish: Vector3,
+      color: Color
+    ) =
+    let lineStaging = Array.zeroCreate<VertexPositionColorTexture> 2
+    lineStaging[0] <- VertexPositionColorTexture(start, color, Vector2.Zero)
+    lineStaging[1] <- VertexPositionColorTexture(finish, color, Vector2.Zero)
+
+    let effect = this.ensureLineEffect gd
+    effect.World <- Matrix.Identity
+    effect.View <- state.View
+    effect.Projection <- state.Projection
+    effect.Alpha <- 1.0f
+
+    gd.BlendState <- BlendState.AlphaBlend
+
+    for p in effect.CurrentTechnique.Passes do
+      p.Apply()
+      gd.DrawUserPrimitives(PrimitiveType.LineList, lineStaging, 0, 1)
+
+    gd.BlendState <- BlendState.Opaque
+
+  // ----------------------------------------------------------------
   // IRenderPipeline3D
   // ----------------------------------------------------------------
 
@@ -578,6 +816,18 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       | ValueSome vb ->
         vb.Dispose()
         instanceVertexBuffer <- ValueNone
+      | ValueNone -> ()
+
+      match billboardEffect with
+      | ValueSome e ->
+        e.Dispose()
+        billboardEffect <- ValueNone
+      | ValueNone -> ()
+
+      match lineEffect with
+      | ValueSome e ->
+        e.Dispose()
+        lineEffect <- ValueNone
       | ValueNone -> ()
 
     member this.Execute(gameCtx, buffer, _rtPool) =
@@ -674,12 +924,26 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
               instanceCount
             )
 
-        // ── Billboards / lines — stubbed (full impl in B8) ──
-        | Command3D.DrawBillboard _
-        | Command3D.DrawBillboardBatch _
-        | Command3D.DrawLine3D _ ->
-          // No-op until B8. Pipeline stays usable; these primitives just don't render yet.
-          ()
+        // ── Billboards / lines (B8) ──
+        | Command3D.DrawBillboard(texture, position, size, color) ->
+          if state.HasCamera then
+            this.handleDrawBillboard(gd, &state, texture, position, size, color)
+
+        | Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count) ->
+          if state.HasCamera then
+            this.handleDrawBillboardBatch(
+              gd,
+              &state,
+              textures,
+              positions,
+              sizes,
+              colors,
+              count
+            )
+
+        | Command3D.DrawLine3D(s, f, color) ->
+          if state.HasCamera then
+            this.handleDrawLine3D(gd, &state, s, f, color)
 
         // ── Lighting ──
         | Command3D.SetAmbientLight a -> lights.Ambient <- ValueSome a
