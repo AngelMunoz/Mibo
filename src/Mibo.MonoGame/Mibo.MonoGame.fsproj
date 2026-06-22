@@ -13,6 +13,16 @@
     <Compile Include="Assets.fs" />
     <Compile Include="Runtime.fs" />
     <Compile Include="Animation.fs" />
+    <Compile Include="Camera3D.fs" />
+    <Compile Include="Graphics3D/Conversions.fs" />
+    <Compile Include="Graphics3D/Light3D.fs" />
+    <Compile Include="Graphics3D/Material3D.fs" />
+    <Compile Include="Graphics3D/Command3D.fs" />
+    <Compile Include="Graphics3D/RenderBuffer3D.fs" />
+    <Compile Include="Graphics3D/RenderTargetPool3D.fs" />
+    <Compile Include="Graphics3D/RenderPipeline3D.fs" />
+    <Compile Include="Graphics3D/Renderer3D.fs" />
+    <Compile Include="Graphics3D/Draw3D.fs" />
     <Compile Include="Graphics2D/Camera2D.fs" />
     <Compile Include="Graphics2D/ShaderLoader.fs" />
     <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
