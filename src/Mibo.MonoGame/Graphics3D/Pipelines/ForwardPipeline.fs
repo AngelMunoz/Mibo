@@ -4,6 +4,7 @@ open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
+open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics3D
 
 // ------------------------------------------------------------------
@@ -239,6 +240,15 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
   // build it in Initialize() (no device is passed there) or capture one in a `lazy`.
   let mutable pbrFallbackEffect: BasicEffect voption = ValueNone
 
+  // B7 instancing: the custom Instanced effect (loads from embedded .mgfx via ShaderLoader)
+  // and a growable per-instance vertex buffer. The effect has instance input semantics
+  // (TEXCOORD1..4) that no stock BasicEffect provides, so instancing needs custom HLSL.
+  // Created on first DrawMeshInstanced against the real device.
+  let mutable instancedEffect: Effect voption = ValueNone
+  let mutable instanceVertexBuffer: VertexBuffer voption = ValueNone
+  // CPU staging array — packed VertexInstanceWorld rows per instance. Grows as needed.
+  let mutable instanceStaging = Array.zeroCreate<VertexInstanceWorld> 64
+
   // ----------------------------------------------------------------
   // Dispatch helpers
   // ----------------------------------------------------------------
@@ -384,6 +394,157 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
     applyLighting(effect, lights)
     mesh.Draw(gd, effect)
 
+  /// <summary>
+  /// Handles <c>DrawMeshInstanced</c>: native hardware instancing via two vertex streams
+  /// (stream 0 = the mesh's <c>VertexPositionNormalTexture</c>, stream 1 = per-instance
+  /// world matrices) and <see cref="M:Microsoft.Xna.Framework.Graphics.GraphicsDevice.DrawInstancedPrimitives"/>.
+  /// </summary>
+  /// <remarks>
+  /// <b>B7 minimal instanced effect.</b> Instancing needs a vertex shader that declares
+  /// instance input semantics; no stock MonoGame effect (<c>BasicEffect</c> etc.) does, so
+  /// B7 ships <c>Shaders/Instanced.fx</c> (compiled to both OGL/DX per §6). The effect applies
+  /// ambient + 1 directional light over a flat albedo — the lighting floor for instanced
+  /// geometry. B9 replaces this with the full PBR instanced variant (plan §B9: "Vertex
+  /// shaders: standard + instanced variant (from B7)").
+  /// <para>
+  /// Per §6.1, matrices upload as plain <c>float4x4</c> with <c>mul(position, matrix)</c>
+  /// (vector LEFT). The per-instance world rows are packed as <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/>
+  /// (TEXCOORD1..4) so they don't collide with the mesh's own TEXCOORD0.
+  /// </para>
+  /// </remarks>
+  member private _.handleDrawMeshInstanced
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      mesh: PrimitiveMesh,
+      transforms: Matrix[],
+      material: Material3D,
+      instanceCount: int
+    ) =
+    if instanceCount <= 0 then
+      () // Nothing to draw.
+    else
+      // Lazily load the Instanced effect on first use (§6.4: ShaderLoader picks OGL/DX by backend).
+      let effect =
+        match instancedEffect with
+        | ValueSome e -> e
+        | ValueNone ->
+          // If the embedded resource is missing (e.g. shader not compiled in), bail cleanly.
+          match ShaderLoader.loadEffect gd "Instanced" with
+          | ValueSome e ->
+            instancedEffect <- ValueSome e
+            e
+          | ValueNone -> Unchecked.defaultof<_>
+      // If the effect couldn't be loaded, skip the draw (don't crash on a null effect).
+
+      if obj.ReferenceEquals(effect, null) then
+        ()
+      else
+        // The instance staging array grows only when a larger batch is seen.
+        if instanceStaging.Length < instanceCount then
+          instanceStaging <- Array.zeroCreate<VertexInstanceWorld> instanceCount
+
+        for i = 0 to instanceCount - 1 do
+          instanceStaging[i] <- VertexInstanceWorld.Create transforms[i]
+
+        // Lazily create / resize the instance vertex buffer.
+        match instanceVertexBuffer with
+        | ValueNone ->
+          let vb =
+            new VertexBuffer(
+              gd,
+              typeof<VertexInstanceWorld>,
+              instanceCount,
+              BufferUsage.WriteOnly
+            )
+
+          instanceVertexBuffer <- ValueSome vb
+        | ValueSome vb when vb.VertexCount < instanceCount ->
+          vb.Dispose()
+
+          let vb' =
+            new VertexBuffer(
+              gd,
+              typeof<VertexInstanceWorld>,
+              instanceCount,
+              BufferUsage.WriteOnly
+            )
+
+          instanceVertexBuffer <- ValueSome vb'
+        | _ -> ()
+
+        let instVB =
+          match instanceVertexBuffer with
+          | ValueSome vb -> vb
+          | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable (created above)
+
+        instVB.SetData(instanceStaging, 0, instanceCount)
+
+        // View-projection combined (§6.1: A * B applies A first → world then view then projection).
+        let viewProj = state.View * state.Projection
+
+        // Material → flat albedo for the minimal effect. PBR maps are B9's job.
+        let c = material.AlbedoColor
+
+        // Uniforms.
+        match effect.Parameters.["ViewProj"] with
+        | null -> ()
+        | p -> p.SetValue viewProj
+
+        match effect.Parameters.["AlbedoColor"] with
+        | null -> ()
+        | p ->
+          p.SetValue(
+            Vector3(
+              float32 c.R / 255.0f,
+              float32 c.G / 255.0f,
+              float32 c.B / 255.0f
+            )
+          )
+
+        match effect.Parameters.["AmbientColor"] with
+        | null -> ()
+        | p ->
+          let amb =
+            match lights.Ambient with
+            | ValueSome a -> a.Color.ToVector3() * a.Intensity
+            | ValueNone -> Vector3.Zero
+
+          p.SetValue amb
+
+        match effect.Parameters.["DirLightDir"], lights.DirLights with
+        | null, _ -> ()
+        | p, dl when dl.Count > 0 ->
+          let d = dl[0]
+          p.SetValue d.Direction
+
+          match effect.Parameters.["DirLightColor"] with
+          | null -> ()
+          | pc -> pc.SetValue(d.Color.ToVector3() * d.Intensity)
+        | _, _ ->
+          match effect.Parameters.["DirLightColor"] with
+          | null -> ()
+          | pc -> pc.SetValue Vector3.Zero
+
+        // Bind two streams: mesh (per-vertex, freq 0) + instance (per-instance, freq 1).
+        gd.SetVertexBuffers(
+          VertexBufferBinding(mesh.Vertices, 0, 0),
+          VertexBufferBinding(instVB, 0, 1)
+        )
+
+        gd.Indices <- mesh.Indices
+
+        for pass in effect.CurrentTechnique.Passes do
+          pass.Apply()
+
+          gd.DrawInstancedPrimitives(
+            PrimitiveType.TriangleList,
+            0, // baseVertex
+            0, // startIndex
+            mesh.PrimitiveCount,
+            instanceCount
+          )
+
   // ----------------------------------------------------------------
   // IRenderPipeline3D
   // ----------------------------------------------------------------
@@ -397,14 +558,26 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
     member _.Initialize() = ()
 
     /// <summary>
-    /// Called once at disposal. Releases the lazily-created PBR fallback effect (if any).
-    /// Reserved for B9 (PBR shader unload).
+    /// Called once at disposal. Releases lazily-created GPU resources (the PBR fallback
+    /// effect, the B7 instanced effect + instance vertex buffer). Reserved for B9 (PBR shader unload).
     /// </summary>
     member _.Shutdown() =
       match pbrFallbackEffect with
       | ValueSome e ->
         e.Dispose()
         pbrFallbackEffect <- ValueNone
+      | ValueNone -> ()
+
+      match instancedEffect with
+      | ValueSome e ->
+        e.Dispose()
+        instancedEffect <- ValueNone
+      | ValueNone -> ()
+
+      match instanceVertexBuffer with
+      | ValueSome vb ->
+        vb.Dispose()
+        instanceVertexBuffer <- ValueNone
       | ValueNone -> ()
 
     member this.Execute(gameCtx, buffer, _rtPool) =
@@ -490,7 +663,16 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
         // vertex stream + a custom HLSL vertex declaration; BasicEffect has no instance
         // semantics). The case is present in the DU so B7 wires dispatch without a breaking
         // signature change. Until B7 this is a no-op.
-        | Command3D.DrawMeshInstanced _ -> ()
+        | Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount) ->
+          if state.HasCamera then
+            this.handleDrawMeshInstanced(
+              gd,
+              &state,
+              mesh,
+              transforms,
+              material,
+              instanceCount
+            )
 
         // ── Billboards / lines — stubbed (full impl in B8) ──
         | Command3D.DrawBillboard _
