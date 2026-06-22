@@ -95,9 +95,16 @@ type Renderer3D<'Model>
       | ValueNone -> ()
 
       buffer.Clear()
-      view ctx model buffer
-      pipeline.Execute(ctx, buffer, rtPool)
-      (rtPool :> IRenderTargetPool3D).ReleaseAll()
+
+      // Wrapped in try/finally so pooled render targets are always released
+      // (and the back-buffer restored) even if view or the pipeline throws —
+      // otherwise an exception leaves the RTs in the pool's inUse list and it
+      // allocates new targets every frame, leaking GPU memory. Mirrors Renderer2D.
+      try
+        view ctx model buffer
+        pipeline.Execute(ctx, buffer, rtPool)
+      finally
+        (rtPool :> IRenderTargetPool3D).ReleaseAll()
 
   interface IDisposable with
     member _.Dispose() =
