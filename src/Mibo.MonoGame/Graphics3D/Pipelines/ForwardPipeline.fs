@@ -452,12 +452,12 @@ module private ForwardHelpers =
     setFloatArray p.SpotLightOuterCutoff spotLightOuterScratch
 
   /// <summary>
-  /// Uploads material scalars/colors + normal matrix. Callers gate this on a <c>MaterialKey</c>
-  /// change to avoid re-uploading when consecutive draws share a material.
+  /// Uploads material scalars/colors. Callers gate this on a <c>MaterialKey</c>
+  /// change to avoid re-uploading when consecutive draws share a material. The per-draw
+  /// <c>normalMatrix</c> is NOT uploaded here — it depends on the transform, not the
+  /// material, and must be set unconditionally on every draw.
   /// </summary>
-  let uploadPbrMaterial
-    (p: inref<PbrEffectParams>, mat: inref<Material3D>, normalMatrix: Matrix)
-    =
+  let uploadPbrMaterial(p: inref<PbrEffectParams>, mat: inref<Material3D>) =
     setVec4 p.AlbedoColor (colorToVec4 mat.AlbedoColor)
     setFloat p.Roughness mat.Roughness
     setFloat p.Metallic mat.Metallic
@@ -471,7 +471,6 @@ module private ForwardHelpers =
       | ValueNone -> 0
 
     setInt p.UseNormalMap useNormal
-    setMatrix p.NormalMatrix normalMatrix
 
   /// <summary>Binds a material's 5 texture maps to sampler slots 0..4 (null = unbound).</summary>
   let bindPbrTextures(gd: GraphicsDevice, mat: inref<Material3D>) =
@@ -718,13 +717,14 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
 
         setMatrix p.MatModel transform
         setMatrix p.ViewProj (state.View * state.Projection)
+        setMatrix p.NormalMatrix normalMatrix
         setVec3 p.CameraPos state.CurrentCamera.Position
 
         // Upload material uniforms only when the material changes (MaterialKey short-circuit).
         let key = materialKey &material
 
         if not pbrHasLastMaterial || key <> pbrLastKey then
-          uploadPbrMaterial(&p, &material, normalMatrix)
+          uploadPbrMaterial(&p, &material)
           bindPbrTextures(gd, &material)
           pbrLastKey <- key
           pbrHasLastMaterial <- true
@@ -846,14 +846,15 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
         | ValueSome e, ValueSome p ->
           e.CurrentTechnique <- e.Techniques["Instanced"]
 
-          // matModel unused for instancing; normalMatrix = Identity (uniform-scale primitives).
+          // matModel + normalMatrix unused for instancing: VS_Instanced transforms
+          // normals by the per-instance world matrix directly (rotation matrices are
+          // orthogonal, so inverse-transpose = the matrix itself for uniform-scale).
           setMatrix p.ViewProj viewProj
-          setMatrix p.NormalMatrix Matrix.Identity
           setVec3 p.CameraPos state.CurrentCamera.Position
 
           // Instanced draws always upload the material (no MaterialKey short-circuit — the
           // batch is one material across all instances).
-          uploadPbrMaterial(&p, &material, Matrix.Identity)
+          uploadPbrMaterial(&p, &material)
           bindPbrTextures(gd, &material)
           uploadPbrLights(&p, lights)
 

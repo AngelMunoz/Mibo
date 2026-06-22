@@ -125,9 +125,9 @@ VS_OUTPUT VS_Instanced(VS_INPUT_INSTANCED input) {
   output.Position = mul(wp, viewProj);
   output.TexCoord = input.TexCoord;
   output.Color = input.Color;
-  // normalMatrix is uploaded as Identity for instanced draws (per-instance
-  // transform already carries world space; primitives are uniform-scale).
-  output.Normal = mul(input.Normal, (float3x3) normalMatrix);
+  // Transform normal by the per-instance world matrix directly: instances are
+  // uniform-scale, so the rotation block is orthogonal and inverse-transpose == world.
+  output.Normal = mul(input.Normal, (float3x3) world);
   output.WorldPos = wp.xyz;
   return output;
 }
