@@ -645,6 +645,9 @@ type ForwardPipeline
   // Pooled scratch for the multi-caster shadowViewProjs/UVOffsets upload.
   let mutable shadowViewProjsScratch = Array.zeroCreate<Matrix> 16
   let mutable shadowUVOffsetsScratch = Array.zeroCreate<Vector4> 16
+  // Reused per-caster frustum (updated in-place via .Matrix) to avoid per-frame heap allocation
+  // in the shadow render loop.
+  let shadowFrustum = BoundingFrustum(Matrix.Identity)
 
   // B7 instancing: the custom Instanced effect (loads from embedded .mgfx via ShaderLoader)
   // and a growable per-instance vertex buffer. The effect has instance input semantics
@@ -1377,11 +1380,15 @@ type ForwardPipeline
     let view =
       Matrix.CreateLookAt(lightPos, lightPos - Vector3.UnitY, Vector3.UnitZ)
 
+    // Dynamic near plane: CreatePerspectiveFieldOfView throws if near >= far.
+    // Keep near strictly below half the radius so the frustum is always valid.
+    let nearPlane = min 0.1f (lightRadius * 0.5f)
+
     let proj =
       Matrix.CreatePerspectiveFieldOfView(
         MathF.PI * 0.5f, // 90°
         1.0f,
-        1.0f,
+        nearPlane,
         lightRadius
       )
 
@@ -1406,8 +1413,11 @@ type ForwardPipeline
     // Outer cutoff is a cosine; half-angle FOV = acos(outerCutoff), full FOV = 2× that.
     let fov = 2.0f * MathF.Acos(light.OuterCutoff)
 
+    // Dynamic near plane: CreatePerspectiveFieldOfView throws if near >= far.
+    let nearPlane = min 0.1f (light.Radius * 0.5f)
+
     let proj =
-      Matrix.CreatePerspectiveFieldOfView(fov, 1.0f, 1.0f, light.Radius)
+      Matrix.CreatePerspectiveFieldOfView(fov, 1.0f, nearPlane, light.Radius)
 
     view * proj
 
@@ -1431,8 +1441,17 @@ type ForwardPipeline
 
     // Always init the per-light slot mappings (default -1 = no shadow). Even when no casters
     // exist, the forward pass reads these to upload pointLightShadowIdx/spotLightShadowIdx.
-    pointShadowSlots <- Array.create<int> lights.PointLights.Count -1
-    spotShadowSlots <- Array.create<int> lights.SpotLights.Count -1
+    // Reuse the arrays across frames (only reallocate if the light count grew) to avoid
+    // per-frame heap allocation on the hot path.
+    if pointShadowSlots.Length < lights.PointLights.Count then
+      pointShadowSlots <- Array.create<int> lights.PointLights.Count -1
+    else
+      Array.Fill(pointShadowSlots, -1)
+
+    if spotShadowSlots.Length < lights.SpotLights.Count then
+      spotShadowSlots <- Array.create<int> lights.SpotLights.Count -1
+    else
+      Array.Fill(spotShadowSlots, -1)
 
     if not(hasDirCaster || hasPointCaster || hasSpotCaster) then
       match pbrParams with
@@ -1480,9 +1499,10 @@ type ForwardPipeline
               casterSlot <- casterSlot + 1
             | ValueNone -> ()
 
-          // Point lights.
-          lights.PointLights
-          |> Seq.iteri(fun i pt ->
+          // Point lights. (for loop, not Seq.iteri — avoids per-frame enumerator allocation.)
+          for i = 0 to lights.PointLights.Count - 1 do
+            let pt = lights.PointLights[i]
+
             if pt.CastsShadows then
               let vp = this.buildPointShadowViewProj(pt.Position, pt.Radius)
 
@@ -1500,11 +1520,12 @@ type ForwardPipeline
                 shadowAtlas.SetRegionViewProj(casterSlot, vp)
                 pointShadowSlots[i] <- casterSlot
                 casterSlot <- casterSlot + 1
-              | ValueNone -> ())
+              | ValueNone -> ()
 
           // Spot lights.
-          lights.SpotLights
-          |> Seq.iteri(fun i sp ->
+          for i = 0 to lights.SpotLights.Count - 1 do
+            let sp = lights.SpotLights[i]
+
             if sp.CastsShadows then
               let vp = this.buildSpotShadowViewProj sp
 
@@ -1522,7 +1543,7 @@ type ForwardPipeline
                 shadowAtlas.SetRegionViewProj(casterSlot, vp)
                 spotShadowSlots[i] <- casterSlot
                 casterSlot <- casterSlot + 1
-              | ValueNone -> ())
+              | ValueNone -> ()
 
           if casterSlot = 0 then
             ()
@@ -1540,11 +1561,9 @@ type ForwardPipeline
                   Array.Resize(&shadowDraws, shadowDraws.Length * 2)
 
                 // Precompute the world-space bounds for the frustum cull.
-                let worldCenter =
-                  Vector3.Transform(mesh.Bounds.Center, transform)
-
-                let worldBounds =
-                  BoundingSphere(worldCenter, mesh.Bounds.Radius)
+                // Transform the local-space bounds to world space (Transform handles scaling —
+                // using the local radius directly would false-negative the cull on scaled meshes).
+                let worldBounds = mesh.Bounds.Transform transform
 
                 shadowDraws[drawCount] <- {
                   Mesh = mesh
@@ -1594,13 +1613,14 @@ type ForwardPipeline
                   gd.Viewport <-
                     shadowAtlas.GetRegionViewport(caster.AtlasRegion)
                   // Per-light frustum cull (Layer 3 of the cost analysis): skip meshes the
-                  // caster's frustum can't see.
-                  let frustum = BoundingFrustum(casterVP)
+                  // caster's frustum can't see. Update the cached frustum in-place (avoids
+                  // per-caster BoundingFrustum allocation every frame).
+                  shadowFrustum.Matrix <- casterVP
 
                   for d = 0 to drawCount - 1 do
                     let draw = shadowDraws[d]
 
-                    if Culling.isVisible frustum draw.WorldBounds then
+                    if Culling.isVisible shadowFrustum draw.WorldBounds then
                       setMatrix depthParams.MatModel draw.Transform
                       setMatrix depthParams.ViewProj casterVP
 

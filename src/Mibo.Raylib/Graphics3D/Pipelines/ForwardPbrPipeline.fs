@@ -415,7 +415,6 @@ module internal ShadowPassHelpers =
 
     struct (arr, count, skinnedStart)
 
-  /// Register all shadow-casting lights with the atlas. Returns true if any casters found.
   /// <summary>
   /// Register shadow casters for every shadow-casting light. Returns:
   ///  - <c>hasCasters</c>: true if any caster was registered.
@@ -442,15 +441,18 @@ module internal ShadowPassHelpers =
         ValueSome slot
       | ValueNone -> ValueNone
 
-    for dir in lights.DirLights do
-      if dir.CastsShadows then
-        tryAdd
-          ShadowCasterType.Directional
-          Vector3.Zero
-          dir.Direction
-          Vector3.Zero
-          ValueNone
-        |> ignore
+    // Only the first shadow-casting directional light is sampled by the forward shader
+    // (computeDirShadow uses slot 0); registering more would waste atlas slots + render cost.
+    lights.DirLights
+    |> Seq.tryFind(fun d -> d.CastsShadows)
+    |> Option.iter(fun dir ->
+      tryAdd
+        ShadowCasterType.Directional
+        Vector3.Zero
+        dir.Direction
+        Vector3.Zero
+        ValueNone
+      |> ignore)
 
     lights.PointLights
     |> Seq.iteri(fun i pt ->
