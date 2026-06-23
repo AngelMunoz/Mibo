@@ -28,7 +28,7 @@ struct VS_INPUT {
 struct VS_INPUT_SKINNED {
   float3 Position    : POSITION0;
   float4 BoneWeights : BLENDWEIGHT0;
-  float4 BoneIndices : BLENDINDICES0;
+  int4   BoneIndices : BLENDINDICES0;
 };
 
 struct VS_OUTPUT {
@@ -48,10 +48,10 @@ VS_OUTPUT VS_Main(VS_INPUT input) {
 VS_OUTPUT VS_Skinned(VS_INPUT_SKINNED input) {
   VS_OUTPUT output;
 
-  int ids0 = (int) input.BoneIndices.x;
-  int ids1 = (int) input.BoneIndices.y;
-  int ids2 = (int) input.BoneIndices.z;
-  int ids3 = (int) input.BoneIndices.w;
+  int ids0 = input.BoneIndices.x;
+  int ids1 = input.BoneIndices.y;
+  int ids2 = input.BoneIndices.z;
+  int ids3 = input.BoneIndices.w;
 
   float4x4 skin =
     input.BoneWeights.x * boneMatrices[ids0] +

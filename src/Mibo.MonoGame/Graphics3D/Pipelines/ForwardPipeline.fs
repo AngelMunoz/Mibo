@@ -286,6 +286,9 @@ module private ForwardHelpers =
     ShadowTexelSize: EffectParameter
     PointLightShadowIdx: EffectParameter
     SpotLightShadowIdx: EffectParameter
+    // Skinning (B12 Skinned technique): bone palette. null on the non-skinned
+    // techniques is harmless — handleDrawSkinnedMesh only uploads when present.
+    Bones: EffectParameter
   }
 
   /// <summary>
@@ -296,6 +299,9 @@ module private ForwardHelpers =
   type ShadowEffectParams = {
     MatModel: EffectParameter
     ViewProj: EffectParameter
+    // Skinning (B12 DepthSkinned technique): bone palette. null on the plain
+    // Depth technique — the skinned-caster path uploads only when present.
+    Bones: EffectParameter
   }
 
   let private param (e: Effect) (name: string) : EffectParameter =
@@ -305,6 +311,7 @@ module private ForwardHelpers =
   let buildShadowParams(e: Effect) : ShadowEffectParams = {
     MatModel = param e "matModel"
     ViewProj = param e "viewProj"
+    Bones = param e "boneMatrices"
   }
 
   /// <summary>A mesh draw collected for the shadow pass (caster geometry).</summary>
@@ -315,6 +322,21 @@ module private ForwardHelpers =
     /// World-space bounds (mesh.Bounds transformed by Transform). Precomputed at collection
     /// time so the per-caster frustum cull in runShadowPass is a single ContainmentType check.
     WorldBounds: BoundingSphere
+  }
+
+  /// <summary>A skinned caster draw collected for the shadow pass (B12).</summary>
+  /// <remarks>
+  /// Unlike <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ShadowMeshDraw"/>, a skinned caster
+  /// carries no world-space bounds: a bare <c>ModelMeshPart</c> has no parent reference, so the
+  /// part's <c>ModelMesh.BoundingSphere</c> isn't reachable at collection time. Skinned casters
+  /// are therefore drawn unconditionally (no per-light frustum cull) — correct for the sample's
+  /// single animated character; the per-caster cull only matters at scale for instanced terrain.
+  /// </remarks>
+  [<Struct>]
+  type ShadowSkinnedDraw = {
+    Part: ModelMeshPart
+    Transform: Matrix
+    Bones: Matrix[]
   }
 
   /// <summary>Resolves all PBR effect parameter handles once after load.</summary>
@@ -355,6 +377,7 @@ module private ForwardHelpers =
     ShadowTexelSize = param e "shadowTexelSize"
     PointLightShadowIdx = param e "pointLightShadowIdx"
     SpotLightShadowIdx = param e "spotLightShadowIdx"
+    Bones = param e "boneMatrices"
   }
 
   let inline setVec2 (p: EffectParameter) (v: Vector2) =
@@ -648,6 +671,11 @@ type ForwardPipeline
   // Reused per-caster frustum (updated in-place via .Matrix) to avoid per-frame heap allocation
   // in the shadow render loop.
   let shadowFrustum = BoundingFrustum(Matrix.Identity)
+  // Pooled skinned-caster draws collected for the shadow pass (B12). Grows on demand.
+  let mutable shadowSkinnedDraws = Array.zeroCreate<ShadowSkinnedDraw> 8
+  // Pooled bone-palette staging array for skinned draws (B12). Shader's MAX_BONES is
+  // 128; reuse across frames, never shrink. Avoids per-draw allocation on the hot path.
+  let mutable bonePaletteScratch = Array.zeroCreate<Matrix> 128
 
   // B7 instancing: the custom Instanced effect (loads from embedded .mgfx via ShaderLoader)
   // and a growable per-instance vertex buffer. The effect has instance input semantics
@@ -750,11 +778,25 @@ type ForwardPipeline
       mesh.Draw()
 
   /// <summary>
-  /// Handles <c>DrawSkinnedMesh</c>: binds the part's native effect (a <c>SkinnedEffect</c>
-  /// when the content pipeline produced one) and uploads bone matrices. Full skinning
-  /// animation is wired in B12; B5 binds the native effect so skinned models render.
+  /// Handles <c>DrawSkinnedMesh</c> (B12). The content pipeline bakes bone
+  /// indices/weights (<c>BLENDINDICES0</c>/<c>BLENDWEIGHT0</c>) into the vertex
+  /// buffer and tags the part with a native <c>SkinnedEffect</c> — but it discards
+  /// the animation clips, which is why bone matrices come from
+  /// <c>Animation3DState.computeBonePalette</c> at runtime.
   /// </summary>
-  member private _.handleDrawSkinnedMesh
+  /// <remarks>
+  /// When the part carries a <c>SkinnedEffect</c> (the content-pipeline signal that the
+  /// vertex buffer is skinnable) and the custom PBR effect loads, this swaps the part's
+  /// effect for the PBR <c>Skinned</c> technique (<c>VS_Skinned</c> — full Cook-Torrance
+  /// lighting with GPU 4-bone linear-blend skinning), uploads the bone palette to
+  /// <c>boneMatrices[128]</c>, and draws. Per §4.1 the part's own effect is the native-first
+  /// material carrier; the swap is opt-in here because <c>DrawSkinnedMesh</c> is the explicit
+  /// skinned command (the caller is asking for skinning, so the PBR skinning shader is the
+  /// honest analog of raylib's skinned material). Falls back to the native
+  /// <c>SkinnedEffect</c> (Blinn-Phong, 3 lights) when the PBR effect is unavailable.
+  /// Non-skinned parts (no <c>SkinnedEffect</c>) draw with their own effect, bones ignored.
+  /// </remarks>
+  member private this.handleDrawSkinnedMesh
     (
       gd: GraphicsDevice,
       state: byref<ForwardState>,
@@ -762,14 +804,79 @@ type ForwardPipeline
       transform: Matrix,
       bones: Matrix[]
     ) =
-    let effect = part.Effect
-    trySetMatrices effect transform state.View state.Projection |> ignore
+    match part.Effect with
+    | :? SkinnedEffect when this.ensurePbrEffect gd ->
+      // ── PBR skinning path: swap the part's effect for the Skinned technique. ──
+      match pbrEffect, pbrParams with
+      | ValueSome e, ValueSome p ->
+        e.CurrentTechnique <- e.Techniques["Skinned"]
 
-    match effect with
-    | :? SkinnedEffect as se -> se.SetBoneTransforms(bones)
-    | _ -> () // Non-skinned effect: ignore bones (B12 handles custom skinning HLSL).
+        let mutable t = transform
+        let mutable inv = Matrix.Identity
+        Matrix.Invert(&t, &inv) |> ignore
+        let normalMatrix = Matrix.Transpose inv
 
-    drawPart(gd, part)
+        setMatrix p.MatModel transform
+        setMatrix p.ViewProj (state.View * state.Projection)
+        setMatrix p.NormalMatrix normalMatrix
+        setVec3 p.CameraPos state.CurrentCamera.Position
+
+        // Upload the bone palette. The shader's MAX_BONES is 128; copy into the
+        // pooled scratch (zero-fill the tail so unused slots are identity-safe).
+        let boneCount = min bones.Length bonePaletteScratch.Length
+
+        for i = 0 to boneCount - 1 do
+          bonePaletteScratch[i] <- bones[i]
+
+        for i = boneCount to bonePaletteScratch.Length - 1 do
+          bonePaletteScratch[i] <- Matrix.Identity
+
+        setMatrixArray p.Bones bonePaletteScratch
+
+        // Skinned PBR has no Material3D carrier (DrawSkinnedMesh carries none, per §4.1);
+        // bind the part's albedo texture from the SkinnedEffect it replaced, and a neutral
+        // material so the PBR fragment lights correctly. Read the native texture once.
+        let saved = part.Effect
+        let sk = saved :?> SkinnedEffect
+        let albedoTex = sk.Texture
+
+        let neutralMat: Material3D = {
+          AlbedoColor = Color.White
+          AlbedoMap =
+            if isNull albedoTex then ValueNone else ValueSome albedoTex
+          Roughness = 0.5f
+          RoughnessMap = ValueNone
+          Metallic = 0.0f
+          MetallicMap = ValueNone
+          NormalMap = ValueNone
+          EmissionColor = Color.Black
+          EmissionMap = ValueNone
+          Opacity = sk.Alpha
+          Tiling = Vector2.One
+        }
+
+        // Material uniforms upload every skinned draw (no MaterialKey short-circuit —
+        // skinned draws are one-per-entity-per-frame, not batched).
+        uploadPbrMaterial(&p, &neutralMat)
+        bindPbrTextures(gd, &neutralMat)
+        uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
+
+        part.Effect <- e
+
+        try
+          drawPart(gd, part)
+        finally
+          part.Effect <- saved
+      | _ -> () // unreachable (ensurePbrEffect set both)
+    | :? SkinnedEffect as se ->
+      // ── Native fallback (PBR effect unavailable): SkinnedEffect, no custom shader. ──
+      trySetMatrices se transform state.View state.Projection |> ignore
+      se.SetBoneTransforms(bones)
+      drawPart(gd, part)
+    | effect ->
+      // Non-skinned part: draw with its own effect, bones ignored.
+      trySetMatrices effect transform state.View state.Projection |> ignore
+      drawPart(gd, part)
 
   /// <summary>
   /// Lazily loads the custom PBR <c>Effect</c> on first PBR draw against the real device.
@@ -1551,9 +1658,10 @@ type ForwardPipeline
           if casterSlot = 0 then
             ()
           else
-            // ── Collect caster meshes (PrimitiveMesh draws, gated by EnableShadows/DisableShadows) ──
+            // ── Collect caster meshes (PrimitiveMesh + skinned draws, gated by EnableShadows/DisableShadows) ──
             let mutable castEnabled = true
             let mutable drawCount = 0
+            let mutable skinnedCount = 0
 
             for i = 0 to buffer.Count - 1 do
               match buffer[i] with
@@ -1575,9 +1683,28 @@ type ForwardPipeline
                 }
 
                 drawCount <- drawCount + 1
+              | Command3D.DrawSkinnedMesh(part, transform, bones) when
+                castEnabled
+                ->
+                // B12: skinned casters. A bare ModelMeshPart has no bounds (no parent ref),
+                // so these are drawn unconditionally per caster — no frustum cull. See
+                // ShadowSkinnedDraw remarks for why that's acceptable for the sample.
+                if skinnedCount >= shadowSkinnedDraws.Length then
+                  Array.Resize(
+                    &shadowSkinnedDraws,
+                    shadowSkinnedDraws.Length * 2
+                  )
+
+                shadowSkinnedDraws[skinnedCount] <- {
+                  Part = part
+                  Transform = transform
+                  Bones = bones
+                }
+
+                skinnedCount <- skinnedCount + 1
               | _ -> ()
 
-            if drawCount = 0 then
+            if drawCount = 0 && skinnedCount = 0 then
               ()
             else
               shadowAtlas.PrepareUniforms()
@@ -1628,6 +1755,7 @@ type ForwardPipeline
                   // per-caster BoundingFrustum allocation every frame).
                   shadowFrustum.Matrix <- casterVP
 
+                  // ── Non-skinned casters (PrimitiveMesh, plain Depth technique) ──
                   for d = 0 to drawCount - 1 do
                     let draw = shadowDraws[d]
 
@@ -1638,6 +1766,41 @@ type ForwardPipeline
                       for pass in depthEffect.CurrentTechnique.Passes do
                         pass.Apply()
                         draw.Mesh.Draw(gd, depthEffect)
+
+                  // ── Skinned casters (B12: DepthSkinned technique, bone palette upload) ──
+                  if skinnedCount > 0 then
+                    depthEffect.CurrentTechnique <-
+                      depthEffect.Techniques["DepthSkinned"]
+
+                    for d = 0 to skinnedCount - 1 do
+                      let draw = shadowSkinnedDraws[d]
+                      // Skinned casters are drawn unconditionally (no frustum cull — see
+                      // ShadowSkinnedDraw remarks). A single animated character per scene.
+                      setMatrix depthParams.MatModel draw.Transform
+                      setMatrix depthParams.ViewProj casterVP
+
+                      // Upload the bone palette (tail zero-filled to identity — see handleDrawSkinnedMesh).
+                      let boneCount =
+                        min draw.Bones.Length bonePaletteScratch.Length
+
+                      for i = 0 to boneCount - 1 do
+                        bonePaletteScratch[i] <- draw.Bones[i]
+
+                      for i = boneCount to bonePaletteScratch.Length - 1 do
+                        bonePaletteScratch[i] <- Matrix.Identity
+
+                      setMatrixArray depthParams.Bones bonePaletteScratch
+
+                      // The part's own SkinnedEffect has the BLENDINDICES0/BLENDWEIGHT0
+                      // vertex declaration; DepthShadow.fx's DepthSkinned technique reads the
+                      // same semantics, so bind it directly (no material swap needed — depth-only).
+                      for pass in depthEffect.CurrentTechnique.Passes do
+                        pass.Apply()
+                        drawPart(gd, draw.Part)
+
+                    // Restore the plain Depth technique for the next caster's non-skinned pass.
+                    depthEffect.CurrentTechnique <-
+                      depthEffect.Techniques["Depth"]
 
               // ── Restore device state ──
               (gd.SetRenderTarget null)

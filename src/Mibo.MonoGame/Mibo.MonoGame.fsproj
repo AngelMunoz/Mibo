@@ -10,6 +10,7 @@
     <Compile Include="GameContext.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="InputMapper.fs" />
+    <Compile Include="Animation3D.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Runtime.fs" />
     <Compile Include="Animation.fs" />
@@ -64,6 +65,7 @@
   <ItemGroup>
     <PackageReference Include="MonoGame.Framework.Native" Version="3.8.4.1" PrivateAssets="all" />
     <PackageReference Include="FSharp.UMX" Version="1.1.0" />
+    <PackageReference Include="AssimpNetter" Version="6.0.4" />
   </ItemGroup>
 
 </Project>
