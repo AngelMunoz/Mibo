@@ -1791,12 +1791,19 @@ type ForwardPipeline
 
                       setMatrixArray depthParams.Bones bonePaletteScratch
 
-                      // The part's own SkinnedEffect has the BLENDINDICES0/BLENDWEIGHT0
-                      // vertex declaration; DepthShadow.fx's DepthSkinned technique reads the
-                      // same semantics, so bind it directly (no material swap needed — depth-only).
-                      for pass in depthEffect.CurrentTechnique.Passes do
-                        pass.Apply()
+                      // drawPart applies part.Effect.CurrentTechnique.Passes, so the
+                      // DepthSkinned technique must be bound on the part's own Effect slot
+                      // — otherwise drawPart re-applies the SkinnedEffect and renders the
+                      // shadow with the forward shader instead of depth-only. Swap the
+                      // part's Effect for the depth effect around the draw, matching
+                      // handleDrawSkinnedMesh's effect-swap pattern (see line 864).
+                      let saved = draw.Part.Effect
+                      draw.Part.Effect <- depthEffect
+
+                      try
                         drawPart(gd, draw.Part)
+                      finally
+                        draw.Part.Effect <- saved
 
                     // Restore the plain Depth technique for the next caster's non-skinned pass.
                     depthEffect.CurrentTechnique <-

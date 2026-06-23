@@ -549,7 +549,10 @@ module Animation3DState =
           let targetFrame =
             if targetClip.KeyframeCount > 0 then
               if nextTargetFrame >= float32 targetClip.KeyframeCount then
-                nextTargetFrame % float32 targetClip.KeyframeCount
+                if s.Loop then
+                  nextTargetFrame % float32 targetClip.KeyframeCount
+                else
+                  float32(targetClip.KeyframeCount - 1)
               else
                 nextTargetFrame
             else

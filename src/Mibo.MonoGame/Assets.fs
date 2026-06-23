@@ -108,6 +108,11 @@ type AssetsService(content: ContentManager) =
   let effects = Dictionary<string, Effect>()
   let modelAnimations = Dictionary<string, Animation3DClips>()
   let animatedMeshes = Dictionary<string, AnimatedMesh voption>()
+  // Shared Assimp Scene cache: parsed once per path, reused by both
+  // ModelAnimations and AnimatedMesh so the file isn't imported twice.
+  // Both derive fully-owned copies (keyframe/bone arrays), so a cached
+  // Scene holds no shared mutable state with its consumers.
+  let scenes = Dictionary<string, Scene>()
 
   /// <summary>The <c>ContentManager</c> this service loads from.</summary>
   member _.Content = content
@@ -126,25 +131,33 @@ type AssetsService(content: ContentManager) =
       if File.Exists(combined) then combined else path
 
   /// <summary>
-  /// Loads an Assimp <c>Scene</c> from a raw model file, cached by path.
-  /// The scene is parsed once and reused for both clips and skeleton extraction.
+  /// Loads an Assimp <c>Scene</c> from a raw model file, cached by path. The
+  /// scene is parsed once and reused for both clip extraction
+  /// (<c>ModelAnimations</c>) and skeleton extraction (<c>AnimatedMesh</c>).
   /// </summary>
   member private this.loadScene(path: string) : Scene =
-    let resolved = this.resolveRawPath path
+    match scenes.TryGetValue(path) with
+    | true, scene -> scene
+    | _ ->
+      let resolved = this.resolveRawPath path
 
-    use importer = new AssimpContext()
+      use importer = new AssimpContext()
 
-    importer.ImportFile(
-      resolved,
-      PostProcessSteps.FindDegenerates
-      ||| PostProcessSteps.FindInvalidData
-      ||| PostProcessSteps.FlipUVs
-      ||| PostProcessSteps.FlipWindingOrder
-      ||| PostProcessSteps.JoinIdenticalVertices
-      ||| PostProcessSteps.ImproveCacheLocality
-      ||| PostProcessSteps.OptimizeMeshes
-      ||| PostProcessSteps.Triangulate
-    )
+      let scene =
+        importer.ImportFile(
+          resolved,
+          PostProcessSteps.FindDegenerates
+          ||| PostProcessSteps.FindInvalidData
+          ||| PostProcessSteps.FlipUVs
+          ||| PostProcessSteps.FlipWindingOrder
+          ||| PostProcessSteps.JoinIdenticalVertices
+          ||| PostProcessSteps.ImproveCacheLocality
+          ||| PostProcessSteps.OptimizeMeshes
+          ||| PostProcessSteps.Triangulate
+        )
+
+      scenes.Add(path, scene)
+      scene
 
   interface IAssets with
     member _.Texture(path) =
@@ -232,6 +245,7 @@ type AssetsService(content: ContentManager) =
       effects.Clear()
       modelAnimations.Clear()
       animatedMeshes.Clear()
+      scenes.Clear()
 
     member _.Dispose() =
       // Dispose user-created IDisposable assets. ContentManager owns the
@@ -250,6 +264,7 @@ type AssetsService(content: ContentManager) =
       effects.Clear()
       modelAnimations.Clear()
       animatedMeshes.Clear()
+      scenes.Clear()
 
 /// Factory for <see cref="T:Mibo.Elmish.IAssets"/> implementations.
 module AssetsService =
