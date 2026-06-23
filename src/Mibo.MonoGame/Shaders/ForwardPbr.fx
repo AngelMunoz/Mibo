@@ -67,6 +67,55 @@ float spotLightOuterCutoff[MAX_SPOT_LIGHTS];
 float3 cameraPos;
 
 // ------------------------------------------------------------------
+// Directional shadow atlas (B10). Point/spot shadow sampling is B11.
+//
+// SM3.0 approach (works identically on OGL and DX):
+//  - Regular sampler2D + manual PCF (hardware SamplerComparisonState / SampleCmp
+//    isn't reliably portable through mgfxc on both profiles).
+//  - Slope-scale bias via RasterizerState.SlopeScaleDepthBias on the shadow pass
+//    (no dFdx/dFdy shader math — applied during caster rasterization).
+//  - Texel size passed as a uniform (replaces textureSize, which has no SM3.0 equivalent).
+// ------------------------------------------------------------------
+
+sampler2D shadowAtlas : register(s5);
+float4x4 shadowViewProjs[1]; // single directional caster for B10
+float4 shadowUVOffset;       // xy = offset, zw = scale (atlas region remap)
+float2 shadowTexelSize;      // 1.0 / atlas resolution (replaces textureSize)
+
+float computeDirShadow(float3 worldPos) {
+  if (dirLightCastsShadows == 0)
+    return 1.0;
+
+  float4 sc = mul(float4(worldPos, 1.0), shadowViewProjs[0]);
+  float3 ndc = sc.xyz / sc.w;
+
+  // Outside the shadow frustum → fully lit (no shadow).
+  if (ndc.z > 1.0)
+    return 1.0;
+
+  ndc = ndc * 0.5 + 0.5; // to [0,1]
+
+  if (ndc.x < 0.0 || ndc.x > 1.0 || ndc.y < 0.0 || ndc.y > 1.0)
+    return 1.0;
+
+  float2 atlasUV = ndc.xy * shadowUVOffset.zw + shadowUVOffset.xy;
+
+  // Manual 3x3 PCF. Bias is baked into the shadow map via RasterizerState
+  // (SlopeScaleDepthBias + DepthBias on the shadow pass), so the comparison
+  // threshold is the receiver depth directly.
+  float shadow = 0.0;
+  [unroll]
+  for (int x = -1; x <= 1; x++) {
+    [unroll]
+    for (int y = -1; y <= 1; y++) {
+      float d = tex2D(shadowAtlas, atlasUV + float2(float(x), float(y)) * shadowTexelSize).r;
+      shadow += (ndc.z > d) ? 0.0 : 1.0;
+    }
+  }
+  return shadow / 9.0;
+}
+
+// ------------------------------------------------------------------
 // Standard (non-instanced, non-skinned) vertex shader
 // ------------------------------------------------------------------
 
@@ -256,7 +305,8 @@ float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
   // Directional (L points toward the light; dirLightDir points along travel)
   float3 L = normalize(-dirLightDir);
   float3 radiance = dirLightColor * dirLightIntensity;
-  float3 dirResult = calcPBR(V, normal, L, radiance, albedo, r, m);
+  float dirShadow = computeDirShadow(input.WorldPos);
+  float3 dirResult = calcPBR(V, normal, L, radiance, albedo, r, m) * dirShadow;
 
   // Point lights ([loop]+break for OGL SM3.0; §6.3)
   float3 pointResult = float3(0.0, 0.0, 0.0);
