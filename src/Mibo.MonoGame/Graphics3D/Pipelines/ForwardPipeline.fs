@@ -308,6 +308,14 @@ module private ForwardHelpers =
     Opacity: EffectParameter
     Tiling: EffectParameter
     UseNormalMap: EffectParameter
+    // Texture maps — MonoGame binds sampler textures from the effect's own parameters
+    // at Apply() time (EffectPass.SetShaderSamplers), NOT from gd.Textures[]. Setting
+    // gd.Textures[i] gets clobbered to null on the next pass.Apply(). Bind via these.
+    AlbedoMapTex: EffectParameter
+    RoughnessMapTex: EffectParameter
+    NormalMapTex: EffectParameter
+    MetallicMapTex: EffectParameter
+    EmissionMapTex: EffectParameter
     // Ambient
     AmbientColor: EffectParameter
     AmbientIntensity: EffectParameter
@@ -404,6 +412,11 @@ module private ForwardHelpers =
     Opacity = param e "opacity"
     Tiling = param e "tiling"
     UseNormalMap = param e "useNormalMap"
+    AlbedoMapTex = param e "texture0"
+    RoughnessMapTex = param e "texture1"
+    NormalMapTex = param e "texture2"
+    MetallicMapTex = param e "texture3"
+    EmissionMapTex = param e "texture4"
     AmbientColor = param e "ambientColor"
     AmbientIntensity = param e "ambientIntensity"
     DirLightDir = param e "dirLightDir"
@@ -616,18 +629,28 @@ module private ForwardHelpers =
 
     setInt p.UseNormalMap useNormal
 
-  /// <summary>Binds a material's 5 texture maps to sampler slots 0..4 (null = unbound).</summary>
-  let bindPbrTextures(gd: GraphicsDevice, mat: inref<Material3D>) =
-    let slot i (t: Texture2D voption) =
-      match t with
-      | ValueSome tex -> gd.Textures[i] <- tex
-      | ValueNone -> gd.Textures[i] <- null
+  /// <summary>
+  /// Binds a material's 5 texture maps to the PBR effect's texture0..4 parameters.
+  /// MonoGame's <see cref="M:Microsoft.Xna.Framework.Graphics.EffectPass.Apply"/> pulls sampler
+  /// textures from the effect's own parameters (<c>EffectPass.SetShaderSamplers</c> in the
+  /// MonoGame source), NOT from <c>gd.Textures[]</c> — so the textures MUST be set here via the
+  /// <c>EffectParameter</c>, or <c>Apply()</c> clobbers them to null and PBR draws sample
+  /// nothing (black). Mirrors <c>Renderer2D</c>'s <c>Texture</c> param bind (Renderer2D.fs:1139).
+  /// </summary>
+  let bindPbrTextures(p: inref<PbrEffectParams>, mat: inref<Material3D>) =
+    let inline setTex (pp: EffectParameter) (t: Texture2D voption) =
+      if not(obj.ReferenceEquals(pp, null)) then
+        match t with
+        // Annotate null as Texture: F# can't resolve the SetValue overload for an untyped null
+        // (SetValue(Texture)/SetValue(int[])/SetValue(float32[])/... all accept null → FS0041).
+        | ValueSome tex -> pp.SetValue tex
+        | ValueNone -> pp.SetValue(null: Texture)
 
-    slot 0 mat.AlbedoMap
-    slot 1 mat.RoughnessMap
-    slot 2 mat.NormalMap
-    slot 3 mat.MetallicMap
-    slot 4 mat.EmissionMap
+    setTex p.AlbedoMapTex mat.AlbedoMap
+    setTex p.RoughnessMapTex mat.RoughnessMap
+    setTex p.NormalMapTex mat.NormalMap
+    setTex p.MetallicMapTex mat.MetallicMap
+    setTex p.EmissionMapTex mat.EmissionMap
 
 // ------------------------------------------------------------------
 // ForwardPipeline
@@ -951,7 +974,7 @@ type ForwardPipeline
 
         if not pbrHasLastMaterial || key <> pbrLastKey then
           uploadPbrMaterial(&p, &material)
-          bindPbrTextures(gd, &material)
+          bindPbrTextures(&p, &material)
           pbrLastKey <- key
           pbrHasLastMaterial <- true
 
@@ -1082,7 +1105,7 @@ type ForwardPipeline
           // Instanced draws always upload the material (no MaterialKey short-circuit — the
           // batch is one material across all instances).
           uploadPbrMaterial(&p, &material)
-          bindPbrTextures(gd, &material)
+          bindPbrTextures(&p, &material)
           uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
 
           for pass in e.CurrentTechnique.Passes do
