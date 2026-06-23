@@ -92,13 +92,25 @@ module private ForwardHelpers =
   /// (custom or fullscreen) isn't known at pre-scan time. Orthographic cameras are
   /// returned unchanged (no aspect correction).
   /// </summary>
-  let perspectiveProjection (cam: Camera3D) (viewportWidth: float32) (viewportHeight: float32) : Matrix =
+  let perspectiveProjection
+    (cam: Camera3D)
+    (viewportWidth: float32)
+    (viewportHeight: float32)
+    : Matrix =
     match cam.Projection with
     | CameraProjection.Perspective ->
       let aspect =
-        if viewportHeight > 0.0f then viewportWidth / viewportHeight else 1.0f
+        if viewportHeight > 0.0f then
+          viewportWidth / viewportHeight
+        else
+          1.0f
 
-      Matrix.CreatePerspectiveFieldOfView(cam.FovY, aspect, cam.NearPlane, cam.FarPlane)
+      Matrix.CreatePerspectiveFieldOfView(
+        cam.FovY,
+        aspect,
+        cam.NearPlane,
+        cam.FarPlane
+      )
     | CameraProjection.Orthographic ->
       Matrix.CreateOrthographic(cam.FovY, cam.FovY, cam.NearPlane, cam.FarPlane)
 
@@ -1912,6 +1924,15 @@ type ForwardPipeline
       gd.RasterizerState <- RasterizerState.CullCounterClockwise
       gd.BlendState <- BlendState.Opaque
       gd.SamplerStates[0] <- SamplerState.LinearWrap
+      // PBR material maps (albedo s0, roughness s1, normal s2, metallic s3, emission s4)
+      // and the shadow atlas (s5) all need explicit sampler states — the PS reads all of them.
+      // Missing slots sampled the albedo map as black (the cube rendered black).
+      gd.SamplerStates[1] <- SamplerState.LinearWrap
+      gd.SamplerStates[2] <- SamplerState.LinearWrap
+      gd.SamplerStates[3] <- SamplerState.LinearWrap
+      gd.SamplerStates[4] <- SamplerState.LinearWrap
+      // s5 is set per-shadow-pass to PointClamp; set a safe default here.
+      gd.SamplerStates[5] <- SamplerState.PointClamp
 
       // ── Step 1: Pre-scan — capture camera + lights + shadow state ──
       clearLights lights
@@ -1966,7 +1987,12 @@ type ForwardPipeline
           // Recompute the projection aspect against the saved (fullscreen) viewport,
           // since buildMatrices used a neutral aspect=1.0 in the pre-scan.
           let vp = state.SavedViewport
-          state.Projection <- perspectiveProjection state.CurrentCamera (float32 vp.Width) (float32 vp.Height)
+
+          state.Projection <-
+            perspectiveProjection
+              state.CurrentCamera
+              (float32 vp.Width)
+              (float32 vp.Height)
 
         | Command3D.BeginCameraConfig cfg ->
           // Apply viewport + clear color (deferred from pre-scan so clearing happens here).
@@ -1977,7 +2003,12 @@ type ForwardPipeline
           // Recompute the projection aspect against the now-active viewport
           // (custom rect or fullscreen). buildMatrices used aspect=1.0 in the pre-scan.
           let vp = gd.Viewport
-          state.Projection <- perspectiveProjection cfg.Camera (float32 vp.Width) (float32 vp.Height)
+
+          state.Projection <-
+            perspectiveProjection
+              cfg.Camera
+              (float32 vp.Width)
+              (float32 vp.Height)
 
           match cfg.ClearColor with
           | ValueSome c -> gd.Clear(ClearOptions.Target, c.ToVector4(), 1.0f, 0)
