@@ -279,11 +279,13 @@ module private ForwardHelpers =
     SpotLightRadius: EffectParameter
     SpotLightInnerCutoff: EffectParameter
     SpotLightOuterCutoff: EffectParameter
-    // Directional shadow sampling (B10)
+    // Shadow sampling (B10 directional; B11 multi-caster + per-light index)
     DirLightCastsShadows: EffectParameter
     ShadowViewProjs: EffectParameter
-    ShadowUVOffset: EffectParameter
+    ShadowUVOffsets: EffectParameter
     ShadowTexelSize: EffectParameter
+    PointLightShadowIdx: EffectParameter
+    SpotLightShadowIdx: EffectParameter
   }
 
   /// <summary>
@@ -310,6 +312,9 @@ module private ForwardHelpers =
   type ShadowMeshDraw = {
     Mesh: PrimitiveMesh
     Transform: Matrix
+    /// World-space bounds (mesh.Bounds transformed by Transform). Precomputed at collection
+    /// time so the per-caster frustum cull in runShadowPass is a single ContainmentType check.
+    WorldBounds: BoundingSphere
   }
 
   /// <summary>Resolves all PBR effect parameter handles once after load.</summary>
@@ -346,8 +351,10 @@ module private ForwardHelpers =
     SpotLightOuterCutoff = param e "spotLightOuterCutoff"
     DirLightCastsShadows = param e "dirLightCastsShadows"
     ShadowViewProjs = param e "shadowViewProjs"
-    ShadowUVOffset = param e "shadowUVOffset"
+    ShadowUVOffsets = param e "shadowUVOffsets"
     ShadowTexelSize = param e "shadowTexelSize"
+    PointLightShadowIdx = param e "pointLightShadowIdx"
+    SpotLightShadowIdx = param e "spotLightShadowIdx"
   }
 
   let inline setVec2 (p: EffectParameter) (v: Vector2) =
@@ -379,6 +386,18 @@ module private ForwardHelpers =
       p.SetValue v
 
   let inline setFloatArray (p: EffectParameter) (v: float32[]) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  let inline setIntArray (p: EffectParameter) (v: int[]) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  let inline setMatrixArray (p: EffectParameter) (v: Matrix[]) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  let inline setVec4Array (p: EffectParameter) (v: Vector4[]) =
     if not(obj.ReferenceEquals(p, null)) then
       p.SetValue v
 
@@ -417,11 +436,21 @@ module private ForwardHelpers =
 
   let mutable private spotLightOuterScratch = Array.zeroCreate<float32> 4
 
+  let mutable private pointShadowIdxScratch = Array.zeroCreate<int> 8
+
+  let mutable private spotShadowIdxScratch = Array.zeroCreate<int> 4
+
   /// <summary>
   /// Uploads accumulated lights (ambient + 1 directional + N point + M spot) to the PBR effect.
   /// Point/spot arrays upload only the active count; the shader early-outs via <c>*Count</c>.
   /// </summary>
-  let uploadPbrLights(p: inref<PbrEffectParams>, lights: LightBuffers) =
+  let uploadPbrLights
+    (
+      p: inref<PbrEffectParams>,
+      lights: LightBuffers,
+      pointShadowIdx: int[],
+      spotShadowIdx: int[]
+    ) =
     // Ambient (single slot; zeroes when absent).
     match lights.Ambient with
     | ValueSome a ->
@@ -455,11 +484,15 @@ module private ForwardHelpers =
       pointLightRadiusScratch[i] <- l.Radius
       pointLightFalloffScratch[i] <- l.Falloff
 
+      pointShadowIdxScratch[i] <-
+        if i < pointShadowIdx.Length then pointShadowIdx[i] else -1
+
     setVec3Array p.PointLightPos pointLightPosScratch
     setVec3Array p.PointLightColor pointLightColorScratch
     setFloatArray p.PointLightIntensity pointLightIntensityScratch
     setFloatArray p.PointLightRadius pointLightRadiusScratch
     setFloatArray p.PointLightFalloff pointLightFalloffScratch
+    setIntArray p.PointLightShadowIdx pointShadowIdxScratch
 
     // Spot lights — upload active count slots.
     let spCount = min lights.SpotLights.Count spotLightPosScratch.Length
@@ -475,6 +508,9 @@ module private ForwardHelpers =
       spotLightInnerScratch[i] <- l.InnerCutoff
       spotLightOuterScratch[i] <- l.OuterCutoff
 
+      spotShadowIdxScratch[i] <-
+        if i < spotShadowIdx.Length then spotShadowIdx[i] else -1
+
     setVec3Array p.SpotLightPos spotLightPosScratch
     setVec3Array p.SpotLightDir spotLightDirScratch
     setVec3Array p.SpotLightColor spotLightColorScratch
@@ -482,6 +518,7 @@ module private ForwardHelpers =
     setFloatArray p.SpotLightRadius spotLightRadiusScratch
     setFloatArray p.SpotLightInnerCutoff spotLightInnerScratch
     setFloatArray p.SpotLightOuterCutoff spotLightOuterScratch
+    setIntArray p.SpotLightShadowIdx spotShadowIdxScratch
 
   /// <summary>
   /// Uploads material scalars/colors. Callers gate this on a <c>MaterialKey</c>
@@ -601,6 +638,16 @@ type ForwardPipeline
   let mutable shadowRaster: RasterizerState = null
   // Pooled scratch for the shadow pass: caster mesh draws collected from the buffer.
   let mutable shadowDraws = Array.zeroCreate<ShadowMeshDraw> 64
+  // Per-light shadow caster slot mapping (computed in runShadowPass, read in uploadPbrLights).
+  // Indexed by lights.PointLights/SpotLights buffer position; -1 = no shadow.
+  let mutable pointShadowSlots: int[] = [||]
+  let mutable spotShadowSlots: int[] = [||]
+  // Pooled scratch for the multi-caster shadowViewProjs/UVOffsets upload.
+  let mutable shadowViewProjsScratch = Array.zeroCreate<Matrix> 16
+  let mutable shadowUVOffsetsScratch = Array.zeroCreate<Vector4> 16
+  // Reused per-caster frustum (updated in-place via .Matrix) to avoid per-frame heap allocation
+  // in the shadow render loop.
+  let shadowFrustum = BoundingFrustum(Matrix.Identity)
 
   // B7 instancing: the custom Instanced effect (loads from embedded .mgfx via ShaderLoader)
   // and a growable per-instance vertex buffer. The effect has instance input semantics
@@ -801,7 +848,7 @@ type ForwardPipeline
           pbrLastKey <- key
           pbrHasLastMaterial <- true
 
-        uploadPbrLights(&p, lights)
+        uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
 
         mesh.Draw(gd, e)
       | _ -> () // unreachable (ensurePbrEffect set both)
@@ -929,7 +976,7 @@ type ForwardPipeline
           // batch is one material across all instances).
           uploadPbrMaterial(&p, &material)
           bindPbrTextures(gd, &material)
-          uploadPbrLights(&p, lights)
+          uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
 
           for pass in e.CurrentTechnique.Passes do
             pass.Apply()
@@ -1323,28 +1370,100 @@ type ForwardPipeline
     view * proj
 
   /// <summary>
-  /// Runs the directional shadow pass: collects casters + caster meshes, renders depth
-  /// to the atlas using <c>DepthShadow.fx</c> with <c>RasterizerState.SlopeScaleDepthBias</c>,
-  /// then uploads shadow uniforms to the PBR effect for forward-pass sampling.
+  /// Builds a point light's shadow ViewProj — a downward-facing 90° perspective frustum
+  /// (matches canonical raylib; correct for ground-level point lights like the sample's
+  /// mushrooms). §6.1: <c>CreateLookAt * CreatePerspectiveFieldOfView</c> in application order.
+  /// </summary>
+  member private _.buildPointShadowViewProj
+    (lightPos: Vector3, lightRadius: float32)
+    : Matrix =
+    let view =
+      Matrix.CreateLookAt(lightPos, lightPos - Vector3.UnitY, Vector3.UnitZ)
+
+    // Dynamic near plane: CreatePerspectiveFieldOfView throws if near >= far.
+    // Keep near strictly below half the radius so the frustum is always valid.
+    let nearPlane = min 0.1f (lightRadius * 0.5f)
+
+    let proj =
+      Matrix.CreatePerspectiveFieldOfView(
+        MathF.PI * 0.5f, // 90°
+        1.0f,
+        nearPlane,
+        lightRadius
+      )
+
+    view * proj
+
+  /// <summary>
+  /// Builds a spot light's shadow ViewProj — a perspective frustum from the light position
+  /// toward <c>pos + dir</c>, with FOV from the outer cutoff cone. §6.1 application order.
+  /// </summary>
+  member private _.buildSpotShadowViewProj(light: SpotLight3D) : Matrix =
+    let lightDir = Vector3.Normalize light.Direction
+
+    let safeUp =
+      if abs lightDir.Y > 0.99f then
+        Vector3.UnitZ
+      else
+        Vector3.UnitY
+
+    let view =
+      Matrix.CreateLookAt(light.Position, light.Position + lightDir, safeUp)
+
+    // Outer cutoff is a cosine; half-angle FOV = acos(outerCutoff), full FOV = 2× that.
+    // Clamp to a safe open interval — CreatePerspectiveFieldOfView throws if FOV ∉ (0, π).
+    // Edge cases: OuterCutoff = 1 → FOV 0 (degenerate narrow), OuterCutoff <= 0 → FOV >= π.
+    let fov =
+      max 0.01f (min (MathF.PI - 0.01f) (2.0f * MathF.Acos(light.OuterCutoff)))
+
+    // Dynamic near plane: CreatePerspectiveFieldOfView throws if near >= far.
+    let nearPlane = min 0.1f (light.Radius * 0.5f)
+
+    let proj =
+      Matrix.CreatePerspectiveFieldOfView(fov, 1.0f, nearPlane, light.Radius)
+
+    view * proj
+
+  /// <summary>
+  /// Runs the shadow pass: collects dir + point + spot casters (B11 extends B10's dir-only),
+  /// renders depth to the atlas using <c>DepthShadow.fx</c> with
+  /// <c>RasterizerState.SlopeScaleDepthBias</c>, then uploads shadow uniforms to the PBR
+  /// effect for forward-pass sampling. Per-light frustum culling skips caster meshes outside
+  /// each light's frustum (Layer 3 of the cost analysis).
   /// </summary>
   member private this.runShadowPass
     (gd: GraphicsDevice, state: byref<ForwardState>, buffer: RenderBuffer3D)
     =
-    // Only directional lights cast shadows in B10.
-    let dirCasters = lights.DirLights |> Seq.exists(fun d -> d.CastsShadows)
+    // Decide whether any light casts shadows (dir, point, or spot).
+    let hasDirCaster = lights.DirLights |> Seq.exists(fun d -> d.CastsShadows)
 
-    if not dirCasters then
-      // No shadow-casting directional light → mark dir shadows off on the PBR effect.
+    let hasPointCaster =
+      lights.PointLights |> Seq.exists(fun p -> p.CastsShadows)
+
+    let hasSpotCaster = lights.SpotLights |> Seq.exists(fun s -> s.CastsShadows)
+
+    // Always init the per-light slot mappings (default -1 = no shadow). Even when no casters
+    // exist, the forward pass reads these to upload pointLightShadowIdx/spotLightShadowIdx.
+    // Reuse the arrays across frames (only reallocate if the light count grew) to avoid
+    // per-frame heap allocation on the hot path.
+    if pointShadowSlots.Length < lights.PointLights.Count then
+      pointShadowSlots <- Array.create<int> lights.PointLights.Count -1
+    else
+      Array.Fill(pointShadowSlots, -1)
+
+    if spotShadowSlots.Length < lights.SpotLights.Count then
+      spotShadowSlots <- Array.create<int> lights.SpotLights.Count -1
+    else
+      Array.Fill(spotShadowSlots, -1)
+
+    if not(hasDirCaster || hasPointCaster || hasSpotCaster) then
       match pbrParams with
       | ValueSome p -> setInt p.DirLightCastsShadows 0
       | ValueNone -> ()
     else
-      // Lazily create the atlas RT + shadow effect. If either is missing, skip the pass.
+      // Lazily create the atlas RT + shadow effect.
       shadowAtlas.EnsureResources gd
-
-      // Ensure the PBR effect is loaded BEFORE uploading shadow uniforms to it — otherwise
-      // pbrParams is ValueNone on the first frame (the effect loads lazily on first PBR draw,
-      // which happens after the shadow pass).
+      // Ensure the PBR effect is loaded BEFORE uploading shadow uniforms to it.
       this.ensurePbrEffect gd |> ignore
 
       if not(this.ensureShadowEffect gd) then
@@ -1354,122 +1473,208 @@ type ForwardPipeline
         | ValueSome depthEffect, ValueSome depthParams ->
           shadowAtlas.Clear()
 
-          // Register one directional caster (first CastsShadows directional light).
-          let dirLight = lights.DirLights |> Seq.find(fun d -> d.CastsShadows)
+          // ── Register casters: dir first (slot 0), then point, then spot ──
+          // The flat shader-array index == registration order (matches PrepareUniforms).
+          let mutable casterSlot = 0
 
-          shadowAtlas.AddCaster(
-            ShadowCasterType.Directional,
-            Vector3.Zero,
-            dirLight.Direction,
-            Vector3.Zero,
-            true,
-            ValueNone
-          )
-          |> ignore
+          // Directional (first CastsShadows one only — matches canonical raylib).
+          if hasDirCaster then
+            let dirLight = lights.DirLights |> Seq.find(fun d -> d.CastsShadows)
 
-          // Collect caster meshes (PrimitiveMesh draws, gated by EnableShadows/DisableShadows).
-          let mutable castEnabled = true
-          let mutable drawCount = 0
-
-          for i = 0 to buffer.Count - 1 do
-            match buffer[i] with
-            | Command3D.EnableShadows -> castEnabled <- true
-            | Command3D.DisableShadows -> castEnabled <- false
-            | Command3D.DrawMeshPBR(mesh, transform, _) when castEnabled ->
-              if drawCount >= shadowDraws.Length then
-                // Array.Resize preserves already-collected casters (Array.zeroCreate would discard them).
-                Array.Resize(&shadowDraws, shadowDraws.Length * 2)
-
-              shadowDraws[drawCount] <- { Mesh = mesh; Transform = transform }
-              drawCount <- drawCount + 1
-            | _ -> ()
-
-          if drawCount = 0 then
-            ()
-          else
-            // Build the directional shadow ViewProj + store on the caster.
             let vp =
               this.buildDirectionalShadowViewProj(
                 dirLight.Direction,
                 state.CurrentCamera
               )
 
-            // The single directional caster is at region 0 (slot allocator started at 0).
-            shadowAtlas.SetRegionViewProj(0, vp)
-            shadowAtlas.PrepareUniforms()
-
-            // ── Render depth into the atlas region ──
-            let prevViewport = gd.Viewport
-            let prevRaster = gd.RasterizerState
-            let prevBlend = gd.BlendState
-            let prevDepth = gd.DepthStencilState
-
-            gd.SetRenderTarget(shadowAtlas.Fbo)
-            gd.Clear(ClearOptions.Target, Color.White.ToVector4(), 1.0f, 0)
-
-            // Native polygon-offset bias (replaces raylib's dFdx/dFdy shader math).
-            // The RasterizerState is cached (config-driven; doesn't change per frame) to avoid
-            // creating/releasing a native GPU state object every frame.
-            if obj.ReferenceEquals(shadowRaster, null) then
-              let sr = new RasterizerState()
-              sr.CullMode <- CullMode.CullClockwiseFace
-              sr.DepthBias <- biasCfg.DirectionalBias
-              sr.SlopeScaleDepthBias <- biasCfg.SlopeScaleBias
-              shadowRaster <- sr
-
-            gd.RasterizerState <- shadowRaster
-            gd.BlendState <- BlendState.Opaque
-            gd.DepthStencilState <- DepthStencilState.Default
-
-            depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
-
-            for caster in shadowAtlas.Casters do
-              if caster.Enabled then
-                // Read the VP from the region store (caster.ViewProj is never updated — it's a
-                // struct copy that stays Identity after AddCaster; the authoritative copy lives
-                // in the region dictionary via SetRegionViewProj).
-                let casterVP = shadowAtlas.GetRegionViewProj caster.AtlasRegion
-                gd.Viewport <- shadowAtlas.GetRegionViewport(caster.AtlasRegion)
-
-                for d = 0 to drawCount - 1 do
-                  let draw = shadowDraws[d]
-                  setMatrix depthParams.MatModel draw.Transform
-                  setMatrix depthParams.ViewProj casterVP
-
-                  for pass in depthEffect.CurrentTechnique.Passes do
-                    pass.Apply()
-                    draw.Mesh.Draw(gd, depthEffect)
-
-            // ── Restore device state (back to the backbuffer; forward pass re-binds) ──
-            (gd.SetRenderTarget null)
-            gd.Viewport <- prevViewport
-            gd.RasterizerState <- prevRaster
-            gd.BlendState <- prevBlend
-            gd.DepthStencilState <- prevDepth
-
-            // ── Upload shadow uniforms to the PBR effect ──
-            match pbrParams with
-            | ValueSome p ->
-              setInt p.DirLightCastsShadows 1
-
-              // Single directional caster → upload shadowViewProjs[0] + shadowUVOffset.
-              match p.ShadowViewProjs with
-              | null -> ()
-              | sp ->
-                let vps = shadowAtlas.ViewProjs
-
-                if vps.Length > 0 then
-                  sp.SetValue vps[0]
-
-              setVec4 p.ShadowUVOffset (shadowAtlas.GetUVOffsetScale 0)
-
-              let texel = 1.0f / float32 atlasCfg.Resolution
-              setVec2 p.ShadowTexelSize (Vector2(texel, texel))
-
-              // Bind the shadow atlas to sampler slot 5 (register(s5) in the shader).
-              gd.Textures[5] <- shadowAtlas.Fbo
-              gd.SamplerStates[5] <- SamplerState.PointClamp
+            match
+              shadowAtlas.AddCaster(
+                ShadowCasterType.Directional,
+                Vector3.Zero,
+                dirLight.Direction,
+                Vector3.Zero,
+                true,
+                ValueNone
+              )
+            with
+            | ValueSome _ ->
+              shadowAtlas.SetRegionViewProj(casterSlot, vp)
+              casterSlot <- casterSlot + 1
             | ValueNone -> ()
+
+          // Point lights. (for loop, not Seq.iteri — avoids per-frame enumerator allocation.)
+          for i = 0 to lights.PointLights.Count - 1 do
+            let pt = lights.PointLights[i]
+
+            if pt.CastsShadows then
+              let vp = this.buildPointShadowViewProj(pt.Position, pt.Radius)
+
+              match
+                shadowAtlas.AddCaster(
+                  ShadowCasterType.Point,
+                  pt.Position,
+                  Vector3.Zero,
+                  Vector3.Zero,
+                  true,
+                  pt.ShadowBias
+                )
+              with
+              | ValueSome _ ->
+                shadowAtlas.SetRegionViewProj(casterSlot, vp)
+                pointShadowSlots[i] <- casterSlot
+                casterSlot <- casterSlot + 1
+              | ValueNone -> ()
+
+          // Spot lights.
+          for i = 0 to lights.SpotLights.Count - 1 do
+            let sp = lights.SpotLights[i]
+
+            if sp.CastsShadows then
+              let vp = this.buildSpotShadowViewProj sp
+
+              match
+                shadowAtlas.AddCaster(
+                  ShadowCasterType.Spot,
+                  sp.Position,
+                  sp.Direction,
+                  sp.Position + sp.Direction,
+                  true,
+                  sp.ShadowBias
+                )
+              with
+              | ValueSome _ ->
+                shadowAtlas.SetRegionViewProj(casterSlot, vp)
+                spotShadowSlots[i] <- casterSlot
+                casterSlot <- casterSlot + 1
+              | ValueNone -> ()
+
+          if casterSlot = 0 then
+            ()
+          else
+            // ── Collect caster meshes (PrimitiveMesh draws, gated by EnableShadows/DisableShadows) ──
+            let mutable castEnabled = true
+            let mutable drawCount = 0
+
+            for i = 0 to buffer.Count - 1 do
+              match buffer[i] with
+              | Command3D.EnableShadows -> castEnabled <- true
+              | Command3D.DisableShadows -> castEnabled <- false
+              | Command3D.DrawMeshPBR(mesh, transform, _) when castEnabled ->
+                if drawCount >= shadowDraws.Length then
+                  Array.Resize(&shadowDraws, shadowDraws.Length * 2)
+
+                // Precompute the world-space bounds for the frustum cull.
+                // Transform the local-space bounds to world space (Transform handles scaling —
+                // using the local radius directly would false-negative the cull on scaled meshes).
+                let worldBounds = mesh.Bounds.Transform transform
+
+                shadowDraws[drawCount] <- {
+                  Mesh = mesh
+                  Transform = transform
+                  WorldBounds = worldBounds
+                }
+
+                drawCount <- drawCount + 1
+              | _ -> ()
+
+            if drawCount = 0 then
+              ()
+            else
+              shadowAtlas.PrepareUniforms()
+
+              // ── Render depth into the atlas ──
+              let prevViewport = gd.Viewport
+              let prevRaster = gd.RasterizerState
+              let prevBlend = gd.BlendState
+              let prevDepth = gd.DepthStencilState
+
+              gd.SetRenderTarget(shadowAtlas.Fbo)
+              // Clear color (white = far = lit, written to .r by DepthShadow.fx) AND depth —
+              // depth testing is enabled for caster hidden-surface removal, so stale depth from
+              // a previous frame would reject caster geometry and corrupt the shadow map.
+              gd.Clear(
+                ClearOptions.Target ||| ClearOptions.DepthBuffer,
+                Color.White.ToVector4(),
+                1.0f,
+                0
+              )
+
+              // Native polygon-offset bias (replaces raylib's dFdx/dFdy shader math).
+              // Cached (config-driven). For B11 the bias uses DirectionalBias as the base —
+              // per-type bias swap is deferred (the shadowRaster caches one state; a per-caster
+              // bias swap would need 3 rasterizers). Documented limitation.
+              if obj.ReferenceEquals(shadowRaster, null) then
+                let sr = new RasterizerState()
+                sr.CullMode <- CullMode.CullClockwiseFace
+                sr.DepthBias <- biasCfg.DirectionalBias
+                sr.SlopeScaleDepthBias <- biasCfg.SlopeScaleBias
+                shadowRaster <- sr
+
+              gd.RasterizerState <- shadowRaster
+              gd.BlendState <- BlendState.Opaque
+              gd.DepthStencilState <- DepthStencilState.Default
+
+              depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
+
+              for caster in shadowAtlas.Casters do
+                if caster.Enabled then
+                  let casterVP =
+                    shadowAtlas.GetRegionViewProj caster.AtlasRegion
+
+                  gd.Viewport <-
+                    shadowAtlas.GetRegionViewport(caster.AtlasRegion)
+                  // Per-light frustum cull (Layer 3 of the cost analysis): skip meshes the
+                  // caster's frustum can't see. Update the cached frustum in-place (avoids
+                  // per-caster BoundingFrustum allocation every frame).
+                  shadowFrustum.Matrix <- casterVP
+
+                  for d = 0 to drawCount - 1 do
+                    let draw = shadowDraws[d]
+
+                    if Culling.isVisible shadowFrustum draw.WorldBounds then
+                      setMatrix depthParams.MatModel draw.Transform
+                      setMatrix depthParams.ViewProj casterVP
+
+                      for pass in depthEffect.CurrentTechnique.Passes do
+                        pass.Apply()
+                        draw.Mesh.Draw(gd, depthEffect)
+
+              // ── Restore device state ──
+              (gd.SetRenderTarget null)
+              gd.Viewport <- prevViewport
+              gd.RasterizerState <- prevRaster
+              gd.BlendState <- prevBlend
+              gd.DepthStencilState <- prevDepth
+
+              // ── Upload shadow uniforms to the PBR effect ──
+              match pbrParams with
+              | ValueSome p ->
+                setInt p.DirLightCastsShadows (if hasDirCaster then 1 else 0)
+
+                // Multi-caster: upload the full packed arrays (shadowViewProjs + shadowUVOffsets).
+                let active = shadowAtlas.ActiveCasterCount
+
+                if active > 0 then
+                  if shadowViewProjsScratch.Length < active then
+                    shadowViewProjsScratch <- Array.zeroCreate<Matrix> active
+                    shadowUVOffsetsScratch <- Array.zeroCreate<Vector4> active
+
+                  let vpArr = shadowAtlas.ViewProjs
+                  let uvArr = shadowAtlas.UVOffsets
+
+                  for i = 0 to active - 1 do
+                    shadowViewProjsScratch[i] <- vpArr[i]
+                    shadowUVOffsetsScratch[i] <- uvArr[i]
+
+                  setMatrixArray p.ShadowViewProjs shadowViewProjsScratch
+                  setVec4Array p.ShadowUVOffsets shadowUVOffsetsScratch
+
+                let texel = 1.0f / float32 atlasCfg.Resolution
+                setVec2 p.ShadowTexelSize (Vector2(texel, texel))
+
+                gd.Textures[5] <- shadowAtlas.Fbo
+                gd.SamplerStates[5] <- SamplerState.PointClamp
+              | ValueNone -> ()
         | _ -> ()
 
   // ----------------------------------------------------------------
