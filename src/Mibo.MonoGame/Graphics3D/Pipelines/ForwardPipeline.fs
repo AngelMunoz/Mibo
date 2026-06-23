@@ -279,10 +279,38 @@ module private ForwardHelpers =
     SpotLightRadius: EffectParameter
     SpotLightInnerCutoff: EffectParameter
     SpotLightOuterCutoff: EffectParameter
+    // Directional shadow sampling (B10)
+    DirLightCastsShadows: EffectParameter
+    ShadowViewProjs: EffectParameter
+    ShadowUVOffset: EffectParameter
+    ShadowTexelSize: EffectParameter
+  }
+
+  /// <summary>
+  /// Cached <see cref="T:Microsoft.Xna.Framework.Graphics.EffectParameter"/> handles for
+  /// the depth-only shadow pass effect (<c>DepthShadow.fx</c>).
+  /// </summary>
+  [<Struct>]
+  type ShadowEffectParams = {
+    MatModel: EffectParameter
+    ViewProj: EffectParameter
   }
 
   let private param (e: Effect) (name: string) : EffectParameter =
     e.Parameters[name] // null when absent — callers null-check before SetValue.
+
+  /// <summary>Builds the shadow-pass parameter handles once after load.</summary>
+  let buildShadowParams(e: Effect) : ShadowEffectParams = {
+    MatModel = param e "matModel"
+    ViewProj = param e "viewProj"
+  }
+
+  /// <summary>A mesh draw collected for the shadow pass (caster geometry).</summary>
+  [<Struct>]
+  type ShadowMeshDraw = {
+    Mesh: PrimitiveMesh
+    Transform: Matrix
+  }
 
   /// <summary>Resolves all PBR effect parameter handles once after load.</summary>
   let buildPbrParams(e: Effect) : PbrEffectParams = {
@@ -316,6 +344,10 @@ module private ForwardHelpers =
     SpotLightRadius = param e "spotLightRadius"
     SpotLightInnerCutoff = param e "spotLightInnerCutoff"
     SpotLightOuterCutoff = param e "spotLightOuterCutoff"
+    DirLightCastsShadows = param e "dirLightCastsShadows"
+    ShadowViewProjs = param e "shadowViewProjs"
+    ShadowUVOffset = param e "shadowUVOffset"
+    ShadowTexelSize = param e "shadowTexelSize"
   }
 
   let inline setVec2 (p: EffectParameter) (v: Vector2) =
@@ -517,9 +549,16 @@ module private ForwardHelpers =
 /// </code>
 /// </para>
 /// </remarks>
-type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
+type ForwardPipeline
+  (
+    [<Struct>] ?postProcess: PostProcessConfig3D,
+    [<Struct>] ?shadowAtlas: ShadowAtlasConfig,
+    [<Struct>] ?shadowBias: ShadowBiasConfig
+  ) =
 
   let ppConfig = ValueOption.defaultValue PostProcessConfig3D.none postProcess
+  let atlasCfg = ValueOption.defaultValue ShadowAtlasConfig.defaults shadowAtlas
+  let biasCfg = ValueOption.defaultValue ShadowBiasConfig.defaults shadowBias
 
   let lights: LightBuffers = {
     Ambient = ValueNone
@@ -545,6 +584,23 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
   let mutable pbrParams: PbrEffectParams voption = ValueNone
   let mutable pbrHasLastMaterial = false
   let mutable pbrLastKey: MaterialKey = Unchecked.defaultof<MaterialKey>
+
+  // B10 directional shadow atlas. ShadowAtlas owns the R32F RenderTarget2D (allocated
+  // lazily against the real device on first shadow pass). shadowEffect is DepthShadow.fx
+  // (writes non-linear depth to .r). shadowOrigin shadows the SetShadowOrigin command;
+  // shadowsEnabled gates which meshes cast (EnableShadows/DisableShadows). The pooled
+  // shadowDraws array holds the mesh draws collected for the shadow pass (gated by the
+  // toggle), avoiding per-frame allocation.
+  let shadowAtlas = ShadowAtlas(atlasCfg, biasCfg)
+  let mutable shadowEffect: Effect voption = ValueNone
+  let mutable shadowParams: ShadowEffectParams voption = ValueNone
+  let mutable shadowOrigin: Vector3 voption = ValueNone
+  // Cached RasterizerState for the shadow pass (polygon-offset bias + back-face culling).
+  // Created once on first shadow pass; disposed in Shutdown. Avoids per-frame GPU-resource
+  // allocation (new RasterizerState() creates a native ID3D11RasterizerState / GL state object).
+  let mutable shadowRaster: RasterizerState = null
+  // Pooled scratch for the shadow pass: caster mesh draws collected from the buffer.
+  let mutable shadowDraws = Array.zeroCreate<ShadowMeshDraw> 64
 
   // B7 instancing: the custom Instanced effect (loads from embedded .mgfx via ShaderLoader)
   // and a growable per-instance vertex buffer. The effect has instance input semantics
@@ -681,6 +737,22 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       | ValueSome e ->
         pbrParams <- ValueSome(buildPbrParams e)
         pbrEffect <- ValueSome e
+        true
+      | ValueNone -> false
+
+  /// <summary>
+  /// Lazily loads the depth-only shadow effect (<c>DepthShadow.fx</c>) on first shadow
+  /// pass. Returns <c>true</c> when loaded; <c>false</c> when the embedded resource is
+  /// missing (the shadow pass is skipped — forward rendering proceeds unshadowed).
+  /// </summary>
+  member private _.ensureShadowEffect(gd: GraphicsDevice) : bool =
+    match shadowEffect with
+    | ValueSome _ -> true
+    | ValueNone ->
+      match ShaderLoader.loadEffect gd "DepthShadow" with
+      | ValueSome e ->
+        shadowParams <- ValueSome(buildShadowParams e)
+        shadowEffect <- ValueSome e
         true
       | ValueNone -> false
 
@@ -1176,6 +1248,231 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
     gd.BlendState <- BlendState.Opaque
 
   // ----------------------------------------------------------------
+  // Shadow pass (B10 — directional shadows only)
+  // ----------------------------------------------------------------
+
+  /// <summary>
+  /// Builds the directional light's orthographic shadow ViewProj (port of canonical
+  /// <c>createDirectionalShadowCamera</c>). Fixed-size ortho box positioned behind a
+  /// grid-snapped origin along the light direction. §6.1: <c>CreateLookAt * CreateOrthographic</c>
+  /// in application order, plain matrices, no transpose.
+  /// </summary>
+  member private _.buildDirectionalShadowViewProj
+    (lightDir: Vector3, activeCamera: Camera3D)
+    : Matrix =
+    let lightFromDir = Vector3.Normalize(-lightDir)
+
+    let rawOrigin =
+      match shadowOrigin with
+      | ValueSome origin -> origin
+      | ValueNone ->
+        match atlasCfg.OriginStrategy with
+        | ShadowOriginStrategy.CameraTarget -> activeCamera.Target
+        | ShadowOriginStrategy.SceneCenter -> Vector3.Zero
+        | ShadowOriginStrategy.Custom f -> f activeCamera
+
+    let snap = atlasCfg.GridSnapSize
+
+    let snappedX =
+      if snap > 0.0f then
+        MathF.Round(rawOrigin.X / snap) * snap
+      else
+        rawOrigin.X
+
+    let snappedZ =
+      if snap > 0.0f then
+        MathF.Round(rawOrigin.Z / snap) * snap
+      else
+        rawOrigin.Z
+
+    let shadowOrigin = Vector3(snappedX, rawOrigin.Y, snappedZ)
+
+    let lightDistance =
+      match atlasCfg.DirectionalLightDistance with
+      | ValueSome d -> d
+      | ValueNone -> 100.0f
+
+    let lightPos = shadowOrigin + lightFromDir * lightDistance
+
+    let safeUp =
+      if abs lightDir.Y > 0.99f then
+        Vector3.UnitZ
+      else
+        Vector3.UnitY
+
+    let orthoSize =
+      match atlasCfg.DirectionalLightSize with
+      | ValueSome s -> s
+      | ValueNone -> 50.0f
+
+    let shadowNear = 1.0f
+    let shadowFar = lightDistance + orthoSize * 2.0f
+
+    let view = Matrix.CreateLookAt(lightPos, shadowOrigin, safeUp)
+
+    let proj =
+      Matrix.CreateOrthographicOffCenter(
+        -orthoSize,
+        orthoSize,
+        -orthoSize,
+        orthoSize,
+        shadowNear,
+        shadowFar
+      )
+
+    view * proj
+
+  /// <summary>
+  /// Runs the directional shadow pass: collects casters + caster meshes, renders depth
+  /// to the atlas using <c>DepthShadow.fx</c> with <c>RasterizerState.SlopeScaleDepthBias</c>,
+  /// then uploads shadow uniforms to the PBR effect for forward-pass sampling.
+  /// </summary>
+  member private this.runShadowPass
+    (gd: GraphicsDevice, state: byref<ForwardState>, buffer: RenderBuffer3D)
+    =
+    // Only directional lights cast shadows in B10.
+    let dirCasters = lights.DirLights |> Seq.exists(fun d -> d.CastsShadows)
+
+    if not dirCasters then
+      // No shadow-casting directional light → mark dir shadows off on the PBR effect.
+      match pbrParams with
+      | ValueSome p -> setInt p.DirLightCastsShadows 0
+      | ValueNone -> ()
+    else
+      // Lazily create the atlas RT + shadow effect. If either is missing, skip the pass.
+      shadowAtlas.EnsureResources gd
+
+      // Ensure the PBR effect is loaded BEFORE uploading shadow uniforms to it — otherwise
+      // pbrParams is ValueNone on the first frame (the effect loads lazily on first PBR draw,
+      // which happens after the shadow pass).
+      this.ensurePbrEffect gd |> ignore
+
+      if not(this.ensureShadowEffect gd) then
+        () // DepthShadow.fx missing — render unshadowed.
+      else
+        match shadowEffect, shadowParams with
+        | ValueSome depthEffect, ValueSome depthParams ->
+          shadowAtlas.Clear()
+
+          // Register one directional caster (first CastsShadows directional light).
+          let dirLight = lights.DirLights |> Seq.find(fun d -> d.CastsShadows)
+
+          shadowAtlas.AddCaster(
+            ShadowCasterType.Directional,
+            Vector3.Zero,
+            dirLight.Direction,
+            Vector3.Zero,
+            true,
+            ValueNone
+          )
+          |> ignore
+
+          // Collect caster meshes (PrimitiveMesh draws, gated by EnableShadows/DisableShadows).
+          let mutable castEnabled = true
+          let mutable drawCount = 0
+
+          for i = 0 to buffer.Count - 1 do
+            match buffer[i] with
+            | Command3D.EnableShadows -> castEnabled <- true
+            | Command3D.DisableShadows -> castEnabled <- false
+            | Command3D.DrawMeshPBR(mesh, transform, _) when castEnabled ->
+              if drawCount >= shadowDraws.Length then
+                // Array.Resize preserves already-collected casters (Array.zeroCreate would discard them).
+                Array.Resize(&shadowDraws, shadowDraws.Length * 2)
+
+              shadowDraws[drawCount] <- { Mesh = mesh; Transform = transform }
+              drawCount <- drawCount + 1
+            | _ -> ()
+
+          if drawCount = 0 then
+            ()
+          else
+            // Build the directional shadow ViewProj + store on the caster.
+            let vp =
+              this.buildDirectionalShadowViewProj(
+                dirLight.Direction,
+                state.CurrentCamera
+              )
+
+            // The single directional caster is at region 0 (slot allocator started at 0).
+            shadowAtlas.SetRegionViewProj(0, vp)
+            shadowAtlas.PrepareUniforms()
+
+            // ── Render depth into the atlas region ──
+            let prevViewport = gd.Viewport
+            let prevRaster = gd.RasterizerState
+            let prevBlend = gd.BlendState
+            let prevDepth = gd.DepthStencilState
+
+            gd.SetRenderTarget(shadowAtlas.Fbo)
+            gd.Clear(ClearOptions.Target, Color.White.ToVector4(), 1.0f, 0)
+
+            // Native polygon-offset bias (replaces raylib's dFdx/dFdy shader math).
+            // The RasterizerState is cached (config-driven; doesn't change per frame) to avoid
+            // creating/releasing a native GPU state object every frame.
+            if obj.ReferenceEquals(shadowRaster, null) then
+              let sr = new RasterizerState()
+              sr.CullMode <- CullMode.CullClockwiseFace
+              sr.DepthBias <- biasCfg.DirectionalBias
+              sr.SlopeScaleDepthBias <- biasCfg.SlopeScaleBias
+              shadowRaster <- sr
+
+            gd.RasterizerState <- shadowRaster
+            gd.BlendState <- BlendState.Opaque
+            gd.DepthStencilState <- DepthStencilState.Default
+
+            depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
+
+            for caster in shadowAtlas.Casters do
+              if caster.Enabled then
+                // Read the VP from the region store (caster.ViewProj is never updated — it's a
+                // struct copy that stays Identity after AddCaster; the authoritative copy lives
+                // in the region dictionary via SetRegionViewProj).
+                let casterVP = shadowAtlas.GetRegionViewProj caster.AtlasRegion
+                gd.Viewport <- shadowAtlas.GetRegionViewport(caster.AtlasRegion)
+
+                for d = 0 to drawCount - 1 do
+                  let draw = shadowDraws[d]
+                  setMatrix depthParams.MatModel draw.Transform
+                  setMatrix depthParams.ViewProj casterVP
+
+                  for pass in depthEffect.CurrentTechnique.Passes do
+                    pass.Apply()
+                    draw.Mesh.Draw(gd, depthEffect)
+
+            // ── Restore device state (back to the backbuffer; forward pass re-binds) ──
+            (gd.SetRenderTarget null)
+            gd.Viewport <- prevViewport
+            gd.RasterizerState <- prevRaster
+            gd.BlendState <- prevBlend
+            gd.DepthStencilState <- prevDepth
+
+            // ── Upload shadow uniforms to the PBR effect ──
+            match pbrParams with
+            | ValueSome p ->
+              setInt p.DirLightCastsShadows 1
+
+              // Single directional caster → upload shadowViewProjs[0] + shadowUVOffset.
+              match p.ShadowViewProjs with
+              | null -> ()
+              | sp ->
+                let vps = shadowAtlas.ViewProjs
+
+                if vps.Length > 0 then
+                  sp.SetValue vps[0]
+
+              setVec4 p.ShadowUVOffset (shadowAtlas.GetUVOffsetScale 0)
+
+              let texel = 1.0f / float32 atlasCfg.Resolution
+              setVec2 p.ShadowTexelSize (Vector2(texel, texel))
+
+              // Bind the shadow atlas to sampler slot 5 (register(s5) in the shader).
+              gd.Textures[5] <- shadowAtlas.Fbo
+              gd.SamplerStates[5] <- SamplerState.PointClamp
+            | ValueNone -> ()
+        | _ -> ()
+
+  // ----------------------------------------------------------------
   // IRenderPipeline3D
   // ----------------------------------------------------------------
 
@@ -1231,6 +1528,19 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
         lineEffect <- ValueNone
       | ValueNone -> ()
 
+      shadowAtlas.Release()
+
+      if not(obj.ReferenceEquals(shadowRaster, null)) then
+        shadowRaster.Dispose()
+        shadowRaster <- null
+
+      match shadowEffect with
+      | ValueSome e ->
+        e.Dispose()
+        shadowEffect <- ValueNone
+        shadowParams <- ValueNone
+      | ValueNone -> ()
+
     member this.Execute(gameCtx, buffer, _rtPool) =
       let gd = MonoGameGameContext.getGraphicsDevice gameCtx
 
@@ -1240,8 +1550,9 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
       gd.BlendState <- BlendState.Opaque
       gd.SamplerStates[0] <- SamplerState.LinearWrap
 
-      // ── Step 1: Pre-scan — capture camera + lights (shadow pass is B10) ──
+      // ── Step 1: Pre-scan — capture camera + lights + shadow state ──
       clearLights lights
+      shadowOrigin <- ValueNone
 
       let mutable state: ForwardState = {
         HasCamera = false
@@ -1252,12 +1563,10 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
         SavedViewport = gd.Viewport
       }
 
-      // Single-pass dispatch: camera/light/draw commands all handled inline in buffer order,
-      // mirroring the canonical raylib dispatch loop (lights are applied lazily at each draw
-      // from the accumulated buffers, so producer command ordering defines the lighting state).
+      // Pre-scan: lights, camera, and shadow commands (shadow origin / toggle) need to be
+      // known before the shadow pass runs. Draw commands are handled in the forward pass.
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
-        // ── Camera ──
         | Command3D.BeginCamera cam ->
           let struct (v, p) = buildMatrices cam
           state.HasCamera <- true
@@ -1274,7 +1583,26 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
           state.CurrentCamera <- cfg.Camera
           state.CurrentConfig <- ValueSome cfg
 
-          // Apply viewport + clear color.
+        | Command3D.SetAmbientLight a -> lights.Ambient <- ValueSome a
+        | Command3D.AddDirectionalLight d -> lights.DirLights.Add d
+        | Command3D.AddPointLight p -> lights.PointLights.Add p
+        | Command3D.AddSpotLight s -> lights.SpotLights.Add s
+        | Command3D.SetShadowOrigin origin -> shadowOrigin <- ValueSome origin
+        | _ -> ()
+
+      // ── Step 2: Shadow pass (directional shadows only; B10) ──
+      if state.HasCamera then
+        this.runShadowPass(gd, &state, buffer)
+
+      // ── Step 3: Forward pass ──
+      // Lights + camera are already in `state`/`lights`; draw commands dispatch here.
+      for i = 0 to buffer.Count - 1 do
+        match buffer[i] with
+        // ── Camera ──
+        | Command3D.BeginCamera _ -> ()
+
+        | Command3D.BeginCameraConfig cfg ->
+          // Apply viewport + clear color (deferred from pre-scan so clearing happens here).
           match cfg.Viewport with
           | ValueSome rect -> gd.Viewport <- Viewport(rect)
           | ValueNone -> ()
@@ -1285,7 +1613,9 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
 
         | Command3D.EndCamera ->
           if state.HasCamera then
-            // Restore fullscreen viewport.
+            // Restore fullscreen viewport + mark camera inactive so subsequent draws are skipped
+            // until the next BeginCamera (matches the B5-B9 single-pass semantics; without this,
+            // draws after EndCamera would dispatch with stale matrices).
             gd.Viewport <- state.SavedViewport
             state.HasCamera <- false
 
@@ -1310,10 +1640,6 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
           if state.HasCamera then
             this.handleDrawMeshPBR(gd, &state, mesh, transform, material)
 
-        // DrawMeshInstanced: stubbed — native hardware instancing is B7 (requires an instance
-        // vertex stream + a custom HLSL vertex declaration; BasicEffect has no instance
-        // semantics). The case is present in the DU so B7 wires dispatch without a breaking
-        // signature change. Until B7 this is a no-op.
         | Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount) ->
           if state.HasCamera then
             this.handleDrawMeshInstanced(
@@ -1346,16 +1672,13 @@ type ForwardPipeline([<Struct>] ?postProcess: PostProcessConfig3D) =
           if state.HasCamera then
             this.handleDrawLine3D(gd, &state, s, f, color)
 
-        // ── Lighting ──
-        | Command3D.SetAmbientLight a -> lights.Ambient <- ValueSome a
+        // ── Lighting (already consumed in pre-scan; no-op here) ──
+        | Command3D.SetAmbientLight _
+        | Command3D.AddDirectionalLight _
+        | Command3D.AddPointLight _
+        | Command3D.AddSpotLight _ -> ()
 
-        | Command3D.AddDirectionalLight d -> lights.DirLights.Add d
-
-        | Command3D.AddPointLight p -> lights.PointLights.Add p
-
-        | Command3D.AddSpotLight s -> lights.SpotLights.Add s
-
-        // ── Shadow state — accepted no-ops (shadow pass is B10) ──
+        // ── Shadow state (consumed in the shadow pass; no-op here) ──
         | Command3D.SetShadowOrigin _
         | Command3D.EnableShadows
         | Command3D.DisableShadows -> ()
