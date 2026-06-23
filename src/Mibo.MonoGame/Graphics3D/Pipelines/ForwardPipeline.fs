@@ -595,6 +595,10 @@ type ForwardPipeline
   let mutable shadowEffect: Effect voption = ValueNone
   let mutable shadowParams: ShadowEffectParams voption = ValueNone
   let mutable shadowOrigin: Vector3 voption = ValueNone
+  // Cached RasterizerState for the shadow pass (polygon-offset bias + back-face culling).
+  // Created once on first shadow pass; disposed in Shutdown. Avoids per-frame GPU-resource
+  // allocation (new RasterizerState() creates a native ID3D11RasterizerState / GL state object).
+  let mutable shadowRaster: RasterizerState = null
   // Pooled scratch for the shadow pass: caster mesh draws collected from the buffer.
   let mutable shadowDraws = Array.zeroCreate<ShadowMeshDraw> 64
 
@@ -1373,8 +1377,8 @@ type ForwardPipeline
             | Command3D.DisableShadows -> castEnabled <- false
             | Command3D.DrawMeshPBR(mesh, transform, _) when castEnabled ->
               if drawCount >= shadowDraws.Length then
-                shadowDraws <-
-                  Array.zeroCreate<ShadowMeshDraw>(shadowDraws.Length * 2)
+                // Array.Resize preserves already-collected casters (Array.zeroCreate would discard them).
+                Array.Resize(&shadowDraws, shadowDraws.Length * 2)
 
               shadowDraws[drawCount] <- { Mesh = mesh; Transform = transform }
               drawCount <- drawCount + 1
@@ -1404,11 +1408,15 @@ type ForwardPipeline
             gd.Clear(ClearOptions.Target, Color.White.ToVector4(), 1.0f, 0)
 
             // Native polygon-offset bias (replaces raylib's dFdx/dFdy shader math).
-            // Scales with the directional bias + the slope factor from config.
-            let shadowRaster = new RasterizerState()
-            shadowRaster.CullMode <- CullMode.CullClockwiseFace
-            shadowRaster.DepthBias <- biasCfg.DirectionalBias
-            shadowRaster.SlopeScaleDepthBias <- biasCfg.SlopeScaleBias
+            // The RasterizerState is cached (config-driven; doesn't change per frame) to avoid
+            // creating/releasing a native GPU state object every frame.
+            if obj.ReferenceEquals(shadowRaster, null) then
+              let sr = new RasterizerState()
+              sr.CullMode <- CullMode.CullClockwiseFace
+              sr.DepthBias <- biasCfg.DirectionalBias
+              sr.SlopeScaleDepthBias <- biasCfg.SlopeScaleBias
+              shadowRaster <- sr
+
             gd.RasterizerState <- shadowRaster
             gd.BlendState <- BlendState.Opaque
             gd.DepthStencilState <- DepthStencilState.Default
@@ -1417,12 +1425,16 @@ type ForwardPipeline
 
             for caster in shadowAtlas.Casters do
               if caster.Enabled then
+                // Read the VP from the region store (caster.ViewProj is never updated — it's a
+                // struct copy that stays Identity after AddCaster; the authoritative copy lives
+                // in the region dictionary via SetRegionViewProj).
+                let casterVP = shadowAtlas.GetRegionViewProj caster.AtlasRegion
                 gd.Viewport <- shadowAtlas.GetRegionViewport(caster.AtlasRegion)
 
                 for d = 0 to drawCount - 1 do
                   let draw = shadowDraws[d]
                   setMatrix depthParams.MatModel draw.Transform
-                  setMatrix depthParams.ViewProj caster.ViewProj
+                  setMatrix depthParams.ViewProj casterVP
 
                   for pass in depthEffect.CurrentTechnique.Passes do
                     pass.Apply()
@@ -1434,7 +1446,6 @@ type ForwardPipeline
             gd.RasterizerState <- prevRaster
             gd.BlendState <- prevBlend
             gd.DepthStencilState <- prevDepth
-            shadowRaster.Dispose()
 
             // ── Upload shadow uniforms to the PBR effect ──
             match pbrParams with
@@ -1519,6 +1530,10 @@ type ForwardPipeline
 
       shadowAtlas.Release()
 
+      if not(obj.ReferenceEquals(shadowRaster, null)) then
+        shadowRaster.Dispose()
+        shadowRaster <- null
+
       match shadowEffect with
       | ValueSome e ->
         e.Dispose()
@@ -1598,8 +1613,11 @@ type ForwardPipeline
 
         | Command3D.EndCamera ->
           if state.HasCamera then
-            // Restore fullscreen viewport.
+            // Restore fullscreen viewport + mark camera inactive so subsequent draws are skipped
+            // until the next BeginCamera (matches the B5-B9 single-pass semantics; without this,
+            // draws after EndCamera would dispatch with stale matrices).
             gd.Viewport <- state.SavedViewport
+            state.HasCamera <- false
 
         // ── Drawing ──
         | Command3D.DrawMesh(part, transform) ->

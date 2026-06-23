@@ -68,8 +68,11 @@ VS_OUTPUT VS_Skinned(VS_INPUT_SKINNED input) {
 }
 
 float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
-  // Non-linear depth in [0,1]. Clear color is white (1.0 = far = lit).
+  // Depth in [0,1] on both backends (matches the forward shader's remapped ndc.z).
+  // Raw clip.z/clip.w is [-1,1] on OpenGL and [0,1] on DX11; remapping to [0,1]
+  // unifies the comparison. Clear color is white (1.0 = far = lit).
   float d = input.Depth.x / input.Depth.y;
+  d = d * 0.5 + 0.5;
   return float4(d, 1.0, 1.0, 1.0);
 }
 

@@ -205,7 +205,6 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
   let regionSize = config.Resolution / gridSize
 
   let mutable fbo: RenderTarget2D = null
-  let mutable fboGraphicsDevice: GraphicsDevice = null
   let casters = Dictionary<int<ShadowCasterId>, ShadowCasterData>()
   let viewProjs = Dictionary<int, Matrix>()
   let mutable nextId = 0
@@ -257,8 +256,6 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
   /// </summary>
   member _.EnsureResources(gd: GraphicsDevice) =
     if obj.ReferenceEquals(fbo, null) then
-      fboGraphicsDevice <- gd
-
       fbo <-
         new RenderTarget2D(
           gd,
@@ -278,7 +275,6 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
     if not(obj.ReferenceEquals(fbo, null)) then
       fbo.Dispose()
       fbo <- null
-      fboGraphicsDevice <- null
 
     casters.Clear()
     viewProjs.Clear()
@@ -360,6 +356,18 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
   /// <summary>Set the view-projection matrix for a specific atlas region.</summary>
   member _.SetRegionViewProj(regionIndex: int, vp: Matrix) =
     viewProjs[regionIndex] <- vp
+
+  /// <summary>
+  /// Get the view-projection matrix for a specific atlas region. Returns <c>Matrix.Identity</c>
+  /// when the region has no VP set. Use this to read back a caster's VP —
+  /// <c>ShadowCasterData.ViewProj</c> is a struct field that is NOT kept in sync with the
+  /// region store (it stays <c>Identity</c> after <c>AddCaster</c>); the authoritative copy
+  /// lives in the region dictionary.
+  /// </summary>
+  member _.GetRegionViewProj(regionIndex: int) =
+    match viewProjs.TryGetValue(regionIndex) with
+    | true, vp -> vp
+    | false, _ -> Matrix.Identity
 
   /// <summary>Get a <see cref="T:Microsoft.Xna.Framework.Graphics.Viewport"/> for a region index.</summary>
   member _.GetRegionViewport(regionIndex: int) =
