@@ -67,7 +67,7 @@ float spotLightOuterCutoff[MAX_SPOT_LIGHTS];
 float3 cameraPos;
 
 // ------------------------------------------------------------------
-// Directional shadow atlas (B10). Point/spot shadow sampling is B11.
+// Shadow atlas (B10 directional; B11 adds point/spot). Multi-caster.
 //
 // SM3.0 approach (works identically on OGL and DX):
 //  - Regular sampler2D + manual PCF (hardware SamplerComparisonState / SampleCmp
@@ -75,18 +75,27 @@ float3 cameraPos;
 //  - Slope-scale bias via RasterizerState.SlopeScaleDepthBias on the shadow pass
 //    (no dFdx/dFdy shader math — applied during caster rasterization).
 //  - Texel size passed as a uniform (replaces textureSize, which has no SM3.0 equivalent).
+//  - Per-light shadow caster index (-1 = none): O(1) lookup, replaces the canonical
+//    raylib O(N*M) caster-matching scan.
 // ------------------------------------------------------------------
 
-sampler2D shadowAtlas : register(s5);
-float4x4 shadowViewProjs[1]; // single directional caster for B10
-float4 shadowUVOffset;       // xy = offset, zw = scale (atlas region remap)
-float2 shadowTexelSize;      // 1.0 / atlas resolution (replaces textureSize)
+#define MAX_SHADOW_CASTERS 16
 
-float computeDirShadow(float3 worldPos) {
-  if (dirLightCastsShadows == 0)
+sampler2D shadowAtlas : register(s5);
+float4x4 shadowViewProjs[MAX_SHADOW_CASTERS];
+float4 shadowUVOffsets[MAX_SHADOW_CASTERS]; // xy = offset, zw = scale (atlas region remap)
+float2 shadowTexelSize;                      // 1.0 / atlas resolution (replaces textureSize)
+int pointLightShadowIdx[MAX_POINT_LIGHTS];   // -1 = no shadow
+int spotLightShadowIdx[MAX_SPOT_LIGHTS];     // -1 = no shadow
+
+// Generic shadow lookup for a caster slot. Manual 3x3 PCF. Bias is baked into the shadow
+// map via RasterizerState on the shadow pass, so the comparison threshold is the receiver
+// depth directly.
+float computeShadowAt(float3 worldPos, int casterIdx) {
+  if (casterIdx < 0)
     return 1.0;
 
-  float4 sc = mul(float4(worldPos, 1.0), shadowViewProjs[0]);
+  float4 sc = mul(float4(worldPos, 1.0), shadowViewProjs[casterIdx]);
   float3 ndc = sc.xyz / sc.w;
 
   // Outside the shadow frustum → fully lit (no shadow).
@@ -98,21 +107,31 @@ float computeDirShadow(float3 worldPos) {
   if (ndc.x < 0.0 || ndc.x > 1.0 || ndc.y < 0.0 || ndc.y > 1.0)
     return 1.0;
 
-  float2 atlasUV = ndc.xy * shadowUVOffset.zw + shadowUVOffset.xy;
+  float4 uvOff = shadowUVOffsets[casterIdx];
+  float2 atlasUV = ndc.xy * uvOff.zw + uvOff.xy;
 
-  // Manual 3x3 PCF. Bias is baked into the shadow map via RasterizerState
-  // (SlopeScaleDepthBias + DepthBias on the shadow pass), so the comparison
-  // threshold is the receiver depth directly.
   float shadow = 0.0;
   [unroll]
   for (int x = -1; x <= 1; x++) {
     [unroll]
     for (int y = -1; y <= 1; y++) {
-      float d = tex2D(shadowAtlas, atlasUV + float2(float(x), float(y)) * shadowTexelSize).r;
+      // tex2Dlod (explicit LOD 0 — the shadow atlas has no mipmaps) instead of tex2D:
+      // tex2D is a gradient instruction, which SM3.0 forbids inside loops with break
+      // (the point/spot light loops break on count). tex2Dlod is gradient-free.
+      float2 sampleUV = atlasUV + float2(float(x), float(y)) * shadowTexelSize;
+      float d = tex2Dlod(shadowAtlas, float4(sampleUV, 0.0, 0.0)).r;
       shadow += (ndc.z > d) ? 0.0 : 1.0;
     }
   }
   return shadow / 9.0;
+}
+
+float computeDirShadow(float3 worldPos) {
+  if (dirLightCastsShadows == 0)
+    return 1.0;
+
+  // Directional caster is registered first (slot 0 by convention — see runShadowPass).
+  return computeShadowAt(worldPos, 0);
 }
 
 // ------------------------------------------------------------------
@@ -319,7 +338,8 @@ float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
       float3 pL = normalize(toLight);
       float atten = pow(clamp(1.0 - dist / pointLightRadius[i], 0.0, 1.0), pointLightFalloff[i]);
       float3 pRad = pointLightColor[i] * pointLightIntensity[i] * atten;
-      pointResult += calcPBR(V, normal, pL, pRad, albedo, r, m);
+      float pShadow = computeShadowAt(input.WorldPos, pointLightShadowIdx[i]);
+      pointResult += calcPBR(V, normal, pL, pRad, albedo, r, m) * pShadow;
     }
   }
 
@@ -337,7 +357,8 @@ float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
       float intensity = clamp((theta - spotLightOuterCutoff[j]) / max(epsilon, 0.0001), 0.0, 1.0);
       float distAtten = 1.0 - (dist / spotLightRadius[j]);
       float3 sRad = spotLightColor[j] * spotLightIntensity[j] * intensity * distAtten;
-      spotResult += calcPBR(V, normal, sL, sRad, albedo, r, m);
+      float sShadow = computeShadowAt(input.WorldPos, spotLightShadowIdx[j]);
+      spotResult += calcPBR(V, normal, sL, sRad, albedo, r, m) * sShadow;
     }
   }
 

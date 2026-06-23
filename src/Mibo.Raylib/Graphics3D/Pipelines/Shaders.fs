@@ -297,6 +297,12 @@ uniform float shadowBiases[MAX_SHADOW_CASTERS];
 uniform int shadowTypes[MAX_SHADOW_CASTERS]; // 0=directional, 1=point, 2=spot
 uniform int shadowPass;
 
+// Per-light shadow caster index (-1 = no shadow). Replaces the O(N*M) per-fragment
+// caster-matching scan with an O(N) array read; the CPU fills these from the
+// shadow-pass caster registration.
+uniform int pointLightShadowIdx[{maxPointLights}];
+uniform int spotLightShadowIdx[{maxSpotLights}];
+
 vec3 getNormal()
 {{
     if (useNormalMap == 0)
@@ -512,15 +518,10 @@ void main()
             float atten = pow(clamp(1.0 - dist / pointLightRadius[i], 0.0, 1.0), pointLightFalloff[i]);
             vec3 pRadiance = pointLightColor[i] * pointLightIntensity[i] * atten;
             
-            // Find matching shadow caster for this point light
-            float ptShadow = 1.0;
-            for (int si = 0; si < shadowCasterCount; si++) {{
-                if (shadowTypes[si] == 1 && shadowLightPositions[si] == pointLightPos[i]) {{
-                    ptShadow = computePointShadow(fragWorldPos, si);
-                    break;
-                }}
-            }}
-            
+            // Per-light shadow index (O(1) lookup; was an O(N*M) caster scan).
+            int pIdx = pointLightShadowIdx[i];
+            float ptShadow = (pIdx >= 0) ? computePointShadow(fragWorldPos, pIdx) : 1.0;
+
             pointResult += calcPBR(V, normal, pL, pRadiance, albedo, r, m) * ptShadow;
         }}
     }}
@@ -541,15 +542,10 @@ void main()
             float distAtten = 1.0 - (dist / spotLightRadius[i]);
             vec3 sRadiance = spotLightColor[i] * spotLightIntensity[i] * intensity * distAtten;
             
-            // Find matching shadow caster for this spot light
-            float spShadow = 1.0;
-            for (int si = 0; si < shadowCasterCount; si++) {{
-                if (shadowTypes[si] == 2 && shadowLightPositions[si] == spotLightPos[i]) {{
-                    spShadow = computeSpotShadow(fragWorldPos, si);
-                    break;
-                }}
-            }}
-            
+            // Per-light shadow index (O(1) lookup; was an O(N*M) caster scan).
+            int spIdx = spotLightShadowIdx[i];
+            float spShadow = (spIdx >= 0) ? computeSpotShadow(fragWorldPos, spIdx) : 1.0;
+
             spotResult += calcPBR(V, normal, sL, sRadiance, albedo, r, m) * spShadow;
         }}
     }}

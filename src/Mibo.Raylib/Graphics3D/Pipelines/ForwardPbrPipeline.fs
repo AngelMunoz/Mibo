@@ -179,6 +179,7 @@ type internal PointLightUniforms = {
   Intensity: int[]
   Radius: int[]
   Falloff: int[]
+  ShadowIdx: int[]
 }
 
 [<IsReadOnly; Struct>]
@@ -191,6 +192,7 @@ type internal SpotLightUniforms = {
   Radius: int[]
   InnerCutoff: int[]
   OuterCutoff: int[]
+  ShadowIdx: int[]
 }
 
 [<IsReadOnly; Struct>]
@@ -414,52 +416,71 @@ module internal ShadowPassHelpers =
     struct (arr, count, skinnedStart)
 
   /// Register all shadow-casting lights with the atlas. Returns true if any casters found.
+  /// <summary>
+  /// Register shadow casters for every shadow-casting light. Returns:
+  ///  - <c>hasCasters</c>: true if any caster was registered.
+  ///  - <c>pointShadowSlots</c>: array indexed by <c>lights.PointLights</c> buffer position;
+  ///    value is the caster's flat shader-array index, or -1 if the light doesn't cast / atlas full.
+  ///  - <c>spotShadowSlots</c>: same shape for spot lights.
+  ///
+  /// The flat index equals the order in which casters are registered (dir first, then point,
+  /// then spot), which matches <c>ShadowAtlas.PrepareUniforms</c>'s flattening order — so the
+  /// value uploaded to <c>pointLightShadowIdx[i]</c> indexes <c>shadowViewProjs[idx]</c> correctly.
+  /// </summary>
   let collectShadowCasters(lights: LightBuffers, atlas: ShadowAtlas) =
     let mutable hasCasters = false
+    let mutable casterSlot = 0
+    let pointShadowSlots = Array.create<int> lights.PointLights.Count -1
+    let spotShadowSlots = Array.create<int> lights.SpotLights.Count -1
+
+    let tryAdd casterType pos dir target bias =
+      match atlas.AddCaster(casterType, pos, dir, target, true, bias) with
+      | ValueSome _ ->
+        hasCasters <- true
+        let slot = casterSlot
+        casterSlot <- casterSlot + 1
+        ValueSome slot
+      | ValueNone -> ValueNone
 
     for dir in lights.DirLights do
       if dir.CastsShadows then
-        hasCasters <- true
-
-        atlas.AddCaster(
-          ShadowCasterType.Directional,
-          Vector3.Zero,
-          dir.Direction,
-          Vector3.Zero,
-          true,
+        tryAdd
+          ShadowCasterType.Directional
+          Vector3.Zero
+          dir.Direction
+          Vector3.Zero
           ValueNone
-        )
         |> ignore
 
-    for pt in lights.PointLights do
+    lights.PointLights
+    |> Seq.iteri(fun i pt ->
       if pt.CastsShadows then
-        hasCasters <- true
+        match
+          tryAdd
+            ShadowCasterType.Point
+            pt.Position
+            Vector3.Zero
+            Vector3.Zero
+            pt.ShadowBias
+        with
+        | ValueSome slot -> pointShadowSlots[i] <- slot
+        | ValueNone -> ())
 
-        atlas.AddCaster(
-          ShadowCasterType.Point,
-          pt.Position,
-          Vector3.Zero,
-          Vector3.Zero,
-          true,
-          pt.ShadowBias
-        )
-        |> ignore
-
-    for sp in lights.SpotLights do
+    lights.SpotLights
+    |> Seq.iteri(fun i sp ->
       if sp.CastsShadows then
-        hasCasters <- true
+        match
+          tryAdd
+            ShadowCasterType.Spot
+            sp.Position
+            sp.Direction
+            (sp.Position + sp.Direction)
+            sp.ShadowBias
+        with
+        | ValueSome slot -> spotShadowSlots[i] <- slot
+        | ValueNone -> ())
 
-        atlas.AddCaster(
-          ShadowCasterType.Spot,
-          sp.Position,
-          sp.Direction,
-          sp.Position + sp.Direction,
-          true,
-          sp.ShadowBias
-        )
-        |> ignore
-
-    hasCasters
+    struct (hasCasters, pointShadowSlots, spotShadowSlots)
 
   /// Build an orthographic camera for directional-light shadow rendering.
   let createDirectionalShadowCamera
@@ -560,6 +581,7 @@ module internal PipelineFunctions =
     let intensity = Array.zeroCreate<int> maxPt
     let radius = Array.zeroCreate<int> maxPt
     let falloff = Array.zeroCreate<int> maxPt
+    let shadowIdx = Array.zeroCreate<int> maxPt
 
     for i = 0 to maxPt - 1 do
       pos[i] <- Raylib.GetShaderLocation(shader, $"pointLightPos[{i}]")
@@ -571,6 +593,9 @@ module internal PipelineFunctions =
       radius[i] <- Raylib.GetShaderLocation(shader, $"pointLightRadius[{i}]")
       falloff[i] <- Raylib.GetShaderLocation(shader, $"pointLightFalloff[{i}]")
 
+      shadowIdx[i] <-
+        Raylib.GetShaderLocation(shader, $"pointLightShadowIdx[{i}]")
+
     {
       Count = Raylib.GetShaderLocation(shader, "pointLightCount")
       Pos = pos
@@ -578,6 +603,7 @@ module internal PipelineFunctions =
       Intensity = intensity
       Radius = radius
       Falloff = falloff
+      ShadowIdx = shadowIdx
     }
 
   /// Cache spot light shader locations.
@@ -589,6 +615,7 @@ module internal PipelineFunctions =
     let radius = Array.zeroCreate<int> maxSp
     let innerCutoff = Array.zeroCreate<int> maxSp
     let outerCutoff = Array.zeroCreate<int> maxSp
+    let shadowIdx = Array.zeroCreate<int> maxSp
 
     for i = 0 to maxSp - 1 do
       pos[i] <- Raylib.GetShaderLocation(shader, $"spotLightPos[{i}]")
@@ -606,6 +633,9 @@ module internal PipelineFunctions =
       outerCutoff[i] <-
         Raylib.GetShaderLocation(shader, $"spotLightOuterCutoff[{i}]")
 
+      shadowIdx[i] <-
+        Raylib.GetShaderLocation(shader, $"spotLightShadowIdx[{i}]")
+
     {
       Count = Raylib.GetShaderLocation(shader, "spotLightCount")
       Pos = pos
@@ -615,6 +645,7 @@ module internal PipelineFunctions =
       Radius = radius
       InnerCutoff = innerCutoff
       OuterCutoff = outerCutoff
+      ShadowIdx = shadowIdx
     }
 
   /// Cache shadow shader locations.
@@ -702,7 +733,9 @@ module internal PipelineFunctions =
       variant: inref<ShaderVariant>,
       lights: LightBuffers,
       maxPt: int,
-      maxSp: int
+      maxSp: int,
+      pointShadowSlots: int[],
+      spotShadowSlots: int[]
     ) =
     let locs = variant.Locs
 
@@ -743,6 +776,14 @@ module internal PipelineFunctions =
       setShaderFloat shader locs.PointLights.Radius[i] l.Radius
       setShaderFloat shader locs.PointLights.Falloff[i] l.Falloff
 
+      let slot =
+        if i < pointShadowSlots.Length then
+          pointShadowSlots[i]
+        else
+          -1
+
+      setShaderInt shader locs.PointLights.ShadowIdx[i] slot
+
     let spCount = min lights.SpotLights.Count maxSp
     setShaderInt shader locs.SpotLights.Count spCount
 
@@ -755,6 +796,14 @@ module internal PipelineFunctions =
       setShaderFloat shader locs.SpotLights.Radius[i] s.Radius
       setShaderFloat shader locs.SpotLights.InnerCutoff[i] s.InnerCutoff
       setShaderFloat shader locs.SpotLights.OuterCutoff[i] s.OuterCutoff
+
+      let slot =
+        if i < spotShadowSlots.Length then
+          spotShadowSlots[i]
+        else
+          -1
+
+      setShaderInt shader locs.SpotLights.ShadowIdx[i] slot
 
   /// Single parameterized material uniform setter replacing 3x duplication.
   let setMaterialUniforms
@@ -979,6 +1028,8 @@ module internal PipelineFunctions =
       lights: LightBuffers,
       maxPt: int,
       maxSp: int,
+      pointShadowSlots: int[],
+      spotShadowSlots: int[],
       mesh: Mesh,
       transform: Matrix4x4,
       material: Material3D
@@ -986,7 +1037,16 @@ module internal PipelineFunctions =
     Raylib.BeginShaderMode shader
 
     if variant.LightsDirty then
-      uploadLights(shader, &variant, lights, maxPt, maxSp)
+      uploadLights(
+        shader,
+        &variant,
+        lights,
+        maxPt,
+        maxSp,
+        pointShadowSlots,
+        spotShadowSlots
+      )
+
       variant.LightsDirty <- false
 
     let nm = computeNormalMatrix transform
@@ -1009,13 +1069,24 @@ module internal PipelineFunctions =
       lights: LightBuffers,
       maxPt: int,
       maxSp: int,
+      pointShadowSlots: int[],
+      spotShadowSlots: int[],
       model: Model,
       transform: Matrix4x4
     ) =
     Raylib.BeginShaderMode shader
 
     if variant.LightsDirty then
-      uploadLights(shader, &variant, lights, maxPt, maxSp)
+      uploadLights(
+        shader,
+        &variant,
+        lights,
+        maxPt,
+        maxSp,
+        pointShadowSlots,
+        spotShadowSlots
+      )
+
       variant.LightsDirty <- false
 
     let nm = computeNormalMatrix transform
@@ -1045,6 +1116,8 @@ module internal PipelineFunctions =
       lights: LightBuffers,
       maxPt: int,
       maxSp: int,
+      pointShadowSlots: int[],
+      spotShadowSlots: int[],
       currentCamera: Camera3D,
       mesh: Mesh,
       transform: Matrix4x4,
@@ -1054,7 +1127,16 @@ module internal PipelineFunctions =
     Raylib.BeginShaderMode shader
 
     if variant.LightsDirty then
-      uploadLights(shader, &variant, lights, maxPt, maxSp)
+      uploadLights(
+        shader,
+        &variant,
+        lights,
+        maxPt,
+        maxSp,
+        pointShadowSlots,
+        spotShadowSlots
+      )
+
       variant.LightsDirty <- false
 
     setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
@@ -1080,6 +1162,8 @@ module internal PipelineFunctions =
       lights: LightBuffers,
       maxPt: int,
       maxSp: int,
+      pointShadowSlots: int[],
+      spotShadowSlots: int[],
       currentCamera: Camera3D,
       mesh: Mesh,
       transforms: Matrix4x4[],
@@ -1089,7 +1173,16 @@ module internal PipelineFunctions =
     Raylib.BeginShaderMode shader
 
     if variant.LightsDirty then
-      uploadLights(shader, &variant, lights, maxPt, maxSp)
+      uploadLights(
+        shader,
+        &variant,
+        lights,
+        maxPt,
+        maxSp,
+        pointShadowSlots,
+        spotShadowSlots
+      )
+
       variant.LightsDirty <- false
 
     setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
@@ -1395,12 +1488,23 @@ module internal PipelineFunctions =
     shadowAtlas.Clear()
 
     let mutable hasCasters = false
+    // Per-light shadow-slot mappings; returned to the caller (the closure stores them on the
+    // pipeline fields so the forward-pass handlers can read them).
+    let mutable pointSlots = Array.create<int> lights.PointLights.Count -1
+    let mutable spotSlots = Array.create<int> lights.SpotLights.Count -1
 
     match frameState.Camera with
-    | ValueNone -> ()
+    | ValueNone ->
+      // No camera → no shadow pass; slots stay all -1 (no shadows).
+      ()
     | ValueSome activeCamera ->
       if meshDrawCount > 0 then
-        hasCasters <- collectShadowCasters(lights, shadowAtlas)
+        let struct (hasC, ptSlots, spSlots) =
+          collectShadowCasters(lights, shadowAtlas)
+
+        hasCasters <- hasC
+        pointSlots <- ptSlots
+        spotSlots <- spSlots
 
         if shadowAtlas.Count > 0 then
           Raylib.BeginTextureMode(shadowAtlas.Fbo)
@@ -1490,7 +1594,7 @@ module internal PipelineFunctions =
           Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
           Raylib.EndTextureMode()
 
-    hasCasters
+    struct (hasCasters, pointSlots, spotSlots)
 
 // ------------------------------------------------------------------
 // ForwardPbrPipeline — closure-over-object-expression factory
@@ -1549,6 +1653,12 @@ type ForwardPbrPipeline
   let mutable skinned: ShaderVariant = Unchecked.defaultof<ShaderVariant>
 
   let mutable shadowAtlas: ShadowAtlas = Unchecked.defaultof<ShadowAtlas>
+
+  // Per-light shadow caster slot mapping (computed in runShadowPass, read in uploadLights).
+  // Indexed by lights.PointLights/SpotLights buffer position; -1 = no shadow. Reallocated per
+  // frame to match the live light counts.
+  let mutable pointShadowSlots: int[] = [||]
+  let mutable spotShadowSlots: int[] = [||]
 
   let lights: LightBuffers = {
     Ambient = ResizeArray<AmbientLight3D> 1
@@ -1734,7 +1844,7 @@ type ForwardPbrPipeline
       let mutable hasShadowCasters = false
 
       try
-        hasShadowCasters <-
+        let struct (hasC, ptSlots, spSlots) =
           runShadowPass(
             shadowAtlas,
             atlasCfg,
@@ -1746,6 +1856,10 @@ type ForwardPbrPipeline
             &frameState,
             gameCtx
           )
+
+        hasShadowCasters <- hasC
+        pointShadowSlots <- ptSlots
+        spotShadowSlots <- spSlots
       finally
         ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
 
@@ -1823,6 +1937,8 @@ type ForwardPbrPipeline
                 lights,
                 maxPt,
                 maxSp,
+                pointShadowSlots,
+                spotShadowSlots,
                 mesh,
                 transform,
                 material
@@ -1836,6 +1952,8 @@ type ForwardPbrPipeline
                 lights,
                 maxPt,
                 maxSp,
+                pointShadowSlots,
+                spotShadowSlots,
                 model,
                 transform
               )
@@ -1848,6 +1966,8 @@ type ForwardPbrPipeline
                 lights,
                 maxPt,
                 maxSp,
+                pointShadowSlots,
+                spotShadowSlots,
                 currentCamera,
                 mesh,
                 transform,
@@ -1866,6 +1986,8 @@ type ForwardPbrPipeline
                 lights,
                 maxPt,
                 maxSp,
+                pointShadowSlots,
+                spotShadowSlots,
                 currentCamera,
                 mesh,
                 transforms,

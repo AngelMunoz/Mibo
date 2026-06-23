@@ -26,6 +26,13 @@ type PrimitiveMesh = {
 
   /// <summary>Number of triangles (primitive count for <c>DrawIndexedPrimitives</c>).</summary>
   PrimitiveCount: int
+
+  /// <summary>
+  /// Local-space bounding sphere (unit primitives centered on origin). Used by the shadow
+  /// pass to frustum-cull caster meshes per light (B11). Transform by the draw's world matrix
+  /// to get the world-space sphere.
+  /// </summary>
+  Bounds: BoundingSphere
 } with
 
 
@@ -616,6 +623,7 @@ module Primitive3D =
 
   let private upload
     (gd: GraphicsDevice)
+    (bounds: BoundingSphere)
     (verts: VertexPositionNormalTexture[])
     (indices: int[])
     : PrimitiveMesh =
@@ -646,6 +654,7 @@ module Primitive3D =
       Vertices = vb
       Indices = ib
       PrimitiveCount = indices.Length / 3
+      Bounds = bounds
     }
 
   // ----------------------------------------------------------------
@@ -678,15 +687,26 @@ module Primitive3D =
   /// <param name="gd">The graphics device used to allocate the vertex/index buffers.</param>
   /// <returns>A <see cref="T:Mibo.Elmish.Graphics3D.Primitive3D.PrimitiveSet"/> holding the six meshes.</returns>
   let create(gd: GraphicsDevice) : PrimitiveSet =
-    let mk(builder: unit -> struct (VertexPositionNormalTexture[] * int[])) =
+    // Local-space bounds (unit primitives centered on origin). Radius = max extent from origin.
+    let cubeBounds = BoundingSphere(Vector3.Zero, 0.866025404f) // sqrt(3)/2
+    let sphereBounds = BoundingSphere(Vector3.Zero, 1.0f)
+    let cylinderBounds = BoundingSphere(Vector3.Zero, 1.118033989f) // sqrt(1.25)
+    let planeBounds = BoundingSphere(Vector3.Zero, 0.707106781f) // sqrt(2)/2
+    let torusBounds = BoundingSphere(Vector3.Zero, 1.0f) // outer radius
+    let coneBounds = BoundingSphere(Vector3.Zero, 1.118033989f) // sqrt(1.25)
+
+    let mk
+      (bounds: BoundingSphere)
+      (builder: unit -> struct (VertexPositionNormalTexture[] * int[]))
+      =
       let struct (v, i) = builder()
-      upload gd v i
+      upload gd bounds v i
 
     {
-      Cube = mk buildCube
-      Sphere = mk(fun () -> buildSphere 32 32)
-      Cylinder = mk(fun () -> buildCylinder 32)
-      Plane = mk buildPlane
-      Torus = mk(fun () -> buildTorus 32 32)
-      Cone = mk(fun () -> buildCone 32)
+      Cube = mk cubeBounds buildCube
+      Sphere = mk sphereBounds (fun () -> buildSphere 32 32)
+      Cylinder = mk cylinderBounds (fun () -> buildCylinder 32)
+      Plane = mk planeBounds buildPlane
+      Torus = mk torusBounds (fun () -> buildTorus 32 32)
+      Cone = mk coneBounds (fun () -> buildCone 32)
     }
