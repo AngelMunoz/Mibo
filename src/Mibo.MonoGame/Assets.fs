@@ -122,13 +122,11 @@ type AssetsService(content: ContentManager) =
   /// XNB paths (no extension); raw model files keep their extension.
   /// Resolution order: as-given → relative to ContentManager.RootDirectory.
   /// </summary>
-  member private this.resolveRawPath(path: string) =
-    if File.Exists(path) then
+  member private _.resolveRawPath(path: string) =
+    if Path.IsPathFullyQualified path then
       path
     else
-      let combined = Path.Combine(content.RootDirectory, path)
-
-      if File.Exists(combined) then combined else path
+      Path.Combine(content.RootDirectory, path)
 
   /// <summary>
   /// Loads an Assimp <c>Scene</c> from a raw model file, cached by path. The

@@ -100,6 +100,13 @@ type Animation3DState = {
 type AnimatedMesh = {
   BoneCount: int
   BoneNames: string[]
+  /// <summary>Index of each bone's parent in <c>BoneNames</c>, or -1 for a root bone.</summary>
+  /// <remarks>
+  /// Built from the Assimp node tree so <c>computeBonePalette</c> can compose
+  /// parent chains (local pose × parent world pose). Without this, child bones
+  /// move in isolation — the classic "exploding joints" symptom.
+  /// </remarks>
+  BoneParents: int[]
   InverseBindPose: Matrix[]
 }
 
@@ -677,6 +684,9 @@ module Animation3DState =
     else
       let clip = state.Clips.Clips[state.CurrentClipIndex]
 
+      // Sample each bone's LOCAL pose for the current frame (or blend two clips).
+      let localPoses = Array.zeroCreate<Matrix> boneCount
+
       if state.BlendTargetIndex >= 0 then
         let clipB = state.Clips.Clips[state.BlendTargetIndex]
         let blend = state.BlendProgress
@@ -685,13 +695,57 @@ module Animation3DState =
           let boneName = mesh.BoneNames[i]
           let poseA = sampleChannel clip boneName state.CurrentFrame
           let poseB = sampleChannel clipB boneName state.BlendTargetFrame
-          let blended = Matrix.Lerp(poseA, poseB, blend)
-          matrices.[i] <- mesh.InverseBindPose[i] * blended
+          localPoses[i] <- Matrix.Lerp(poseA, poseB, blend)
       else
         for i = 0 to boneCount - 1 do
           let boneName = mesh.BoneNames[i]
-          let pose = sampleChannel clip boneName state.CurrentFrame
-          matrices.[i] <- mesh.InverseBindPose[i] * pose
+          localPoses[i] <- sampleChannel clip boneName state.CurrentFrame
+
+      // Compose parent chains: worldPose[i] = worldPose[parent] * localPose[i].
+      // MonoGame uses the row-vector convention (v' = v * M; A * B applies A then B),
+      // so a child's world transform is the parent's world applied first, then the
+      // child's local offset — parent on the LEFT. Writing it the other way detaches
+      // children from their parents (the "exploding joints" symptom).
+      // Parents must be processed before children. The bone indices from Assimp
+      // aren't guaranteed to be hierarchy-ordered, so process by ascending parent
+      // depth (roots first). The final palette entry is inverseBind * worldPose,
+      // which maps a bind-space vertex through the animated skeleton
+      // (v * (invBind * world) = (v * invBind) * world).
+      let parents = mesh.BoneParents
+      let worldPoses = Array.zeroCreate<Matrix> boneCount
+
+      // Compute depth (distance to root bone) for each bone to order processing.
+      let depth = Array.zeroCreate<int> boneCount
+
+      let rec depthOf (i: int) : int =
+        if depth[i] > 0 then
+          depth[i]
+        else
+          let p = parents[i]
+
+          if p < 0 then
+            0
+          else
+            1 + depthOf p
+
+      for i = 0 to boneCount - 1 do
+        depth[i] <- depthOf i
+
+      // Process bones in ascending depth order so a parent's world pose is ready.
+      let order = Array.init boneCount id
+      Array.sortInPlaceWith (fun a b -> compare depth[a] depth[b]) order
+
+      for i in order do
+        let p = parents[i]
+
+        let worldPose =
+          if p < 0 then
+            localPoses[i]
+          else
+            worldPoses[p] * localPoses[i]
+
+        worldPoses[i] <- worldPose
+        matrices[i] <- mesh.InverseBindPose[i] * worldPose
 
       matrices
 
@@ -732,15 +786,65 @@ module AnimatedMesh =
         for i = 0 to boneCount - 1 do
           let bone = mesh.Bones[i]
           boneNames[i] <- bone.Name
-          // Assimp's OffsetMatrix is already the inverse-bind matrix.
-          // MonoGame's content pipeline transposes it (Matrix.Transpose);
-          // since we bypass the pipeline and read Assimp directly, we use
-          // the matrix as-is (Assimp gives row-major, System.Numerics is row-major).
-          invBind[i] <- Matrix.op_Implicit bone.OffsetMatrix
+          // Assimp's OffsetMatrix is the inverse-bind matrix in Assimp's
+          // column-vector convention (translation in M14/M24/M34). The clip
+          // merger (buildTrsMatrix) builds poses in MonoGame's row-vector
+          // convention (translation in M41/M42/M43, what Matrix.Translation
+          // reads). MonoGame's content pipeline transposes Assimp's offset
+          // matrix for the same reason (see OpenAssetImporter). Transpose here
+          // so invBind matches the world-pose convention and the palette entry
+          // invBind * worldPose composes correctly.
+          let raw = Matrix.op_Implicit bone.OffsetMatrix
+          invBind[i] <- Matrix.Transpose raw
+
+        // Build the parent-index map by walking the Assimp node tree. Each bone
+        // name maps to a node; a bone's parent is the nearest ancestor node whose
+        // name is also a bone. Nodes that aren't bones (e.g. the model root or the
+        // mesh node) are skipped, so the parent chain only spans skeletal bones.
+        let nameToIndex =
+          let d = System.Collections.Generic.Dictionary<string, int>(boneCount)
+
+          for i = 0 to boneCount - 1 do
+            d[boneNames[i]] <- i
+
+          d
+
+        let boneParents = Array.create boneCount -1
+
+        // For each bone, walk up the Assimp node tree from its node's parent until
+        // we find an ancestor whose name is a bone (record its index), or reach the
+        // root (parent stays -1).
+        let rec findBoneParent (node: Node) : int =
+          if isNull node || isNull node.Parent then
+            -1
+          else
+            match nameToIndex.TryGetValue(node.Name) with
+            | true, idx -> idx
+            | false, _ -> findBoneParent node.Parent
+
+        // Map each bone name to its Assimp node, then resolve the parent bone.
+        let nodeByName =
+          let d = System.Collections.Generic.Dictionary<string, Node>()
+
+          let rec walk (n: Node) =
+            if not(isNull n) then
+              d[n.Name] <- n
+
+              for i = 0 to n.ChildCount - 1 do
+                walk n.Children[i]
+
+          walk scene.RootNode
+          d
+
+        for i = 0 to boneCount - 1 do
+          match nodeByName.TryGetValue(boneNames[i]) with
+          | true, node -> boneParents[i] <- findBoneParent node.Parent
+          | false, _ -> boneParents[i] <- -1
 
         ValueSome {
           BoneCount = boneCount
           BoneNames = boneNames
+          BoneParents = boneParents
           InverseBindPose = invBind
         }
 

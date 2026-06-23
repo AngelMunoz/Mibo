@@ -64,7 +64,7 @@
   <ItemGroup>
     <PackageReference Include="MonoGame.Framework.Native" Version="3.8.4.1" PrivateAssets="all" />
     <PackageReference Include="FSharp.UMX" Version="1.1.0" />
-    <PackageReference Include="AssimpNetter" Version="6.0.4" />
+    <PackageReference Include="AssimpNetter" Version="6.0.4"/>
   </ItemGroup>
 
 </Project>

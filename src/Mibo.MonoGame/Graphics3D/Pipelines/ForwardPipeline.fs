@@ -68,9 +68,9 @@ module private ForwardHelpers =
         Matrix.CreatePerspectiveFieldOfView(
           cam.FovY,
           // Aspect is window-dependent; the pipeline recomputes per-frame using the
-          // active viewport, but the camera itself carries no aspect field. Use 1.0
-          // as a neutral default; callers wanting a specific aspect should set the
-          // projection directly via a custom Effect (DrawMeshEffect).
+          // active viewport (see perspectiveProjection), but the camera itself carries
+          // no aspect field. Use 1.0 as a neutral default; callers wanting a specific
+          // aspect should set the projection directly via a custom Effect (DrawMeshEffect).
           1.0f,
           cam.NearPlane,
           cam.FarPlane
@@ -84,6 +84,23 @@ module private ForwardHelpers =
         )
 
     struct (view, projection)
+
+  /// <summary>
+  /// Recomputes the perspective projection with the correct aspect ratio for the
+  /// given viewport width/height. Called in the forward pass after the viewport is
+  /// applied, since the camera carries no aspect field and the active viewport
+  /// (custom or fullscreen) isn't known at pre-scan time. Orthographic cameras are
+  /// returned unchanged (no aspect correction).
+  /// </summary>
+  let perspectiveProjection (cam: Camera3D) (viewportWidth: float32) (viewportHeight: float32) : Matrix =
+    match cam.Projection with
+    | CameraProjection.Perspective ->
+      let aspect =
+        if viewportHeight > 0.0f then viewportWidth / viewportHeight else 1.0f
+
+      Matrix.CreatePerspectiveFieldOfView(cam.FovY, aspect, cam.NearPlane, cam.FarPlane)
+    | CameraProjection.Orthographic ->
+      Matrix.CreateOrthographic(cam.FovY, cam.FovY, cam.NearPlane, cam.FarPlane)
 
   /// <summary>Applies accumulated lighting to a <see cref="T:Microsoft.Xna.Framework.Graphics.BasicEffect"/>.</summary>
   /// <remarks>
@@ -99,7 +116,21 @@ module private ForwardHelpers =
   /// <see cref="M:Microsoft.Xna.Framework.Color.ToVector3"/> is used directly, so this
   /// function performs zero per-call heap allocations.
   /// </remarks>
-  let applyLighting(effect: BasicEffect, lights: LightBuffers) =
+  /// <summary>Applies accumulated lighting to any <see cref="T:Microsoft.Xna.Framework.Graphics.IEffectLights"/> effect (<c>BasicEffect</c>, <c>SkinnedEffect</c>, etc.).</summary>
+  /// <remarks>
+  /// <b>The native floor.</b> <c>IEffectLights</c> exposes 1 ambient slot + up to 3 directional
+  /// light slots (<c>DirectionalLight0..2</c>). There is <b>no native point/spot light</b> —
+  /// those <c>AddPointLight</c>/<c>AddSpotLight</c> accumulations are collected for parity
+  /// and consumed only by the custom PBR pipeline (B9). Excess directionals (4+) are clamped.
+  /// Unused directional slots are disabled. Fog is off. This is the documented limitation
+  /// upgraded in B9.
+  /// </remarks>
+  /// <remarks>
+  /// Hot path: the three light slots are unrolled (not looped over a temporary array) and
+  /// <see cref="M:Microsoft.Xna.Framework.Color.ToVector3"/> is used directly, so this
+  /// function performs zero per-call heap allocations.
+  /// </remarks>
+  let applyLighting(effect: IEffectLights, lights: LightBuffers) =
     // Ambient.
     match lights.Ambient with
     | ValueSome a ->
@@ -107,7 +138,7 @@ module private ForwardHelpers =
     | ValueNone -> effect.AmbientLightColor <- Vector3.Zero
 
     // Up to 3 directional lights — clamp; disable the rest. Slots unrolled (no temp array)
-    // because this runs once per BasicEffect draw on the hot path.
+    // because this runs once per effect draw on the hot path.
     let dirs = lights.DirLights
     let count = dirs.Count
 
@@ -138,8 +169,17 @@ module private ForwardHelpers =
     else
       effect.DirectionalLight2.Enabled <- false
 
-    effect.FogEnabled <- false
-    effect.PreferPerPixelLighting <- true
+    // FogEnabled is on IEffectFog (BasicEffect/SkinnedEffect both implement it),
+    // not on IEffectLights. PreferPerPixelLighting is on BasicEffect/SkinnedEffect
+    // directly (no shared interface). Set both via type-test.
+    match box effect with
+    | :? IEffectFog as f -> f.FogEnabled <- false
+    | _ -> ()
+
+    match box effect with
+    | :? BasicEffect as be -> be.PreferPerPixelLighting <- true
+    | :? SkinnedEffect as se -> se.PreferPerPixelLighting <- true
+    | _ -> ()
 
   /// <summary>
   /// Sets <c>World</c>/<c>View</c>/<c>Projection</c> on an effect via <see cref="T:Microsoft.Xna.Framework.Graphics.IEffectMatrices"/>
@@ -805,76 +845,24 @@ type ForwardPipeline
       bones: Matrix[]
     ) =
     match part.Effect with
-    | :? SkinnedEffect when this.ensurePbrEffect gd ->
-      // ── PBR skinning path: swap the part's effect for the Skinned technique. ──
-      match pbrEffect, pbrParams with
-      | ValueSome e, ValueSome p ->
-        e.CurrentTechnique <- e.Techniques["Skinned"]
-
-        let mutable t = transform
-        let mutable inv = Matrix.Identity
-        Matrix.Invert(&t, &inv) |> ignore
-        let normalMatrix = Matrix.Transpose inv
-
-        setMatrix p.MatModel transform
-        setMatrix p.ViewProj (state.View * state.Projection)
-        setMatrix p.NormalMatrix normalMatrix
-        setVec3 p.CameraPos state.CurrentCamera.Position
-
-        // Upload the bone palette. The shader's MAX_BONES is 128; copy into the
-        // pooled scratch (zero-fill the tail so unused slots are identity-safe).
-        let boneCount = min bones.Length bonePaletteScratch.Length
-
-        for i = 0 to boneCount - 1 do
-          bonePaletteScratch[i] <- bones[i]
-
-        for i = boneCount to bonePaletteScratch.Length - 1 do
-          bonePaletteScratch[i] <- Matrix.Identity
-
-        setMatrixArray p.Bones bonePaletteScratch
-
-        // Skinned PBR has no Material3D carrier (DrawSkinnedMesh carries none, per §4.1);
-        // bind the part's albedo texture from the SkinnedEffect it replaced, and a neutral
-        // material so the PBR fragment lights correctly. Read the native texture once.
-        let saved = part.Effect
-        let sk = saved :?> SkinnedEffect
-        let albedoTex = sk.Texture
-
-        let neutralMat: Material3D = {
-          AlbedoColor = Color.White
-          AlbedoMap =
-            if isNull albedoTex then ValueNone else ValueSome albedoTex
-          Roughness = 0.5f
-          RoughnessMap = ValueNone
-          Metallic = 0.0f
-          MetallicMap = ValueNone
-          NormalMap = ValueNone
-          EmissionColor = Color.Black
-          EmissionMap = ValueNone
-          Opacity = sk.Alpha
-          Tiling = Vector2.One
-        }
-
-        // Material uniforms upload every skinned draw (no MaterialKey short-circuit —
-        // skinned draws are one-per-entity-per-frame, not batched).
-        uploadPbrMaterial(&p, &neutralMat)
-        bindPbrTextures(gd, &neutralMat)
-        uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
-
-        part.Effect <- e
-
-        try
-          drawPart(gd, part)
-        finally
-          part.Effect <- saved
-      | _ -> () // unreachable (ensurePbrEffect set both)
     | :? SkinnedEffect as se ->
-      // ── Native fallback (PBR effect unavailable): SkinnedEffect, no custom shader. ──
+      // ── Native SkinnedEffect path (default): preserves the model's own texture
+      // and uses standard Blinn-Phong lighting (same light slots as BasicEffect).
+      // The content pipeline bakes BLENDINDICES0/BLENDWEIGHT0 and binds the
+      // albedo texture onto the SkinnedEffect; swapping to the custom PBR effect
+      // would discard that look and re-light with Cook-Torrance, which is wrong
+      // for models authored for the native effect. Bones come from
+      // Animation3DState.computeBonePalette (hierarchy-composed).
       trySetMatrices se transform state.View state.Projection |> ignore
+
+      // SkinnedEffect exposes the same ambient + 3 directional slots as BasicEffect.
+      applyLighting(se, lights)
+
       se.SetBoneTransforms(bones)
       drawPart(gd, part)
     | effect ->
-      // Non-skinned part: draw with its own effect, bones ignored.
+      // Non-skinned part (BasicEffect/custom): draw with its own effect, bones
+      // ignored. This covers models whose parts aren't tagged SkinnedEffect.
       trySetMatrices effect transform state.View state.Projection |> ignore
       drawPart(gd, part)
 
@@ -1974,13 +1962,22 @@ type ForwardPipeline
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
         // ── Camera ──
-        | Command3D.BeginCamera _ -> ()
+        | Command3D.BeginCamera _ ->
+          // Recompute the projection aspect against the saved (fullscreen) viewport,
+          // since buildMatrices used a neutral aspect=1.0 in the pre-scan.
+          let vp = state.SavedViewport
+          state.Projection <- perspectiveProjection state.CurrentCamera (float32 vp.Width) (float32 vp.Height)
 
         | Command3D.BeginCameraConfig cfg ->
           // Apply viewport + clear color (deferred from pre-scan so clearing happens here).
           match cfg.Viewport with
           | ValueSome rect -> gd.Viewport <- Viewport(rect)
           | ValueNone -> ()
+
+          // Recompute the projection aspect against the now-active viewport
+          // (custom rect or fullscreen). buildMatrices used aspect=1.0 in the pre-scan.
+          let vp = gd.Viewport
+          state.Projection <- perspectiveProjection cfg.Camera (float32 vp.Width) (float32 vp.Height)
 
           match cfg.ClearColor with
           | ValueSome c -> gd.Clear(ClearOptions.Target, c.ToVector4(), 1.0f, 0)
