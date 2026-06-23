@@ -1411,7 +1411,10 @@ type ForwardPipeline
       Matrix.CreateLookAt(light.Position, light.Position + lightDir, safeUp)
 
     // Outer cutoff is a cosine; half-angle FOV = acos(outerCutoff), full FOV = 2× that.
-    let fov = 2.0f * MathF.Acos(light.OuterCutoff)
+    // Clamp to a safe open interval — CreatePerspectiveFieldOfView throws if FOV ∉ (0, π).
+    // Edge cases: OuterCutoff = 1 → FOV 0 (degenerate narrow), OuterCutoff <= 0 → FOV >= π.
+    let fov =
+      max 0.01f (min (MathF.PI - 0.01f) (2.0f * MathF.Acos(light.OuterCutoff)))
 
     // Dynamic near plane: CreatePerspectiveFieldOfView throws if near >= far.
     let nearPlane = min 0.1f (light.Radius * 0.5f)
@@ -1586,7 +1589,15 @@ type ForwardPipeline
               let prevDepth = gd.DepthStencilState
 
               gd.SetRenderTarget(shadowAtlas.Fbo)
-              gd.Clear(ClearOptions.Target, Color.White.ToVector4(), 1.0f, 0)
+              // Clear color (white = far = lit, written to .r by DepthShadow.fx) AND depth —
+              // depth testing is enabled for caster hidden-surface removal, so stale depth from
+              // a previous frame would reject caster geometry and corrupt the shadow map.
+              gd.Clear(
+                ClearOptions.Target ||| ClearOptions.DepthBuffer,
+                Color.White.ToVector4(),
+                1.0f,
+                0
+              )
 
               // Native polygon-offset bias (replaces raylib's dFdx/dFdy shader math).
               // Cached (config-driven). For B11 the bias uses DirectionalBias as the base —
