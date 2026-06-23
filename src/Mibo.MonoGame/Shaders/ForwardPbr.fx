@@ -207,22 +207,25 @@ VS_OUTPUT VS_Instanced(VS_INPUT_INSTANCED input) {
 
 float4x4 boneMatrices[MAX_BONES];
 
+// VS_INPUT_SKINNED mirrors MonoGame's SkinnedEffect.fx VSInputNmTxWeights: bone
+// indices arrive as int4 (the pipeline bakes them as Byte4, which binds to int4
+// exactly — NOT float4, whose (int) cast would misinterpret the byte encoding).
 struct VS_INPUT_SKINNED {
   float3 Position   : POSITION0;
   float2 TexCoord   : TEXCOORD0;
   float3 Normal     : NORMAL0;
   float4 Color      : COLOR0;
   float4 BoneWeights: BLENDWEIGHT0;
-  float4 BoneIndices: BLENDINDICES0;
+  int4   BoneIndices: BLENDINDICES0;
 };
 
 VS_OUTPUT VS_Skinned(VS_INPUT_SKINNED input) {
   VS_OUTPUT output;
 
-  int ids0 = (int) input.BoneIndices.x;
-  int ids1 = (int) input.BoneIndices.y;
-  int ids2 = (int) input.BoneIndices.z;
-  int ids3 = (int) input.BoneIndices.w;
+  int ids0 = input.BoneIndices.x;
+  int ids1 = input.BoneIndices.y;
+  int ids2 = input.BoneIndices.z;
+  int ids3 = input.BoneIndices.w;
 
   float4x4 skin =
     input.BoneWeights.x * boneMatrices[ids0] +
