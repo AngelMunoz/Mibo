@@ -270,56 +270,14 @@ module private ForwardHelpers =
       TilingY = mat.Tiling.Y
     }
 
-  // PbrEffectParams (and its semantic sub-records Matrix/Material/Ambient/DirLight/
-  // PointLights/SpotLights/Shadow) moved to PbrUniforms.fs in the v2 pipeline-staging
-  // refactor. The upload helpers (uploadLights/uploadMaterial/bindTextures) + pooled
-  // light scratch arrays moved there too. ForwardPipeline references them as
-  // PbrUniforms.build / PbrUniforms.uploadLights / etc.
+// PbrEffectParams (and its semantic sub-records Matrix/Material/Ambient/DirLight/
+// PointLights/SpotLights/Shadow) moved to PbrUniforms.fs in the v2 pipeline-staging
+// refactor. The upload helpers (uploadLights/uploadMaterial/bindTextures) + pooled
+// light scratch arrays moved there too. ForwardPipeline references them as
+// PbrUniforms.build / PbrUniforms.uploadLights / etc.
 
-  /// <summary>
-  /// Cached <see cref="T:Microsoft.Xna.Framework.Graphics.EffectParameter"/> handles for
-  /// the depth-only shadow pass effect (<c>DepthShadow.fx</c>).
-  /// </summary>
-  [<Struct>]
-  type ShadowEffectParams = {
-    MatModel: EffectParameter
-    ViewProj: EffectParameter
-    // Skinning (B12 DepthSkinned technique): bone palette. null on the plain
-    // Depth technique — the skinned-caster path uploads only when present.
-    Bones: EffectParameter
-  }
-
-  /// <summary>Builds the shadow-pass parameter handles once after load.</summary>
-  let buildShadowParams(e: Effect) : ShadowEffectParams = {
-    MatModel = e.Parameters["matModel"]
-    ViewProj = e.Parameters["viewProj"]
-    Bones = e.Parameters["boneMatrices"]
-  }
-
-  /// <summary>A mesh draw collected for the shadow pass (caster geometry).</summary>
-  [<Struct>]
-  type ShadowMeshDraw = {
-    Mesh: PrimitiveMesh
-    Transform: Matrix
-    /// World-space bounds (mesh.Bounds transformed by Transform). Precomputed at collection
-    /// time so the per-caster frustum cull in runShadowPass is a single ContainmentType check.
-    WorldBounds: BoundingSphere
-  }
-
-  /// <summary>A skinned caster draw collected for the shadow pass (B12).</summary>
-  /// <remarks>
-  /// Unlike <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ShadowMeshDraw"/>, a skinned caster
-  /// carries no world-space bounds: a bare <c>ModelMeshPart</c> has no parent reference, so the
-  /// part's <c>ModelMesh.BoundingSphere</c> isn't reachable at collection time. Skinned casters
-  /// are therefore drawn unconditionally (no per-light frustum cull) — correct for the sample's
-  /// single animated character; the per-caster cull only matters at scale for instanced terrain.
-  /// </remarks>
-  [<Struct>]
-  type ShadowSkinnedDraw = {
-    Part: ModelMeshPart
-    Transform: Matrix
-    Bones: Matrix[]
-  }
+// ShadowEffectParams + buildShadowParams, ShadowMeshDraw, ShadowSkinnedDraw all moved
+// to ShadowPass.fs in the v2 refactor (along with the pass body + the 3 ViewProj builders).
 
 // buildPbrParams moved to PbrUniforms.fs (PbrUniforms.build).
 
@@ -397,37 +355,15 @@ type ForwardPipelineBase
   let mutable pbrHasLastMaterial = false
   let mutable pbrLastKey: MaterialKey = Unchecked.defaultof<MaterialKey>
 
-  // B10 directional shadow atlas. ShadowAtlas owns the R32F RenderTarget2D (allocated
-  // lazily against the real device on first shadow pass). shadowEffect is DepthShadow.fx
-  // (writes non-linear depth to .r). shadowOrigin shadows the SetShadowOrigin command;
-  // shadowsEnabled gates which meshes cast (EnableShadows/DisableShadows). The pooled
-  // shadowDraws array holds the mesh draws collected for the shadow pass (gated by the
-  // toggle), avoiding per-frame allocation.
-  let shadowAtlas = ShadowAtlas(atlasCfg, biasCfg)
-  let mutable shadowEffect: Effect voption = ValueNone
-  let mutable shadowParams: ShadowEffectParams voption = ValueNone
-  let mutable shadowOrigin: Vector3 voption = ValueNone
-  // Cached RasterizerState for the shadow pass (polygon-offset bias + back-face culling).
-  // Created once on first shadow pass; disposed in Shutdown. Avoids per-frame GPU-resource
-  // allocation (new RasterizerState() creates a native ID3D11RasterizerState / GL state object).
-  let mutable shadowRaster: RasterizerState = null
-  // Pooled scratch for the shadow pass: caster mesh draws collected from the buffer.
-  let mutable shadowDraws = Array.zeroCreate<ShadowMeshDraw> 64
-  // Per-light shadow caster slot mapping (computed in runShadowPass, read in uploadPbrLights).
-  // Indexed by lights.PointLights/SpotLights buffer position; -1 = no shadow.
-  let mutable pointShadowSlots: int[] = [||]
-  let mutable spotShadowSlots: int[] = [||]
-  // Pooled scratch for the multi-caster shadowViewProjs/UVOffsets upload.
-  let mutable shadowViewProjsScratch = Array.zeroCreate<Matrix> 16
-  let mutable shadowUVOffsetsScratch = Array.zeroCreate<Vector4> 16
-  // Reused per-caster frustum (updated in-place via .Matrix) to avoid per-frame heap allocation
-  // in the shadow render loop.
-  let shadowFrustum = BoundingFrustum(Matrix.Identity)
-  // Pooled skinned-caster draws collected for the shadow pass (B12). Grows on demand.
-  let mutable shadowSkinnedDraws = Array.zeroCreate<ShadowSkinnedDraw> 8
-  // Pooled bone-palette staging array for skinned draws (B12). Shader's MAX_BONES is
-  // 128; reuse across frames, never shrink. Avoids per-draw allocation on the hot path.
-  let mutable bonePaletteScratch = Array.zeroCreate<Matrix> 128
+  // Shadow pass: all shadow state (atlas, depth effect + params, origin, raster, pooled
+  // caster/skinned/scratch arrays, per-light slot mappings, frustum, bone palette) is owned
+  // by ShadowResources and driven by ShadowPass.run. See ShadowPass.fs.
+  let shadowRes = ShadowResources(atlasCfg, biasCfg)
+  // bonePaletteScratch is also written by the forward-pass skinned handlers (handleDrawAnimatedModel,
+  // shadeWithEffect); alias it from the shadow resources so both paths share the one pooled array.
+  // (The shadow pass reads/writes bonePaletteScratch in place; it never reassigns the field, so an
+  //  alias is safe here — unlike the slot arrays, which ShadowPass.run can reassign.)
+  let bonePaletteScratch = shadowRes.BonePaletteScratch
 
   // Instancing: the custom Instanced effect (loads from embedded .mgfx via ShaderLoader)
   // and a growable per-instance vertex buffer. The effect has instance input semantics
@@ -708,8 +644,8 @@ type ForwardPipelineBase
           PbrUniforms.uploadLights(
             &p,
             lights,
-            pointShadowSlots,
-            spotShadowSlots
+            shadowRes.PointShadowSlots,
+            shadowRes.SpotShadowSlots
           )
 
           for part in mesh.MeshParts do
@@ -795,8 +731,8 @@ type ForwardPipelineBase
           PbrUniforms.uploadLights(
             &p,
             lights,
-            pointShadowSlots,
-            spotShadowSlots
+            shadowRes.PointShadowSlots,
+            shadowRes.SpotShadowSlots
           )
 
           for part in mesh.MeshParts do
@@ -847,21 +783,8 @@ type ForwardPipelineBase
         true
       | ValueNone -> false
 
-  /// <summary>
-  /// Lazily loads the depth-only shadow effect (<c>DepthShadow.fx</c>) on first shadow
-  /// pass. Returns <c>true</c> when loaded; <c>false</c> when the embedded resource is
-  /// missing (the shadow pass is skipped — forward rendering proceeds unshadowed).
-  /// </summary>
-  member private _.ensureShadowEffect(gd: GraphicsDevice) : bool =
-    match shadowEffect with
-    | ValueSome _ -> true
-    | ValueNone ->
-      match ShaderLoader.loadEffect gd "DepthShadow" with
-      | ValueSome e ->
-        shadowParams <- ValueSome(buildShadowParams e)
-        shadowEffect <- ValueSome e
-        true
-      | ValueNone -> false
+  // The depth-only shadow effect is now loaded lazily inside ShadowPass.run (against
+  // shadowRes.Effect/Params), so this pipeline no longer owns an ensureShadowEffect hook.
 
   /// <summary>
   /// Handles <c>DrawPrimitive</c>: draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/>
@@ -908,7 +831,12 @@ type ForwardPipelineBase
           pbrLastKey <- key
           pbrHasLastMaterial <- true
 
-        PbrUniforms.uploadLights(&p, lights, pointShadowSlots, spotShadowSlots)
+        PbrUniforms.uploadLights(
+          &p,
+          lights,
+          shadowRes.PointShadowSlots,
+          shadowRes.SpotShadowSlots
+        )
 
         mesh.Draw(gd, e)
       | _ -> () // unreachable (ensurePbrEffect set both)
@@ -1040,8 +968,8 @@ type ForwardPipelineBase
           PbrUniforms.uploadLights(
             &p,
             lights,
-            pointShadowSlots,
-            spotShadowSlots
+            shadowRes.PointShadowSlots,
+            shadowRes.SpotShadowSlots
           )
 
           for pass in e.CurrentTechnique.Passes do
@@ -1361,468 +1289,30 @@ type ForwardPipelineBase
     gd.BlendState <- BlendState.Opaque
 
   // ----------------------------------------------------------------
-  // Shadow pass (B10 — directional shadows only)
+  // Shadow pass — delegates to ShadowPass.run (see ShadowPass.fs)
   // ----------------------------------------------------------------
 
   /// <summary>
-  /// Builds the directional light's orthographic shadow ViewProj (port of canonical
-  /// <c>createDirectionalShadowCamera</c>). Fixed-size ortho box positioned behind a
-  /// grid-snapped origin along the light direction. §6.1: <c>CreateLookAt * CreateOrthographic</c>
-  /// in application order, plain matrices, no transpose.
-  /// </summary>
-  member private _.buildDirectionalShadowViewProj
-    (lightDir: Vector3, activeCamera: Camera3D)
-    : Matrix =
-    let lightFromDir = Vector3.Normalize(-lightDir)
-
-    let rawOrigin =
-      match shadowOrigin with
-      | ValueSome origin -> origin
-      | ValueNone ->
-        match atlasCfg.OriginStrategy with
-        | ShadowOriginStrategy.CameraTarget -> activeCamera.Target
-        | ShadowOriginStrategy.SceneCenter -> Vector3.Zero
-        | ShadowOriginStrategy.Custom f -> f activeCamera
-
-    let snap = atlasCfg.GridSnapSize
-
-    let snappedX =
-      if snap > 0.0f then
-        MathF.Round(rawOrigin.X / snap) * snap
-      else
-        rawOrigin.X
-
-    let snappedZ =
-      if snap > 0.0f then
-        MathF.Round(rawOrigin.Z / snap) * snap
-      else
-        rawOrigin.Z
-
-    let shadowOrigin = Vector3(snappedX, rawOrigin.Y, snappedZ)
-
-    let lightDistance =
-      match atlasCfg.DirectionalLightDistance with
-      | ValueSome d -> d
-      | ValueNone -> 100.0f
-
-    let lightPos = shadowOrigin + lightFromDir * lightDistance
-
-    let safeUp =
-      if abs lightDir.Y > 0.99f then
-        Vector3.UnitZ
-      else
-        Vector3.UnitY
-
-    let orthoSize =
-      match atlasCfg.DirectionalLightSize with
-      | ValueSome s -> s
-      | ValueNone -> 50.0f
-
-    let shadowNear = 1.0f
-    let shadowFar = lightDistance + orthoSize * 2.0f
-
-    let view = Matrix.CreateLookAt(lightPos, shadowOrigin, safeUp)
-
-    let proj =
-      Matrix.CreateOrthographicOffCenter(
-        -orthoSize,
-        orthoSize,
-        -orthoSize,
-        orthoSize,
-        shadowNear,
-        shadowFar
-      )
-
-    view * proj
-
-  /// <summary>
-  /// Builds a point light's shadow ViewProj — a downward-facing 90° perspective frustum
-  /// (matches canonical raylib; correct for ground-level point lights like the sample's
-  /// mushrooms). §6.1: <c>CreateLookAt * CreatePerspectiveFieldOfView</c> in application order.
-  /// </summary>
-  member private _.buildPointShadowViewProj
-    (lightPos: Vector3, lightRadius: float32)
-    : Matrix =
-    let view =
-      Matrix.CreateLookAt(lightPos, lightPos - Vector3.UnitY, Vector3.UnitZ)
-
-    // Dynamic near plane: CreatePerspectiveFieldOfView throws if near >= far.
-    // Keep near strictly below half the radius so the frustum is always valid.
-    let nearPlane = min 0.1f (lightRadius * 0.5f)
-
-    let proj =
-      Matrix.CreatePerspectiveFieldOfView(
-        MathF.PI * 0.5f, // 90°
-        1.0f,
-        nearPlane,
-        lightRadius
-      )
-
-    view * proj
-
-  /// <summary>
-  /// Builds a spot light's shadow ViewProj — a perspective frustum from the light position
-  /// toward <c>pos + dir</c>, with FOV from the outer cutoff cone. §6.1 application order.
-  /// </summary>
-  member private _.buildSpotShadowViewProj(light: SpotLight3D) : Matrix =
-    let lightDir = Vector3.Normalize light.Direction
-
-    let safeUp =
-      if abs lightDir.Y > 0.99f then
-        Vector3.UnitZ
-      else
-        Vector3.UnitY
-
-    let view =
-      Matrix.CreateLookAt(light.Position, light.Position + lightDir, safeUp)
-
-    // Outer cutoff is a cosine; half-angle FOV = acos(outerCutoff), full FOV = 2× that.
-    // Clamp to a safe open interval — CreatePerspectiveFieldOfView throws if FOV ∉ (0, π).
-    // Edge cases: OuterCutoff = 1 → FOV 0 (degenerate narrow), OuterCutoff <= 0 → FOV >= π.
-    let fov =
-      max 0.01f (min (MathF.PI - 0.01f) (2.0f * MathF.Acos(light.OuterCutoff)))
-
-    // Dynamic near plane: CreatePerspectiveFieldOfView throws if near >= far.
-    let nearPlane = min 0.1f (light.Radius * 0.5f)
-
-    let proj =
-      Matrix.CreatePerspectiveFieldOfView(fov, 1.0f, nearPlane, light.Radius)
-
-    view * proj
-
-  /// <summary>
-  /// Runs the shadow pass: collects dir + point + spot casters (B11 extends B10's dir-only),
-  /// renders depth to the atlas using <c>DepthShadow.fx</c> with
-  /// <c>RasterizerState.SlopeScaleDepthBias</c>, then uploads shadow uniforms to the PBR
-  /// effect for forward-pass sampling. Per-light frustum culling skips caster meshes outside
-  /// each light's frustum (Layer 3 of the cost analysis).
+  /// Runs the shadow pass: collects dir + point + spot casters, renders depth to the atlas, then
+  /// uploads shadow uniforms to the PBR effect. The body lives in <c>ShadowPass.run</c>; this
+  /// member just forwards the pipeline's resources + config. Ensures the PBR effect is loaded
+  /// first (shadow uniforms upload to it).
   /// </summary>
   member private this.runShadowPass
     (gd: GraphicsDevice, state: byref<ForwardState>, buffer: RenderBuffer3D)
     =
-    // Decide whether any light casts shadows (dir, point, or spot).
-    let hasDirCaster = lights.DirLights |> Seq.exists(fun d -> d.CastsShadows)
+    // Ensure the PBR effect is loaded BEFORE the pass uploads shadow uniforms to it.
+    this.ensurePbrEffect gd |> ignore
 
-    let hasPointCaster =
-      lights.PointLights |> Seq.exists(fun p -> p.CastsShadows)
-
-    let hasSpotCaster = lights.SpotLights |> Seq.exists(fun s -> s.CastsShadows)
-
-    // Always init the per-light slot mappings (default -1 = no shadow). Even when no casters
-    // exist, the forward pass reads these to upload pointLightShadowIdx/spotLightShadowIdx.
-    // Reuse the arrays across frames (only reallocate if the light count grew) to avoid
-    // per-frame heap allocation on the hot path.
-    if pointShadowSlots.Length < lights.PointLights.Count then
-      pointShadowSlots <- Array.create<int> lights.PointLights.Count -1
-    else
-      Array.Fill(pointShadowSlots, -1)
-
-    if spotShadowSlots.Length < lights.SpotLights.Count then
-      spotShadowSlots <- Array.create<int> lights.SpotLights.Count -1
-    else
-      Array.Fill(spotShadowSlots, -1)
-
-    if not(hasDirCaster || hasPointCaster || hasSpotCaster) then
-      match pbrParams with
-      | ValueSome p -> PbrUniforms.setInt p.Shadow.DirLightCastsShadows 0
-      | ValueNone -> ()
-    else
-      // Lazily create the atlas RT + shadow effect.
-      shadowAtlas.EnsureResources gd
-      // Ensure the PBR effect is loaded BEFORE uploading shadow uniforms to it.
-      this.ensurePbrEffect gd |> ignore
-
-      if not(this.ensureShadowEffect gd) then
-        () // DepthShadow.fx missing — render unshadowed.
-      else
-        match shadowEffect, shadowParams with
-        | ValueSome depthEffect, ValueSome depthParams ->
-          shadowAtlas.Clear()
-
-          // ── Register casters: dir first (slot 0), then point, then spot ──
-          // The flat shader-array index == registration order (matches PrepareUniforms).
-          let mutable casterSlot = 0
-
-          // Directional (first CastsShadows one only — matches canonical raylib).
-          if hasDirCaster then
-            let dirLight = lights.DirLights |> Seq.find(fun d -> d.CastsShadows)
-
-            let vp =
-              this.buildDirectionalShadowViewProj(
-                dirLight.Direction,
-                state.CurrentCamera
-              )
-
-            match
-              shadowAtlas.AddCaster(
-                ShadowCasterType.Directional,
-                Vector3.Zero,
-                dirLight.Direction,
-                Vector3.Zero,
-                true,
-                ValueNone
-              )
-            with
-            | ValueSome _ ->
-              shadowAtlas.SetRegionViewProj(casterSlot, vp)
-              casterSlot <- casterSlot + 1
-            | ValueNone -> ()
-
-          // Point lights. (for loop, not Seq.iteri — avoids per-frame enumerator allocation.)
-          for i = 0 to lights.PointLights.Count - 1 do
-            let pt = lights.PointLights[i]
-
-            if pt.CastsShadows then
-              let vp = this.buildPointShadowViewProj(pt.Position, pt.Radius)
-
-              match
-                shadowAtlas.AddCaster(
-                  ShadowCasterType.Point,
-                  pt.Position,
-                  Vector3.Zero,
-                  Vector3.Zero,
-                  true,
-                  pt.ShadowBias
-                )
-              with
-              | ValueSome _ ->
-                shadowAtlas.SetRegionViewProj(casterSlot, vp)
-                pointShadowSlots[i] <- casterSlot
-                casterSlot <- casterSlot + 1
-              | ValueNone -> ()
-
-          // Spot lights.
-          for i = 0 to lights.SpotLights.Count - 1 do
-            let sp = lights.SpotLights[i]
-
-            if sp.CastsShadows then
-              let vp = this.buildSpotShadowViewProj sp
-
-              match
-                shadowAtlas.AddCaster(
-                  ShadowCasterType.Spot,
-                  sp.Position,
-                  sp.Direction,
-                  sp.Position + sp.Direction,
-                  true,
-                  sp.ShadowBias
-                )
-              with
-              | ValueSome _ ->
-                shadowAtlas.SetRegionViewProj(casterSlot, vp)
-                spotShadowSlots[i] <- casterSlot
-                casterSlot <- casterSlot + 1
-              | ValueNone -> ()
-
-          if casterSlot = 0 then
-            ()
-          else
-            // ── Collect caster meshes (PrimitiveMesh + skinned draws, gated by EnableShadows/DisableShadows) ──
-            let mutable castEnabled = true
-            let mutable drawCount = 0
-            let mutable skinnedCount = 0
-
-            for i = 0 to buffer.Count - 1 do
-              match buffer[i] with
-              | Command3D.EnableShadows -> castEnabled <- true
-              | Command3D.DisableShadows -> castEnabled <- false
-              | Command3D.DrawPrimitive(mesh, transform, _) when castEnabled ->
-                if drawCount >= shadowDraws.Length then
-                  Array.Resize(&shadowDraws, shadowDraws.Length * 2)
-
-                // Precompute the world-space bounds for the frustum cull.
-                // Transform the local-space bounds to world space (Transform handles scaling —
-                // using the local radius directly would false-negative the cull on scaled meshes).
-                let worldBounds = mesh.Bounds.Transform transform
-
-                shadowDraws[drawCount] <- {
-                  Mesh = mesh
-                  Transform = transform
-                  WorldBounds = worldBounds
-                }
-
-                drawCount <- drawCount + 1
-              | Command3D.DrawAnimatedModel(model, transform, bones) when
-                castEnabled
-                ->
-                // Skinned casters. A bare ModelMeshPart has no bounds (no parent ref), so these
-                // are drawn unconditionally per caster — no frustum cull. See ShadowSkinnedDraw
-                // remarks for why that's acceptable for the sample. Collect each skinned part of
-                // the model as a separate ShadowSkinnedDraw (bones shared across all parts).
-                for mesh in model.Meshes do
-                  for part in mesh.MeshParts do
-                    match part.Effect with
-                    | :? SkinnedEffect ->
-                      if skinnedCount >= shadowSkinnedDraws.Length then
-                        Array.Resize(
-                          &shadowSkinnedDraws,
-                          shadowSkinnedDraws.Length * 2
-                        )
-
-                      shadowSkinnedDraws[skinnedCount] <- {
-                        Part = part
-                        Transform = transform
-                        Bones = bones
-                      }
-
-                      skinnedCount <- skinnedCount + 1
-                    | _ -> ()
-              | _ -> ()
-
-            if drawCount = 0 && skinnedCount = 0 then
-              ()
-            else
-              shadowAtlas.PrepareUniforms()
-
-              // ── Render depth into the atlas ──
-              let prevViewport = gd.Viewport
-              let prevRaster = gd.RasterizerState
-              let prevBlend = gd.BlendState
-              let prevDepth = gd.DepthStencilState
-
-              gd.SetRenderTarget(shadowAtlas.Fbo)
-              // Clear color (white = far = lit, written to .r by DepthShadow.fx) AND depth —
-              // depth testing is enabled for caster hidden-surface removal, so stale depth from
-              // a previous frame would reject caster geometry and corrupt the shadow map.
-              gd.Clear(
-                ClearOptions.Target ||| ClearOptions.DepthBuffer,
-                Color.White.ToVector4(),
-                1.0f,
-                0
-              )
-
-              // Native polygon-offset bias (replaces raylib's dFdx/dFdy shader math).
-              // Cached (config-driven). For B11 the bias uses DirectionalBias as the base —
-              // per-type bias swap is deferred (the shadowRaster caches one state; a per-caster
-              // bias swap would need 3 rasterizers). Documented limitation.
-              if obj.ReferenceEquals(shadowRaster, null) then
-                let sr = new RasterizerState()
-                sr.CullMode <- CullMode.CullClockwiseFace
-                sr.DepthBias <- biasCfg.DirectionalBias
-                sr.SlopeScaleDepthBias <- biasCfg.SlopeScaleBias
-                shadowRaster <- sr
-
-              gd.RasterizerState <- shadowRaster
-              gd.BlendState <- BlendState.Opaque
-              gd.DepthStencilState <- DepthStencilState.Default
-
-              depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
-
-              for caster in shadowAtlas.Casters do
-                if caster.Enabled then
-                  let casterVP =
-                    shadowAtlas.GetRegionViewProj caster.AtlasRegion
-
-                  gd.Viewport <-
-                    shadowAtlas.GetRegionViewport(caster.AtlasRegion)
-                  // Per-light frustum cull (Layer 3 of the cost analysis): skip meshes the
-                  // caster's frustum can't see. Update the cached frustum in-place (avoids
-                  // per-caster BoundingFrustum allocation every frame).
-                  shadowFrustum.Matrix <- casterVP
-
-                  // ── Non-skinned casters (PrimitiveMesh, plain Depth technique) ──
-                  for d = 0 to drawCount - 1 do
-                    let draw = shadowDraws[d]
-
-                    if Culling.isVisible shadowFrustum draw.WorldBounds then
-                      PbrUniforms.setMatrix depthParams.MatModel draw.Transform
-                      PbrUniforms.setMatrix depthParams.ViewProj casterVP
-
-                      for pass in depthEffect.CurrentTechnique.Passes do
-                        pass.Apply()
-                        draw.Mesh.Draw(gd, depthEffect)
-
-                  // ── Skinned casters (B12: DepthSkinned technique, bone palette upload) ──
-                  if skinnedCount > 0 then
-                    depthEffect.CurrentTechnique <-
-                      depthEffect.Techniques["DepthSkinned"]
-
-                    for d = 0 to skinnedCount - 1 do
-                      let draw = shadowSkinnedDraws[d]
-                      // Skinned casters are drawn unconditionally (no frustum cull — see
-                      // ShadowSkinnedDraw remarks). A single animated character per scene.
-                      PbrUniforms.setMatrix depthParams.MatModel draw.Transform
-                      PbrUniforms.setMatrix depthParams.ViewProj casterVP
-
-                      // Upload the bone palette (tail zero-filled to identity — see handleDrawAnimatedModel).
-                      let boneCount =
-                        min draw.Bones.Length bonePaletteScratch.Length
-
-                      for i = 0 to boneCount - 1 do
-                        bonePaletteScratch[i] <- draw.Bones[i]
-
-                      for i = boneCount to bonePaletteScratch.Length - 1 do
-                        bonePaletteScratch[i] <- Matrix.Identity
-
-                      PbrUniforms.setMatrixArray
-                        depthParams.Bones
-                        bonePaletteScratch
-
-                      // drawPart applies part.Effect.CurrentTechnique.Passes, so the
-                      // DepthSkinned technique must be bound on the part's own Effect slot
-                      // — otherwise drawPart re-applies the SkinnedEffect and renders the
-                      // shadow with the forward shader instead of depth-only. Swap the
-                      // part's Effect for the depth effect around the draw, matching
-                      // handleDrawAnimatedModel's effect-swap pattern.
-                      let saved = draw.Part.Effect
-                      draw.Part.Effect <- depthEffect
-
-                      try
-                        drawPart(gd, draw.Part)
-                      finally
-                        draw.Part.Effect <- saved
-
-                    // Restore the plain Depth technique for the next caster's non-skinned pass.
-                    depthEffect.CurrentTechnique <-
-                      depthEffect.Techniques["Depth"]
-
-              // ── Restore device state ──
-              (gd.SetRenderTarget null)
-              gd.Viewport <- prevViewport
-              gd.RasterizerState <- prevRaster
-              gd.BlendState <- prevBlend
-              gd.DepthStencilState <- prevDepth
-
-              // ── Upload shadow uniforms to the PBR effect ──
-              match pbrParams with
-              | ValueSome p ->
-                PbrUniforms.setInt
-                  p.Shadow.DirLightCastsShadows
-                  (if hasDirCaster then 1 else 0)
-
-                // Multi-caster: upload the full packed arrays (shadowViewProjs + shadowUVOffsets).
-                let active = shadowAtlas.ActiveCasterCount
-
-                if active > 0 then
-                  if shadowViewProjsScratch.Length < active then
-                    shadowViewProjsScratch <- Array.zeroCreate<Matrix> active
-                    shadowUVOffsetsScratch <- Array.zeroCreate<Vector4> active
-
-                  let vpArr = shadowAtlas.ViewProjs
-                  let uvArr = shadowAtlas.UVOffsets
-
-                  for i = 0 to active - 1 do
-                    shadowViewProjsScratch[i] <- vpArr[i]
-                    shadowUVOffsetsScratch[i] <- uvArr[i]
-
-                  PbrUniforms.setMatrixArray
-                    p.Shadow.ShadowViewProjs
-                    shadowViewProjsScratch
-
-                  PbrUniforms.setVec4Array
-                    p.Shadow.ShadowUVOffsets
-                    shadowUVOffsetsScratch
-
-                let texel = 1.0f / float32 atlasCfg.Resolution
-
-                PbrUniforms.setVec2
-                  p.Shadow.ShadowTexelSize
-                  (Vector2(texel, texel))
-
-                gd.Textures[5] <- shadowAtlas.Fbo
-                gd.SamplerStates[5] <- SamplerState.PointClamp
-              | ValueNone -> ()
-        | _ -> ()
+    ShadowPass.run
+      gd
+      atlasCfg
+      biasCfg
+      shadowRes
+      lights
+      pbrParams
+      buffer
+      state.CurrentCamera
 
   // ----------------------------------------------------------------
   // IRenderPipeline3D
@@ -1880,17 +1370,17 @@ type ForwardPipelineBase
         lineEffect <- ValueNone
       | ValueNone -> ()
 
-      shadowAtlas.Release()
+      shadowRes.Atlas.Release()
 
-      if not(obj.ReferenceEquals(shadowRaster, null)) then
-        shadowRaster.Dispose()
-        shadowRaster <- null
+      if not(obj.ReferenceEquals(shadowRes.Raster, null)) then
+        shadowRes.Raster.Dispose()
+        shadowRes.Raster <- null
 
-      match shadowEffect with
+      match shadowRes.Effect with
       | ValueSome e ->
         e.Dispose()
-        shadowEffect <- ValueNone
-        shadowParams <- ValueNone
+        shadowRes.Effect <- ValueNone
+        shadowRes.Params <- ValueNone
       | ValueNone -> ()
 
     member this.Execute(gameCtx, buffer, _rtPool) =
@@ -1913,7 +1403,7 @@ type ForwardPipelineBase
 
       // ── Step 1: Pre-scan — capture camera + lights + shadow state ──
       Pipelines.LightBuffers.clear lights
-      shadowOrigin <- ValueNone
+      shadowRes.Origin <- ValueNone
 
       let mutable state: ForwardState = {
         HasCamera = false
@@ -1948,7 +1438,8 @@ type ForwardPipelineBase
         | Command3D.AddDirectionalLight d -> lights.DirLights.Add d
         | Command3D.AddPointLight p -> lights.PointLights.Add p
         | Command3D.AddSpotLight s -> lights.SpotLights.Add s
-        | Command3D.SetShadowOrigin origin -> shadowOrigin <- ValueSome origin
+        | Command3D.SetShadowOrigin origin ->
+          shadowRes.Origin <- ValueSome origin
         | _ -> ()
 
       // ── Step 2: Shadow pass (directional shadows only; B10) ──
