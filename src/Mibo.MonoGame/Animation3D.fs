@@ -717,16 +717,13 @@ module Animation3DState =
       // Compute depth (distance to root bone) for each bone to order processing.
       let depth = Array.zeroCreate<int> boneCount
 
-      let rec depthOf (i: int) : int =
+      let rec depthOf(i: int) : int =
         if depth[i] > 0 then
           depth[i]
         else
           let p = parents[i]
 
-          if p < 0 then
-            0
-          else
-            1 + depthOf p
+          if p < 0 then 0 else 1 + depthOf p
 
       for i = 0 to boneCount - 1 do
         depth[i] <- depthOf i
@@ -814,7 +811,7 @@ module AnimatedMesh =
         // For each bone, walk up the Assimp node tree from its node's parent until
         // we find an ancestor whose name is a bone (record its index), or reach the
         // root (parent stays -1).
-        let rec findBoneParent (node: Node) : int =
+        let rec findBoneParent(node: Node) : int =
           if isNull node || isNull node.Parent then
             -1
           else
@@ -826,7 +823,7 @@ module AnimatedMesh =
         let nodeByName =
           let d = System.Collections.Generic.Dictionary<string, Node>()
 
-          let rec walk (n: Node) =
+          let rec walk(n: Node) =
             if not(isNull n) then
               d[n.Name] <- n
 
@@ -905,3 +902,135 @@ module AnimatedMesh =
             matrices[i] <- mesh.InverseBindPose[i] * pose
 
       matrices
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnimatedModel — runtime state for a single animated 3D entity.
+//
+// Mirrors Mibo.MonoGame's 2D AnimatedSprite (Animation.fs:73): a struct value
+// holding a reference to shared immutable data (the Model + skeleton + clip set)
+// and the live playback state. Store one per entity in your Elmish model.
+// Update functions are pure (return a new AnimatedModel); bone computation is
+// deferred to draw time (Draw3D.drawAnimatedModel), so update stays
+// allocation-free in the common case.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Runtime state for a single animated 3D entity. The 3D analog of the 2D
+/// <c>AnimatedSprite</c>. Holds the model to draw, the shared skeleton data
+/// (<c>ValueNone</c> if the model has no bones), and the live animation state.
+/// </summary>
+/// <remarks>
+/// Store one per entity in your Elmish model. Use the <c>AnimatedModel</c> module
+/// (<c>create</c>/<c>update</c>/<c>play</c>/...) to advance state, and
+/// <c>Draw3D.drawAnimatedModel</c> to draw — the DSL computes the bone palette
+/// from the state so you never handle a <c>Matrix[]</c> directly.
+/// </remarks>
+[<Struct>]
+type AnimatedModel = {
+  /// <summary>The MonoGame model to draw (meshes/textures from the content pipeline).</summary>
+  Model: Microsoft.Xna.Framework.Graphics.Model
+
+  /// <summary>
+  /// Shared skeleton data (bone names, parents, inverse-bind). <c>ValueNone</c> if the
+  /// model has no bones — <c>drawAnimatedModel</c> then falls back to a static draw.
+  /// </summary>
+  Mesh: AnimatedMesh voption
+
+  /// <summary>Live playback state (current clip, frame, blend, speed, loop).</summary>
+  State: Animation3DState
+}
+
+/// <summary>Pure update functions for <see cref="T:Mibo.Animation.AnimatedModel"/>.</summary>
+/// <remarks>
+/// Mirrors the 2D <c>AnimatedSprite</c> module. Each function returns a new
+/// <c>AnimatedModel</c>. Playback delegates to <see cref="T:Mibo.Animation.Animation3DState"/>;
+/// bone computation happens at draw time, not here.
+/// </remarks>
+module AnimatedModel =
+
+  /// <summary>Create an animated model starting on the named clip.</summary>
+  /// <param name="model">The MonoGame model (meshes/textures).</param>
+  /// <param name="mesh">Shared skeleton data (ValueNone for a boneless model).</param>
+  /// <param name="clips">Shared animation clip set (from <c>IAssets.ModelAnimations</c>).</param>
+  /// <param name="clipName">The animation to start on (falls back to clip 0 if absent).</param>
+  /// <param name="fps">Playback speed in frames per second.</param>
+  let create
+    (model: Microsoft.Xna.Framework.Graphics.Model)
+    (mesh: AnimatedMesh voption)
+    (clips: Animation3DClips)
+    (clipName: string)
+    (fps: float32)
+    : AnimatedModel =
+    {
+      Model = model
+      Mesh = mesh
+      State = Animation3DState.create clips clipName fps
+    }
+
+  /// <summary>Advance playback by delta seconds. Pure; returns a new state.</summary>
+  let update (deltaSeconds: float32) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.update deltaSeconds am.State
+  }
+
+  /// <summary>Play an animation by name. Resets the frame if switching clips.</summary>
+  let play (clipName: string) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.play clipName am.State
+  }
+
+  /// <summary>Play by clip index (zero string allocation).</summary>
+  let playByIndex (clipIndex: int) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.playByIndex clipIndex am.State
+  }
+
+  /// <summary>Play only if not already playing it.</summary>
+  let playIfNot (clipName: string) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.playIfNot clipName am.State
+  }
+
+  /// <summary>Start blending toward a target animation.</summary>
+  let blendTo
+    (clipName: string)
+    (duration: float32)
+    (am: AnimatedModel)
+    : AnimatedModel =
+    {
+      am with
+          State = Animation3DState.blendTo clipName duration am.State
+    }
+
+  /// <summary>Is the current animation finished? (always false for looping).</summary>
+  let inline isFinished(am: AnimatedModel) =
+    Animation3DState.isFinished am.State
+
+  /// <summary>Is currently playing the specified animation?</summary>
+  let isPlaying (clipName: string) (am: AnimatedModel) =
+    Animation3DState.isPlaying clipName am.State
+
+  /// <summary>Force restart the current animation.</summary>
+  let restart(am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.restart am.State
+  }
+
+  /// <summary>Total duration of the current clip in seconds at the current speed.</summary>
+  let inline duration(am: AnimatedModel) = Animation3DState.duration am.State
+
+  /// <summary>Name of the current clip.</summary>
+  let currentClipName(am: AnimatedModel) : string =
+    Animation3DState.currentClipName am.State
+
+  /// <summary>Set the playback speed multiplier.</summary>
+  let inline withSpeed (speed: float32) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.withSpeed speed am.State
+  }
+
+  /// <summary>Set whether the current clip loops.</summary>
+  let inline withLoop (loop: bool) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.withLoop loop am.State
+  }
