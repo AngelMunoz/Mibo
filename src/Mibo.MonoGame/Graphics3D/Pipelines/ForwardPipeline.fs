@@ -11,23 +11,27 @@ open Mibo.Elmish.Graphics3D
 // Internal helpers
 // ------------------------------------------------------------------
 
+/// <summary>Per-frame forward-rendering state, threaded byref through dispatch.</summary>
+/// <remarks>
+/// Mirrors the <c>RendererState</c> pattern from <c>Renderer2D.fs</c>: a mutable struct
+/// threaded by reference so dispatch avoids heap allocation on the hot path. Public because the
+/// staged base's virtual <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase.Shade"/>
+/// exposes it (byref) to subclass / object-expression overrides — a shading strategy needs the
+/// active camera's view/projection. It is repopulated each frame by the gather + forward-pass;
+/// overrides read it, they should not mutate it.
+/// </remarks>
+[<Struct>]
+type ForwardState = {
+  mutable HasCamera: bool
+  mutable View: Matrix
+  mutable Projection: Matrix
+  mutable CurrentCamera: Camera3D
+  mutable CurrentConfig: Camera3DConfig voption
+  mutable SavedViewport: Viewport
+}
+
 [<AutoOpen>]
 module private ForwardHelpers =
-
-  /// <summary>Per-frame forward-rendering state, threaded byref through dispatch.</summary>
-  /// <remarks>
-  /// Mirrors the <c>RendererState</c> pattern from <c>Renderer2D.fs</c>: a mutable struct
-  /// threaded by reference so dispatch avoids heap allocation on the hot path.
-  /// </remarks>
-  [<Struct>]
-  type ForwardState = {
-    mutable HasCamera: bool
-    mutable View: Matrix
-    mutable Projection: Matrix
-    mutable CurrentCamera: Camera3D
-    mutable CurrentConfig: Camera3DConfig voption
-    mutable SavedViewport: Viewport
-  }
 
   // LightBuffers + clearLights moved to SceneData.fs (public) in Phase 1 of the v2
   // pipeline-staging work. ForwardPipeline references them as Pipelines.LightBuffers.
@@ -636,13 +640,16 @@ module private ForwardHelpers =
 // ------------------------------------------------------------------
 
 /// <summary>
-/// Forward 3D pipeline for the MonoGame backend. Implements
+/// Staged forward 3D pipeline base for the MonoGame backend. Implements
 /// <see cref="T:Mibo.Elmish.Graphics3D.IRenderPipeline3D"/> by dispatching
-/// <see cref="T:Mibo.Elmish.Graphics3D.Command3D"/> values. All model and primitive draws route
-/// through the custom Cook-Torrance PBR effect (<c>ForwardPbr.fx</c>), so imported models and
-/// instanced geometry get PBR + point/spot lights + shadows automatically. The only native-effect
-/// paths left are the billboards/lines (unlit <c>BasicEffect</c>) and <c>DrawMeshEffect</c>
-/// (user-supplied effect escape hatch).
+/// <see cref="T:Mibo.Elmish.Graphics3D.Command3D"/> values, split into reusable stages —
+/// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase.Execute"/> (orchestration),
+/// the pre-scan gather, the shadow pass, and a virtual <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase.Shade"/>
+/// for per-draw shading. The default <c>Shade</c> routes the shaded draw kinds (model / animated
+/// model / primitive / instanced) through the custom Cook-Torrance PBR effect (<c>ForwardPbr.fx</c>),
+/// so imported models and instanced geometry get PBR + point/spot lights + shadows automatically.
+/// The only native-effect paths left are the billboards/lines (unlit <c>BasicEffect</c>) and
+/// <c>DrawMeshEffect</c> (user-supplied effect escape hatch).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -665,16 +672,17 @@ module private ForwardHelpers =
 /// </code>
 /// </para>
 /// </remarks>
-type ForwardPipeline
+[<AbstractClass>]
+type ForwardPipelineBase
   (
-    [<Struct>] ?postProcess: PostProcessConfig3D,
-    [<Struct>] ?shadowAtlas: ShadowAtlasConfig,
-    [<Struct>] ?shadowBias: ShadowBiasConfig
+    ?postProcess: PostProcessConfig3D,
+    ?shadowAtlas: ShadowAtlasConfig,
+    ?shadowBias: ShadowBiasConfig
   ) =
 
-  let ppConfig = ValueOption.defaultValue PostProcessConfig3D.none postProcess
-  let atlasCfg = ValueOption.defaultValue ShadowAtlasConfig.defaults shadowAtlas
-  let biasCfg = ValueOption.defaultValue ShadowBiasConfig.defaults shadowBias
+  let ppConfig = defaultArg postProcess PostProcessConfig3D.none
+  let atlasCfg = defaultArg shadowAtlas ShadowAtlasConfig.defaults
+  let biasCfg = defaultArg shadowBias ShadowBiasConfig.defaults
 
   let lights: Pipelines.LightBuffers = Pipelines.LightBuffers.defaults
 
@@ -750,6 +758,47 @@ type ForwardPipeline
   // Reused across DrawLine3D calls — avoids per-call heap allocation on the hot path.
   let mutable lineStaging: VertexPositionColorTexture[] =
     Array.zeroCreate<VertexPositionColorTexture> 2
+
+  // ----------------------------------------------------------------
+  // Staging hooks — overridable per-draw shading (v2 pipeline-staging).
+  //
+  // The default implementation is the Cook-Torrance PBR path: each shaded
+  // draw kind (model / animated model / primitive / instanced) routes through
+  // the custom ForwardPbr.fx via the handleDraw* members above. A subclass (or
+  // object expression over ForwardPipeline) overrides Shade to plug a different
+  // shading strategy while inheriting the camera/light/shadow gather and the
+  // forward-pass orchestration from Execute.
+  //
+  // activeEffect: a user-effect scope opened by BeginEffect (Phase 2+4).
+  // ValueNone on the default path → the pipeline's own PBR effect. The base
+  // passes it through unchanged so the default PBR Shade is scope-unaware.
+  // ----------------------------------------------------------------
+
+  abstract Shade:
+    gd: GraphicsDevice *
+    state: byref<ForwardState> *
+    activeEffect: Effect voption *
+    draw: Command3D ->
+      unit
+
+  default this.Shade(gd, state, _activeEffect, draw) =
+    match draw with
+    | Command3D.DrawModel(model, transform) ->
+      this.handleDrawModel(gd, &state, model, transform)
+    | Command3D.DrawAnimatedModel(model, transform, bones) ->
+      this.handleDrawAnimatedModel(gd, &state, model, transform, bones)
+    | Command3D.DrawPrimitive(mesh, transform, material) ->
+      this.handleDrawPrimitive(gd, &state, mesh, transform, material)
+    | Command3D.DrawInstanced(mesh, transforms, material, instanceCount) ->
+      this.handleDrawInstanced(
+        gd,
+        &state,
+        mesh,
+        transforms,
+        material,
+        instanceCount
+      )
+    | _ -> ()
 
   // ----------------------------------------------------------------
   // Dispatch helpers
@@ -1296,7 +1345,7 @@ type ForwardPipeline
     if billboardStaging.Length < 4 then
       billboardStaging <- Array.zeroCreate<VertexPositionColorTexture> 4
 
-    ForwardPipeline.EmitQuad(
+    ForwardPipelineBase.EmitQuad(
       billboardStaging,
       0,
       world,
@@ -1381,7 +1430,7 @@ type ForwardPipeline
         let world =
           Matrix.CreateBillboard(positions[i], cam.Position, cam.Up, camFwd)
 
-        ForwardPipeline.EmitQuad(
+        ForwardPipelineBase.EmitQuad(
           billboardStaging,
           i * 4,
           world,
@@ -2080,28 +2129,17 @@ type ForwardPipeline
             state.HasCamera <- false
 
         // ── Drawing ──
-        | Command3D.DrawModel(model, transform) ->
+        // Shaded draw kinds (model / animated model / primitive / instanced) go through the
+        // virtual Shade so a subclass / object expression can override per-draw shading while
+        // inheriting the camera/light/shadow gather and forward-pass orchestration. The default
+        // Shade is the PBR path (no behavior change). activeEffect is ValueNone on the default
+        // path until BeginEffect/EndEffect land (Phase 2+4).
+        | Command3D.DrawModel _
+        | Command3D.DrawAnimatedModel _
+        | Command3D.DrawPrimitive _
+        | Command3D.DrawInstanced _ ->
           if state.HasCamera then
-            this.handleDrawModel(gd, &state, model, transform)
-
-        | Command3D.DrawAnimatedModel(model, transform, bones) ->
-          if state.HasCamera then
-            this.handleDrawAnimatedModel(gd, &state, model, transform, bones)
-
-        | Command3D.DrawPrimitive(mesh, transform, material) ->
-          if state.HasCamera then
-            this.handleDrawPrimitive(gd, &state, mesh, transform, material)
-
-        | Command3D.DrawInstanced(mesh, transforms, material, instanceCount) ->
-          if state.HasCamera then
-            this.handleDrawInstanced(
-              gd,
-              &state,
-              mesh,
-              transforms,
-              material,
-              instanceCount
-            )
+            this.Shade(gd, &state, ValueNone, buffer[i])
 
         | Command3D.DrawMeshEffect(part, transform, effect) ->
           if state.HasCamera then
@@ -2160,3 +2198,43 @@ type ForwardPipeline
         // Full post-process ping-pong lands in B9. Until then, passes are unsupported.
         // Silently ignored rather than throwing so the pipeline stays usable.
         ()
+
+// ------------------------------------------------------------------
+// ForwardPipeline — the default PBR subclass (v2 pipeline-staging)
+// ------------------------------------------------------------------
+
+/// <summary>
+/// The default MonoGame 3D forward pipeline: a thin <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase"/>
+/// that inherits the camera/light/shadow gather and forward-pass orchestration unchanged, using
+/// the base's default Cook-Torrance PBR <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase.Shade"/>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Registered via:
+/// <code lang="fsharp">
+/// Renderer3D.create (ForwardPipeline()) view
+/// </code>
+/// </para>
+/// <para>
+/// To plug a different shading strategy (toon, cel, custom), build an object expression over
+/// <c>ForwardPipeline()</c> and override <c>Shade</c> — the scene gather, shadow pass, and
+/// forward-pass dispatch are inherited:
+/// <code lang="fsharp">
+/// let toon =
+///   { new ForwardPipeline() with
+///       override _.Shade(gd, state, activeEffect, draw) = ... }
+/// </code>
+/// </para>
+/// </remarks>
+type ForwardPipeline
+  (
+    ?postProcess: PostProcessConfig3D,
+    ?shadowAtlas: ShadowAtlasConfig,
+    ?shadowBias: ShadowBiasConfig
+  ) =
+  inherit
+    ForwardPipelineBase(
+      ?postProcess = postProcess,
+      ?shadowAtlas = shadowAtlas,
+      ?shadowBias = shadowBias
+    )
