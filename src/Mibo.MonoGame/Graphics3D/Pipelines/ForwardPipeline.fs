@@ -347,7 +347,7 @@ module private ForwardHelpers =
     PointLightShadowIdx: EffectParameter
     SpotLightShadowIdx: EffectParameter
     // Skinning (B12 Skinned technique): bone palette. null on the non-skinned
-    // techniques is harmless — handleDrawSkinnedMesh only uploads when present.
+    // techniques is harmless — handleDrawAnimatedModel only uploads when present.
     Bones: EffectParameter
   }
 
@@ -657,25 +657,27 @@ module private ForwardHelpers =
 // ------------------------------------------------------------------
 
 /// <summary>
-/// Native-first forward 3D pipeline for the MonoGame backend. Implements
+/// Forward 3D pipeline for the MonoGame backend. Implements
 /// <see cref="T:Mibo.Elmish.Graphics3D.IRenderPipeline3D"/> by dispatching
-/// <see cref="T:Mibo.Elmish.Graphics3D.Command3D"/> values and binding each
-/// <see cref="T:Microsoft.Xna.Framework.Graphics.ModelMeshPart"/>'s own native effect
-/// (<c>BasicEffect</c> etc.) with accumulated lighting.
+/// <see cref="T:Mibo.Elmish.Graphics3D.Command3D"/> values. All model and primitive draws route
+/// through the custom Cook-Torrance PBR effect (<c>ForwardPbr.fx</c>), so imported models and
+/// instanced geometry get PBR + point/spot lights + shadows automatically. The only native-effect
+/// paths left are the billboards/lines (unlit <c>BasicEffect</c>) and <c>DrawMeshEffect</c>
+/// (user-supplied effect escape hatch).
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the <b>native floor</b> described in the monogame3d plan (B5): a structurally
-/// complete forward pipeline that binds native stock effects. It ports the dispatch
-/// skeleton of <c>Mibo.Raylib/Graphics3D/Pipelines/ForwardPbrPipeline.fs</c> but binds
-/// <c>BasicEffect</c> instead of custom PBR shaders. Shadows are stubbed (B10), billboards
-/// and lines are stubbed (B8), custom PBR is added in B9.
+/// Ports the dispatch skeleton of <c>Mibo.Raylib/Graphics3D/Pipelines/ForwardPbrPipeline.fs</c>,
+/// adapted to MonoGame per the monogame3d plan §6 conventions (plain <c>float4x4</c>,
+/// <c>mul(position, matrix)</c>, right-handed math, OpenGL SM3.0 cap).
+/// <c>Material3D.fromModelMeshPart</c> reads each model part's baked native effect
+/// (<c>BasicEffect</c>/<c>SkinnedEffect</c>) into a <c>Material3D</c> so the authored look
+/// survives the swap to the PBR effect.
 /// </para>
 /// <para>
-/// Lighting budget: 1 ambient + up to 3 directional lights (<c>BasicEffect</c>'s limit).
-/// Point/spot lights are accumulated but not bound natively — they require the custom PBR
-/// pipeline (B9). Instanced/skinned dispatch wires fully in B7/B12; here <c>DrawSkinnedMesh</c>
-/// binds a native <c>SkinnedEffect</c> if present.
+/// Lighting budget: 1 ambient + 1 directional + up to 8 point + up to 4 spot lights, all bound
+/// to the PBR effect. Directional/point/spot shadows render to an <c>R32F</c> atlas
+/// (<c>DepthShadow.fx</c>) and are sampled with manual 3×3 PCF.
 /// </para>
 /// <para>
 /// Register via:
@@ -707,9 +709,9 @@ type ForwardPipeline
   // Model.CopyAbsoluteBoneTransformsTo with zero per-frame allocation or copying.
   let mutable boneTransforms = Array.zeroCreate<Matrix> 64
 
-  // Lazily-created BasicEffect for the DrawMeshPBR fallback path (used when the custom
+  // Lazily-created BasicEffect for the DrawPrimitive fallback path (used when the custom
   // PBR effect can't be loaded — e.g. missing embedded resource). Created on first
-  // DrawMeshPBR against the actual GraphicsDevice passed to Execute.
+  // DrawPrimitive against the actual GraphicsDevice passed to Execute.
   let mutable pbrFallbackEffect: BasicEffect voption = ValueNone
 
   // B9 PBR: the custom Cook-Torrance effect (loads from embedded .mgfx via ShaderLoader)
@@ -752,10 +754,10 @@ type ForwardPipeline
   // 128; reuse across frames, never shrink. Avoids per-draw allocation on the hot path.
   let mutable bonePaletteScratch = Array.zeroCreate<Matrix> 128
 
-  // B7 instancing: the custom Instanced effect (loads from embedded .mgfx via ShaderLoader)
+  // Instancing: the custom Instanced effect (loads from embedded .mgfx via ShaderLoader)
   // and a growable per-instance vertex buffer. The effect has instance input semantics
   // (TEXCOORD1..4) that no stock BasicEffect provides, so instancing needs custom HLSL.
-  // Created on first DrawMeshInstanced against the real device.
+  // Created on first DrawInstanced against the real device.
   let mutable instancedEffect: Effect voption = ValueNone
   let mutable instanceVertexBuffer: VertexBuffer voption = ValueNone
   // CPU staging array — packed VertexInstanceWorld rows per instance. Grows as needed.
@@ -778,23 +780,6 @@ type ForwardPipeline
   // ----------------------------------------------------------------
   // Dispatch helpers
   // ----------------------------------------------------------------
-
-  /// <summary>Handles <c>DrawMesh</c>: binds the part's own native effect + lighting, draws.</summary>
-  member private _.handleDrawMesh
-    (
-      gd: GraphicsDevice,
-      state: byref<ForwardState>,
-      part: ModelMeshPart,
-      transform: Matrix
-    ) =
-    let effect = part.Effect
-
-    if trySetMatrices effect transform state.View state.Projection then
-      match effect with
-      | :? BasicEffect as be -> applyLighting(be, lights)
-      | _ -> () // Non-BasicEffect (SkinnedEffect/custom): matrices set, lighting skipped.
-
-    drawPart(gd, part)
 
   /// <summary>
   /// Handles <c>DrawMeshEffect</c>: overrides the part's effect with a user-supplied one.
@@ -886,76 +871,88 @@ type ForwardPipeline
       | _ -> () // unreachable (ensurePbrEffect set both)
 
   /// <summary>
-  /// Handles <c>DrawSkinnedMesh</c>: routes the part through the PBR <c>Skinned</c> technique
-  /// with the supplied bone palette. The content pipeline bakes bone indices/weights
-  /// (<c>BLENDINDICES0</c>/<c>BLENDWEIGHT0</c>) into the vertex buffer and tags the part with a
-  /// native <c>SkinnedEffect</c> (the signal that the geometry is skinnable) but discards the
-  /// animation clips — bone matrices come from <c>Animation3DState.computeBonePalette</c> at
-  /// runtime. The material (DiffuseColor/Texture/Alpha) is read from the native
-  /// <c>SkinnedEffect</c> via <c>Material3D.fromModelMeshPart</c>, the part's effect is swapped
-  /// to the PBR <c>Skinned</c> technique around the draw, and the bone palette is uploaded to
-  /// the shader's <c>boneMatrices[128]</c>. Non-skinned parts fall back to the PBR
-  /// <c>Standard</c> technique (bones ignored).
+  /// Handles <c>DrawAnimatedModel</c>: routes the model's parts through PBR, applying the
+  /// <c>Skinned</c> technique (with the supplied bone palette) to parts whose native effect is a
+  /// <c>SkinnedEffect</c> (the content-pipeline signal that the vertex buffer carries
+  /// <c>BLENDINDICES0</c>/<c>BLENDWEIGHT0</c>), and the <c>Standard</c> technique to the rest.
+  /// The content pipeline bakes bone indices/weights but discards the animation clips, so bone
+  /// matrices come from <c>Animation3DState.computeBonePalette</c> at runtime. The material
+  /// (DiffuseColor/Texture/Alpha) is read per part via <c>Material3D.fromModelMeshPart</c>, the
+  /// part's effect is swapped to PBR around the draw, and the bone palette is uploaded to the
+  /// shader's <c>boneMatrices[128]</c>. The bone palette is uploaded once per draw (shared across
+  /// all skinned parts), tail zero-filled to identity.
   /// </summary>
-  member private this.handleDrawSkinnedMesh
+  member private this.handleDrawAnimatedModel
     (
       gd: GraphicsDevice,
       state: byref<ForwardState>,
-      part: ModelMeshPart,
+      model: Model,
       transform: Matrix,
       bones: Matrix[]
     ) =
     if this.ensurePbrEffect gd then
       match pbrEffect, pbrParams with
       | ValueSome e, ValueSome p ->
-        let mutable t = transform
-        let mutable inv = Matrix.Identity
-        Matrix.Invert(&t, &inv) |> ignore
-        let normalMatrix = Matrix.Transpose inv
+        let boneCount = model.Bones.Count
 
-        setMatrix p.MatModel transform
-        setMatrix p.ViewProj (state.View * state.Projection)
-        setMatrix p.NormalMatrix normalMatrix
-        setVec3 p.CameraPos state.CurrentCamera.Position
-        uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
+        if boneTransforms.Length < boneCount then
+          boneTransforms <- Array.zeroCreate<Matrix> boneCount
 
-        let mat = Material3D.fromModelMeshPart part
+        model.CopyAbsoluteBoneTransformsTo(boneTransforms)
 
-        // Material uniform short-circuit (MaterialKey).
-        let key = materialKey &mat
+        // Bone palette (tail zero-filled to identity) — uploaded once per draw, shared by all
+        // skinned parts. Matches the shadow pass's skinned-caster path.
+        let palCount = min bones.Length bonePaletteScratch.Length
 
-        if not pbrHasLastMaterial || key <> pbrLastKey then
-          uploadPbrMaterial(&p, &mat)
-          bindPbrTextures(&p, &mat)
-          pbrLastKey <- key
-          pbrHasLastMaterial <- true
+        for i = 0 to palCount - 1 do
+          bonePaletteScratch[i] <- bones[i]
 
-        match part.Effect with
-        | :? SkinnedEffect ->
-          // Skinned part: PBR Skinned technique + bone-palette upload (tail zero-filled to
-          // identity — matches the shadow pass's skinned-caster path).
-          e.CurrentTechnique <- e.Techniques["Skinned"]
+        for i = palCount to bonePaletteScratch.Length - 1 do
+          bonePaletteScratch[i] <- Matrix.Identity
 
-          let palCount = min bones.Length bonePaletteScratch.Length
+        for mesh in model.Meshes do
+          let world = boneTransforms[mesh.ParentBone.Index] * transform
 
-          for i = 0 to palCount - 1 do
-            bonePaletteScratch[i] <- bones[i]
+          let mutable t = world
+          let mutable inv = Matrix.Identity
+          Matrix.Invert(&t, &inv) |> ignore
 
-          for i = palCount to bonePaletteScratch.Length - 1 do
-            bonePaletteScratch[i] <- Matrix.Identity
+          setMatrix p.MatModel world
+          setMatrix p.ViewProj (state.View * state.Projection)
+          setMatrix p.NormalMatrix (Matrix.Transpose inv)
+          setVec3 p.CameraPos state.CurrentCamera.Position
+          uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
 
-          setMatrixArray p.Bones bonePaletteScratch
-        | _ ->
-          // Non-skinned part in a DrawSkinnedMesh command: draw static via the Standard technique.
-          e.CurrentTechnique <- e.Techniques["Standard"]
+          for part in mesh.MeshParts do
+            let isSkinned =
+              match part.Effect with
+              | :? SkinnedEffect -> true
+              | _ -> false
 
-        let saved = part.Effect
-        part.Effect <- e
+            if isSkinned then
+              e.CurrentTechnique <- e.Techniques["Skinned"]
+              setMatrixArray p.Bones bonePaletteScratch
+            else
+              e.CurrentTechnique <- e.Techniques["Standard"]
 
-        try
-          drawPart(gd, part)
-        finally
-          part.Effect <- saved
+            let mat = Material3D.fromModelMeshPart part
+
+            // Material uniform short-circuit (MaterialKey).
+            let key = materialKey &mat
+
+            if not pbrHasLastMaterial || key <> pbrLastKey then
+              uploadPbrMaterial(&p, &mat)
+              bindPbrTextures(&p, &mat)
+              pbrLastKey <- key
+              pbrHasLastMaterial <- true
+
+            let saved = part.Effect
+            part.Effect <- e
+
+            try
+              drawPart(gd, part)
+            finally
+              part.Effect <- saved
       | _ -> () // unreachable (ensurePbrEffect set both)
 
   /// <summary>
@@ -991,17 +988,17 @@ type ForwardPipeline
       | ValueNone -> false
 
   /// <summary>
-  /// Handles <c>DrawMeshPBR</c>: draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/>
-  /// with a <c>Material3D</c>. Per §4.1, this is the only place <c>Material3D</c> is consumed.
+  /// Handles <c>DrawPrimitive</c>: draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/>
+  /// with a <c>Material3D</c> via the custom PBR effect.
   /// </summary>
   /// <remarks>
-  /// B9 binds the custom Cook-Torrance <c>ForwardPbr.fx</c> (ambient + directional + point +
+  /// Binds the custom Cook-Torrance <c>ForwardPbr.fx</c> (ambient + directional + point +
   /// spot, emission, opacity, tiling, optional normal map) with a <c>MaterialKey</c> short-circuit
   /// to skip uniform re-uploads across consecutive draws sharing a material. When the PBR effect
-  /// can't be loaded (missing embedded resource), it falls back to the B5/B6 <c>BasicEffect</c>
+  /// can't be loaded (missing embedded resource), it falls back to the <c>BasicEffect</c>
   /// path that maps the albedo color only — preserving the smoke-testable floor.
   /// </remarks>
-  member private this.handleDrawMeshPBR
+  member private this.handleDrawPrimitive
     (
       gd: GraphicsDevice,
       state: byref<ForwardState>,
@@ -1069,14 +1066,14 @@ type ForwardPipeline
       mesh.Draw(gd, effect)
 
   /// <summary>
-  /// Handles <c>DrawMeshInstanced</c>: native hardware instancing via two vertex streams
+  /// Handles <c>DrawInstanced</c>: native hardware instancing via two vertex streams
   /// (stream 0 = the mesh's <c>VertexPositionNormalTexture</c>, stream 1 = per-instance
   /// world matrices packed as <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/>
   /// TEXCOORD1..4 rows) and <see cref="M:Microsoft.Xna.Framework.Graphics.GraphicsDevice.DrawInstancedPrimitives"/>.
   /// </summary>
   /// <remarks>
-  /// B9 prefers the PBR <c>Instanced</c> technique (full Cook-Torrance lighting, all light
-  /// types). When the PBR effect can't be loaded, it falls back to the B7 minimal
+  /// Prefers the PBR <c>Instanced</c> technique (full Cook-Torrance lighting, all light
+  /// types). When the PBR effect can't be loaded, it falls back to the minimal
   /// <c>Instanced.fx</c> (flat albedo + 1 directional light).
   /// <para>
   /// Per §6.1, matrices upload as plain <c>float4x4</c> with <c>mul(position, matrix)</c>
@@ -1086,7 +1083,7 @@ type ForwardPipeline
   /// rotation is orthogonal, so inverse-transpose == world).
   /// </para>
   /// </remarks>
-  member private this.handleDrawMeshInstanced
+  member private this.handleDrawInstanced
     (
       gd: GraphicsDevice,
       state: byref<ForwardState>,
@@ -1747,7 +1744,7 @@ type ForwardPipeline
               match buffer[i] with
               | Command3D.EnableShadows -> castEnabled <- true
               | Command3D.DisableShadows -> castEnabled <- false
-              | Command3D.DrawMeshPBR(mesh, transform, _) when castEnabled ->
+              | Command3D.DrawPrimitive(mesh, transform, _) when castEnabled ->
                 if drawCount >= shadowDraws.Length then
                   Array.Resize(&shadowDraws, shadowDraws.Length * 2)
 
@@ -1763,25 +1760,31 @@ type ForwardPipeline
                 }
 
                 drawCount <- drawCount + 1
-              | Command3D.DrawSkinnedMesh(part, transform, bones) when
+              | Command3D.DrawAnimatedModel(model, transform, bones) when
                 castEnabled
                 ->
-                // B12: skinned casters. A bare ModelMeshPart has no bounds (no parent ref),
-                // so these are drawn unconditionally per caster — no frustum cull. See
-                // ShadowSkinnedDraw remarks for why that's acceptable for the sample.
-                if skinnedCount >= shadowSkinnedDraws.Length then
-                  Array.Resize(
-                    &shadowSkinnedDraws,
-                    shadowSkinnedDraws.Length * 2
-                  )
+                // Skinned casters. A bare ModelMeshPart has no bounds (no parent ref), so these
+                // are drawn unconditionally per caster — no frustum cull. See ShadowSkinnedDraw
+                // remarks for why that's acceptable for the sample. Collect each skinned part of
+                // the model as a separate ShadowSkinnedDraw (bones shared across all parts).
+                for mesh in model.Meshes do
+                  for part in mesh.MeshParts do
+                    match part.Effect with
+                    | :? SkinnedEffect ->
+                      if skinnedCount >= shadowSkinnedDraws.Length then
+                        Array.Resize(
+                          &shadowSkinnedDraws,
+                          shadowSkinnedDraws.Length * 2
+                        )
 
-                shadowSkinnedDraws[skinnedCount] <- {
-                  Part = part
-                  Transform = transform
-                  Bones = bones
-                }
+                      shadowSkinnedDraws[skinnedCount] <- {
+                        Part = part
+                        Transform = transform
+                        Bones = bones
+                      }
 
-                skinnedCount <- skinnedCount + 1
+                      skinnedCount <- skinnedCount + 1
+                    | _ -> ()
               | _ -> ()
 
             if drawCount = 0 && skinnedCount = 0 then
@@ -1859,7 +1862,7 @@ type ForwardPipeline
                       setMatrix depthParams.MatModel draw.Transform
                       setMatrix depthParams.ViewProj casterVP
 
-                      // Upload the bone palette (tail zero-filled to identity — see handleDrawSkinnedMesh).
+                      // Upload the bone palette (tail zero-filled to identity — see handleDrawAnimatedModel).
                       let boneCount =
                         min draw.Bones.Length bonePaletteScratch.Length
 
@@ -1876,7 +1879,7 @@ type ForwardPipeline
                       // — otherwise drawPart re-applies the SkinnedEffect and renders the
                       // shadow with the forward shader instead of depth-only. Swap the
                       // part's Effect for the depth effect around the draw, matching
-                      // handleDrawSkinnedMesh's effect-swap pattern (see line 864).
+                      // handleDrawAnimatedModel's effect-swap pattern.
                       let saved = draw.Part.Effect
                       draw.Part.Effect <- depthEffect
 
@@ -2103,29 +2106,21 @@ type ForwardPipeline
             state.HasCamera <- false
 
         // ── Drawing ──
-        | Command3D.DrawMesh(part, transform) ->
-          if state.HasCamera then
-            this.handleDrawMesh(gd, &state, part, transform)
-
-        | Command3D.DrawMeshEffect(part, transform, effect) ->
-          if state.HasCamera then
-            this.handleDrawMeshEffect(gd, &state, part, transform, effect)
-
         | Command3D.DrawModel(model, transform) ->
           if state.HasCamera then
             this.handleDrawModel(gd, &state, model, transform)
 
-        | Command3D.DrawSkinnedMesh(part, transform, bones) ->
+        | Command3D.DrawAnimatedModel(model, transform, bones) ->
           if state.HasCamera then
-            this.handleDrawSkinnedMesh(gd, &state, part, transform, bones)
+            this.handleDrawAnimatedModel(gd, &state, model, transform, bones)
 
-        | Command3D.DrawMeshPBR(mesh, transform, material) ->
+        | Command3D.DrawPrimitive(mesh, transform, material) ->
           if state.HasCamera then
-            this.handleDrawMeshPBR(gd, &state, mesh, transform, material)
+            this.handleDrawPrimitive(gd, &state, mesh, transform, material)
 
-        | Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount) ->
+        | Command3D.DrawInstanced(mesh, transforms, material, instanceCount) ->
           if state.HasCamera then
-            this.handleDrawMeshInstanced(
+            this.handleDrawInstanced(
               gd,
               &state,
               mesh,
@@ -2133,6 +2128,10 @@ type ForwardPipeline
               material,
               instanceCount
             )
+
+        | Command3D.DrawMeshEffect(part, transform, effect) ->
+          if state.HasCamera then
+            this.handleDrawMeshEffect(gd, &state, part, transform, effect)
 
         // ── Billboards / lines (B8) ──
         | Command3D.DrawBillboard(texture, position, size, color) ->

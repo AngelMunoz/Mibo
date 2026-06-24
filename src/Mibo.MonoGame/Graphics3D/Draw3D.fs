@@ -2,6 +2,7 @@ namespace Mibo.Elmish.Graphics3D
 
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open Mibo.Animation
 open Mibo.Elmish
 
 /// <summary>
@@ -31,19 +32,71 @@ module Draw3D =
   // Geometry
   // ──────────────────────────────────────────────
 
-  /// <summary>Draws a mesh part with a world transform, binding the part's own native effect.</summary>
-  let inline drawMesh
-    (meshPart: ModelMeshPart)
+  /// <summary>
+  /// Draws a static model with a world transform. Auto-PBR + lights + shadows; the model's
+  /// baked native effect is read via <c>Material3D.fromModelMeshPart</c> so the model keeps its
+  /// authored look when the pipeline swaps to the PBR effect.
+  /// </summary>
+  let inline drawModel
+    (model: Model)
     (transform: Matrix)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.drawMesh meshPart transform)
+    buffer.Add(Command3D.drawModel model transform)
     buffer
 
   /// <summary>
-  /// Draws a mesh part with a world transform using a user-supplied <see cref="T:Microsoft.Xna.Framework.Graphics.Effect"/>.
-  /// The pipeline sets <c>World</c> from the transform and <c>View</c>/<c>Projection</c> from
-  /// the active camera, applies the effect's current technique pass, and draws the part.
+  /// Draws an animated model. The 3D analog of the 2D <c>litAnimatedSprite</c>: takes the
+  /// runtime state value (<see cref="T:Mibo.Animation.AnimatedModel"/>) + a transform, derives
+  /// the bone palette internally from the state, and emits a <c>DrawAnimatedModel</c> command.
+  /// Auto-PBR + lights + shadows; skinned parts use the PBR <c>Skinned</c> technique. The caller
+  /// never handles a <c>Matrix[]</c> — bone computation happens here, at draw-recording time.
+  /// </summary>
+  let drawAnimatedModel
+    (am: AnimatedModel)
+    (transform: Matrix)
+    (buffer: RenderBuffer3D)
+    =
+    let bones =
+      match am.Mesh with
+      | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
+      | ValueNone -> [||]
+
+    buffer.Add(Command3D.drawAnimatedModel am.Model transform bones)
+    buffer
+
+  /// <summary>
+  /// Draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/> with a PBR material.
+  /// Auto-PBR + lights + shadows.
+  /// </summary>
+  let inline drawPrimitive
+    (mesh: PrimitiveMesh)
+    (transform: Matrix)
+    (material: Material3D)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(Command3D.drawPrimitive mesh transform material)
+    buffer
+
+  /// <summary>
+  /// Draws static instanced bulk (terrain/props) of an effectless
+  /// <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/>. Auto-PBR + lights + shadows.
+  /// Used by <c>CellGridRenderer3D</c>/<c>HexGrid3DRenderer</c> after camera culling.
+  /// </summary>
+  let inline drawInstanced
+    (mesh: PrimitiveMesh)
+    (transforms: Matrix[])
+    (material: Material3D)
+    (instanceCount: int)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(Command3D.drawInstanced mesh transforms material instanceCount)
+    buffer
+
+  /// <summary>
+  /// Draws a mesh part with a user-supplied <see cref="T:Microsoft.Xna.Framework.Graphics.Effect"/>
+  /// (escape hatch). The pipeline sets <c>World</c> from the transform and <c>View</c>/<c>Projection</c>
+  /// from the active camera, applies the effect's current technique pass, and draws the part.
   /// The caller owns lighting and material parameters on the effect.
   /// </summary>
   let inline drawMeshEffect
@@ -53,19 +106,6 @@ module Draw3D =
     (buffer: RenderBuffer3D)
     =
     buffer.Add(Command3D.drawMeshEffect meshPart transform effect)
-    buffer
-
-  /// <summary>
-  /// Draws a MonoGame model with a world transform.
-  /// Each sub-mesh is drawn with its own native effect (e.g. <c>BasicEffect</c>),
-  /// which the pipeline configures with the active camera and lights.
-  /// </summary>
-  let inline drawModel
-    (model: Model)
-    (transform: Matrix)
-    (buffer: RenderBuffer3D)
-    =
-    buffer.Add(Command3D.drawModel model transform)
     buffer
 
   /// <summary>Draws a billboard (camera-facing quad) with a texture.</summary>
@@ -87,46 +127,6 @@ module Draw3D =
     (buffer: RenderBuffer3D)
     =
     buffer.Add(Command3D.drawLine3D start finish color)
-    buffer
-
-  /// <summary>Draws a skinned mesh part with bone matrix data, binding the part's own native effect.</summary>
-  let inline drawSkinnedMesh
-    (meshPart: ModelMeshPart)
-    (transform: Matrix)
-    (bones: Matrix[])
-    (buffer: RenderBuffer3D)
-    =
-    buffer.Add(Command3D.drawSkinnedMesh meshPart transform bones)
-    buffer
-
-  /// <summary>
-  /// Draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/> with a PBR material.
-  /// See <c>Command3D.drawMeshPBR</c> for the §4.1 rationale and the B9 PBR-shader timeline.
-  /// </summary>
-  let inline drawMeshPBR
-    (mesh: PrimitiveMesh)
-    (transform: Matrix)
-    (material: Material3D)
-    (buffer: RenderBuffer3D)
-    =
-    buffer.Add(Command3D.drawMeshPBR mesh transform material)
-    buffer
-
-  /// <summary>
-  /// Draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/> instanced.
-  /// See <c>Command3D.drawMeshInstanced</c> for the B7 native-instancing timeline.
-  /// </summary>
-  let inline drawMeshInstanced
-    (mesh: PrimitiveMesh)
-    (transforms: Matrix[])
-    (material: Material3D)
-    (instanceCount: int)
-    (buffer: RenderBuffer3D)
-    =
-    buffer.Add(
-      Command3D.drawMeshInstanced mesh transforms material instanceCount
-    )
-
     buffer
 
   /// <summary>
