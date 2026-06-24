@@ -270,69 +270,11 @@ module private ForwardHelpers =
       TilingY = mat.Tiling.Y
     }
 
-  /// <summary>
-  /// Cached <see cref="T:Microsoft.Xna.Framework.Graphics.EffectParameter"/> handles for the
-  /// PBR effect, resolved once on load. <c>null</c> entries are valid (absent uniform) and
-  /// are skipped on upload — MonoGame returns <c>null</c> from <c>Parameters["name"]</c> when
-  /// the uniform is optimized out, unlike raylib's <c>-1</c> silent no-op.
-  /// </summary>
-  [<Struct>]
-  type PbrEffectParams = {
-    // Matrices
-    MatModel: EffectParameter
-    ViewProj: EffectParameter
-    NormalMatrix: EffectParameter
-    CameraPos: EffectParameter
-    // Material scalars/colors
-    AlbedoColor: EffectParameter
-    Roughness: EffectParameter
-    Metallic: EffectParameter
-    EmissionColor: EffectParameter
-    Opacity: EffectParameter
-    Tiling: EffectParameter
-    UseNormalMap: EffectParameter
-    // Texture maps — MonoGame binds sampler textures from the effect's own parameters
-    // at Apply() time (EffectPass.SetShaderSamplers), NOT from gd.Textures[]. Setting
-    // gd.Textures[i] gets clobbered to null on the next pass.Apply(). Bind via these.
-    AlbedoMapTex: EffectParameter
-    RoughnessMapTex: EffectParameter
-    NormalMapTex: EffectParameter
-    MetallicMapTex: EffectParameter
-    EmissionMapTex: EffectParameter
-    // Ambient
-    AmbientColor: EffectParameter
-    AmbientIntensity: EffectParameter
-    // Directional
-    DirLightDir: EffectParameter
-    DirLightColor: EffectParameter
-    DirLightIntensity: EffectParameter
-    // Point lights (array params; null if MAX_POINT_LIGHTS sized out)
-    PointLightCount: EffectParameter
-    PointLightPos: EffectParameter
-    PointLightColor: EffectParameter
-    PointLightIntensity: EffectParameter
-    PointLightRadius: EffectParameter
-    PointLightFalloff: EffectParameter
-    // Spot lights
-    SpotLightCount: EffectParameter
-    SpotLightPos: EffectParameter
-    SpotLightDir: EffectParameter
-    SpotLightColor: EffectParameter
-    SpotLightIntensity: EffectParameter
-    SpotLightRadius: EffectParameter
-    SpotLightInnerCutoff: EffectParameter
-    SpotLightOuterCutoff: EffectParameter
-    // Shadow sampling (B10 directional; B11 multi-caster + per-light index)
-    DirLightCastsShadows: EffectParameter
-    ShadowViewProjs: EffectParameter
-    ShadowUVOffsets: EffectParameter
-    ShadowTexelSize: EffectParameter
-    PointLightShadowIdx: EffectParameter
-    SpotLightShadowIdx: EffectParameter
-    // Skinning (B12 Skinned technique): bone palette. null on the non-skinned
-    // techniques is harmless — handleDrawAnimatedModel only uploads when present.
-    Bones: EffectParameter
-  }
+  // PbrEffectParams (and its semantic sub-records Matrix/Material/Ambient/DirLight/
+  // PointLights/SpotLights/Shadow) moved to PbrUniforms.fs in the v2 pipeline-staging
+  // refactor. The upload helpers (uploadLights/uploadMaterial/bindTextures) + pooled
+  // light scratch arrays moved there too. ForwardPipeline references them as
+  // PbrUniforms.build / PbrUniforms.uploadLights / etc.
 
   /// <summary>
   /// Cached <see cref="T:Microsoft.Xna.Framework.Graphics.EffectParameter"/> handles for
@@ -347,14 +289,11 @@ module private ForwardHelpers =
     Bones: EffectParameter
   }
 
-  let private param (e: Effect) (name: string) : EffectParameter =
-    e.Parameters[name] // null when absent — callers null-check before SetValue.
-
   /// <summary>Builds the shadow-pass parameter handles once after load.</summary>
   let buildShadowParams(e: Effect) : ShadowEffectParams = {
-    MatModel = param e "matModel"
-    ViewProj = param e "viewProj"
-    Bones = param e "boneMatrices"
+    MatModel = e.Parameters["matModel"]
+    ViewProj = e.Parameters["viewProj"]
+    Bones = e.Parameters["boneMatrices"]
   }
 
   /// <summary>A mesh draw collected for the shadow pass (caster geometry).</summary>
@@ -382,258 +321,12 @@ module private ForwardHelpers =
     Bones: Matrix[]
   }
 
-  /// <summary>Resolves all PBR effect parameter handles once after load.</summary>
-  let buildPbrParams(e: Effect) : PbrEffectParams = {
-    MatModel = param e "matModel"
-    ViewProj = param e "viewProj"
-    NormalMatrix = param e "normalMatrix"
-    CameraPos = param e "cameraPos"
-    AlbedoColor = param e "albedoColor"
-    Roughness = param e "roughness"
-    Metallic = param e "metallic"
-    EmissionColor = param e "emissionColor"
-    Opacity = param e "opacity"
-    Tiling = param e "tiling"
-    UseNormalMap = param e "useNormalMap"
-    AlbedoMapTex = param e "texture0"
-    RoughnessMapTex = param e "texture1"
-    NormalMapTex = param e "texture2"
-    MetallicMapTex = param e "texture3"
-    EmissionMapTex = param e "texture4"
-    AmbientColor = param e "ambientColor"
-    AmbientIntensity = param e "ambientIntensity"
-    DirLightDir = param e "dirLightDir"
-    DirLightColor = param e "dirLightColor"
-    DirLightIntensity = param e "dirLightIntensity"
-    PointLightCount = param e "pointLightCount"
-    PointLightPos = param e "pointLightPos"
-    PointLightColor = param e "pointLightColor"
-    PointLightIntensity = param e "pointLightIntensity"
-    PointLightRadius = param e "pointLightRadius"
-    PointLightFalloff = param e "pointLightFalloff"
-    SpotLightCount = param e "spotLightCount"
-    SpotLightPos = param e "spotLightPos"
-    SpotLightDir = param e "spotLightDir"
-    SpotLightColor = param e "spotLightColor"
-    SpotLightIntensity = param e "spotLightIntensity"
-    SpotLightRadius = param e "spotLightRadius"
-    SpotLightInnerCutoff = param e "spotLightInnerCutoff"
-    SpotLightOuterCutoff = param e "spotLightOuterCutoff"
-    DirLightCastsShadows = param e "dirLightCastsShadows"
-    ShadowViewProjs = param e "shadowViewProjs"
-    ShadowUVOffsets = param e "shadowUVOffsets"
-    ShadowTexelSize = param e "shadowTexelSize"
-    PointLightShadowIdx = param e "pointLightShadowIdx"
-    SpotLightShadowIdx = param e "spotLightShadowIdx"
-    Bones = param e "boneMatrices"
-  }
+// buildPbrParams moved to PbrUniforms.fs (PbrUniforms.build).
 
-  let inline setVec2 (p: EffectParameter) (v: Vector2) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
-
-  let inline setVec3 (p: EffectParameter) (v: Vector3) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
-
-  let inline setVec4 (p: EffectParameter) (v: Vector4) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
-
-  let inline setFloat (p: EffectParameter) (v: float32) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
-
-  let inline setInt (p: EffectParameter) (v: int) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
-
-  let inline setMatrix (p: EffectParameter) (m: Matrix) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue m
-
-  let inline setVec3Array (p: EffectParameter) (v: Vector3[]) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
-
-  let inline setFloatArray (p: EffectParameter) (v: float32[]) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
-
-  let inline setIntArray (p: EffectParameter) (v: int[]) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
-
-  let inline setMatrixArray (p: EffectParameter) (v: Matrix[]) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
-
-  let inline setVec4Array (p: EffectParameter) (v: Vector4[]) =
-    if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
-
-  /// <summary>Converts an XNA <see cref="T:Microsoft.Xna.Framework.Color"/> to a normalized <see cref="T:Microsoft.Xna.Framework.Vector4"/>.</summary>
-  let inline colorToVec4(c: Color) : Vector4 =
-    Vector4(
-      float32 c.R / 255.0f,
-      float32 c.G / 255.0f,
-      float32 c.B / 255.0f,
-      float32 c.A / 255.0f
-    )
-
-  // Pooled staging arrays for light uploads — sized to the shader's MAX_* constants,
-  // reused across frames (no per-draw allocation on the hot path).
-  let mutable private pointLightPosScratch = Array.zeroCreate<Vector3> 8
-
-  let mutable private pointLightColorScratch = Array.zeroCreate<Vector3> 8
-
-  let mutable private pointLightIntensityScratch = Array.zeroCreate<float32> 8
-
-  let mutable private pointLightRadiusScratch = Array.zeroCreate<float32> 8
-
-  let mutable private pointLightFalloffScratch = Array.zeroCreate<float32> 8
-
-  let mutable private spotLightPosScratch = Array.zeroCreate<Vector3> 4
-
-  let mutable private spotLightDirScratch = Array.zeroCreate<Vector3> 4
-
-  let mutable private spotLightColorScratch = Array.zeroCreate<Vector3> 4
-
-  let mutable private spotLightIntensityScratch = Array.zeroCreate<float32> 4
-
-  let mutable private spotLightRadiusScratch = Array.zeroCreate<float32> 4
-
-  let mutable private spotLightInnerScratch = Array.zeroCreate<float32> 4
-
-  let mutable private spotLightOuterScratch = Array.zeroCreate<float32> 4
-
-  let mutable private pointShadowIdxScratch = Array.zeroCreate<int> 8
-
-  let mutable private spotShadowIdxScratch = Array.zeroCreate<int> 4
-
-  /// <summary>
-  /// Uploads accumulated lights (ambient + 1 directional + N point + M spot) to the PBR effect.
-  /// Point/spot arrays upload only the active count; the shader early-outs via <c>*Count</c>.
-  /// </summary>
-  let uploadPbrLights
-    (
-      p: inref<PbrEffectParams>,
-      lights: LightBuffers,
-      pointShadowIdx: int[],
-      spotShadowIdx: int[]
-    ) =
-    // Ambient (single slot; zeroes when absent).
-    match lights.Ambient with
-    | ValueSome a ->
-      setVec3 p.AmbientColor (a.Color.ToVector3())
-      setFloat p.AmbientIntensity a.Intensity
-    | ValueNone ->
-      setVec3 p.AmbientColor Vector3.Zero
-      setFloat p.AmbientIntensity 0.0f
-
-    // Directional (single slot; zeroes when absent).
-    match lights.DirLights.Count with
-    | 0 ->
-      setVec3 p.DirLightDir Vector3.Forward
-      setVec3 p.DirLightColor Vector3.Zero
-      setFloat p.DirLightIntensity 0.0f
-    | _ ->
-      let d = lights.DirLights[0]
-      setVec3 p.DirLightDir d.Direction
-      setVec3 p.DirLightColor (d.Color.ToVector3())
-      setFloat p.DirLightIntensity d.Intensity
-
-    // Point lights — upload active count slots.
-    let ptCount = min lights.PointLights.Count pointLightPosScratch.Length
-    setInt p.PointLightCount ptCount
-
-    for i = 0 to ptCount - 1 do
-      let l = lights.PointLights[i]
-      pointLightPosScratch[i] <- l.Position
-      pointLightColorScratch[i] <- l.Color.ToVector3()
-      pointLightIntensityScratch[i] <- l.Intensity
-      pointLightRadiusScratch[i] <- l.Radius
-      pointLightFalloffScratch[i] <- l.Falloff
-
-      pointShadowIdxScratch[i] <-
-        if i < pointShadowIdx.Length then pointShadowIdx[i] else -1
-
-    setVec3Array p.PointLightPos pointLightPosScratch
-    setVec3Array p.PointLightColor pointLightColorScratch
-    setFloatArray p.PointLightIntensity pointLightIntensityScratch
-    setFloatArray p.PointLightRadius pointLightRadiusScratch
-    setFloatArray p.PointLightFalloff pointLightFalloffScratch
-    setIntArray p.PointLightShadowIdx pointShadowIdxScratch
-
-    // Spot lights — upload active count slots.
-    let spCount = min lights.SpotLights.Count spotLightPosScratch.Length
-    setInt p.SpotLightCount spCount
-
-    for i = 0 to spCount - 1 do
-      let l = lights.SpotLights[i]
-      spotLightPosScratch[i] <- l.Position
-      spotLightDirScratch[i] <- l.Direction
-      spotLightColorScratch[i] <- l.Color.ToVector3()
-      spotLightIntensityScratch[i] <- l.Intensity
-      spotLightRadiusScratch[i] <- l.Radius
-      spotLightInnerScratch[i] <- l.InnerCutoff
-      spotLightOuterScratch[i] <- l.OuterCutoff
-
-      spotShadowIdxScratch[i] <-
-        if i < spotShadowIdx.Length then spotShadowIdx[i] else -1
-
-    setVec3Array p.SpotLightPos spotLightPosScratch
-    setVec3Array p.SpotLightDir spotLightDirScratch
-    setVec3Array p.SpotLightColor spotLightColorScratch
-    setFloatArray p.SpotLightIntensity spotLightIntensityScratch
-    setFloatArray p.SpotLightRadius spotLightRadiusScratch
-    setFloatArray p.SpotLightInnerCutoff spotLightInnerScratch
-    setFloatArray p.SpotLightOuterCutoff spotLightOuterScratch
-    setIntArray p.SpotLightShadowIdx spotShadowIdxScratch
-
-  /// <summary>
-  /// Uploads material scalars/colors. Callers gate this on a <c>MaterialKey</c>
-  /// change to avoid re-uploading when consecutive draws share a material. The per-draw
-  /// <c>normalMatrix</c> is NOT uploaded here — it depends on the transform, not the
-  /// material, and must be set unconditionally on every draw.
-  /// </summary>
-  let uploadPbrMaterial(p: inref<PbrEffectParams>, mat: inref<Material3D>) =
-    setVec4 p.AlbedoColor (colorToVec4 mat.AlbedoColor)
-    setFloat p.Roughness mat.Roughness
-    setFloat p.Metallic mat.Metallic
-    setVec4 p.EmissionColor (colorToVec4 mat.EmissionColor)
-    setFloat p.Opacity mat.Opacity
-    setVec2 p.Tiling mat.Tiling
-
-    let useNormal =
-      match mat.NormalMap with
-      | ValueSome _ -> 1
-      | ValueNone -> 0
-
-    setInt p.UseNormalMap useNormal
-
-  /// <summary>
-  /// Binds a material's 5 texture maps to the PBR effect's texture0..4 parameters.
-  /// MonoGame's <see cref="M:Microsoft.Xna.Framework.Graphics.EffectPass.Apply"/> pulls sampler
-  /// textures from the effect's own parameters (<c>EffectPass.SetShaderSamplers</c> in the
-  /// MonoGame source), NOT from <c>gd.Textures[]</c> — so the textures MUST be set here via the
-  /// <c>EffectParameter</c>, or <c>Apply()</c> clobbers them to null and PBR draws sample
-  /// nothing (black). Mirrors <c>Renderer2D</c>'s <c>Texture</c> param bind (Renderer2D.fs:1139).
-  /// </summary>
-  let bindPbrTextures(p: inref<PbrEffectParams>, mat: inref<Material3D>) =
-    let inline setTex (pp: EffectParameter) (t: Texture2D voption) =
-      if not(obj.ReferenceEquals(pp, null)) then
-        match t with
-        // Annotate null as Texture: F# can't resolve the SetValue overload for an untyped null
-        // (SetValue(Texture)/SetValue(int[])/SetValue(float32[])/... all accept null → FS0041).
-        | ValueSome tex -> pp.SetValue tex
-        | ValueNone -> pp.SetValue(null: Texture)
-
-    setTex p.AlbedoMapTex mat.AlbedoMap
-    setTex p.RoughnessMapTex mat.RoughnessMap
-    setTex p.NormalMapTex mat.NormalMap
-    setTex p.MetallicMapTex mat.MetallicMap
-    setTex p.EmissionMapTex mat.EmissionMap
+// The null-safe setters (setVec2/.../setVec4Array/colorToVec4), the pooled light
+// scratch arrays, and the PBR upload helpers (uploadLights/uploadMaterial/bindTextures)
+// all moved to PbrUniforms.fs in the v2 refactor. Call sites reference them directly
+// as PbrUniforms.* — no aliases.
 
 // ------------------------------------------------------------------
 // ForwardPipeline
@@ -1003,11 +696,21 @@ type ForwardPipelineBase
           Matrix.Invert(&t, &inv) |> ignore
           let normalMatrix = Matrix.Transpose inv
 
-          setMatrix p.MatModel world
-          setMatrix p.ViewProj (state.View * state.Projection)
-          setMatrix p.NormalMatrix normalMatrix
-          setVec3 p.CameraPos state.CurrentCamera.Position
-          uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
+          PbrUniforms.setMatrix p.Matrix.MatModel world
+
+          PbrUniforms.setMatrix
+            p.Matrix.ViewProj
+            (state.View * state.Projection)
+
+          PbrUniforms.setMatrix p.Matrix.NormalMatrix normalMatrix
+          PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
+
+          PbrUniforms.uploadLights(
+            &p,
+            lights,
+            pointShadowSlots,
+            spotShadowSlots
+          )
 
           for part in mesh.MeshParts do
             let mat = Material3D.fromModelMeshPart part
@@ -1016,8 +719,8 @@ type ForwardPipelineBase
             let key = materialKey &mat
 
             if not pbrHasLastMaterial || key <> pbrLastKey then
-              uploadPbrMaterial(&p, &mat)
-              bindPbrTextures(&p, &mat)
+              PbrUniforms.uploadMaterial(&p, &mat)
+              PbrUniforms.bindTextures(&p, &mat)
               pbrLastKey <- key
               pbrHasLastMaterial <- true
 
@@ -1080,11 +783,21 @@ type ForwardPipelineBase
           let mutable inv = Matrix.Identity
           Matrix.Invert(&t, &inv) |> ignore
 
-          setMatrix p.MatModel world
-          setMatrix p.ViewProj (state.View * state.Projection)
-          setMatrix p.NormalMatrix (Matrix.Transpose inv)
-          setVec3 p.CameraPos state.CurrentCamera.Position
-          uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
+          PbrUniforms.setMatrix p.Matrix.MatModel world
+
+          PbrUniforms.setMatrix
+            p.Matrix.ViewProj
+            (state.View * state.Projection)
+
+          PbrUniforms.setMatrix p.Matrix.NormalMatrix (Matrix.Transpose inv)
+          PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
+
+          PbrUniforms.uploadLights(
+            &p,
+            lights,
+            pointShadowSlots,
+            spotShadowSlots
+          )
 
           for part in mesh.MeshParts do
             let isSkinned =
@@ -1094,7 +807,7 @@ type ForwardPipelineBase
 
             if isSkinned then
               e.CurrentTechnique <- e.Techniques["Skinned"]
-              setMatrixArray p.Bones bonePaletteScratch
+              PbrUniforms.setMatrixArray p.Matrix.Bones bonePaletteScratch
             else
               e.CurrentTechnique <- e.Techniques["Standard"]
 
@@ -1104,8 +817,8 @@ type ForwardPipelineBase
             let key = materialKey &mat
 
             if not pbrHasLastMaterial || key <> pbrLastKey then
-              uploadPbrMaterial(&p, &mat)
-              bindPbrTextures(&p, &mat)
+              PbrUniforms.uploadMaterial(&p, &mat)
+              PbrUniforms.bindTextures(&p, &mat)
               pbrLastKey <- key
               pbrHasLastMaterial <- true
 
@@ -1129,7 +842,7 @@ type ForwardPipelineBase
     | ValueNone ->
       match ShaderLoader.loadEffect gd "ForwardPbr" with
       | ValueSome e ->
-        pbrParams <- ValueSome(buildPbrParams e)
+        pbrParams <- ValueSome(PbrUniforms.build e)
         pbrEffect <- ValueSome e
         true
       | ValueNone -> false
@@ -1181,21 +894,21 @@ type ForwardPipelineBase
         Matrix.Invert(&t, &inv) |> ignore
         let normalMatrix = Matrix.Transpose inv
 
-        setMatrix p.MatModel transform
-        setMatrix p.ViewProj (state.View * state.Projection)
-        setMatrix p.NormalMatrix normalMatrix
-        setVec3 p.CameraPos state.CurrentCamera.Position
+        PbrUniforms.setMatrix p.Matrix.MatModel transform
+        PbrUniforms.setMatrix p.Matrix.ViewProj (state.View * state.Projection)
+        PbrUniforms.setMatrix p.Matrix.NormalMatrix normalMatrix
+        PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
 
         // Upload material uniforms only when the material changes (MaterialKey short-circuit).
         let key = materialKey &material
 
         if not pbrHasLastMaterial || key <> pbrLastKey then
-          uploadPbrMaterial(&p, &material)
-          bindPbrTextures(&p, &material)
+          PbrUniforms.uploadMaterial(&p, &material)
+          PbrUniforms.bindTextures(&p, &material)
           pbrLastKey <- key
           pbrHasLastMaterial <- true
 
-        uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
+        PbrUniforms.uploadLights(&p, lights, pointShadowSlots, spotShadowSlots)
 
         mesh.Draw(gd, e)
       | _ -> () // unreachable (ensurePbrEffect set both)
@@ -1316,14 +1029,20 @@ type ForwardPipelineBase
           // matModel + normalMatrix unused for instancing: VS_Instanced transforms
           // normals by the per-instance world matrix directly (rotation matrices are
           // orthogonal, so inverse-transpose = the matrix itself for uniform-scale).
-          setMatrix p.ViewProj viewProj
-          setVec3 p.CameraPos state.CurrentCamera.Position
+          PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
+          PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
 
           // Instanced draws always upload the material (no MaterialKey short-circuit — the
           // batch is one material across all instances).
-          uploadPbrMaterial(&p, &material)
-          bindPbrTextures(&p, &material)
-          uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
+          PbrUniforms.uploadMaterial(&p, &material)
+          PbrUniforms.bindTextures(&p, &material)
+
+          PbrUniforms.uploadLights(
+            &p,
+            lights,
+            pointShadowSlots,
+            spotShadowSlots
+          )
 
           for pass in e.CurrentTechnique.Passes do
             pass.Apply()
@@ -1805,7 +1524,7 @@ type ForwardPipelineBase
 
     if not(hasDirCaster || hasPointCaster || hasSpotCaster) then
       match pbrParams with
-      | ValueSome p -> setInt p.DirLightCastsShadows 0
+      | ValueSome p -> PbrUniforms.setInt p.Shadow.DirLightCastsShadows 0
       | ValueNone -> ()
     else
       // Lazily create the atlas RT + shadow effect.
@@ -2006,8 +1725,8 @@ type ForwardPipelineBase
                     let draw = shadowDraws[d]
 
                     if Culling.isVisible shadowFrustum draw.WorldBounds then
-                      setMatrix depthParams.MatModel draw.Transform
-                      setMatrix depthParams.ViewProj casterVP
+                      PbrUniforms.setMatrix depthParams.MatModel draw.Transform
+                      PbrUniforms.setMatrix depthParams.ViewProj casterVP
 
                       for pass in depthEffect.CurrentTechnique.Passes do
                         pass.Apply()
@@ -2022,8 +1741,8 @@ type ForwardPipelineBase
                       let draw = shadowSkinnedDraws[d]
                       // Skinned casters are drawn unconditionally (no frustum cull — see
                       // ShadowSkinnedDraw remarks). A single animated character per scene.
-                      setMatrix depthParams.MatModel draw.Transform
-                      setMatrix depthParams.ViewProj casterVP
+                      PbrUniforms.setMatrix depthParams.MatModel draw.Transform
+                      PbrUniforms.setMatrix depthParams.ViewProj casterVP
 
                       // Upload the bone palette (tail zero-filled to identity — see handleDrawAnimatedModel).
                       let boneCount =
@@ -2035,7 +1754,9 @@ type ForwardPipelineBase
                       for i = boneCount to bonePaletteScratch.Length - 1 do
                         bonePaletteScratch[i] <- Matrix.Identity
 
-                      setMatrixArray depthParams.Bones bonePaletteScratch
+                      PbrUniforms.setMatrixArray
+                        depthParams.Bones
+                        bonePaletteScratch
 
                       // drawPart applies part.Effect.CurrentTechnique.Passes, so the
                       // DepthSkinned technique must be bound on the part's own Effect slot
@@ -2065,7 +1786,9 @@ type ForwardPipelineBase
               // ── Upload shadow uniforms to the PBR effect ──
               match pbrParams with
               | ValueSome p ->
-                setInt p.DirLightCastsShadows (if hasDirCaster then 1 else 0)
+                PbrUniforms.setInt
+                  p.Shadow.DirLightCastsShadows
+                  (if hasDirCaster then 1 else 0)
 
                 // Multi-caster: upload the full packed arrays (shadowViewProjs + shadowUVOffsets).
                 let active = shadowAtlas.ActiveCasterCount
@@ -2082,11 +1805,19 @@ type ForwardPipelineBase
                     shadowViewProjsScratch[i] <- vpArr[i]
                     shadowUVOffsetsScratch[i] <- uvArr[i]
 
-                  setMatrixArray p.ShadowViewProjs shadowViewProjsScratch
-                  setVec4Array p.ShadowUVOffsets shadowUVOffsetsScratch
+                  PbrUniforms.setMatrixArray
+                    p.Shadow.ShadowViewProjs
+                    shadowViewProjsScratch
+
+                  PbrUniforms.setVec4Array
+                    p.Shadow.ShadowUVOffsets
+                    shadowUVOffsetsScratch
 
                 let texel = 1.0f / float32 atlasCfg.Resolution
-                setVec2 p.ShadowTexelSize (Vector2(texel, texel))
+
+                PbrUniforms.setVec2
+                  p.Shadow.ShadowTexelSize
+                  (Vector2(texel, texel))
 
                 gd.Textures[5] <- shadowAtlas.Fbo
                 gd.SamplerStates[5] <- SamplerState.PointClamp
