@@ -645,6 +645,14 @@ module internal PbrShading =
         for part in mesh.MeshParts do
           let mat = Material3D.fromModelMeshPart part
 
+          // DrawModel binds the Standard technique (matches the PBR handleDrawModel — a static
+          // model draw doesn't upload a bone palette, even if the parts are skinned).
+          match
+            effect.Techniques |> Seq.tryFind(fun t -> t.Name = "Standard")
+          with
+          | Some st -> effect.CurrentTechnique <- st
+          | None -> ()
+
           SceneUpload.uploadToEffect(
             gd,
             effect,
@@ -688,6 +696,28 @@ module internal PbrShading =
 
         for part in mesh.MeshParts do
           let mat = Material3D.fromModelMeshPart part
+
+          // Select the technique by part kind, matching the PBR path: a SkinnedEffect part
+          // (the content-pipeline signal for BLENDINDICES0/BLENDWEIGHT0) needs the effect's
+          // Skinned technique so VS_Skinning + boneMatrices apply. A user effect without a
+          // Skinned technique falls back to its CurrentTechnique — safe, just unskinned.
+          let isSkinned =
+            match part.Effect with
+            | :? SkinnedEffect -> true
+            | _ -> false
+
+          if isSkinned then
+            match
+              effect.Techniques |> Seq.tryFind(fun t -> t.Name = "Skinned")
+            with
+            | Some sk -> effect.CurrentTechnique <- sk
+            | None -> ()
+          else
+            match
+              effect.Techniques |> Seq.tryFind(fun t -> t.Name = "Standard")
+            with
+            | Some st -> effect.CurrentTechnique <- st
+            | None -> ()
 
           SceneUpload.uploadToEffect(
             gd,
