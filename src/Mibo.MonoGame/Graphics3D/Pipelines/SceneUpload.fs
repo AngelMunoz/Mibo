@@ -26,6 +26,25 @@ open Mibo.Elmish.Graphics3D
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>Effect-agnostic scene-data upload: resolves uniform names on any <see cref="T:Microsoft.Xna.Framework.Graphics.Effect"/>.</summary>
+/// <remarks>
+/// <para>
+/// <b>What is uploaded</b> (when the uniform is present on the target effect; absent uniforms are
+/// skipped — MonoGame returns null from <c>Parameters["name"]</c>):
+/// matrices (<c>matModel</c>/<c>viewProj</c>/<c>normalMatrix</c>/<c>cameraPos</c>), material
+/// (<c>albedoColor</c>, <c>texture0..4</c>, <c>roughness</c>/<c>metallic</c>/<c>emissionColor</c>/
+/// <c>opacity</c>/<c>tiling</c>/<c>useNormalMap</c>), lights (ambient + 1 directional + N point +
+/// M spot), and bones (<c>boneMatrices[128]</c>, only when supplied).
+/// </para>
+/// <para>
+/// <b>What is NOT uploaded — shadows.</b> Shadow uniforms (<c>shadowViewProjs</c>,
+/// <c>shadowUVOffsets</c>, <c>shadowTexelSize</c>, <c>dirLightCastsShadows</c>,
+/// <c>pointLightShadowIdx</c>, <c>spotLightShadowIdx</c>) and the shadow atlas texture (slot 5) are
+/// a concern of the default PBR pipeline, uploaded by the shadow pass (<c>ForwardPipelineBase</c>'s
+/// <c>runShadowPass</c>) to its own cached PBR effect. A user-effect scope (<c>beginEffect</c>) inherits
+/// scene <b>data</b> — camera, lights, material, bones — not the PBR shader's shadow machinery (v2 spec §3).
+/// An effect that wants shadows must declare those uniforms and bind the atlas texture itself.
+/// </para>
+/// </remarks>
 module SceneUpload =
 
   // ── null-safe setters (mirror ForwardHelpers' set* but self-contained: this module

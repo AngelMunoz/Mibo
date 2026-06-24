@@ -195,6 +195,16 @@ module Draw3D =
   /// or automatically at the next <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.endCamera"/> (scopes do not
   /// persist across cameras).
   /// </summary>
+  /// <remarks>
+  /// <b>Shadows are not inherited.</b> The default PBR path uploads shadow uniforms + the shadow
+  /// atlas (slot 5) during its shadow pass; a user-effect scope inherits only scene data (camera,
+  /// lights, material, bones). An effect that wants shadows must declare and bind them itself. See
+  /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SceneUpload"/> for the exact upload contract.
+  /// <para>
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.drawInstanced"/> inside a scope falls back to the PBR
+  /// path — hardware instancing needs a per-instance vertex stream a generic inherited effect won't declare.
+  /// </para>
+  /// </remarks>
   let inline beginEffect (effect: Effect) (buffer: RenderBuffer3D) =
     buffer.Add(Command3D.beginEffect effect)
     buffer
