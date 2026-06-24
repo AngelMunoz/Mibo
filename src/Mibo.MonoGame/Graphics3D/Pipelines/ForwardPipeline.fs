@@ -781,7 +781,19 @@ type ForwardPipelineBase
     draw: Command3D ->
       unit
 
-  default this.Shade(gd, state, _activeEffect, draw) =
+  default this.Shade(gd, state, activeEffect, draw) =
+    match activeEffect with
+    | ValueNone ->
+      // Default path: cached PBR fast path (no behavior change vs. pre-staging).
+      this.shadePbr(gd, &state, draw)
+    | ValueSome userEffect ->
+      // Per-group scope: shade with the user effect via name-resolved SceneUpload.
+      // The effect inherits scene data (camera/lights/material/bones), NOT the PBR shader.
+      this.shadeWithEffect(gd, &state, userEffect, draw)
+
+  /// <summary>Default PBR shading (cached <c>PbrEffectParams</c> fast path). Routes each shaded
+  /// draw kind to its <c>handleDraw*</c> member.</summary>
+  member private this.shadePbr(gd, state, draw) =
     match draw with
     | Command3D.DrawModel(model, transform) ->
       this.handleDrawModel(gd, &state, model, transform)
@@ -798,6 +810,134 @@ type ForwardPipelineBase
         material,
         instanceCount
       )
+    | _ -> ()
+
+  /// <summary>
+  /// User-effect shading: uploads the gathered scene data (matrices + material + lights + bones)
+  /// to <paramref name="effect"/> via <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.SceneUpload.uploadToEffect"/>
+  /// (name-resolved; absent uniforms skipped), then draws through the effect's own
+  /// <c>CurrentTechnique</c>. The effect inherits scene DATA, not the PBR shader (v2 §3).
+  /// </summary>
+  /// <remarks>
+  /// <c>DrawInstanced</c> under a user scope falls back to the cached PBR instanced path: hardware
+  /// instancing needs a vertex stream (TEXCOORD1..4) a generic inherited effect won't declare, so
+  /// the inheritance contract doesn't cover it. Use the PBR <c>Instanced</c> technique for bulk.
+  /// </remarks>
+  member private this.shadeWithEffect(gd, state, effect, draw) =
+    let camPos = state.CurrentCamera.Position
+
+    // normalMatrix = transpose(inverse(world)) (RH; §6.2).
+    let normalMatrixOf(world: Matrix) =
+      let mutable t = world
+      let mutable inv = Matrix.Identity
+      Matrix.Invert(&t, &inv) |> ignore
+      Matrix.Transpose inv
+
+    match draw with
+    | Command3D.DrawPrimitive(mesh, transform, material) ->
+      SceneUpload.uploadToEffect(
+        effect,
+        state.View,
+        state.Projection,
+        camPos,
+        transform,
+        normalMatrixOf transform,
+        lights,
+        ValueNone,
+        material
+      )
+
+      mesh.Draw(gd, effect)
+
+    | Command3D.DrawModel(model, transform) ->
+      let boneCount = model.Bones.Count
+
+      if boneTransforms.Length < boneCount then
+        boneTransforms <- Array.zeroCreate<Matrix> boneCount
+
+      model.CopyAbsoluteBoneTransformsTo(boneTransforms)
+
+      for mesh in model.Meshes do
+        let world = boneTransforms[mesh.ParentBone.Index] * transform
+
+        for part in mesh.MeshParts do
+          let mat = Material3D.fromModelMeshPart part
+
+          SceneUpload.uploadToEffect(
+            effect,
+            state.View,
+            state.Projection,
+            camPos,
+            world,
+            normalMatrixOf world,
+            lights,
+            ValueNone,
+            mat
+          )
+
+          let saved = part.Effect
+          part.Effect <- effect
+
+          try
+            drawPart(gd, part)
+          finally
+            part.Effect <- saved
+
+    | Command3D.DrawAnimatedModel(model, transform, bones) ->
+      let boneCount = model.Bones.Count
+
+      if boneTransforms.Length < boneCount then
+        boneTransforms <- Array.zeroCreate<Matrix> boneCount
+
+      model.CopyAbsoluteBoneTransformsTo(boneTransforms)
+
+      // Bone palette (tail zero-filled to identity) — matches the PBR skinned path. Uploaded
+      // once per draw, shared across parts. A user effect with a boneMatrices[128] slot inherits it.
+      let palCount = min bones.Length bonePaletteScratch.Length
+
+      for i = 0 to palCount - 1 do
+        bonePaletteScratch[i] <- bones[i]
+
+      for i = palCount to bonePaletteScratch.Length - 1 do
+        bonePaletteScratch[i] <- Matrix.Identity
+
+      for mesh in model.Meshes do
+        let world = boneTransforms[mesh.ParentBone.Index] * transform
+
+        for part in mesh.MeshParts do
+          let mat = Material3D.fromModelMeshPart part
+
+          SceneUpload.uploadToEffect(
+            effect,
+            state.View,
+            state.Projection,
+            camPos,
+            world,
+            normalMatrixOf world,
+            lights,
+            ValueSome bonePaletteScratch,
+            mat
+          )
+
+          let saved = part.Effect
+          part.Effect <- effect
+
+          try
+            drawPart(gd, part)
+          finally
+            part.Effect <- saved
+
+    | Command3D.DrawInstanced(mesh, transforms, material, instanceCount) ->
+      // Instancing under a user scope falls back to the PBR path (see remarks).
+      this.handleDrawInstanced(
+        gd,
+        &state,
+        mesh,
+        transforms,
+        material,
+        instanceCount
+      )
+
     | _ -> ()
 
   // ----------------------------------------------------------------
@@ -2086,6 +2226,12 @@ type ForwardPipelineBase
 
       // ── Step 3: Forward pass ──
       // Lights + camera are already in `state`/`lights`; draw commands dispatch here.
+      // activeEffect tracks the per-group shading scope (beginEffect/endEffect, §7.2):
+      // ValueNone → default PBR path; ValueSome e → shade with the user effect. Scopes do NOT
+      // persist across cameras — a new camera block (BeginCamera/BeginCameraConfig) and EndCamera
+      // both reset it, so a forgotten endEffect can't leak a user effect into the next view.
+      let mutable activeEffect: Effect voption = ValueNone
+
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
         // ── Camera ──
@@ -2099,6 +2245,9 @@ type ForwardPipelineBase
               state.CurrentCamera
               (float32 vp.Width)
               (float32 vp.Height)
+
+          // New camera block: scopes don't persist across cameras (§7.2).
+          activeEffect <- ValueNone
 
         | Command3D.BeginCameraConfig cfg ->
           // Apply viewport + clear color (deferred from pre-scan so clearing happens here).
@@ -2120,6 +2269,9 @@ type ForwardPipelineBase
           | ValueSome c -> gd.Clear(ClearOptions.Target, c.ToVector4(), 1.0f, 0)
           | ValueNone -> ()
 
+          // New camera block: scopes don't persist across cameras (§7.2).
+          activeEffect <- ValueNone
+
         | Command3D.EndCamera ->
           if state.HasCamera then
             // Restore fullscreen viewport + mark camera inactive so subsequent draws are skipped
@@ -2128,18 +2280,25 @@ type ForwardPipelineBase
             gd.Viewport <- state.SavedViewport
             state.HasCamera <- false
 
+          // EndCamera closes any open effect scope (§7.2).
+          activeEffect <- ValueNone
+
+        // ── Per-group shading scope ──
+        | Command3D.BeginEffect effect -> activeEffect <- ValueSome effect
+        | Command3D.EndEffect -> activeEffect <- ValueNone
+
         // ── Drawing ──
         // Shaded draw kinds (model / animated model / primitive / instanced) go through the
         // virtual Shade so a subclass / object expression can override per-draw shading while
-        // inheriting the camera/light/shadow gather and forward-pass orchestration. The default
-        // Shade is the PBR path (no behavior change). activeEffect is ValueNone on the default
-        // path until BeginEffect/EndEffect land (Phase 2+4).
+        // inheriting the camera/light/shadow gather and forward-pass orchestration. activeEffect
+        // is the current scope (ValueNone on the default path). The default Shade branches on it:
+        // PBR-cached fast path when None, SceneUpload name-resolved path when Some.
         | Command3D.DrawModel _
         | Command3D.DrawAnimatedModel _
         | Command3D.DrawPrimitive _
         | Command3D.DrawInstanced _ ->
           if state.HasCamera then
-            this.Shade(gd, &state, ValueNone, buffer[i])
+            this.Shade(gd, &state, activeEffect, buffer[i])
 
         | Command3D.DrawMeshEffect(part, transform, effect) ->
           if state.HasCamera then

@@ -182,6 +182,32 @@ module Draw3D =
     buffer
 
   // ──────────────────────────────────────────────
+  // Per-group shading scopes
+  // ──────────────────────────────────────────────
+
+  /// <summary>
+  /// Opens a per-group shading scope: draws between this and <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.endEffect"/>
+  /// are shaded by <paramref name="effect"/> instead of the default PBR effect. The effect inherits
+  /// the gathered scene data (camera matrices, lights, material, bones) — <b>not</b> the PBR shader
+  /// itself (v2 spec §3): it need only declare the uniform subset it consumes, and absent uniforms
+  /// are skipped. This lets a toon/cel/wireframe effect reuse the scene's camera + lighting without
+  /// re-implementing the gather. The scope closes at <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.endEffect"/>
+  /// or automatically at the next <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.endCamera"/> (scopes do not
+  /// persist across cameras).
+  /// </summary>
+  let inline beginEffect (effect: Effect) (buffer: RenderBuffer3D) =
+    buffer.Add(Command3D.beginEffect effect)
+    buffer
+
+  /// <summary>
+  /// Closes the shading scope opened by <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.beginEffect"/>;
+  /// subsequent draws revert to the default PBR path. No-op if no scope is open.
+  /// </summary>
+  let inline endEffect(buffer: RenderBuffer3D) =
+    buffer.Add(Command3D.endEffect())
+    buffer
+
+  // ──────────────────────────────────────────────
   // Lighting
   // ──────────────────────────────────────────────
 

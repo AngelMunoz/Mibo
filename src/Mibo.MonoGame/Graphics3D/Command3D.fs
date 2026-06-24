@@ -53,6 +53,8 @@ type Command3D =
   | AddSpotLight of sLight: SpotLight3D
   | EnableShadows
   | DisableShadows
+  | BeginEffect of effect: Effect
+  | EndEffect
   | DrawImmediate of action: (unit -> unit)
 
 /// <summary>
@@ -142,6 +144,18 @@ module Command3D =
   let inline enableShadows() = Command3D.EnableShadows
 
   let inline disableShadows() = Command3D.DisableShadows
+
+  /// <summary>
+  /// Opens a per-group shading scope: draws between this and <see cref="M:Mibo.Elmish.Graphics3D.Command3D.endEffect"/>
+  /// are shaded by <paramref name="effect"/> instead of the default PBR effect. The effect inherits the
+  /// gathered scene data (camera matrices, lights, material, bones) — NOT the PBR shader itself. An
+  /// effect need only declare the uniform subset it consumes; absent uniforms are skipped. The scope
+  /// closes automatically at <c>EndCamera</c> (it does not persist across cameras).
+  /// </summary>
+  let inline beginEffect(effect: Effect) = Command3D.BeginEffect(effect)
+
+  /// <summary>Closes the shading scope opened by <see cref="M:Mibo.Elmish.Graphics3D.Command3D.beginEffect"/>; subsequent draws revert to the default PBR path.</summary>
+  let inline endEffect() = Command3D.EndEffect
 
   let inline drawImmediate(action: unit -> unit) =
     Command3D.DrawImmediate(action)
