@@ -26,6 +26,7 @@
     <Compile Include="Graphics3D/RenderPipeline3D.fs" />
     <Compile Include="Graphics3D/Renderer3D.fs" />
     <Compile Include="Graphics3D/Pipelines/PostProcess3D.fs" />
+    <Compile Include="Graphics3D/Pipelines/SceneData.fs" />
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
     <Compile Include="Graphics3D/Pipelines/ForwardPipeline.fs" />
     <Compile Include="Graphics3D/Draw3D.fs" />

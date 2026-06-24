@@ -29,29 +29,8 @@ module private ForwardHelpers =
     mutable SavedViewport: Viewport
   }
 
-  /// <summary>
-  /// Per-pipeline light accumulator. Created once at construction; cleared and repopulated
-  /// each frame (mirrors the canonical raylib <c>LightBuffers</c> double-scan pattern).
-  /// </summary>
-  /// <remarks>
-  /// <see cref="T:Mibo.Elmish.Graphics3D.PointLight3D"/> and
-  /// <see cref="T:Mibo.Elmish.Graphics3D.SpotLight3D"/> are accumulated for parity with
-  /// the raylib pipeline, but have no native <c>BasicEffect</c> equivalent — they are
-  /// bound only by the custom PBR path (B9). See <c>applyLighting</c>.
-  /// </remarks>
-  type LightBuffers = {
-    mutable Ambient: AmbientLight3D voption
-    DirLights: ResizeArray<DirectionalLight3D>
-    PointLights: ResizeArray<PointLight3D>
-    SpotLights: ResizeArray<SpotLight3D>
-  }
-
-  /// <summary>Resets all light accumulators to empty.</summary>
-  let inline clearLights(lights: LightBuffers) =
-    lights.Ambient <- ValueNone
-    lights.DirLights.Clear()
-    lights.PointLights.Clear()
-    lights.SpotLights.Clear()
+  // LightBuffers + clearLights moved to SceneData.fs (public) in Phase 1 of the v2
+  // pipeline-staging work. ForwardPipeline references them as Pipelines.LightBuffers.
 
   /// <summary>Builds the view + projection matrices for a MonoGame <see cref="T:Mibo.Elmish.Camera3D"/>.</summary>
   /// <remarks>
@@ -697,12 +676,7 @@ type ForwardPipeline
   let atlasCfg = ValueOption.defaultValue ShadowAtlasConfig.defaults shadowAtlas
   let biasCfg = ValueOption.defaultValue ShadowBiasConfig.defaults shadowBias
 
-  let lights: LightBuffers = {
-    Ambient = ValueNone
-    DirLights = ResizeArray<DirectionalLight3D>(3)
-    PointLights = ResizeArray<PointLight3D>(8)
-    SpotLights = ResizeArray<SpotLight3D>(4)
-  }
+  let lights: Pipelines.LightBuffers = Pipelines.LightBuffers.defaults
 
   // Reused each frame to avoid per-frame allocation. Sized generously; grows if a larger
   // model is seen. A raw array (not ResizeArray) so we can pass it directly to
@@ -2018,7 +1992,7 @@ type ForwardPipeline
       gd.SamplerStates[5] <- SamplerState.PointClamp
 
       // ── Step 1: Pre-scan — capture camera + lights + shadow state ──
-      clearLights lights
+      Pipelines.LightBuffers.clear lights
       shadowOrigin <- ValueNone
 
       let mutable state: ForwardState = {
