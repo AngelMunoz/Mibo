@@ -54,6 +54,10 @@ type ForwardFrame = {
   PointShadowSlots: int[]
   /// <summary>Per-light shadow atlas slots (-1 = no shadow), indexed by SpotLights position.</summary>
   SpotShadowSlots: int[]
+  /// <summary>The frame's shadow pass output — ValueNone when no shadow-casting light / missing DepthShadow.fx.
+  /// The user-effect scope (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PbrShading.shadeWithEffect"/>)
+  /// uploads these uniforms by name so a custom effect can opt into shadow sampling.</summary>
+  Shadows: ShadowResult voption
 }
 
 /// <summary>
@@ -612,6 +616,7 @@ module internal PbrShading =
     match draw with
     | Command3D.DrawPrimitive(mesh, transform, material) ->
       SceneUpload.uploadToEffect(
+        gd,
         effect,
         state.View,
         state.Projection,
@@ -619,6 +624,7 @@ module internal PbrShading =
         transform,
         normalMatrixOf transform,
         frame.Lights,
+        frame.Shadows,
         ValueNone,
         material
       )
@@ -640,6 +646,7 @@ module internal PbrShading =
           let mat = Material3D.fromModelMeshPart part
 
           SceneUpload.uploadToEffect(
+            gd,
             effect,
             state.View,
             state.Projection,
@@ -647,6 +654,7 @@ module internal PbrShading =
             world,
             normalMatrixOf world,
             frame.Lights,
+            frame.Shadows,
             ValueNone,
             mat
           )
@@ -682,6 +690,7 @@ module internal PbrShading =
           let mat = Material3D.fromModelMeshPart part
 
           SceneUpload.uploadToEffect(
+            gd,
             effect,
             state.View,
             state.Projection,
@@ -689,6 +698,7 @@ module internal PbrShading =
             world,
             normalMatrixOf world,
             frame.Lights,
+            frame.Shadows,
             ValueSome bonePaletteScratch,
             mat
           )

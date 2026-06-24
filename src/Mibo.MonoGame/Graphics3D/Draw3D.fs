@@ -196,10 +196,12 @@ module Draw3D =
   /// persist across cameras).
   /// </summary>
   /// <remarks>
-  /// <b>Shadows are not inherited.</b> The default PBR path uploads shadow uniforms + the shadow
-  /// atlas (slot 5) during its shadow pass; a user-effect scope inherits only scene data (camera,
-  /// lights, material, bones). An effect that wants shadows must declare and bind them itself. See
-  /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SceneUpload"/> for the exact upload contract.
+  /// <b>Shadows + lights + animation are inherited by declaration.</b> The scene gather (camera,
+  /// lights, the shadow pass output, material, bones) is uploaded to the user effect by name via
+  /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SceneUpload"/>: an effect that declares the
+  /// matching uniforms (e.g. <c>dirLightDir</c>, <c>boneMatrices</c>, <c>shadowViewProjs</c>,
+  /// <c>texture5</c>) inherits and samples them; one that declares none of them is unaffected. So a
+  /// toon/water scope can opt into shadows and skinned animation simply by declaring those uniforms.
   /// <para>
   /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.drawInstanced"/> inside a scope falls back to the PBR
   /// path — hardware instancing needs a per-instance vertex stream a generic inherited effect won't declare.

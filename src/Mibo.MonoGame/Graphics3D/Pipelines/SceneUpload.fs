@@ -29,20 +29,23 @@ open Mibo.Elmish.Graphics3D
 /// <remarks>
 /// <para>
 /// <b>What is uploaded</b> (when the uniform is present on the target effect; absent uniforms are
-/// skipped — MonoGame returns null from <c>Parameters["name"]</c>):
-/// matrices (<c>matModel</c>/<c>viewProj</c>/<c>normalMatrix</c>/<c>cameraPos</c>), material
+/// skipped — MonoGame returns null from <c>Parameters["name"]</c>): matrices
+/// (<c>matModel</c>/<c>viewProj</c>/<c>normalMatrix</c>/<c>cameraPos</c>), material
 /// (<c>albedoColor</c>, <c>texture0..4</c>, <c>roughness</c>/<c>metallic</c>/<c>emissionColor</c>/
 /// <c>opacity</c>/<c>tiling</c>/<c>useNormalMap</c>), lights (ambient + 1 directional + N point +
-/// M spot), and bones (<c>boneMatrices[128]</c>, only when supplied).
+/// M spot, including per-light shadow indices), shadows (the atlas + <c>shadowViewProjs</c>/
+/// <c>shadowUVOffsets</c>/<c>shadowTexelSize</c>/<c>dirLightCastsShadows</c>, when the frame has a
+/// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ShadowResult"/>), and bones
+/// (<c>boneMatrices[128]</c>, only when supplied).
 /// </para>
 /// <para>
-/// <b>What is NOT uploaded — shadows.</b> Shadow uniforms (<c>shadowViewProjs</c>,
-/// <c>shadowUVOffsets</c>, <c>shadowTexelSize</c>, <c>dirLightCastsShadows</c>,
-/// <c>pointLightShadowIdx</c>, <c>spotLightShadowIdx</c>) and the shadow atlas texture (slot 5) are
-/// a concern of the default PBR pipeline, uploaded by the shadow pass (<c>ForwardPipelineBase</c>'s
-/// <c>runShadowPass</c>) to its own cached PBR effect. A user-effect scope (<c>beginEffect</c>) inherits
-/// scene <b>data</b> — camera, lights, material, bones — not the PBR shader's shadow machinery (v2 spec §3).
-/// An effect that wants shadows must declare those uniforms and bind the atlas texture itself.
+/// <b>Shadows are opt-in by declaration.</b> A user effect that wants shadow sampling declares the
+/// shadow uniforms (<c>shadowViewProjs</c>, <c>shadowUVOffsets</c>, <c>shadowTexelSize</c>,
+/// <c>dirLightCastsShadows</c>, <c>pointLightShadowIdx</c>, <c>spotLightShadowIdx</c>) and a
+/// <c>texture5</c> sampler; when the frame's shadow pass produced an atlas, those uniforms are
+/// uploaded by name and the atlas is bound to sampler slot 5 (PointClamp). An effect that declares
+/// none of them renders unshadowed — no cost, no sampling. When the frame has no shadow-casting
+/// light, <c>dirLightCastsShadows</c> is set to 0 and nothing else shadow-related is uploaded.
 /// </para>
 /// </remarks>
 module SceneUpload =
@@ -81,9 +84,22 @@ module SceneUpload =
     if not(obj.ReferenceEquals(p, null)) then
       p.SetValue v
 
+  let inline private setIntArray (p: EffectParameter) (v: int[]) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
   let inline private setMatrixArray (p: EffectParameter) (v: Matrix[]) =
     if not(obj.ReferenceEquals(p, null)) then
       p.SetValue v
+
+  let inline private setVec4Array (p: EffectParameter) (v: Vector4[]) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue v
+
+  /// <summary>Binds the shadow atlas to a named sampler texture param (texture5 slot).</summary>
+  let inline private setTex5 (pp: EffectParameter) (tex: Texture2D) =
+    if not(obj.ReferenceEquals(pp, null)) then
+      pp.SetValue tex
 
   /// <summary>Converts an XNA <see cref="T:Microsoft.Xna.Framework.Color"/> to a normalized <see cref="T:Microsoft.Xna.Framework.Vector4"/>.</summary>
   let inline private colorToVec4(c: Color) : Vector4 =
@@ -111,6 +127,8 @@ module SceneUpload =
   let mutable private spotRadius = Array.zeroCreate<float32> 4
   let mutable private spotInner = Array.zeroCreate<float32> 4
   let mutable private spotOuter = Array.zeroCreate<float32> 4
+  let mutable private pointShadowIdx = Array.zeroCreate<int> 8
+  let mutable private spotShadowIdx = Array.zeroCreate<int> 4
 
   /// <summary>
   /// Uploads the full scene-data contract to <paramref name="effect"/> by resolving each
@@ -131,6 +149,7 @@ module SceneUpload =
   /// <param name="material">The draw's material.</param>
   let uploadToEffect
     (
+      gd: GraphicsDevice,
       effect: Effect,
       view: Matrix,
       projection: Matrix,
@@ -138,6 +157,7 @@ module SceneUpload =
       world: Matrix,
       normalMatrix: Matrix,
       lights: LightBuffers,
+      shadows: ShadowResult voption,
       bones: Matrix[] voption,
       material: Material3D
     ) : unit =
@@ -201,6 +221,12 @@ module SceneUpload =
 
     // ── Lights: point (upload active count slots) ──
     let ptCount = min lights.PointLights.Count pointPos.Length
+
+    let ptShadowIdx =
+      match shadows with
+      | ValueSome s -> s.PointLightShadowIdx
+      | ValueNone -> null
+
     setInt (p "pointLightCount") ptCount
 
     for i = 0 to ptCount - 1 do
@@ -211,14 +237,27 @@ module SceneUpload =
       pointRadius[i] <- l.Radius
       pointFalloff[i] <- l.Falloff
 
+      pointShadowIdx[i] <-
+        if ptShadowIdx <> null && i < ptShadowIdx.Length then
+          ptShadowIdx[i]
+        else
+          -1
+
     setVec3Array (p "pointLightPos") pointPos
     setVec3Array (p "pointLightColor") pointColor
     setFloatArray (p "pointLightIntensity") pointIntensity
     setFloatArray (p "pointLightRadius") pointRadius
     setFloatArray (p "pointLightFalloff") pointFalloff
+    setIntArray (p "pointLightShadowIdx") pointShadowIdx
 
     // ── Lights: spot (upload active count slots) ──
     let spCount = min lights.SpotLights.Count spotPos.Length
+
+    let spShadowIdx =
+      match shadows with
+      | ValueSome s -> s.SpotLightShadowIdx
+      | ValueNone -> null
+
     setInt (p "spotLightCount") spCount
 
     for i = 0 to spCount - 1 do
@@ -231,6 +270,12 @@ module SceneUpload =
       spotInner[i] <- l.InnerCutoff
       spotOuter[i] <- l.OuterCutoff
 
+      spotShadowIdx[i] <-
+        if spShadowIdx <> null && i < spShadowIdx.Length then
+          spShadowIdx[i]
+        else
+          -1
+
     setVec3Array (p "spotLightPos") spotPos
     setVec3Array (p "spotLightDir") spotDir
     setVec3Array (p "spotLightColor") spotColor
@@ -238,6 +283,27 @@ module SceneUpload =
     setFloatArray (p "spotLightRadius") spotRadius
     setFloatArray (p "spotLightInnerCutoff") spotInner
     setFloatArray (p "spotLightOuterCutoff") spotOuter
+    setIntArray (p "spotLightShadowIdx") spotShadowIdx
+
+    // ── Shadows (opt-in: a user effect that declares these uniforms inherits shadow sampling). ──
+    // The atlas texture is bound to sampler slot 5 (PointClamp) when shadows are active. Absent
+    // uniforms are skipped (null), so an effect that doesn't declare shadow sampling is unaffected.
+    match shadows with
+    | ValueSome s ->
+      setInt
+        (p "dirLightCastsShadows")
+        (if s.DirLightCastsShadows then 1 else 0)
+
+      setMatrixArray (p "shadowViewProjs") s.ViewProjs
+      setVec4Array (p "shadowUVOffsets") s.UVOffsets
+      setVec2 (p "shadowTexelSize") (Vector2(s.TexelSize, s.TexelSize))
+      // Bind the atlas to the effect's own sampler param (texture5) — like the material maps, the
+      // sampler is read from the effect's parameters at Apply(), not gd.Textures[]. Also set slot 5
+      // so an effect that samples the atlas via the fixed texture slot (not a named param) works.
+      setTex5 (p "texture5") s.Atlas
+      gd.Textures[5] <- s.Atlas
+      gd.SamplerStates[5] <- SamplerState.PointClamp
+    | ValueNone -> setInt (p "dirLightCastsShadows") 0
 
     // ── Bones (only for skinned draws) ──
     match bones with

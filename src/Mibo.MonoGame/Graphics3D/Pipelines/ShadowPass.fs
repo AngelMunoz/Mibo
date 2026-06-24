@@ -113,6 +113,11 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   /// <summary>Pooled bone-palette staging array for skinned casters (B12). Shader's MAX_BONES is 128.</summary>
   member val BonePaletteScratch = Array.zeroCreate<Matrix> 128 with get, set
 
+  /// <summary>The last frame's shadow pass output — read by the forward pass (Shade overrides +
+  /// user-effect scopes) so a custom shader can opt into shadow sampling. ValueNone when no
+  /// shadow-casting light exists or DepthShadow.fx is unavailable.</summary>
+  member val ShadowResult: ShadowResult voption = ValueNone with get, set
+
 /// <summary>The extracted shadow pass: caster geometry types, per-light ViewProj builders, and the pass body.</summary>
 module internal ShadowPass =
 
@@ -282,7 +287,7 @@ module internal ShadowPass =
     (pbrParams: PbrEffectParams voption)
     (buffer: RenderBuffer3D)
     (activeCamera: Camera3D)
-    : unit =
+    : ShadowResult voption =
     let hasDirCaster = lights.DirLights |> Seq.exists(fun d -> d.CastsShadows)
 
     let hasPointCaster =
@@ -303,10 +308,13 @@ module internal ShadowPass =
     else
       Array.Fill(res.SpotShadowSlots, -1)
 
+    let mutable result: ShadowResult voption = ValueNone
+
     if not(hasDirCaster || hasPointCaster || hasSpotCaster) then
       match pbrParams with
       | ValueSome p -> PbrUniforms.setInt p.Shadow.DirLightCastsShadows 0
       | ValueNone -> ()
+    // No shadow-casting light → no result; scene renders unshadowed.
     else
       res.Atlas.EnsureResources gd
 
@@ -550,26 +558,30 @@ module internal ShadowPass =
             gd.DepthStencilState <- prevDepth
 
             // ── Upload shadow uniforms to the PBR effect ──
+            let active = res.Atlas.ActiveCasterCount
+
+            // Size the packed scratch to the active caster count (reused across frames).
+            if active > 0 && res.ViewProjsScratch.Length < active then
+              res.ViewProjsScratch <- Array.zeroCreate<Matrix> active
+              res.UVOffsetsScratch <- Array.zeroCreate<Vector4> active
+
+            if active > 0 then
+              let vpArr = res.Atlas.ViewProjs
+              let uvArr = res.Atlas.UVOffsets
+
+              for i = 0 to active - 1 do
+                res.ViewProjsScratch[i] <- vpArr[i]
+                res.UVOffsetsScratch[i] <- uvArr[i]
+
+            let texel = 1.0f / float32 atlasCfg.Resolution
+
             match pbrParams with
             | ValueSome p ->
               PbrUniforms.setInt
                 p.Shadow.DirLightCastsShadows
                 (if hasDirCaster then 1 else 0)
 
-              let active = res.Atlas.ActiveCasterCount
-
               if active > 0 then
-                if res.ViewProjsScratch.Length < active then
-                  res.ViewProjsScratch <- Array.zeroCreate<Matrix> active
-                  res.UVOffsetsScratch <- Array.zeroCreate<Vector4> active
-
-                let vpArr = res.Atlas.ViewProjs
-                let uvArr = res.Atlas.UVOffsets
-
-                for i = 0 to active - 1 do
-                  res.ViewProjsScratch[i] <- vpArr[i]
-                  res.UVOffsetsScratch[i] <- uvArr[i]
-
                 PbrUniforms.setMatrixArray
                   p.Shadow.ShadowViewProjs
                   res.ViewProjsScratch
@@ -578,8 +590,6 @@ module internal ShadowPass =
                   p.Shadow.ShadowUVOffsets
                   res.UVOffsetsScratch
 
-              let texel = 1.0f / float32 atlasCfg.Resolution
-
               PbrUniforms.setVec2
                 p.Shadow.ShadowTexelSize
                 (Vector2(texel, texel))
@@ -587,4 +597,20 @@ module internal ShadowPass =
               gd.Textures[5] <- res.Atlas.Fbo
               gd.SamplerStates[5] <- SamplerState.PointClamp
             | ValueNone -> ()
-      | _ -> () // DepthShadow.fx missing — render unshadowed.
+
+            // Build the result both the PBR path and user-effect scopes consume. The atlas is
+            // bound to slot 5 above for the PBR pass; SceneUpload re-binds it for user effects.
+            result <-
+              ValueSome {
+                Atlas = res.Atlas.Fbo
+                ViewProjs = res.ViewProjsScratch
+                UVOffsets = res.UVOffsetsScratch
+                ActiveCasterCount = active
+                TexelSize = texel
+                DirLightCastsShadows = hasDirCaster
+                PointLightShadowIdx = res.PointShadowSlots
+                SpotLightShadowIdx = res.SpotShadowSlots
+              }
+      | _ -> () // DepthShadow.fx missing — render unshadowed (result stays ValueNone).
+
+    result

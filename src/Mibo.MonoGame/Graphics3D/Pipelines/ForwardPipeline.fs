@@ -237,20 +237,12 @@ type ForwardPipelineBase
   abstract Shade:
     gd: GraphicsDevice *
     state: byref<ForwardState> *
+    frame: byref<ForwardFrame> *
     activeEffect: Effect voption *
     draw: Command3D ->
       unit
 
-  default this.Shade(gd, state, activeEffect, draw) =
-    // Build the per-frame scene bundle the PBR handlers read (lights, shared bone palette, the
-    // per-light shadow slots the shadow pass just filled). A struct — no per-draw allocation.
-    let mutable frame: ForwardFrame = {
-      Lights = lights
-      BonePaletteScratch = bonePaletteScratch
-      PointShadowSlots = shadowRes.PointShadowSlots
-      SpotShadowSlots = shadowRes.SpotShadowSlots
-    }
-
+  default this.Shade(gd, state, frame, activeEffect, draw) =
     match activeEffect with
     | ValueNone ->
       // Default path: cached PBR fast path.
@@ -590,6 +582,7 @@ type ForwardPipelineBase
       pbrRes.Params
       buffer
       state.CurrentCamera
+    |> fun r -> shadowRes.ShadowResult <- r // stash for the forward pass (Shade / user-effect scopes)
 
   // ----------------------------------------------------------------
   // IRenderPipeline3D
@@ -731,6 +724,17 @@ type ForwardPipelineBase
       // both reset it, so a forgotten endEffect can't leak a user effect into the next view.
       let mutable activeEffect: Effect voption = ValueNone
 
+      // Build the per-frame scene bundle once (lights, shared bone palette, per-light shadow slots,
+      // the shadow pass output) and pass it byref to Shade for the whole forward pass. A struct —
+      // no per-draw allocation. This is the bundle a Shade override (use case 1) receives.
+      let mutable scene: ForwardFrame = {
+        Lights = lights
+        BonePaletteScratch = bonePaletteScratch
+        PointShadowSlots = shadowRes.PointShadowSlots
+        SpotShadowSlots = shadowRes.SpotShadowSlots
+        Shadows = shadowRes.ShadowResult
+      }
+
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
         // ── Camera ──
@@ -797,7 +801,7 @@ type ForwardPipelineBase
         | Command3D.DrawPrimitive _
         | Command3D.DrawInstanced _ ->
           if state.HasCamera then
-            this.Shade(gd, &state, activeEffect, buffer[i])
+            this.Shade(gd, &state, &scene, activeEffect, buffer[i])
 
         | Command3D.DrawMeshEffect(part, transform, effect) ->
           if state.HasCamera then
