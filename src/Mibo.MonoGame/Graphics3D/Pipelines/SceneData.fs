@@ -1,8 +1,31 @@
 namespace Mibo.Elmish.Graphics3D.Pipelines
 
 open Microsoft.Xna.Framework
+open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
 open Mibo.Elmish.Graphics3D
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ForwardState — per-frame forward-rendering state, threaded byref through dispatch.
+//
+// Mirrors the RendererState pattern from Renderer2D.fs: a mutable struct threaded by reference so
+// dispatch avoids heap allocation on the hot path. Public because the staged base's virtual Shade
+// exposes it (byref) to subclass / object-expression overrides — a shading strategy needs the
+// active camera's view/projection. Repopulated each frame by the gather + forward-pass; overrides
+// read it, they should not mutate it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>Per-frame forward-rendering state, threaded byref through dispatch.</summary>
+/// <remarks>Mutable struct (hot path, no allocation); repopulated each frame by the forward pass.</remarks>
+[<Struct>]
+type ForwardState = {
+  mutable HasCamera: bool
+  mutable View: Matrix
+  mutable Projection: Matrix
+  mutable CurrentCamera: Camera3D
+  mutable CurrentConfig: Camera3DConfig voption
+  mutable SavedViewport: Viewport
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SceneData — the reusable per-frame scene gather.

@@ -11,25 +11,6 @@ open Mibo.Elmish.Graphics3D
 // Internal helpers
 // ------------------------------------------------------------------
 
-/// <summary>Per-frame forward-rendering state, threaded byref through dispatch.</summary>
-/// <remarks>
-/// Mirrors the <c>RendererState</c> pattern from <c>Renderer2D.fs</c>: a mutable struct
-/// threaded by reference so dispatch avoids heap allocation on the hot path. Public because the
-/// staged base's virtual <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase.Shade"/>
-/// exposes it (byref) to subclass / object-expression overrides — a shading strategy needs the
-/// active camera's view/projection. It is repopulated each frame by the gather + forward-pass;
-/// overrides read it, they should not mutate it.
-/// </remarks>
-[<Struct>]
-type ForwardState = {
-  mutable HasCamera: bool
-  mutable View: Matrix
-  mutable Projection: Matrix
-  mutable CurrentCamera: Camera3D
-  mutable CurrentConfig: Camera3DConfig voption
-  mutable SavedViewport: Viewport
-}
-
 [<AutoOpen>]
 module private ForwardHelpers =
 
@@ -97,84 +78,7 @@ module private ForwardHelpers =
     | CameraProjection.Orthographic ->
       Matrix.CreateOrthographic(cam.FovY, cam.FovY, cam.NearPlane, cam.FarPlane)
 
-  /// <summary>Applies accumulated lighting to a <see cref="T:Microsoft.Xna.Framework.Graphics.BasicEffect"/>.</summary>
-  /// <remarks>
-  /// <b>The native floor.</b> <c>BasicEffect</c> exposes 1 ambient slot + up to 3 directional
-  /// light slots (<c>DirectionalLight0..2</c>). There is <b>no native point/spot light</b> —
-  /// those <c>AddPointLight</c>/<c>AddSpotLight</c> accumulations are collected for parity
-  /// and consumed only by the custom PBR pipeline (B9). Excess directionals (4+) are clamped.
-  /// Unused directional slots are disabled. Fog is off. This is the documented limitation
-  /// upgraded in B9.
-  /// </remarks>
-  /// <remarks>
-  /// Hot path: the three light slots are unrolled (not looped over a temporary array) and
-  /// <see cref="M:Microsoft.Xna.Framework.Color.ToVector3"/> is used directly, so this
-  /// function performs zero per-call heap allocations.
-  /// </remarks>
-  /// <summary>Applies accumulated lighting to any <see cref="T:Microsoft.Xna.Framework.Graphics.IEffectLights"/> effect (<c>BasicEffect</c>, <c>SkinnedEffect</c>, etc.).</summary>
-  /// <remarks>
-  /// <b>The native floor.</b> <c>IEffectLights</c> exposes 1 ambient slot + up to 3 directional
-  /// light slots (<c>DirectionalLight0..2</c>). There is <b>no native point/spot light</b> —
-  /// those <c>AddPointLight</c>/<c>AddSpotLight</c> accumulations are collected for parity
-  /// and consumed only by the custom PBR pipeline (B9). Excess directionals (4+) are clamped.
-  /// Unused directional slots are disabled. Fog is off. This is the documented limitation
-  /// upgraded in B9.
-  /// </remarks>
-  /// <remarks>
-  /// Hot path: the three light slots are unrolled (not looped over a temporary array) and
-  /// <see cref="M:Microsoft.Xna.Framework.Color.ToVector3"/> is used directly, so this
-  /// function performs zero per-call heap allocations.
-  /// </remarks>
-  let applyLighting(effect: IEffectLights, lights: LightBuffers) =
-    // Ambient.
-    match lights.Ambient with
-    | ValueSome a ->
-      effect.AmbientLightColor <- a.Color.ToVector3() * a.Intensity
-    | ValueNone -> effect.AmbientLightColor <- Vector3.Zero
-
-    // Up to 3 directional lights — clamp; disable the rest. Slots unrolled (no temp array)
-    // because this runs once per effect draw on the hot path.
-    let dirs = lights.DirLights
-    let count = dirs.Count
-
-    // Slot 0
-    if count > 0 then
-      let d = dirs[0]
-      effect.DirectionalLight0.Enabled <- true
-      effect.DirectionalLight0.Direction <- d.Direction
-      effect.DirectionalLight0.DiffuseColor <- d.Color.ToVector3() * d.Intensity
-    else
-      effect.DirectionalLight0.Enabled <- false
-
-    // Slot 1
-    if count > 1 then
-      let d = dirs[1]
-      effect.DirectionalLight1.Enabled <- true
-      effect.DirectionalLight1.Direction <- d.Direction
-      effect.DirectionalLight1.DiffuseColor <- d.Color.ToVector3() * d.Intensity
-    else
-      effect.DirectionalLight1.Enabled <- false
-
-    // Slot 2
-    if count > 2 then
-      let d = dirs[2]
-      effect.DirectionalLight2.Enabled <- true
-      effect.DirectionalLight2.Direction <- d.Direction
-      effect.DirectionalLight2.DiffuseColor <- d.Color.ToVector3() * d.Intensity
-    else
-      effect.DirectionalLight2.Enabled <- false
-
-    // FogEnabled is on IEffectFog (BasicEffect/SkinnedEffect both implement it),
-    // not on IEffectLights. PreferPerPixelLighting is on BasicEffect/SkinnedEffect
-    // directly (no shared interface). Set both via type-test.
-    match box effect with
-    | :? IEffectFog as f -> f.FogEnabled <- false
-    | _ -> ()
-
-    match box effect with
-    | :? BasicEffect as be -> be.PreferPerPixelLighting <- true
-    | :? SkinnedEffect as se -> se.PreferPerPixelLighting <- true
-    | _ -> ()
+  // applyLighting moved to PbrShading.fs (private helper there) in the v2 refactor.
 
   /// <summary>
   /// Sets <c>World</c>/<c>View</c>/<c>Projection</c> on an effect via <see cref="T:Microsoft.Xna.Framework.Graphics.IEffectMatrices"/>
@@ -221,54 +125,7 @@ module private ForwardHelpers =
           part.PrimitiveCount
         )
 
-  // ----------------------------------------------------------------
-  // PBR (B9): Cook-Torrance effect parameter cache + upload helpers
-  // ----------------------------------------------------------------
-
-  /// <summary>
-  /// Structural identity key for a <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/> —
-  /// texture map references + scalar/color fields. Used to skip uniform re-uploads when
-  /// consecutive PBR draws share the same material (mirrors the canonical raylib
-  /// <c>MaterialKey</c> short-circuit). Texture fields use reference equality (a
-  /// <c>Texture2D</c> has no stable numeric ID on MonoGame, unlike raylib's <c>.Id</c>).
-  /// </summary>
-  [<Struct>]
-  type MaterialKey = {
-    AlbedoMap: Texture2D
-    RoughnessMap: Texture2D
-    MetallicMap: Texture2D
-    NormalMap: Texture2D
-    EmissionMap: Texture2D
-    AlbedoColor: Color
-    Roughness: float32
-    Metallic: float32
-    EmissionColor: Color
-    Opacity: float32
-    TilingX: float32
-    TilingY: float32
-  }
-
-  /// <summary>Builds a <see cref="MaterialKey"/> from a material (null for absent maps).</summary>
-  let inline materialKey(mat: inref<Material3D>) : MaterialKey =
-    let texOrNull(t: Texture2D voption) =
-      match t with
-      | ValueSome x -> x
-      | ValueNone -> null
-
-    {
-      AlbedoMap = texOrNull mat.AlbedoMap
-      RoughnessMap = texOrNull mat.RoughnessMap
-      MetallicMap = texOrNull mat.MetallicMap
-      NormalMap = texOrNull mat.NormalMap
-      EmissionMap = texOrNull mat.EmissionMap
-      AlbedoColor = mat.AlbedoColor
-      Roughness = mat.Roughness
-      Metallic = mat.Metallic
-      EmissionColor = mat.EmissionColor
-      Opacity = mat.Opacity
-      TilingX = mat.Tiling.X
-      TilingY = mat.Tiling.Y
-    }
+// MaterialKey + materialKey moved to PbrShading.fs (the PBR handlers own the short-circuit).
 
 // PbrEffectParams (and its semantic sub-records Matrix/Material/Ambient/DirLight/
 // PointLights/SpotLights/Shadow) moved to PbrUniforms.fs in the v2 pipeline-staging
@@ -337,42 +194,18 @@ type ForwardPipelineBase
 
   let lights: Pipelines.LightBuffers = Pipelines.LightBuffers.defaults
 
-  // Reused each frame to avoid per-frame allocation. Sized generously; grows if a larger
-  // model is seen. A raw array (not ResizeArray) so we can pass it directly to
-  // Model.CopyAbsoluteBoneTransformsTo with zero per-frame allocation or copying.
-  let mutable boneTransforms = Array.zeroCreate<Matrix> 64
-
-  // Lazily-created BasicEffect for the DrawPrimitive fallback path (used when the custom
-  // PBR effect can't be loaded — e.g. missing embedded resource). Created on first
-  // DrawPrimitive against the actual GraphicsDevice passed to Execute.
-  let mutable pbrFallbackEffect: BasicEffect voption = ValueNone
-
-  // B9 PBR: the custom Cook-Torrance effect (loads from embedded .mgfx via ShaderLoader)
-  // + its cached parameter handles + a MaterialKey short-circuit to skip uniform re-uploads
-  // across consecutive draws sharing the same material. Created on first PBR draw.
-  let mutable pbrEffect: Effect voption = ValueNone
-  let mutable pbrParams: PbrEffectParams voption = ValueNone
-  let mutable pbrHasLastMaterial = false
-  let mutable pbrLastKey: MaterialKey = Unchecked.defaultof<MaterialKey>
+  // PBR shading: the lazily-loaded PBR effect + params, the BasicEffect fallback, the instancing
+  // effect + growable instance vertex buffer + staging, the MaterialKey short-circuit cache, and the
+  // bone-transforms scratch are all owned by PbrResources and driven by PbrShading.* (PbrShading.fs).
+  let pbrRes = PbrResources()
 
   // Shadow pass: all shadow state (atlas, depth effect + params, origin, raster, pooled
   // caster/skinned/scratch arrays, per-light slot mappings, frustum, bone palette) is owned
   // by ShadowResources and driven by ShadowPass.run. See ShadowPass.fs.
   let shadowRes = ShadowResources(atlasCfg, biasCfg)
-  // bonePaletteScratch is also written by the forward-pass skinned handlers (handleDrawAnimatedModel,
-  // shadeWithEffect); alias it from the shadow resources so both paths share the one pooled array.
-  // (The shadow pass reads/writes bonePaletteScratch in place; it never reassigns the field, so an
-  //  alias is safe here — unlike the slot arrays, which ShadowPass.run can reassign.)
+  // bonePaletteScratch is shared between the shadow pass and the forward-pass skinned handlers;
+  // alias it from the shadow resources. (Read/written in place — never reassigned by either path.)
   let bonePaletteScratch = shadowRes.BonePaletteScratch
-
-  // Instancing: the custom Instanced effect (loads from embedded .mgfx via ShaderLoader)
-  // and a growable per-instance vertex buffer. The effect has instance input semantics
-  // (TEXCOORD1..4) that no stock BasicEffect provides, so instancing needs custom HLSL.
-  // Created on first DrawInstanced against the real device.
-  let mutable instancedEffect: Effect voption = ValueNone
-  let mutable instanceVertexBuffer: VertexBuffer voption = ValueNone
-  // CPU staging array — packed VertexInstanceWorld rows per instance. Grows as needed.
-  let mutable instanceStaging = Array.zeroCreate<VertexInstanceWorld> 64
 
   // B8 billboards + lines: lazily-created unlit BasicEffects (one textured+alpha for
   // billboards, one vertex-color for lines) and a pooled CPU vertex staging array for
@@ -389,18 +222,16 @@ type ForwardPipelineBase
     Array.zeroCreate<VertexPositionColorTexture> 2
 
   // ----------------------------------------------------------------
-  // Staging hooks — overridable per-draw shading (v2 pipeline-staging).
+  // Per-draw shading hook — overridable (v2 pipeline-staging).
   //
-  // The default implementation is the Cook-Torrance PBR path: each shaded
-  // draw kind (model / animated model / primitive / instanced) routes through
-  // the custom ForwardPbr.fx via the handleDraw* members above. A subclass (or
-  // object expression over ForwardPipeline) overrides Shade to plug a different
-  // shading strategy while inheriting the camera/light/shadow gather and the
-  // forward-pass orchestration from Execute.
+  // The default implementation delegates to PbrShading.*: the cached PBR fast path for the
+  // shaded draw kinds (model / animated model / primitive / instanced), or — when a user-effect
+  // scope is open (BeginEffect) — name-resolved SceneUpload to the user effect. A subclass /
+  // object expression overrides Shade to plug a different strategy while inheriting the
+  // camera/light/shadow gather and forward-pass orchestration from Execute.
   //
-  // activeEffect: a user-effect scope opened by BeginEffect (Phase 2+4).
-  // ValueNone on the default path → the pipeline's own PBR effect. The base
-  // passes it through unchanged so the default PBR Shade is scope-unaware.
+  // activeEffect: ValueNone on the default path → PBR; ValueSome e → shade with the user effect
+  // (it inherits scene DATA, not the PBR shader).
   // ----------------------------------------------------------------
 
   abstract Shade:
@@ -411,163 +242,58 @@ type ForwardPipelineBase
       unit
 
   default this.Shade(gd, state, activeEffect, draw) =
+    // Build the per-frame scene bundle the PBR handlers read (lights, shared bone palette, the
+    // per-light shadow slots the shadow pass just filled). A struct — no per-draw allocation.
+    let mutable frame: ForwardFrame = {
+      Lights = lights
+      BonePaletteScratch = bonePaletteScratch
+      PointShadowSlots = shadowRes.PointShadowSlots
+      SpotShadowSlots = shadowRes.SpotShadowSlots
+    }
+
     match activeEffect with
     | ValueNone ->
-      // Default path: cached PBR fast path (no behavior change vs. pre-staging).
-      this.shadePbr(gd, &state, draw)
+      // Default path: cached PBR fast path.
+      match draw with
+      | Command3D.DrawModel(model, transform) ->
+        PbrShading.drawModel(gd, &state, &frame, pbrRes, model, transform)
+      | Command3D.DrawAnimatedModel(model, transform, bones) ->
+        PbrShading.drawAnimatedModel(
+          gd,
+          &state,
+          &frame,
+          pbrRes,
+          model,
+          transform,
+          bones
+        )
+      | Command3D.DrawPrimitive(mesh, transform, material) ->
+        PbrShading.drawPrimitive(
+          gd,
+          &state,
+          &frame,
+          pbrRes,
+          mesh,
+          transform,
+          material
+        )
+      | Command3D.DrawInstanced(mesh, transforms, material, instanceCount) ->
+        PbrShading.drawInstanced(
+          gd,
+          &state,
+          &frame,
+          pbrRes,
+          mesh,
+          transforms,
+          material,
+          instanceCount
+        )
+      | _ -> ()
     | ValueSome userEffect ->
-      // Per-group scope: shade with the user effect via name-resolved SceneUpload.
-      // The effect inherits scene data (camera/lights/material/bones), NOT the PBR shader.
-      this.shadeWithEffect(gd, &state, userEffect, draw)
+      // Per-group scope: shade with the user effect via name-resolved SceneUpload. The effect
+      // inherits scene data (camera/lights/material/bones), NOT the PBR shader itself (v2 §3).
+      PbrShading.shadeWithEffect(gd, &state, &frame, pbrRes, userEffect, draw)
 
-  /// <summary>Default PBR shading (cached <c>PbrEffectParams</c> fast path). Routes each shaded
-  /// draw kind to its <c>handleDraw*</c> member.</summary>
-  member private this.shadePbr(gd, state, draw) =
-    match draw with
-    | Command3D.DrawModel(model, transform) ->
-      this.handleDrawModel(gd, &state, model, transform)
-    | Command3D.DrawAnimatedModel(model, transform, bones) ->
-      this.handleDrawAnimatedModel(gd, &state, model, transform, bones)
-    | Command3D.DrawPrimitive(mesh, transform, material) ->
-      this.handleDrawPrimitive(gd, &state, mesh, transform, material)
-    | Command3D.DrawInstanced(mesh, transforms, material, instanceCount) ->
-      this.handleDrawInstanced(
-        gd,
-        &state,
-        mesh,
-        transforms,
-        material,
-        instanceCount
-      )
-    | _ -> ()
-
-  /// <summary>
-  /// User-effect shading: uploads the gathered scene data (matrices + material + lights + bones)
-  /// to <paramref name="effect"/> via <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.SceneUpload.uploadToEffect"/>
-  /// (name-resolved; absent uniforms skipped), then draws through the effect's own
-  /// <c>CurrentTechnique</c>. The effect inherits scene DATA, not the PBR shader (v2 §3).
-  /// </summary>
-  /// <remarks>
-  /// <c>DrawInstanced</c> under a user scope falls back to the cached PBR instanced path: hardware
-  /// instancing needs a vertex stream (TEXCOORD1..4) a generic inherited effect won't declare, so
-  /// the inheritance contract doesn't cover it. Use the PBR <c>Instanced</c> technique for bulk.
-  /// </remarks>
-  member private this.shadeWithEffect(gd, state, effect, draw) =
-    let camPos = state.CurrentCamera.Position
-
-    // normalMatrix = transpose(inverse(world)) (RH; §6.2).
-    let normalMatrixOf(world: Matrix) =
-      let mutable t = world
-      let mutable inv = Matrix.Identity
-      Matrix.Invert(&t, &inv) |> ignore
-      Matrix.Transpose inv
-
-    match draw with
-    | Command3D.DrawPrimitive(mesh, transform, material) ->
-      SceneUpload.uploadToEffect(
-        effect,
-        state.View,
-        state.Projection,
-        camPos,
-        transform,
-        normalMatrixOf transform,
-        lights,
-        ValueNone,
-        material
-      )
-
-      mesh.Draw(gd, effect)
-
-    | Command3D.DrawModel(model, transform) ->
-      let boneCount = model.Bones.Count
-
-      if boneTransforms.Length < boneCount then
-        boneTransforms <- Array.zeroCreate<Matrix> boneCount
-
-      model.CopyAbsoluteBoneTransformsTo(boneTransforms)
-
-      for mesh in model.Meshes do
-        let world = boneTransforms[mesh.ParentBone.Index] * transform
-
-        for part in mesh.MeshParts do
-          let mat = Material3D.fromModelMeshPart part
-
-          SceneUpload.uploadToEffect(
-            effect,
-            state.View,
-            state.Projection,
-            camPos,
-            world,
-            normalMatrixOf world,
-            lights,
-            ValueNone,
-            mat
-          )
-
-          let saved = part.Effect
-          part.Effect <- effect
-
-          try
-            drawPart(gd, part)
-          finally
-            part.Effect <- saved
-
-    | Command3D.DrawAnimatedModel(model, transform, bones) ->
-      let boneCount = model.Bones.Count
-
-      if boneTransforms.Length < boneCount then
-        boneTransforms <- Array.zeroCreate<Matrix> boneCount
-
-      model.CopyAbsoluteBoneTransformsTo(boneTransforms)
-
-      // Bone palette (tail zero-filled to identity) — matches the PBR skinned path. Uploaded
-      // once per draw, shared across parts. A user effect with a boneMatrices[128] slot inherits it.
-      let palCount = min bones.Length bonePaletteScratch.Length
-
-      for i = 0 to palCount - 1 do
-        bonePaletteScratch[i] <- bones[i]
-
-      for i = palCount to bonePaletteScratch.Length - 1 do
-        bonePaletteScratch[i] <- Matrix.Identity
-
-      for mesh in model.Meshes do
-        let world = boneTransforms[mesh.ParentBone.Index] * transform
-
-        for part in mesh.MeshParts do
-          let mat = Material3D.fromModelMeshPart part
-
-          SceneUpload.uploadToEffect(
-            effect,
-            state.View,
-            state.Projection,
-            camPos,
-            world,
-            normalMatrixOf world,
-            lights,
-            ValueSome bonePaletteScratch,
-            mat
-          )
-
-          let saved = part.Effect
-          part.Effect <- effect
-
-          try
-            drawPart(gd, part)
-          finally
-            part.Effect <- saved
-
-    | Command3D.DrawInstanced(mesh, transforms, material, instanceCount) ->
-      // Instancing under a user scope falls back to the PBR path (see remarks).
-      this.handleDrawInstanced(
-        gd,
-        &state,
-        mesh,
-        transforms,
-        material,
-        instanceCount
-      )
-
-    | _ -> ()
 
   // ----------------------------------------------------------------
   // Dispatch helpers
@@ -596,459 +322,10 @@ type ForwardPipelineBase
     finally
       part.Effect <- saved
 
-  /// <summary>
-  /// Handles <c>DrawModel</c>: routes every mesh part through the PBR effect. For each part
-  /// the baked native effect (<c>BasicEffect</c>/<c>SkinnedEffect</c>) is read into a
-  /// <c>Material3D</c> via <c>Material3D.fromModelMeshPart</c>, the part's effect is swapped
-  /// to the PBR <c>Standard</c> technique around the draw, and lighting/shadows come from the
-  /// pipeline's accumulated lights. This replaces the native-effect path: imported models now
-  /// get PBR + point/spot lights + shadows instead of flat BasicEffect.
-  /// </summary>
-  member private this.handleDrawModel
-    (
-      gd: GraphicsDevice,
-      state: byref<ForwardState>,
-      model: Model,
-      transform: Matrix
-    ) =
-    if this.ensurePbrEffect gd then
-      match pbrEffect, pbrParams with
-      | ValueSome e, ValueSome p ->
-        let boneCount = model.Bones.Count
-
-        if boneTransforms.Length < boneCount then
-          boneTransforms <- Array.zeroCreate<Matrix> boneCount
-
-        model.CopyAbsoluteBoneTransformsTo(boneTransforms)
-
-        e.CurrentTechnique <- e.Techniques["Standard"]
-
-        for mesh in model.Meshes do
-          let world = boneTransforms[mesh.ParentBone.Index] * transform
-
-          // normalMatrix = transpose(inverse(world)) (RH; §6.2)
-          let mutable t = world
-          let mutable inv = Matrix.Identity
-          Matrix.Invert(&t, &inv) |> ignore
-          let normalMatrix = Matrix.Transpose inv
-
-          PbrUniforms.setMatrix p.Matrix.MatModel world
-
-          PbrUniforms.setMatrix
-            p.Matrix.ViewProj
-            (state.View * state.Projection)
-
-          PbrUniforms.setMatrix p.Matrix.NormalMatrix normalMatrix
-          PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
-
-          PbrUniforms.uploadLights(
-            &p,
-            lights,
-            shadowRes.PointShadowSlots,
-            shadowRes.SpotShadowSlots
-          )
-
-          for part in mesh.MeshParts do
-            let mat = Material3D.fromModelMeshPart part
-
-            // Material uniform short-circuit (MaterialKey).
-            let key = materialKey &mat
-
-            if not pbrHasLastMaterial || key <> pbrLastKey then
-              PbrUniforms.uploadMaterial(&p, &mat)
-              PbrUniforms.bindTextures(&p, &mat)
-              pbrLastKey <- key
-              pbrHasLastMaterial <- true
-
-            // Swap the part's effect to PBR around the draw — drawPart applies
-            // part.Effect.CurrentTechnique.Passes, so the PBR technique must be bound
-            // on the part's own Effect slot. Same pattern as the shadow pass.
-            let saved = part.Effect
-            part.Effect <- e
-
-            try
-              drawPart(gd, part)
-            finally
-              part.Effect <- saved
-      | _ -> () // unreachable (ensurePbrEffect set both)
-
-  /// <summary>
-  /// Handles <c>DrawAnimatedModel</c>: routes the model's parts through PBR, applying the
-  /// <c>Skinned</c> technique (with the supplied bone palette) to parts whose native effect is a
-  /// <c>SkinnedEffect</c> (the content-pipeline signal that the vertex buffer carries
-  /// <c>BLENDINDICES0</c>/<c>BLENDWEIGHT0</c>), and the <c>Standard</c> technique to the rest.
-  /// The content pipeline bakes bone indices/weights but discards the animation clips, so bone
-  /// matrices come from <c>Animation3DState.computeBonePalette</c> at runtime. The material
-  /// (DiffuseColor/Texture/Alpha) is read per part via <c>Material3D.fromModelMeshPart</c>, the
-  /// part's effect is swapped to PBR around the draw, and the bone palette is uploaded to the
-  /// shader's <c>boneMatrices[128]</c>. The bone palette is uploaded once per draw (shared across
-  /// all skinned parts), tail zero-filled to identity.
-  /// </summary>
-  member private this.handleDrawAnimatedModel
-    (
-      gd: GraphicsDevice,
-      state: byref<ForwardState>,
-      model: Model,
-      transform: Matrix,
-      bones: Matrix[]
-    ) =
-    if this.ensurePbrEffect gd then
-      match pbrEffect, pbrParams with
-      | ValueSome e, ValueSome p ->
-        let boneCount = model.Bones.Count
-
-        if boneTransforms.Length < boneCount then
-          boneTransforms <- Array.zeroCreate<Matrix> boneCount
-
-        model.CopyAbsoluteBoneTransformsTo(boneTransforms)
-
-        // Bone palette (tail zero-filled to identity) — uploaded once per draw, shared by all
-        // skinned parts. Matches the shadow pass's skinned-caster path.
-        let palCount = min bones.Length bonePaletteScratch.Length
-
-        for i = 0 to palCount - 1 do
-          bonePaletteScratch[i] <- bones[i]
-
-        for i = palCount to bonePaletteScratch.Length - 1 do
-          bonePaletteScratch[i] <- Matrix.Identity
-
-        for mesh in model.Meshes do
-          let world = boneTransforms[mesh.ParentBone.Index] * transform
-
-          let mutable t = world
-          let mutable inv = Matrix.Identity
-          Matrix.Invert(&t, &inv) |> ignore
-
-          PbrUniforms.setMatrix p.Matrix.MatModel world
-
-          PbrUniforms.setMatrix
-            p.Matrix.ViewProj
-            (state.View * state.Projection)
-
-          PbrUniforms.setMatrix p.Matrix.NormalMatrix (Matrix.Transpose inv)
-          PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
-
-          PbrUniforms.uploadLights(
-            &p,
-            lights,
-            shadowRes.PointShadowSlots,
-            shadowRes.SpotShadowSlots
-          )
-
-          for part in mesh.MeshParts do
-            let isSkinned =
-              match part.Effect with
-              | :? SkinnedEffect -> true
-              | _ -> false
-
-            if isSkinned then
-              e.CurrentTechnique <- e.Techniques["Skinned"]
-              PbrUniforms.setMatrixArray p.Matrix.Bones bonePaletteScratch
-            else
-              e.CurrentTechnique <- e.Techniques["Standard"]
-
-            let mat = Material3D.fromModelMeshPart part
-
-            // Material uniform short-circuit (MaterialKey).
-            let key = materialKey &mat
-
-            if not pbrHasLastMaterial || key <> pbrLastKey then
-              PbrUniforms.uploadMaterial(&p, &mat)
-              PbrUniforms.bindTextures(&p, &mat)
-              pbrLastKey <- key
-              pbrHasLastMaterial <- true
-
-            let saved = part.Effect
-            part.Effect <- e
-
-            try
-              drawPart(gd, part)
-            finally
-              part.Effect <- saved
-      | _ -> () // unreachable (ensurePbrEffect set both)
-
-  /// <summary>
-  /// Lazily loads the custom PBR <c>Effect</c> on first PBR draw against the real device.
-  /// Returns <c>true</c> when <c>pbrEffect</c>/<c>pbrParams</c> are usable; <c>false</c> when
-  /// the embedded resource is missing (caller falls back to <c>BasicEffect</c>).
-  /// </summary>
-  member private _.ensurePbrEffect(gd: GraphicsDevice) : bool =
-    match pbrEffect with
-    | ValueSome _ -> true
-    | ValueNone ->
-      match ShaderLoader.loadEffect gd "ForwardPbr" with
-      | ValueSome e ->
-        pbrParams <- ValueSome(PbrUniforms.build e)
-        pbrEffect <- ValueSome e
-        true
-      | ValueNone -> false
-
-  // The depth-only shadow effect is now loaded lazily inside ShadowPass.run (against
-  // shadowRes.Effect/Params), so this pipeline no longer owns an ensureShadowEffect hook.
-
-  /// <summary>
-  /// Handles <c>DrawPrimitive</c>: draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/>
-  /// with a <c>Material3D</c> via the custom PBR effect.
-  /// </summary>
-  /// <remarks>
-  /// Binds the custom Cook-Torrance <c>ForwardPbr.fx</c> (ambient + directional + point +
-  /// spot, emission, opacity, tiling, optional normal map) with a <c>MaterialKey</c> short-circuit
-  /// to skip uniform re-uploads across consecutive draws sharing a material. When the PBR effect
-  /// can't be loaded (missing embedded resource), it falls back to the <c>BasicEffect</c>
-  /// path that maps the albedo color only — preserving the smoke-testable floor.
-  /// </remarks>
-  member private this.handleDrawPrimitive
-    (
-      gd: GraphicsDevice,
-      state: byref<ForwardState>,
-      mesh: PrimitiveMesh,
-      transform: Matrix,
-      material: Material3D
-    ) =
-    if this.ensurePbrEffect gd then
-      match pbrEffect, pbrParams with
-      | ValueSome e, ValueSome p ->
-        // Technique: Standard (non-instanced, non-skinned).
-        e.CurrentTechnique <- e.Techniques["Standard"]
-
-        // Normal matrix = transpose(inverse(world)) (RH; §6.2).
-        let mutable t = transform
-        let mutable inv = Matrix.Identity
-        Matrix.Invert(&t, &inv) |> ignore
-        let normalMatrix = Matrix.Transpose inv
-
-        PbrUniforms.setMatrix p.Matrix.MatModel transform
-        PbrUniforms.setMatrix p.Matrix.ViewProj (state.View * state.Projection)
-        PbrUniforms.setMatrix p.Matrix.NormalMatrix normalMatrix
-        PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
-
-        // Upload material uniforms only when the material changes (MaterialKey short-circuit).
-        let key = materialKey &material
-
-        if not pbrHasLastMaterial || key <> pbrLastKey then
-          PbrUniforms.uploadMaterial(&p, &material)
-          PbrUniforms.bindTextures(&p, &material)
-          pbrLastKey <- key
-          pbrHasLastMaterial <- true
-
-        PbrUniforms.uploadLights(
-          &p,
-          lights,
-          shadowRes.PointShadowSlots,
-          shadowRes.SpotShadowSlots
-        )
-
-        mesh.Draw(gd, e)
-      | _ -> () // unreachable (ensurePbrEffect set both)
-    else
-      // ── BasicEffect fallback (B5/B6 floor) — albedo color only. ──
-      let effect =
-        match pbrFallbackEffect with
-        | ValueSome e -> e
-        | ValueNone ->
-          let e = new BasicEffect(gd)
-          pbrFallbackEffect <- ValueSome e
-          e
-
-      let c = material.AlbedoColor
-
-      effect.DiffuseColor <-
-        Vector3(
-          float32 c.R / 255.0f,
-          float32 c.G / 255.0f,
-          float32 c.B / 255.0f
-        )
-
-      effect.Alpha <- material.Opacity
-      effect.Texture <- null
-      effect.TextureEnabled <- false
-      effect.VertexColorEnabled <- false
-      effect.World <- transform
-      effect.View <- state.View
-      effect.Projection <- state.Projection
-      applyLighting(effect, lights)
-      mesh.Draw(gd, effect)
-
-  /// <summary>
-  /// Handles <c>DrawInstanced</c>: native hardware instancing via two vertex streams
-  /// (stream 0 = the mesh's <c>VertexPositionNormalTexture</c>, stream 1 = per-instance
-  /// world matrices packed as <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/>
-  /// TEXCOORD1..4 rows) and <see cref="M:Microsoft.Xna.Framework.Graphics.GraphicsDevice.DrawInstancedPrimitives"/>.
-  /// </summary>
-  /// <remarks>
-  /// Prefers the PBR <c>Instanced</c> technique (full Cook-Torrance lighting, all light
-  /// types). When the PBR effect can't be loaded, it falls back to the minimal
-  /// <c>Instanced.fx</c> (flat albedo + 1 directional light).
-  /// <para>
-  /// Per §6.1, matrices upload as plain <c>float4x4</c> with <c>mul(position, matrix)</c>
-  /// (vector LEFT). For the PBR instanced technique, <c>matModel</c> and <c>normalMatrix</c>
-  /// are unused: <c>VS_Instanced</c> composes the per-instance world from the TEXCOORD1..4
-  /// rows and transforms normals by it directly (correct for uniform-scale instances —
-  /// rotation is orthogonal, so inverse-transpose == world).
-  /// </para>
-  /// </remarks>
-  member private this.handleDrawInstanced
-    (
-      gd: GraphicsDevice,
-      state: byref<ForwardState>,
-      mesh: PrimitiveMesh,
-      transforms: Matrix[],
-      material: Material3D,
-      instanceCount: int
-    ) =
-    if instanceCount <= 0 then
-      () // Nothing to draw.
-    else
-      // The instance staging array grows only when a larger batch is seen.
-      if instanceStaging.Length < instanceCount then
-        instanceStaging <- Array.zeroCreate<VertexInstanceWorld> instanceCount
-
-      for i = 0 to instanceCount - 1 do
-        instanceStaging[i] <- VertexInstanceWorld.Create transforms[i]
-
-      // Lazily create / resize the instance vertex buffer.
-      match instanceVertexBuffer with
-      | ValueNone ->
-        let vb =
-          new VertexBuffer(
-            gd,
-            typeof<VertexInstanceWorld>,
-            instanceCount,
-            BufferUsage.WriteOnly
-          )
-
-        instanceVertexBuffer <- ValueSome vb
-      | ValueSome vb when vb.VertexCount < instanceCount ->
-        vb.Dispose()
-
-        let vb' =
-          new VertexBuffer(
-            gd,
-            typeof<VertexInstanceWorld>,
-            instanceCount,
-            BufferUsage.WriteOnly
-          )
-
-        instanceVertexBuffer <- ValueSome vb'
-      | _ -> ()
-
-      let instVB =
-        match instanceVertexBuffer with
-        | ValueSome vb -> vb
-        | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable (created above)
-
-      instVB.SetData(instanceStaging, 0, instanceCount)
-
-      // Bind two streams: mesh (per-vertex, freq 0) + instance (per-instance, freq 1).
-      gd.SetVertexBuffers(
-        VertexBufferBinding(mesh.Vertices, 0, 0),
-        VertexBufferBinding(instVB, 0, 1)
-      )
-
-      gd.Indices <- mesh.Indices
-
-      let viewProj = state.View * state.Projection
-
-      if this.ensurePbrEffect gd then
-        match pbrEffect, pbrParams with
-        | ValueSome e, ValueSome p ->
-          e.CurrentTechnique <- e.Techniques["Instanced"]
-
-          // matModel + normalMatrix unused for instancing: VS_Instanced transforms
-          // normals by the per-instance world matrix directly (rotation matrices are
-          // orthogonal, so inverse-transpose = the matrix itself for uniform-scale).
-          PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
-          PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
-
-          // Instanced draws always upload the material (no MaterialKey short-circuit — the
-          // batch is one material across all instances).
-          PbrUniforms.uploadMaterial(&p, &material)
-          PbrUniforms.bindTextures(&p, &material)
-
-          PbrUniforms.uploadLights(
-            &p,
-            lights,
-            shadowRes.PointShadowSlots,
-            shadowRes.SpotShadowSlots
-          )
-
-          for pass in e.CurrentTechnique.Passes do
-            pass.Apply()
-
-            gd.DrawInstancedPrimitives(
-              PrimitiveType.TriangleList,
-              0, // baseVertex
-              0, // startIndex
-              mesh.PrimitiveCount,
-              instanceCount
-            )
-        | _ -> () // unreachable
-      else
-        // ── B7 fallback: minimal Instanced.fx (flat albedo + 1 directional). ──
-        let effect =
-          match instancedEffect with
-          | ValueSome e -> e
-          | ValueNone ->
-            match ShaderLoader.loadEffect gd "Instanced" with
-            | ValueSome e ->
-              instancedEffect <- ValueSome e
-              e
-            | ValueNone -> Unchecked.defaultof<_>
-
-        if obj.ReferenceEquals(effect, null) then
-          ()
-        else
-          let c = material.AlbedoColor
-
-          match effect.Parameters.["ViewProj"] with
-          | null -> ()
-          | pp -> pp.SetValue viewProj
-
-          match effect.Parameters.["AlbedoColor"] with
-          | null -> ()
-          | p ->
-            p.SetValue(
-              Vector3(
-                float32 c.R / 255.0f,
-                float32 c.G / 255.0f,
-                float32 c.B / 255.0f
-              )
-            )
-
-          match effect.Parameters.["AmbientColor"] with
-          | null -> ()
-          | p ->
-            let amb =
-              match lights.Ambient with
-              | ValueSome a -> a.Color.ToVector3() * a.Intensity
-              | ValueNone -> Vector3.Zero
-
-            p.SetValue amb
-
-          match effect.Parameters.["DirLightDir"], lights.DirLights with
-          | null, _ -> ()
-          | p, dl when dl.Count > 0 ->
-            let d = dl[0]
-            p.SetValue d.Direction
-
-            match effect.Parameters.["DirLightColor"] with
-            | null -> ()
-            | pc -> pc.SetValue(d.Color.ToVector3() * d.Intensity)
-          | _, _ ->
-            match effect.Parameters.["DirLightColor"] with
-            | null -> ()
-            | pc -> pc.SetValue Vector3.Zero
-
-          for pass in effect.CurrentTechnique.Passes do
-            pass.Apply()
-
-            gd.DrawInstancedPrimitives(
-              PrimitiveType.TriangleList,
-              0, // baseVertex
-              0, // startIndex
-              mesh.PrimitiveCount,
-              instanceCount
-            )
+  // The four PBR draw handlers (handleDrawModel/handleDrawAnimatedModel/handleDrawPrimitive/
+  // handleDrawInstanced), ensurePbrEffect, the MaterialKey short-circuit, the PBR effect+params,
+  // the BasicEffect fallback, and the instancing effect/buffers all moved to PbrShading.fs
+  // (PbrShading.* / PbrResources). The default Shade delegates to them.
 
   // ----------------------------------------------------------------
   // B8: Billboards + lines
@@ -1302,7 +579,7 @@ type ForwardPipelineBase
     (gd: GraphicsDevice, state: byref<ForwardState>, buffer: RenderBuffer3D)
     =
     // Ensure the PBR effect is loaded BEFORE the pass uploads shadow uniforms to it.
-    this.ensurePbrEffect gd |> ignore
+    PbrShading.ensureEffect(gd, pbrRes) |> ignore
 
     ShadowPass.run
       gd
@@ -1310,7 +587,7 @@ type ForwardPipelineBase
       biasCfg
       shadowRes
       lights
-      pbrParams
+      pbrRes.Params
       buffer
       state.CurrentCamera
 
@@ -1332,30 +609,30 @@ type ForwardPipelineBase
     /// billboard/line effects.
     /// </summary>
     member _.Shutdown() =
-      match pbrEffect with
+      match pbrRes.Effect with
       | ValueSome e ->
         e.Dispose()
-        pbrEffect <- ValueNone
-        pbrParams <- ValueNone
-        pbrHasLastMaterial <- false
+        pbrRes.Effect <- ValueNone
+        pbrRes.Params <- ValueNone
+        pbrRes.HasLastMaterial <- false
       | ValueNone -> ()
 
-      match pbrFallbackEffect with
+      match pbrRes.FallbackEffect with
       | ValueSome e ->
         e.Dispose()
-        pbrFallbackEffect <- ValueNone
+        pbrRes.FallbackEffect <- ValueNone
       | ValueNone -> ()
 
-      match instancedEffect with
+      match pbrRes.InstancedEffect with
       | ValueSome e ->
         e.Dispose()
-        instancedEffect <- ValueNone
+        pbrRes.InstancedEffect <- ValueNone
       | ValueNone -> ()
 
-      match instanceVertexBuffer with
+      match pbrRes.InstanceVertexBuffer with
       | ValueSome vb ->
         vb.Dispose()
-        instanceVertexBuffer <- ValueNone
+        pbrRes.InstanceVertexBuffer <- ValueNone
       | ValueNone -> ()
 
       match billboardEffect with

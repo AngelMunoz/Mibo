@@ -29,8 +29,9 @@
     <Compile Include="Graphics3D/Pipelines/SceneData.fs" />
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
     <Compile Include="Graphics3D/Pipelines/PbrUniforms.fs" />
-    <Compile Include="Graphics3D/Pipelines/ShadowPass.fs" />
     <Compile Include="Graphics3D/Pipelines/SceneUpload.fs" />
+    <Compile Include="Graphics3D/Pipelines/ShadowPass.fs" />
+    <Compile Include="Graphics3D/Pipelines/PbrShading.fs" />
     <Compile Include="Graphics3D/Pipelines/ForwardPipeline.fs" />
     <Compile Include="Graphics3D/Draw3D.fs" />
     <Compile Include="Layout3D/Renderer3D.fs" />
