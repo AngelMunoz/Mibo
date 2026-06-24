@@ -820,57 +820,83 @@ type ForwardPipeline
       part.Effect <- saved
 
   /// <summary>
-  /// Handles <c>DrawModel</c>: replicates <c>Model.Draw</c>'s bone-composition loop but
-  /// injects the pipeline's accumulated lighting on each <c>BasicEffect</c>.
+  /// Handles <c>DrawModel</c>: routes every mesh part through the PBR effect. For each part
+  /// the baked native effect (<c>BasicEffect</c>/<c>SkinnedEffect</c>) is read into a
+  /// <c>Material3D</c> via <c>Material3D.fromModelMeshPart</c>, the part's effect is swapped
+  /// to the PBR <c>Standard</c> technique around the draw, and lighting/shadows come from the
+  /// pipeline's accumulated lights. This replaces the native-effect path: imported models now
+  /// get PBR + point/spot lights + shadows instead of flat BasicEffect.
   /// </summary>
-  member private _.handleDrawModel
+  member private this.handleDrawModel
     (
       gd: GraphicsDevice,
       state: byref<ForwardState>,
       model: Model,
       transform: Matrix
     ) =
-    // Grow the pre-allocated bone array if this model has more bones than we've seen.
-    // Reused across frames; never shrinks. Passed directly to CopyAbsoluteBoneTransformsTo
-    // with zero per-frame allocation.
-    let boneCount = model.Bones.Count
+    if this.ensurePbrEffect gd then
+      match pbrEffect, pbrParams with
+      | ValueSome e, ValueSome p ->
+        let boneCount = model.Bones.Count
 
-    if boneTransforms.Length < boneCount then
-      boneTransforms <- Array.zeroCreate<Matrix> boneCount
+        if boneTransforms.Length < boneCount then
+          boneTransforms <- Array.zeroCreate<Matrix> boneCount
 
-    model.CopyAbsoluteBoneTransformsTo(boneTransforms)
+        model.CopyAbsoluteBoneTransformsTo(boneTransforms)
 
-    for mesh in model.Meshes do
-      let world = boneTransforms[mesh.ParentBone.Index] * transform
+        e.CurrentTechnique <- e.Techniques["Standard"]
 
-      for effect in mesh.Effects do
-        trySetMatrices effect world state.View state.Projection |> ignore
+        for mesh in model.Meshes do
+          let world = boneTransforms[mesh.ParentBone.Index] * transform
 
-        match effect with
-        | :? BasicEffect as be -> applyLighting(be, lights)
-        | _ -> ()
+          // normalMatrix = transpose(inverse(world)) (RH; §6.2)
+          let mutable t = world
+          let mutable inv = Matrix.Identity
+          Matrix.Invert(&t, &inv) |> ignore
+          let normalMatrix = Matrix.Transpose inv
 
-      mesh.Draw()
+          setMatrix p.MatModel world
+          setMatrix p.ViewProj (state.View * state.Projection)
+          setMatrix p.NormalMatrix normalMatrix
+          setVec3 p.CameraPos state.CurrentCamera.Position
+          uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
+
+          for part in mesh.MeshParts do
+            let mat = Material3D.fromModelMeshPart part
+
+            // Material uniform short-circuit (MaterialKey).
+            let key = materialKey &mat
+
+            if not pbrHasLastMaterial || key <> pbrLastKey then
+              uploadPbrMaterial(&p, &mat)
+              bindPbrTextures(&p, &mat)
+              pbrLastKey <- key
+              pbrHasLastMaterial <- true
+
+            // Swap the part's effect to PBR around the draw — drawPart applies
+            // part.Effect.CurrentTechnique.Passes, so the PBR technique must be bound
+            // on the part's own Effect slot. Same pattern as the shadow pass.
+            let saved = part.Effect
+            part.Effect <- e
+
+            try
+              drawPart(gd, part)
+            finally
+              part.Effect <- saved
+      | _ -> () // unreachable (ensurePbrEffect set both)
 
   /// <summary>
-  /// Handles <c>DrawSkinnedMesh</c> (B12). The content pipeline bakes bone
-  /// indices/weights (<c>BLENDINDICES0</c>/<c>BLENDWEIGHT0</c>) into the vertex
-  /// buffer and tags the part with a native <c>SkinnedEffect</c> — but it discards
-  /// the animation clips, which is why bone matrices come from
-  /// <c>Animation3DState.computeBonePalette</c> at runtime.
+  /// Handles <c>DrawSkinnedMesh</c>: routes the part through the PBR <c>Skinned</c> technique
+  /// with the supplied bone palette. The content pipeline bakes bone indices/weights
+  /// (<c>BLENDINDICES0</c>/<c>BLENDWEIGHT0</c>) into the vertex buffer and tags the part with a
+  /// native <c>SkinnedEffect</c> (the signal that the geometry is skinnable) but discards the
+  /// animation clips — bone matrices come from <c>Animation3DState.computeBonePalette</c> at
+  /// runtime. The material (DiffuseColor/Texture/Alpha) is read from the native
+  /// <c>SkinnedEffect</c> via <c>Material3D.fromModelMeshPart</c>, the part's effect is swapped
+  /// to the PBR <c>Skinned</c> technique around the draw, and the bone palette is uploaded to
+  /// the shader's <c>boneMatrices[128]</c>. Non-skinned parts fall back to the PBR
+  /// <c>Standard</c> technique (bones ignored).
   /// </summary>
-  /// <remarks>
-  /// When the part carries a <c>SkinnedEffect</c> (the content-pipeline signal that the
-  /// vertex buffer is skinnable) and the custom PBR effect loads, this swaps the part's
-  /// effect for the PBR <c>Skinned</c> technique (<c>VS_Skinned</c> — full Cook-Torrance
-  /// lighting with GPU 4-bone linear-blend skinning), uploads the bone palette to
-  /// <c>boneMatrices[128]</c>, and draws. Per §4.1 the part's own effect is the native-first
-  /// material carrier; the swap is opt-in here because <c>DrawSkinnedMesh</c> is the explicit
-  /// skinned command (the caller is asking for skinning, so the PBR skinning shader is the
-  /// honest analog of raylib's skinned material). Falls back to the native
-  /// <c>SkinnedEffect</c> (Blinn-Phong, 3 lights) when the PBR effect is unavailable.
-  /// Non-skinned parts (no <c>SkinnedEffect</c>) draw with their own effect, bones ignored.
-  /// </remarks>
   member private this.handleDrawSkinnedMesh
     (
       gd: GraphicsDevice,
@@ -879,27 +905,58 @@ type ForwardPipeline
       transform: Matrix,
       bones: Matrix[]
     ) =
-    match part.Effect with
-    | :? SkinnedEffect as se ->
-      // ── Native SkinnedEffect path (default): preserves the model's own texture
-      // and uses standard Blinn-Phong lighting (same light slots as BasicEffect).
-      // The content pipeline bakes BLENDINDICES0/BLENDWEIGHT0 and binds the
-      // albedo texture onto the SkinnedEffect; swapping to the custom PBR effect
-      // would discard that look and re-light with Cook-Torrance, which is wrong
-      // for models authored for the native effect. Bones come from
-      // Animation3DState.computeBonePalette (hierarchy-composed).
-      trySetMatrices se transform state.View state.Projection |> ignore
+    if this.ensurePbrEffect gd then
+      match pbrEffect, pbrParams with
+      | ValueSome e, ValueSome p ->
+        let mutable t = transform
+        let mutable inv = Matrix.Identity
+        Matrix.Invert(&t, &inv) |> ignore
+        let normalMatrix = Matrix.Transpose inv
 
-      // SkinnedEffect exposes the same ambient + 3 directional slots as BasicEffect.
-      applyLighting(se, lights)
+        setMatrix p.MatModel transform
+        setMatrix p.ViewProj (state.View * state.Projection)
+        setMatrix p.NormalMatrix normalMatrix
+        setVec3 p.CameraPos state.CurrentCamera.Position
+        uploadPbrLights(&p, lights, pointShadowSlots, spotShadowSlots)
 
-      se.SetBoneTransforms(bones)
-      drawPart(gd, part)
-    | effect ->
-      // Non-skinned part (BasicEffect/custom): draw with its own effect, bones
-      // ignored. This covers models whose parts aren't tagged SkinnedEffect.
-      trySetMatrices effect transform state.View state.Projection |> ignore
-      drawPart(gd, part)
+        let mat = Material3D.fromModelMeshPart part
+
+        // Material uniform short-circuit (MaterialKey).
+        let key = materialKey &mat
+
+        if not pbrHasLastMaterial || key <> pbrLastKey then
+          uploadPbrMaterial(&p, &mat)
+          bindPbrTextures(&p, &mat)
+          pbrLastKey <- key
+          pbrHasLastMaterial <- true
+
+        match part.Effect with
+        | :? SkinnedEffect ->
+          // Skinned part: PBR Skinned technique + bone-palette upload (tail zero-filled to
+          // identity — matches the shadow pass's skinned-caster path).
+          e.CurrentTechnique <- e.Techniques["Skinned"]
+
+          let palCount = min bones.Length bonePaletteScratch.Length
+
+          for i = 0 to palCount - 1 do
+            bonePaletteScratch[i] <- bones[i]
+
+          for i = palCount to bonePaletteScratch.Length - 1 do
+            bonePaletteScratch[i] <- Matrix.Identity
+
+          setMatrixArray p.Bones bonePaletteScratch
+        | _ ->
+          // Non-skinned part in a DrawSkinnedMesh command: draw static via the Standard technique.
+          e.CurrentTechnique <- e.Techniques["Standard"]
+
+        let saved = part.Effect
+        part.Effect <- e
+
+        try
+          drawPart(gd, part)
+        finally
+          part.Effect <- saved
+      | _ -> () // unreachable (ensurePbrEffect set both)
 
   /// <summary>
   /// Lazily loads the custom PBR <c>Effect</c> on first PBR draw against the real device.

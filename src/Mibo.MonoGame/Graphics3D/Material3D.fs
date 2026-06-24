@@ -99,3 +99,64 @@ module Material3D =
     mat with
         MetallicMap = ValueSome tex
   }
+
+  // ───────────────────────────────────────────────────────────────────
+  // fromModelMeshPart / fromEffect — read a part's baked native effect
+  // into a Material3D. This is the bridge that lets the PBR pipeline
+  // preserve a model's authored look when it swaps out the native effect.
+  // Mirrors the canonical Mibo.Raylib Material3D.fromRaylibMaterial shape,
+  // reduced to what MonoGame's stock BasicEffect/SkinnedEffect expose:
+  // DiffuseColor, Texture, Alpha. Map extraction (normal/roughness/metallic)
+  // is deferred until the content-pipeline rework (spec §10).
+  // ───────────────────────────────────────────────────────────────────
+
+  let private vec3ToColor(v: Vector3) : Color =
+    // DiffuseColor is in [0,1] float32; Color has float32 * float32 * float32 overloads.
+    Color(
+      min 1.0f (max 0.0f v.X),
+      min 1.0f (max 0.0f v.Y),
+      min 1.0f (max 0.0f v.Z)
+    )
+
+  /// <summary>
+  /// Reads material params from a native <see cref="T:Microsoft.Xna.Framework.Graphics.Effect"/>
+  /// that exposes diffuse color/texture/alpha (<c>BasicEffect</c>/<c>SkinnedEffect</c>).
+  /// Returns <c>defaults</c> (opaque white, mid-roughness, non-metal) when the effect exposes
+  /// no recognizable material fields. Per §10: albedo color + albedo map + opacity only.
+  /// </summary>
+  let fromEffect(effect: Effect) : Material3D =
+    match box effect with
+    | :? BasicEffect as be ->
+      let albedoMap =
+        if be.TextureEnabled && not(isNull be.Texture) then
+          ValueSome be.Texture
+        else
+          ValueNone
+
+      {
+        defaults with
+            AlbedoColor = vec3ToColor be.DiffuseColor
+            AlbedoMap = albedoMap
+            Opacity = be.Alpha
+      }
+    | :? SkinnedEffect as se ->
+      let albedoMap =
+        if not(isNull se.Texture) then
+          ValueSome se.Texture
+        else
+          ValueNone
+
+      {
+        defaults with
+            AlbedoColor = vec3ToColor se.DiffuseColor
+            AlbedoMap = albedoMap
+            Opacity = se.Alpha
+      }
+    | _ -> defaults
+
+  /// <summary>
+  /// Reads material params from a <see cref="T:Microsoft.Xna.Framework.Graphics.ModelMeshPart"/>'s
+  /// baked native effect (the content-pipeline material). Convenience over <c>fromEffect</c>.
+  /// </summary>
+  let fromModelMeshPart(part: ModelMeshPart) : Material3D =
+    fromEffect part.Effect
