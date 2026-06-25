@@ -146,13 +146,11 @@ struct VS_INPUT {
   float3 Position  : POSITION0;
   float2 TexCoord  : TEXCOORD0;
   float3 Normal    : NORMAL0;
-  float4 Color     : COLOR0;
 };
 
 struct VS_OUTPUT {
   float4 Position  : SV_POSITION;
   float2 TexCoord  : TEXCOORD0;
-  float4 Color     : COLOR0;
   float3 Normal    : TEXCOORD1;
   float3 WorldPos  : TEXCOORD2;
 };
@@ -162,7 +160,6 @@ VS_OUTPUT VS_Standard(VS_INPUT input) {
   float4 world = mul(float4(input.Position, 1.0), matModel);
   output.Position = mul(world, viewProj);
   output.TexCoord = input.TexCoord;
-  output.Color = input.Color;
   output.Normal = mul(input.Normal, (float3x3) normalMatrix);
   output.WorldPos = world.xyz;
   return output;
@@ -178,7 +175,6 @@ struct VS_INPUT_INSTANCED {
   float3 Position  : POSITION0;
   float2 TexCoord  : TEXCOORD0;
   float3 Normal    : NORMAL0;
-  float4 Color     : COLOR0;
   // Stream 1 (per-instance) — 4 rows composing a 4x4 world matrix.
   float4 Row0      : TEXCOORD1;
   float4 Row1      : TEXCOORD2;
@@ -192,7 +188,6 @@ VS_OUTPUT VS_Instanced(VS_INPUT_INSTANCED input) {
   float4 wp = mul(float4(input.Position, 1.0), world);
   output.Position = mul(wp, viewProj);
   output.TexCoord = input.TexCoord;
-  output.Color = input.Color;
   // Transform normal by the per-instance world matrix directly: instances are
   // uniform-scale, so the rotation block is orthogonal and inverse-transpose == world.
   output.Normal = mul(input.Normal, (float3x3) world);
@@ -214,7 +209,6 @@ struct VS_INPUT_SKINNED {
   float3 Position   : POSITION0;
   float2 TexCoord   : TEXCOORD0;
   float3 Normal     : NORMAL0;
-  float4 Color      : COLOR0;
   float4 BoneWeights: BLENDWEIGHT0;
   int4   BoneIndices: BLENDINDICES0;
 };
@@ -239,7 +233,6 @@ VS_OUTPUT VS_Skinned(VS_INPUT_SKINNED input) {
   float4 world = mul(skinnedPos, matModel);
   output.Position = mul(world, viewProj);
   output.TexCoord = input.TexCoord;
-  output.Color = input.Color;
   output.Normal = mul(skinnedN, (float3x3) normalMatrix);
   output.WorldPos = world.xyz;
   return output;
@@ -312,7 +305,7 @@ float3 calcPBR(float3 V, float3 N, float3 L, float3 radiance, float3 albedo, flo
 
 float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
   float2 uv = input.TexCoord * tiling;
-  float4 texColor = tex2D(texture0, uv) * albedoColor * input.Color;
+  float4 texColor = tex2D(texture0, uv) * albedoColor;
   float3 albedo = texColor.rgb;
   float3 normal = getNormal(input.Normal, uv);
 

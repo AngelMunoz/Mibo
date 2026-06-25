@@ -75,7 +75,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
         for mi = 0 to meshesAndMaterials.Length - 1 do
           let struct (mesh, material) = meshesAndMaterials[mi]
 
-          buffer.Add(Command3D.drawMeshInstanced mesh snapshot material count)
+          buffer.Add(Command3D.DrawInstanced(mesh, snapshot, material, count))
 
 /// <summary>
 /// Cell-grid and hex-grid renderers for the MonoGame backend. Mirrors
@@ -121,7 +121,7 @@ module CellGridRenderer3D =
 
   /// <summary>
   /// Renders a cell grid using GPU instancing. Cells are grouped by a key function,
-  /// and each group emits one <c>DrawMeshInstanced</c> per sub-mesh.
+  /// and each group emits one <c>DrawInstanced</c> per sub-mesh.
   /// </summary>
   let renderInstanced
     (ctx: InstancedRenderContext<'T, 'K>)
@@ -229,7 +229,7 @@ module HexGrid3DRenderer =
 
   /// <summary>
   /// Renders a hex grid using GPU instancing. Cells are grouped by a key function,
-  /// and each group emits one <c>DrawMeshInstanced</c> per sub-mesh.
+  /// and each group emits one <c>DrawInstanced</c> per sub-mesh.
   /// </summary>
   let renderInstanced
     (ctx: InstancedRenderContext<'T, 'K>)

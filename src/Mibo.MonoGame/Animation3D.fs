@@ -100,6 +100,13 @@ type Animation3DState = {
 type AnimatedMesh = {
   BoneCount: int
   BoneNames: string[]
+  /// <summary>Index of each bone's parent in <c>BoneNames</c>, or -1 for a root bone.</summary>
+  /// <remarks>
+  /// Built from the Assimp node tree so <c>computeBonePalette</c> can compose
+  /// parent chains (local pose × parent world pose). Without this, child bones
+  /// move in isolation — the classic "exploding joints" symptom.
+  /// </remarks>
+  BoneParents: int[]
   InverseBindPose: Matrix[]
 }
 
@@ -677,6 +684,9 @@ module Animation3DState =
     else
       let clip = state.Clips.Clips[state.CurrentClipIndex]
 
+      // Sample each bone's LOCAL pose for the current frame (or blend two clips).
+      let localPoses = Array.zeroCreate<Matrix> boneCount
+
       if state.BlendTargetIndex >= 0 then
         let clipB = state.Clips.Clips[state.BlendTargetIndex]
         let blend = state.BlendProgress
@@ -685,13 +695,59 @@ module Animation3DState =
           let boneName = mesh.BoneNames[i]
           let poseA = sampleChannel clip boneName state.CurrentFrame
           let poseB = sampleChannel clipB boneName state.BlendTargetFrame
-          let blended = Matrix.Lerp(poseA, poseB, blend)
-          matrices.[i] <- mesh.InverseBindPose[i] * blended
+          localPoses[i] <- Matrix.Lerp(poseA, poseB, blend)
       else
         for i = 0 to boneCount - 1 do
           let boneName = mesh.BoneNames[i]
-          let pose = sampleChannel clip boneName state.CurrentFrame
-          matrices.[i] <- mesh.InverseBindPose[i] * pose
+          localPoses[i] <- sampleChannel clip boneName state.CurrentFrame
+
+      // Compose parent chains: worldPose[i] = worldPose[parent] * localPose[i].
+      // MonoGame uses the row-vector convention (v' = v * M; A * B applies A then B),
+      // so a child's world transform is the parent's world applied first, then the
+      // child's local offset — parent on the LEFT. Writing it the other way detaches
+      // children from their parents (the "exploding joints" symptom).
+      // Parents must be processed before children. The bone indices from Assimp
+      // aren't guaranteed to be hierarchy-ordered, so process by ascending parent
+      // depth (roots first). The final palette entry is inverseBind * worldPose,
+      // which maps a bind-space vertex through the animated skeleton
+      // (v * (invBind * world) = (v * invBind) * world).
+      let parents = mesh.BoneParents
+      let worldPoses = Array.zeroCreate<Matrix> boneCount
+
+      // Compute depth (distance to root bone) for each bone to order processing.
+      // Initialized to -1 (not 0) so root bones (depth 0) are memoized correctly:
+      // a 0-init array can't distinguish "computed root" from "uncomputed", so roots
+      // would be recomputed on every recursive reach. -1 sentinel + memoize during
+      // the recursion → O(N) instead of O(N * depth).
+      let depth = Array.create boneCount -1
+
+      let rec depthOf(i: int) : int =
+        if depth[i] <> -1 then
+          depth[i]
+        else
+          let p = parents[i]
+          let d = if p < 0 then 0 else 1 + depthOf p
+          depth[i] <- d
+          d
+
+      for i = 0 to boneCount - 1 do
+        depth[i] <- depthOf i
+
+      // Process bones in ascending depth order so a parent's world pose is ready.
+      let order = Array.init boneCount id
+      Array.sortInPlaceWith (fun a b -> compare depth[a] depth[b]) order
+
+      for i in order do
+        let p = parents[i]
+
+        let worldPose =
+          if p < 0 then
+            localPoses[i]
+          else
+            localPoses[i] * worldPoses[p]
+
+        worldPoses[i] <- worldPose
+        matrices[i] <- mesh.InverseBindPose[i] * worldPose
 
       matrices
 
@@ -732,15 +788,68 @@ module AnimatedMesh =
         for i = 0 to boneCount - 1 do
           let bone = mesh.Bones[i]
           boneNames[i] <- bone.Name
-          // Assimp's OffsetMatrix is already the inverse-bind matrix.
-          // MonoGame's content pipeline transposes it (Matrix.Transpose);
-          // since we bypass the pipeline and read Assimp directly, we use
-          // the matrix as-is (Assimp gives row-major, System.Numerics is row-major).
-          invBind[i] <- Matrix.op_Implicit bone.OffsetMatrix
+          // Assimp's OffsetMatrix is the inverse-bind matrix in Assimp's
+          // column-vector convention (translation in M14/M24/M34). The clip
+          // merger (buildTrsMatrix) builds poses in MonoGame's row-vector
+          // convention (translation in M41/M42/M43, what Matrix.Translation
+          // reads). MonoGame's content pipeline transposes Assimp's offset
+          // matrix for the same reason (see OpenAssetImporter). Transpose here
+          // so invBind matches the world-pose convention and the palette entry
+          // invBind * worldPose composes correctly.
+          let raw = Matrix.op_Implicit bone.OffsetMatrix
+          invBind[i] <- Matrix.Transpose raw
+
+        // Build the parent-index map by walking the Assimp node tree. Each bone
+        // name maps to a node; a bone's parent is the nearest ancestor node whose
+        // name is also a bone. Nodes that aren't bones (e.g. the model root or the
+        // mesh node) are skipped, so the parent chain only spans skeletal bones.
+        let nameToIndex =
+          let d = System.Collections.Generic.Dictionary<string, int>(boneCount)
+
+          for i = 0 to boneCount - 1 do
+            d[boneNames[i]] <- i
+
+          d
+
+        let boneParents = Array.create boneCount -1
+
+        // For each bone, walk up the Assimp node tree from its node's parent until
+        // we find an ancestor whose name is a bone (record its index), or reach the
+        // root (parent stays -1). We check the current node's name BEFORE the null-parent
+        // short-circuit so a bone that is itself the scene-root node (e.g. "Hips" as the
+        // top node in some exports) resolves correctly — its children find it rather than
+        // defaulting to -1. The null-parent case falls out of the recursive call naturally.
+        let rec findBoneParent(node: Node) : int =
+          if isNull node then
+            -1
+          else
+            match nameToIndex.TryGetValue(node.Name) with
+            | true, idx -> idx
+            | false, _ -> findBoneParent node.Parent
+
+        // Map each bone name to its Assimp node, then resolve the parent bone.
+        let nodeByName =
+          let d = System.Collections.Generic.Dictionary<string, Node>()
+
+          let rec walk(n: Node) =
+            if not(isNull n) then
+              d[n.Name] <- n
+
+              for i = 0 to n.ChildCount - 1 do
+                walk n.Children[i]
+
+          walk scene.RootNode
+          d
+
+        for i = 0 to boneCount - 1 do
+          match nodeByName.TryGetValue(boneNames[i]) with
+          | true, node -> boneParents[i] <- findBoneParent node.Parent
+          | false, _ -> boneParents[i] <- -1
 
         ValueSome {
           BoneCount = boneCount
           BoneNames = boneNames
+          BoneParents = boneParents
           InverseBindPose = invBind
         }
 
@@ -801,3 +910,135 @@ module AnimatedMesh =
             matrices[i] <- mesh.InverseBindPose[i] * pose
 
       matrices
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnimatedModel — runtime state for a single animated 3D entity.
+//
+// Mirrors Mibo.MonoGame's 2D AnimatedSprite (Animation.fs:73): a struct value
+// holding a reference to shared immutable data (the Model + skeleton + clip set)
+// and the live playback state. Store one per entity in your Elmish model.
+// Update functions are pure (return a new AnimatedModel); bone computation is
+// deferred to draw time (Draw3D.drawAnimatedModel), so update stays
+// allocation-free in the common case.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Runtime state for a single animated 3D entity. The 3D analog of the 2D
+/// <c>AnimatedSprite</c>. Holds the model to draw, the shared skeleton data
+/// (<c>ValueNone</c> if the model has no bones), and the live animation state.
+/// </summary>
+/// <remarks>
+/// Store one per entity in your Elmish model. Use the <c>AnimatedModel</c> module
+/// (<c>create</c>/<c>update</c>/<c>play</c>/...) to advance state, and
+/// <c>Draw3D.drawAnimatedModel</c> to draw — the DSL computes the bone palette
+/// from the state so you never handle a <c>Matrix[]</c> directly.
+/// </remarks>
+[<Struct>]
+type AnimatedModel = {
+  /// <summary>The MonoGame model to draw (meshes/textures from the content pipeline).</summary>
+  Model: Microsoft.Xna.Framework.Graphics.Model
+
+  /// <summary>
+  /// Shared skeleton data (bone names, parents, inverse-bind). <c>ValueNone</c> if the
+  /// model has no bones — <c>drawAnimatedModel</c> then falls back to a static draw.
+  /// </summary>
+  Mesh: AnimatedMesh voption
+
+  /// <summary>Live playback state (current clip, frame, blend, speed, loop).</summary>
+  State: Animation3DState
+}
+
+/// <summary>Pure update functions for <see cref="T:Mibo.Animation.AnimatedModel"/>.</summary>
+/// <remarks>
+/// Mirrors the 2D <c>AnimatedSprite</c> module. Each function returns a new
+/// <c>AnimatedModel</c>. Playback delegates to <see cref="T:Mibo.Animation.Animation3DState"/>;
+/// bone computation happens at draw time, not here.
+/// </remarks>
+module AnimatedModel =
+
+  /// <summary>Create an animated model starting on the named clip.</summary>
+  /// <param name="model">The MonoGame model (meshes/textures).</param>
+  /// <param name="mesh">Shared skeleton data (ValueNone for a boneless model).</param>
+  /// <param name="clips">Shared animation clip set (from <c>IAssets.ModelAnimations</c>).</param>
+  /// <param name="clipName">The animation to start on (falls back to clip 0 if absent).</param>
+  /// <param name="fps">Playback speed in frames per second.</param>
+  let create
+    (model: Microsoft.Xna.Framework.Graphics.Model)
+    (mesh: AnimatedMesh voption)
+    (clips: Animation3DClips)
+    (clipName: string)
+    (fps: float32)
+    : AnimatedModel =
+    {
+      Model = model
+      Mesh = mesh
+      State = Animation3DState.create clips clipName fps
+    }
+
+  /// <summary>Advance playback by delta seconds. Pure; returns a new state.</summary>
+  let update (deltaSeconds: float32) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.update deltaSeconds am.State
+  }
+
+  /// <summary>Play an animation by name. Resets the frame if switching clips.</summary>
+  let play (clipName: string) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.play clipName am.State
+  }
+
+  /// <summary>Play by clip index (zero string allocation).</summary>
+  let playByIndex (clipIndex: int) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.playByIndex clipIndex am.State
+  }
+
+  /// <summary>Play only if not already playing it.</summary>
+  let playIfNot (clipName: string) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.playIfNot clipName am.State
+  }
+
+  /// <summary>Start blending toward a target animation.</summary>
+  let blendTo
+    (clipName: string)
+    (duration: float32)
+    (am: AnimatedModel)
+    : AnimatedModel =
+    {
+      am with
+          State = Animation3DState.blendTo clipName duration am.State
+    }
+
+  /// <summary>Is the current animation finished? (always false for looping).</summary>
+  let inline isFinished(am: AnimatedModel) =
+    Animation3DState.isFinished am.State
+
+  /// <summary>Is currently playing the specified animation?</summary>
+  let isPlaying (clipName: string) (am: AnimatedModel) =
+    Animation3DState.isPlaying clipName am.State
+
+  /// <summary>Force restart the current animation.</summary>
+  let restart(am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.restart am.State
+  }
+
+  /// <summary>Total duration of the current clip in seconds at the current speed.</summary>
+  let inline duration(am: AnimatedModel) = Animation3DState.duration am.State
+
+  /// <summary>Name of the current clip.</summary>
+  let currentClipName(am: AnimatedModel) : string =
+    Animation3DState.currentClipName am.State
+
+  /// <summary>Set the playback speed multiplier.</summary>
+  let inline withSpeed (speed: float32) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.withSpeed speed am.State
+  }
+
+  /// <summary>Set whether the current clip loops.</summary>
+  let inline withLoop (loop: bool) (am: AnimatedModel) : AnimatedModel = {
+    am with
+        State = Animation3DState.withLoop loop am.State
+  }

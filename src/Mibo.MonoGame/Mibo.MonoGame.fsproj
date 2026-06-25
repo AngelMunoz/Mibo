@@ -20,13 +20,19 @@
     <Compile Include="Graphics3D/Light3D.fs" />
     <Compile Include="Graphics3D/Material3D.fs" />
     <Compile Include="Graphics3D/Primitive3D.fs" />
+    <Compile Include="Graphics3D/SceneContext.fs" />
     <Compile Include="Graphics3D/Command3D.fs" />
     <Compile Include="Graphics3D/RenderBuffer3D.fs" />
     <Compile Include="Graphics3D/RenderTargetPool3D.fs" />
     <Compile Include="Graphics3D/RenderPipeline3D.fs" />
     <Compile Include="Graphics3D/Renderer3D.fs" />
     <Compile Include="Graphics3D/Pipelines/PostProcess3D.fs" />
+    <Compile Include="Graphics3D/Pipelines/SceneData.fs" />
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
+    <Compile Include="Graphics3D/Pipelines/PbrUniforms.fs" />
+    <Compile Include="Graphics3D/Pipelines/SceneUpload.fs" />
+    <Compile Include="Graphics3D/Pipelines/ShadowPass.fs" />
+    <Compile Include="Graphics3D/Pipelines/PbrShading.fs" />
     <Compile Include="Graphics3D/Pipelines/ForwardPipeline.fs" />
     <Compile Include="Graphics3D/Draw3D.fs" />
     <Compile Include="Layout3D/Renderer3D.fs" />
@@ -64,7 +70,7 @@
   <ItemGroup>
     <PackageReference Include="MonoGame.Framework.Native" Version="3.8.4.1" PrivateAssets="all" />
     <PackageReference Include="FSharp.UMX" Version="1.1.0" />
-    <PackageReference Include="AssimpNetter" Version="6.0.4" />
+    <PackageReference Include="AssimpNetter" Version="6.0.4"/>
   </ItemGroup>
 
 </Project>

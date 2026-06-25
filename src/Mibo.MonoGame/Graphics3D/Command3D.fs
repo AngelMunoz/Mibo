@@ -16,31 +16,27 @@ open Mibo.Elmish
 /// </remarks>
 [<RequireQualifiedAccess; Struct>]
 type Command3D =
-  | DrawMesh of meshPart: ModelMeshPart * transform: Matrix
+  | DrawModel of model: Model * transform: Matrix
+  | DrawAnimatedModel of model: Model * transform: Matrix * bones: Matrix[]
+  | DrawInstanced of
+    mesh: PrimitiveMesh *
+    transforms: Matrix[] *
+    material: Material3D *
+    instanceCount: int
+  | DrawPrimitive of
+    mesh: PrimitiveMesh *
+    transform: Matrix *
+    material: Material3D
   | DrawMeshEffect of
     meshPart: ModelMeshPart *
     transform: Matrix *
     effect: Effect
-  | DrawModel of model: Model * transform: Matrix
   | DrawBillboard of
     texture: Texture2D *
     position: Vector3 *
     size: Vector2 *
     color: Color
   | DrawLine3D of start: Vector3 * finish: Vector3 * color: Color
-  | DrawSkinnedMesh of
-    meshPart: ModelMeshPart *
-    transform: Matrix *
-    bones: Matrix[]
-  | DrawMeshPBR of
-    mesh: PrimitiveMesh *
-    transform: Matrix *
-    material: Material3D
-  | DrawMeshInstanced of
-    mesh: PrimitiveMesh *
-    transforms: Matrix[] *
-    material: Material3D *
-    instanceCount: int
   | DrawBillboardBatch of
     textures: Texture2D[] *
     positions: Vector3[] *
@@ -57,110 +53,6 @@ type Command3D =
   | AddSpotLight of sLight: SpotLight3D
   | EnableShadows
   | DisableShadows
-  | DrawImmediate of action: (unit -> unit)
-
-/// <summary>
-/// Factory functions that create <see cref="T:Mibo.Elmish.Graphics3D.Command3D"/> values
-/// for all 3D drawing operations.
-/// </summary>
-/// <remarks>
-/// Each function returns a command that can be added to a <see cref="T:Mibo.Elmish.Graphics3D.RenderBuffer3D"/>.
-/// Commands are stored as a closed DU for zero-allocation use in the hot path.
-/// </remarks>
-module Command3D =
-
-  let inline drawMesh (meshPart: ModelMeshPart) (transform: Matrix) =
-    Command3D.DrawMesh(meshPart, transform)
-
-  let inline drawMeshEffect
-    (meshPart: ModelMeshPart)
-    (transform: Matrix)
-    (effect: Effect)
-    =
-    Command3D.DrawMeshEffect(meshPart, transform, effect)
-
-  let inline drawModel (model: Model) (transform: Matrix) =
-    Command3D.DrawModel(model, transform)
-
-  let inline drawBillboard
-    (texture: Texture2D)
-    (position: Vector3)
-    (size: Vector2)
-    (color: Color)
-    =
-    Command3D.DrawBillboard(texture, position, size, color)
-
-  let inline drawLine3D (start: Vector3) (finish: Vector3) (color: Color) =
-    Command3D.DrawLine3D(start, finish, color)
-
-  let inline drawSkinnedMesh
-    (meshPart: ModelMeshPart)
-    (transform: Matrix)
-    (bones: Matrix[])
-    =
-    Command3D.DrawSkinnedMesh(meshPart, transform, bones)
-
-  /// <summary>
-  /// Draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/> with a PBR material.
-  /// Per §4.1, <c>Material3D</c> pairs only with <c>PrimitiveMesh</c> (never <c>ModelMeshPart</c>).
-  /// Until B9 lands the custom PBR shader, the pipeline synthesizes a <c>BasicEffect</c> from
-  /// the material's albedo color (PBR maps are ignored). From B9 on, this dispatches to the
-  /// pipeline's PBR <c>Effect</c>.
-  /// </summary>
-  let inline drawMeshPBR
-    (mesh: PrimitiveMesh)
-    (transform: Matrix)
-    (material: Material3D)
-    =
-    Command3D.DrawMeshPBR(mesh, transform, material)
-
-  /// <summary>
-  /// Draws an effectless <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/> instanced.
-  /// Native hardware instancing is wired in B7 (requires an instance vertex stream + a custom
-  /// HLSL vertex declaration; <c>BasicEffect</c> declares no instance semantics). Until B7,
-  /// this case is a pipeline no-op — present in the DU so B7 can wire dispatch without a
-  /// breaking signature change.
-  /// </summary>
-  let inline drawMeshInstanced
-    (mesh: PrimitiveMesh)
-    (transforms: Matrix[])
-    (material: Material3D)
-    (instanceCount: int)
-    =
-    Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount)
-
-  let inline drawBillboardBatch
-    (textures: Texture2D[])
-    (positions: Vector3[])
-    (sizes: Vector2[])
-    (colors: Color[])
-    (count: int)
-    =
-    Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count)
-
-  let inline beginCamera(camera: Camera3D) = Command3D.BeginCamera(camera)
-
-  let inline beginCameraConfig(config: Camera3DConfig) =
-    Command3D.BeginCameraConfig(config)
-
-  let inline endCamera() = Command3D.EndCamera
-
-  let inline setShadowOrigin(origin: Vector3) =
-    Command3D.SetShadowOrigin(origin)
-
-  let inline setAmbientLight(light: AmbientLight3D) =
-    Command3D.SetAmbientLight(light)
-
-  let inline addDirectionalLight(light: DirectionalLight3D) =
-    Command3D.AddDirectionalLight(light)
-
-  let inline addPointLight(light: PointLight3D) = Command3D.AddPointLight(light)
-
-  let inline addSpotLight(light: SpotLight3D) = Command3D.AddSpotLight(light)
-
-  let inline enableShadows() = Command3D.EnableShadows
-
-  let inline disableShadows() = Command3D.DisableShadows
-
-  let inline drawImmediate(action: unit -> unit) =
-    Command3D.DrawImmediate(action)
+  | BeginEffect of effect: Effect
+  | EndEffect
+  | DrawImmediate of action: (Pipelines.SceneContext -> unit)
