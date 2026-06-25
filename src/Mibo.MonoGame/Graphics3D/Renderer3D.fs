@@ -43,7 +43,7 @@ module Renderer3DConfig =
 /// </remarks>
 type NoopPipeline() =
   interface IRenderPipeline3D with
-    member _.Execute(_, _, _) = ()
+    member _.Execute(_, _, _, _) = ()
     member _.Initialize() = ()
     member _.Shutdown() = ()
 
@@ -81,7 +81,7 @@ type Renderer3D<'Model>
   do pipeline.Initialize()
 
   interface IRenderer<'Model> with
-    member _.Draw(ctx, model, _gameTime) =
+    member _.Draw(ctx, model, gameTime) =
       let gd = MonoGameGameContext.getGraphicsDevice ctx
 
       match _rtPool with
@@ -102,7 +102,7 @@ type Renderer3D<'Model>
       // allocates new targets every frame, leaking GPU memory. Mirrors Renderer2D.
       try
         view ctx model buffer
-        pipeline.Execute(ctx, buffer, rtPool)
+        pipeline.Execute(ctx, gameTime, buffer, rtPool)
       finally
         (rtPool :> IRenderTargetPool3D).ReleaseAll()
 

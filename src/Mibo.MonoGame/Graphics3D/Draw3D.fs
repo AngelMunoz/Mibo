@@ -200,11 +200,12 @@ module Draw3D =
   /// </summary>
   /// <remarks>
   /// <b>Shadows + lights + animation are inherited by declaration.</b> The scene gather (camera,
-  /// lights, the shadow pass output, material, bones) is uploaded to the user effect by name via
-  /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SceneUpload"/>: an effect that declares the
-  /// matching uniforms (e.g. <c>dirLightDir</c>, <c>boneMatrices</c>, <c>shadowViewProjs</c>,
-  /// <c>texture5</c>) inherits and samples them; one that declares none of them is unaffected. So a
-  /// toon/water scope can opt into shadows and skinned animation simply by declaring those uniforms.
+  /// lights, the shadow pass output, material, bones, and the frame's elapsed <c>time</c>) is uploaded
+  /// to the user effect by name via <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SceneUpload"/>: an
+  /// effect that declares the matching uniforms (e.g. <c>dirLightDir</c>, <c>boneMatrices</c>,
+  /// <c>shadowViewProjs</c>, <c>texture5</c>, <c>time</c>) inherits and samples them; one that declares
+  /// none of them is unaffected. So a toon/water scope can opt into shadows, skinned animation, and a
+  /// shader animation clock simply by declaring those uniforms.
   /// <para>
   /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.drawInstanced"/> inside a scope falls back to the PBR
   /// path — hardware instancing needs a per-instance vertex stream a generic inherited effect won't declare.

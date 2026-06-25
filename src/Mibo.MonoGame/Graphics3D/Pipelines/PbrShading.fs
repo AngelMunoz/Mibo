@@ -58,6 +58,10 @@ type ForwardFrame = {
   /// The user-effect scope (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PbrShading.shadeWithEffect"/>)
   /// uploads these uniforms by name so a custom effect can opt into shadow sampling.</summary>
   Shadows: ShadowResult voption
+  /// <summary>The total elapsed game time, in seconds (<c>Game.TotalGameTime.TotalSeconds</c>). Uploaded
+  /// as the <c>time</c> uniform so an animated shader (water ripples, flowing textures, pulsing emissive)
+  /// has a clock to read — the only animation input the scene-data contract provides.</summary>
+  Time: float32
 }
 
 /// <summary>
@@ -626,7 +630,8 @@ module internal PbrShading =
         frame.Lights,
         frame.Shadows,
         ValueNone,
-        material
+        material,
+        frame.Time
       )
 
       mesh.Draw(gd, effect)
@@ -664,7 +669,8 @@ module internal PbrShading =
             frame.Lights,
             frame.Shadows,
             ValueNone,
-            mat
+            mat,
+            frame.Time
           )
 
           let saved = part.Effect
@@ -730,7 +736,8 @@ module internal PbrShading =
             frame.Lights,
             frame.Shadows,
             ValueSome bonePaletteScratch,
-            mat
+            mat,
+            frame.Time
           )
 
           let saved = part.Effect

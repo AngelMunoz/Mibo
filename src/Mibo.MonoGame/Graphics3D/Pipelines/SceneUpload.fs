@@ -133,10 +133,10 @@ module SceneUpload =
   /// <summary>
   /// Uploads the full scene-data contract to <paramref name="effect"/> by resolving each
   /// uniform by name. Absent uniforms are skipped (MonoGame returns null). Uploads:
-  /// matrices (matModel/viewProj/normalMatrix/cameraPos), material (albedoColor, maps
-  /// texture0..4, roughness/metallic/emissionColor/opacity/tiling/useNormalMap), lights
-  /// (ambient + 1 directional + N point + M spot), and bones (boneMatrices[128], only when
-  /// <paramref name="bones"/> is ValueSome).
+  /// matrices (matModel/viewProj/normalMatrix/cameraPos), the <c>time</c> animation clock,
+  /// material (albedoColor, maps texture0..4, roughness/metallic/emissionColor/opacity/tiling/useNormalMap),
+  /// lights (ambient + 1 directional + N point + M spot), shadows (when a ShadowResult is present),
+  /// and bones (boneMatrices[128], only when <paramref name="bones"/> is ValueSome).
   /// </summary>
   /// <param name="effect">The target effect (user-owned; its <c>CurrentTechnique</c> is selected by the caller).</param>
   /// <param name="view">Active camera view matrix.</param>
@@ -147,6 +147,7 @@ module SceneUpload =
   /// <param name="lights">The frame's accumulated lights.</param>
   /// <param name="bones">Bone palette (ValueSome for skinned draws; ValueNone otherwise).</param>
   /// <param name="material">The draw's material.</param>
+  /// <param name="time">Total elapsed game time, in seconds — the <c>time</c> uniform for animated shaders.</param>
   let uploadToEffect
     (
       gd: GraphicsDevice,
@@ -159,7 +160,8 @@ module SceneUpload =
       lights: LightBuffers,
       shadows: ShadowResult voption,
       bones: Matrix[] voption,
-      material: Material3D
+      material: Material3D,
+      time: float32
     ) : unit =
     let p name = param effect name
 
@@ -168,6 +170,9 @@ module SceneUpload =
     setMatrix (p "viewProj") (view * projection)
     setMatrix (p "normalMatrix") normalMatrix
     setVec3 (p "cameraPos") cameraPos
+
+    // ── Time (animation clock; opt-in — absent on effects that don't declare `time`) ──
+    setFloat (p "time") time
 
     // ── Material scalars/colors ──
     setVec4 (p "albedoColor") (colorToVec4 material.AlbedoColor)

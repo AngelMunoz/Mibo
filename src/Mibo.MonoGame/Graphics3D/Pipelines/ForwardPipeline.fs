@@ -653,8 +653,11 @@ type ForwardPipelineBase
         shadowRes.Params <- ValueNone
       | ValueNone -> ()
 
-    member this.Execute(gameCtx, buffer, _rtPool) =
+    member this.Execute(gameCtx, gameTime, buffer, _rtPool) =
       let gd = MonoGameGameContext.getGraphicsDevice gameCtx
+      // Total elapsed game time, in seconds — captured once per frame for the scene bundle so an
+      // animated custom shader (water ripples, flowing textures) has a `time` uniform to read.
+      let frameTime = float32 gameTime.TotalTime.TotalSeconds
 
       // ── Device defaults for opaque 3D rendering ──
       gd.DepthStencilState <- DepthStencilState.Default
@@ -733,6 +736,7 @@ type ForwardPipelineBase
         PointShadowSlots = shadowRes.PointShadowSlots
         SpotShadowSlots = shadowRes.SpotShadowSlots
         Shadows = shadowRes.ShadowResult
+        Time = frameTime
       }
 
       for i = 0 to buffer.Count - 1 do
