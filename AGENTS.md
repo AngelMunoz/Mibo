@@ -71,6 +71,35 @@ Each section may contain the following categories:
 
 When adding entries to the changelog, make sure to follow format and categories.
 
+### Writing style
+
+The changelog is written for **developers upgrading their version**, not as a development
+journal. Keep these rules in mind:
+
+1. **Concise and reader-focused.** Each entry is one bullet that says what changed and why a
+   user cares — not how it's implemented internally. No internal module/file paths, no build/
+   milestone/phase numbers (e.g. "B12", "Phase 3"), no section references (e.g. "§6.2"), and no
+   "mirrors the canonical X" narration. A reader should understand the entry without reading the
+   code.
+
+2. **Group by user-facing concern, not by task.** One bullet per feature/fix area. If multiple
+   commits touch the same subsystem (e.g. several shadow-pass fixes), collapse them into one
+   bullet that names each fix briefly, rather than one bullet per commit.
+
+3. **Only released code can be Changed or Fixed.** Features that have never shipped belong in
+   `Added` — there is no prior version to change from or fix against. Design choices and
+   implementation details of a new feature are part of its `Added` description, not separate
+   `Fixed`/`Changed` entries. Use `Changed`/`Fixed` only for modifications to already-released
+   behavior (and mark breakage with **Breaking:** or **Breaking (behavioral):**).
+
+4. **Lead with the affected surface.** Bold-prefix each bullet with the area:
+   `**MonoGame 3D:**`, `**Core:**`, `**Raylib:**`, `**MonoGame 2D:**`, etc. — so a reader can
+   scan for their backend. Keep breaking changes at the top of their category.
+
+5. **Plain language.** Describe the user-visible effect ("shadows render correctly on scaled
+   objects"), not the code diff ("BoundingSphere.Transform now scales center and radius"). The
+   reader wants to know what they'll observe, not what line changed.
+
 ## raylib-cs / F# Quirks
 
 ### DisableRuntimeMarshalling + void\* Bug
