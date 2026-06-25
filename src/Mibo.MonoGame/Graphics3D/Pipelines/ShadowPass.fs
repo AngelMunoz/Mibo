@@ -407,7 +407,13 @@ module internal ShadowPass =
             | ValueNone -> ()
 
         if casterSlot = 0 then
-          ()
+          // Caster registration failed for every shadow light (atlas full). Effect params
+          // persist between frames in MonoGame, so DirLightCastsShadows (set to 1 on a
+          // previous successful frame) would leave the PBR shader sampling stale shadow
+          // matrices/UVs. Zero it explicitly so the scene renders unshadowed this frame.
+          match pbrParams with
+          | ValueSome p -> PbrUniforms.setInt p.Shadow.DirLightCastsShadows 0
+          | ValueNone -> ()
         else
           // ── Collect caster meshes (PrimitiveMesh + skinned draws, gated by EnableShadows/DisableShadows) ──
           let mutable castEnabled = true

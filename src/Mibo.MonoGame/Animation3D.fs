@@ -715,15 +715,20 @@ module Animation3DState =
       let worldPoses = Array.zeroCreate<Matrix> boneCount
 
       // Compute depth (distance to root bone) for each bone to order processing.
-      let depth = Array.zeroCreate<int> boneCount
+      // Initialized to -1 (not 0) so root bones (depth 0) are memoized correctly:
+      // a 0-init array can't distinguish "computed root" from "uncomputed", so roots
+      // would be recomputed on every recursive reach. -1 sentinel + memoize during
+      // the recursion → O(N) instead of O(N * depth).
+      let depth = Array.create boneCount -1
 
       let rec depthOf(i: int) : int =
-        if depth[i] > 0 then
+        if depth[i] <> -1 then
           depth[i]
         else
           let p = parents[i]
-
-          if p < 0 then 0 else 1 + depthOf p
+          let d = if p < 0 then 0 else 1 + depthOf p
+          depth[i] <- d
+          d
 
       for i = 0 to boneCount - 1 do
         depth[i] <- depthOf i
@@ -739,7 +744,7 @@ module Animation3DState =
           if p < 0 then
             localPoses[i]
           else
-            worldPoses[p] * localPoses[i]
+            localPoses[i] * worldPoses[p]
 
         worldPoses[i] <- worldPose
         matrices[i] <- mesh.InverseBindPose[i] * worldPose
@@ -810,9 +815,12 @@ module AnimatedMesh =
 
         // For each bone, walk up the Assimp node tree from its node's parent until
         // we find an ancestor whose name is a bone (record its index), or reach the
-        // root (parent stays -1).
+        // root (parent stays -1). We check the current node's name BEFORE the null-parent
+        // short-circuit so a bone that is itself the scene-root node (e.g. "Hips" as the
+        // top node in some exports) resolves correctly — its children find it rather than
+        // defaulting to -1. The null-parent case falls out of the recursive call naturally.
         let rec findBoneParent(node: Node) : int =
-          if isNull node || isNull node.Parent then
+          if isNull node then
             -1
           else
             match nameToIndex.TryGetValue(node.Name) with

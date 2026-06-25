@@ -720,8 +720,8 @@ type ForwardPipelineBase
         this.runShadowPass(gd, &state, buffer)
 
       // ── Step 3: Forward pass ──
-      // Lights + camera are already in `state`/`lights`; draw commands dispatch here.
-      // activeEffect tracks the per-group shading scope (beginEffect/endEffect, §7.2):
+      // Lights + shadow state are already gathered; the camera is re-established per block
+      // below. activeEffect tracks the per-group shading scope (beginEffect/endEffect, §7.2):
       // ValueNone → default PBR path; ValueSome e → shade with the user effect. Scopes do NOT
       // persist across cameras — a new camera block (BeginCamera/BeginCameraConfig) and EndCamera
       // both reset it, so a forgotten endEffect can't leak a user effect into the next view.
@@ -739,19 +739,33 @@ type ForwardPipelineBase
         Time = frameTime
       }
 
+      // The pre-scan left HasCamera/View/CurrentCamera on the *last* camera in the buffer
+      // (needed for the shadow pass above). The forward pass must NOT inherit that: each
+      // camera block establishes its own matrices, and draws outside any camera block are
+      // skipped. So reset to "no active camera" before the forward loop.
+      state.HasCamera <- false
+
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
         // ── Camera ──
-        | Command3D.BeginCamera _ ->
+        | Command3D.BeginCamera cam ->
+          // Re-establish this camera's view (the pre-scan left the LAST camera's view in
+          // state; without this, multi-camera scenes render every view from the last one).
+          let struct (v, _) = buildMatrices cam
+
+          state.View <- v
+          state.CurrentCamera <- cam
+          state.HasCamera <- true
+
+          // A fullscreen camera block restores the device to the fullscreen viewport.
+          gd.Viewport <- state.SavedViewport
+
           // Recompute the projection aspect against the saved (fullscreen) viewport,
-          // since buildMatrices used a neutral aspect=1.0 in the pre-scan.
+          // since buildMatrices used a neutral aspect=1.0.
           let vp = state.SavedViewport
 
           state.Projection <-
-            perspectiveProjection
-              state.CurrentCamera
-              (float32 vp.Width)
-              (float32 vp.Height)
+            perspectiveProjection cam (float32 vp.Width) (float32 vp.Height)
 
           // New camera block: scopes don't persist across cameras (§7.2).
           activeEffect <- ValueNone
@@ -762,8 +776,15 @@ type ForwardPipelineBase
           | ValueSome rect -> gd.Viewport <- Viewport(rect)
           | ValueNone -> ()
 
+          // Re-establish this camera's view (see BeginCamera note).
+          let struct (v, _) = buildMatrices cfg.Camera
+
+          state.View <- v
+          state.CurrentCamera <- cfg.Camera
+          state.HasCamera <- true
+
           // Recompute the projection aspect against the now-active viewport
-          // (custom rect or fullscreen). buildMatrices used aspect=1.0 in the pre-scan.
+          // (custom rect or fullscreen). buildMatrices used aspect=1.0.
           let vp = gd.Viewport
 
           state.Projection <-
@@ -898,7 +919,7 @@ type ForwardPipelineBase
 /// <code lang="fsharp">
 /// let toon =
 ///   { new ForwardPipeline() with
-///       override _.Shade(gd, state, activeEffect, draw) = ... }
+///       override _.Shade(gd, state, frame, activeEffect, draw) = ... }
 /// </code>
 /// </para>
 /// </remarks>
