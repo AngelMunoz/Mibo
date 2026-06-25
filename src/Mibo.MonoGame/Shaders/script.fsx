@@ -28,7 +28,6 @@ let ShaderList = [
   "Instanced.fx"
   "ForwardPbr.fx"
   "DepthShadow.fx"
-  "Toon.fx"
 ]
 
 let commandsToExecute = [

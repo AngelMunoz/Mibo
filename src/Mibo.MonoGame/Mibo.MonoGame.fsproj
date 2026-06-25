@@ -59,8 +59,6 @@
     <EmbeddedResource Include="Shaders\ForwardPbr.ogl.mgfx" />
     <EmbeddedResource Include="Shaders\DepthShadow.dx.mgfx" />
     <EmbeddedResource Include="Shaders\DepthShadow.ogl.mgfx" />
-    <EmbeddedResource Include="Shaders\Toon.dx.mgfx" />
-    <EmbeddedResource Include="Shaders\Toon.ogl.mgfx" />
     <None Include="Shaders\*.fx" CopyToOutputDirectory="Never" />
   </ItemGroup>
 
