@@ -255,11 +255,18 @@ module Draw3D =
   // ──────────────────────────────────────────────
 
   /// <summary>
-  /// Runs a custom immediate draw action.
-  /// The pipeline is responsible for ensuring correct state (e.g., exiting any
-  /// active camera or shader before invoking the action).
+  /// Runs a fully-custom draw with raw device access AND the scene data the pipeline gathered this
+  /// frame. The callback receives a <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SceneContext"/> — the
+  /// graphics device, the active camera (view/projection/config), the accumulated lights, the shadow
+  /// pass output, and the elapsed time — so a custom effect (water/refraction, screen-space, multi-pass)
+  /// can read the scene without re-implementing the gather. The pipeline restores the viewport + camera
+  /// scope around the callback; any other device state you mutate is your responsibility.
   /// </summary>
-  let inline drawImmediate (action: unit -> unit) (buffer: RenderBuffer3D) =
+  /// <param name="action">A callback invoked once with the frame's <c>SceneContext</c>.</param>
+  let inline drawImmediate
+    (action: Pipelines.SceneContext -> unit)
+    (buffer: RenderBuffer3D)
+    =
     buffer.Add(Command3D.DrawImmediate action)
     buffer
 

@@ -843,13 +843,23 @@ type ForwardPipelineBase
         | Command3D.EnableShadows
         | Command3D.DisableShadows -> ()
 
-        // ── Escape hatch ──
+        // ── Escape hatch: full device control + the gathered scene data ──
         | Command3D.DrawImmediate action ->
           let savedHasCamera = state.HasCamera
           let savedViewport = gd.Viewport
 
+          let ctx: Pipelines.SceneContext = {
+            Device = gd
+            View = state.View
+            Projection = state.Projection
+            Camera = state.CurrentCamera
+            Lights = lights
+            Shadows = scene.Shadows
+            Time = scene.Time
+          }
+
           try
-            action()
+            action ctx
           finally
             // Restore viewport; camera state is logical (matrices), nothing to restore on gd.
             gd.Viewport <- savedViewport

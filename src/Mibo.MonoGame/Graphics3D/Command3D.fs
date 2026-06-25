@@ -55,4 +55,4 @@ type Command3D =
   | DisableShadows
   | BeginEffect of effect: Effect
   | EndEffect
-  | DrawImmediate of action: (unit -> unit)
+  | DrawImmediate of action: (Pipelines.SceneContext -> unit)
