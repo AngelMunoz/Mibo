@@ -42,7 +42,7 @@ module Draw3D =
     (transform: Matrix)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.drawModel model transform)
+    buffer.Add(Command3D.DrawModel(model, transform))
     buffer
 
   /// <summary>
@@ -62,7 +62,7 @@ module Draw3D =
       | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
       | ValueNone -> [||]
 
-    buffer.Add(Command3D.drawAnimatedModel am.Model transform bones)
+    buffer.Add(Command3D.DrawAnimatedModel(am.Model, transform, bones))
     buffer
 
   /// <summary>
@@ -75,7 +75,7 @@ module Draw3D =
     (material: Material3D)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.drawPrimitive mesh transform material)
+    buffer.Add(Command3D.DrawPrimitive(mesh, transform, material))
     buffer
 
   /// <summary>
@@ -90,7 +90,10 @@ module Draw3D =
     (instanceCount: int)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.drawInstanced mesh transforms material instanceCount)
+    buffer.Add(
+      Command3D.DrawInstanced(mesh, transforms, material, instanceCount)
+    )
+
     buffer
 
   /// <summary>
@@ -105,7 +108,7 @@ module Draw3D =
     (effect: Effect)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.drawMeshEffect meshPart transform effect)
+    buffer.Add(Command3D.DrawMeshEffect(meshPart, transform, effect))
     buffer
 
   /// <summary>Draws a billboard (camera-facing quad) with a texture.</summary>
@@ -116,7 +119,7 @@ module Draw3D =
     (color: Color)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.drawBillboard texture position size color)
+    buffer.Add(Command3D.DrawBillboard(texture, position, size, color))
     buffer
 
   /// <summary>Draws a 3D line between two points.</summary>
@@ -126,7 +129,7 @@ module Draw3D =
     (color: Color)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.drawLine3D start finish color)
+    buffer.Add(Command3D.DrawLine3D(start, finish, color))
     buffer
 
   /// <summary>
@@ -142,7 +145,7 @@ module Draw3D =
     (buffer: RenderBuffer3D)
     =
     buffer.Add(
-      Command3D.drawBillboardBatch textures positions sizes colors count
+      Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count)
     )
 
     buffer
@@ -153,32 +156,32 @@ module Draw3D =
 
   /// <summary>Begins a 3D camera transform.</summary>
   let inline beginCamera (camera: Camera3D) (buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.beginCamera camera)
+    buffer.Add(Command3D.BeginCamera camera)
     buffer
 
   /// <summary>Begins a 3D camera with explicit rendering config (viewport, clear, post-process).</summary>
   let inline beginCameraWith (config: Camera3DConfig) (buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.beginCameraConfig config)
+    buffer.Add(Command3D.BeginCameraConfig config)
     buffer
 
   /// <summary>Ends the current 3D camera transform.</summary>
   let inline endCamera(buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.endCamera())
+    buffer.Add Command3D.EndCamera
     buffer
 
   /// <summary>Sets the shadow origin for this frame's shadow pass.</summary>
   let inline setShadowOrigin (origin: Vector3) (buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.setShadowOrigin origin)
+    buffer.Add(Command3D.SetShadowOrigin origin)
     buffer
 
   /// <summary>Enables shadow casting for subsequent geometry until disabled.</summary>
   let inline enableShadows(buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.enableShadows())
+    buffer.Add Command3D.EnableShadows
     buffer
 
   /// <summary>Disables shadow casting for subsequent geometry until re-enabled.</summary>
   let inline disableShadows(buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.disableShadows())
+    buffer.Add Command3D.DisableShadows
     buffer
 
   // ──────────────────────────────────────────────
@@ -208,7 +211,7 @@ module Draw3D =
   /// </para>
   /// </remarks>
   let inline beginEffect (effect: Effect) (buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.beginEffect effect)
+    buffer.Add(Command3D.BeginEffect effect)
     buffer
 
   /// <summary>
@@ -216,7 +219,7 @@ module Draw3D =
   /// subsequent draws revert to the default PBR path. No-op if no scope is open.
   /// </summary>
   let inline endEffect(buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.endEffect())
+    buffer.Add Command3D.EndEffect
     buffer
 
   // ──────────────────────────────────────────────
@@ -225,7 +228,7 @@ module Draw3D =
 
   /// <summary>Sets the ambient light for the scene.</summary>
   let inline setAmbientLight (light: AmbientLight3D) (buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.setAmbientLight light)
+    buffer.Add(Command3D.SetAmbientLight light)
     buffer
 
   /// <summary>Adds a directional light to the scene.</summary>
@@ -233,17 +236,17 @@ module Draw3D =
     (light: DirectionalLight3D)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.addDirectionalLight light)
+    buffer.Add(Command3D.AddDirectionalLight light)
     buffer
 
   /// <summary>Adds a point light to the scene.</summary>
   let inline addPointLight (light: PointLight3D) (buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.addPointLight light)
+    buffer.Add(Command3D.AddPointLight light)
     buffer
 
   /// <summary>Adds a spot light to the scene.</summary>
   let inline addSpotLight (light: SpotLight3D) (buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.addSpotLight light)
+    buffer.Add(Command3D.AddSpotLight light)
     buffer
 
   // ──────────────────────────────────────────────
@@ -256,7 +259,7 @@ module Draw3D =
   /// active camera or shader before invoking the action).
   /// </summary>
   let inline drawImmediate (action: unit -> unit) (buffer: RenderBuffer3D) =
-    buffer.Add(Command3D.drawImmediate action)
+    buffer.Add(Command3D.DrawImmediate action)
     buffer
 
   /// <summary>Terminal function that discards the buffer, silencing the unused-value warning. Does nothing.</summary>

@@ -75,7 +75,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
         for mi = 0 to meshesAndMaterials.Length - 1 do
           let struct (mesh, material) = meshesAndMaterials[mi]
 
-          buffer.Add(Command3D.drawInstanced mesh snapshot material count)
+          buffer.Add(Command3D.DrawInstanced(mesh, snapshot, material, count))
 
 /// <summary>
 /// Cell-grid and hex-grid renderers for the MonoGame backend. Mirrors
