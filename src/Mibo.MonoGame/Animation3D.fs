@@ -667,25 +667,14 @@ module Animation3DState =
       elif ch.Keyframes.Length = 1 then
         ch.Keyframes[0].Transform
       else
-        let currentFrame = int frame
-        let nextFrame = currentFrame + 1
-
-        let blend: float32 =
-          let v = frame - float32 currentFrame
-          Math.Clamp(v, 0.0f, 1.0f)
-
-        let cf =
-          if currentFrame >= ch.Keyframes.Length then
-            currentFrame % ch.Keyframes.Length
-          else
-            currentFrame
-
-        let nf =
-          if nextFrame >= ch.Keyframes.Length then
-            nextFrame % ch.Keyframes.Length
-          else
-            nextFrame
-
+        let len = ch.Keyframes.Length
+        // Map the clip-wide frame index into this channel's keyframe space so every
+        // bone samples at the same normalized time. Indexing by the raw frame with
+        // per-channel modulo desyncs bones whose channels have differing counts.
+        let pos = frame * float32 len / float32 clip.KeyframeCount
+        let cf = int pos % len
+        let nf = (cf + 1) % len
+        let blend = Math.Clamp(pos - float32(int pos), 0.0f, 1.0f)
         let t0 = ch.Keyframes[cf].Transform
         let t1 = ch.Keyframes[nf].Transform
         Matrix.Lerp(t0, t1, blend)

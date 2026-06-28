@@ -50,9 +50,14 @@ module internal Conversions =
     )
 
   let inline fromNumericsColor(v: Vector4) : Microsoft.Xna.Framework.Color =
+    let clamp(x: float32) =
+      if x > 1.0f then 1.0f
+      elif x < 0.0f then 0.0f
+      else x
+
     Microsoft.Xna.Framework.Color(
-      byte(v.X * 255.0f),
-      byte(v.Y * 255.0f),
-      byte(v.Z * 255.0f),
-      byte(v.W * 255.0f)
+      byte(clamp v.X * 255.0f),
+      byte(clamp v.Y * 255.0f),
+      byte(clamp v.Z * 255.0f),
+      byte(clamp v.W * 255.0f)
     )
