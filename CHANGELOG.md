@@ -4,6 +4,9 @@
 
 ### Added
 
+- **MonoGame: host & program** — `MiboGame(program)` is the MonoGame game host (subclasses `Microsoft.Xna.Framework.Game`, drives the shared `ElmishLoop`). `MonoGameProgram.withInputMapper` registers the MonoGame-backed input mapper (and calls `withInput`). `MonoGameGameContext` accessors (`getGraphicsDevice`/`getContentManager`/`getGame`) retrieve MonoGame handles from the Core `GameContext` service registry. MonoGame `IAssets` exposes the typed loaders (`Texture`/`Font`/`Sound`/`Model`/`Effect`/`ModelAnimations`/`AnimatedMesh`) and extends the portable `IAssetCache`.
+- **Core: `IAssetCache`** — backend-neutral asset cache interface (`Get`/`Create`/`GetOrCreate`/`Clear`/`Dispose`) that portable code depends on; the backend `IAssets` extends it.
+- **Docs: migration guide** — `docs/migration-from-monogame.md`, a before/after guide for moving from the original monolithic `Mibo` package to `Mibo.Core` + `Mibo.MonoGame` (program setup, GameContext, input, assets, the renamed 2D/3D rendering stacks, animation, cameras, the content pipeline, and a Raylib-backend appendix).
 - **MonoGame 3D: per-group custom shading** — `Draw3D.beginEffect`/`endEffect` shade the draws between them with a user-supplied `Effect` instead of PBR. The effect inherits the scene's camera, lights, shadows, material, bones, and a `time` clock **by declaring the matching uniform names**; uniforms it doesn't declare are skipped. Scopes don't persist across cameras. Lets you render toon/water/vignette alongside the default PBR scene.
 - **MonoGame 3D: extensible pipeline** — `ForwardPipelineBase` (abstract; owns the gather + frame orchestration + a virtual `Shade`) with `ForwardPipeline` as the thin PBR subclass. Override `Shade` to plug a different shading strategy; it receives the per-frame scene (lights, bones, shadow output, `time`). Register the same way: `Renderer3D.create (ForwardPipeline()) view`.
 - **MonoGame 3D: `drawImmediate` receives a `SceneContext`** — the raw `GraphicsDevice` plus the gathered scene (camera, lights, shadows, `time`). For fully-custom draws (water/refraction, screen-space, multi-pass) that want device control without re-gathering the scene.
@@ -23,10 +26,12 @@
 
 ### Changed
 
-- **Breaking:** `Cmd<'Msg>` has a new `Msg of 'Msg` case. Exhaustive pattern matches must handle it (or use a wildcard). `Cmd.ofMsg` returns `Msg` instead of wrapping in an `Effect`.
-- **Breaking:** input uses backend-neutral codes instead of raylib enums — `InputMap.key` takes `KeyCode` (not `Raylib_cs.KeyboardKey`), `InputMap.mouse` takes `MouseButtonCode` (not `int`), and `Trigger.MouseBut`/`GamepadBut` became `MouseButton`/`GamepadButton`. Bindings are now portable.
-- **Breaking:** `Program.withInputMapper` moved to `RaylibProgram.withInputMapper` (raylib backend only). Call sites change `Program.withInputMapper map` → `RaylibProgram.withInputMapper map`.
-- **Breaking (behavioral):** multiple renderers now draw in the order you add them (previously the last-added drew first). Review your setup if you stack renderers.
+- **Raylib — Breaking:** `Mibo.Elmish.Camera` is now a `[<Struct>]` (was a reference record). It flows through the view function every frame, so stack-allocating it removes per-frame Gen0 pressure. Code that held it by reference or relied on reference-identity semantics needs review.
+- **Raylib:** 3D point/spot shadow lookup is now an O(N) indexed read instead of an O(N·M) per-fragment caster scan (no visual change; faster with many shadow-casting lights). Only the first shadow-casting directional light is registered.
+- **Core — Breaking:** `Cmd<'Msg>` has a new `Msg of 'Msg` case. Exhaustive pattern matches must handle it (or use a wildcard). `Cmd.ofMsg` returns `Msg` instead of wrapping in an `Effect`.
+- **Core — Breaking:** input uses backend-neutral codes instead of raylib enums — `InputMap.key` takes `KeyCode` (not `Raylib_cs.KeyboardKey`), `InputMap.mouse` takes `MouseButtonCode` (not `int`), and `Trigger.MouseBut`/`GamepadBut` became `MouseButton`/`GamepadButton`. Bindings are now portable.
+- **Raylib — Breaking:** `Program.withInputMapper` moved to `RaylibProgram.withInputMapper` (raylib backend only). Call sites change `Program.withInputMapper map` → `RaylibProgram.withInputMapper map`.
+- **Core — Breaking (behavioral):** multiple renderers now draw in the order you add them (previously the last-added drew first). Review your setup if you stack renderers.
 
 ### Fixed
 
@@ -36,9 +41,7 @@
 
 ### Removed
 
-- 11 stale duplicate test files from `Mibo.Raylib.Tests` (leftovers from the `Mibo.Core.Tests` extraction; never compiled).
-
-
+- **Raylib:** 11 stale duplicate test files from `Mibo.Raylib.Tests` (leftovers from the `Mibo.Core.Tests` extraction; never compiled).
 
 ## [1.3.0] - 2026-06-13
 
