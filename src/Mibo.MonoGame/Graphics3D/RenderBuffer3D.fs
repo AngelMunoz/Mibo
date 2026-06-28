@@ -26,6 +26,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
     ArrayPool<Command3D>.Shared.Rent(defaultValueArg capacity 1024)
 
   let mutable count = 0
+  let mutable clearCounter = 0
 
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
@@ -57,13 +58,22 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   /// Call this at the start of each frame before populating with new commands.
   /// </summary>
   /// <remarks>
-  /// Intentionally resets only the count, not the array slots — clearing thousands
-  /// of struct-DU slots every frame is a hot-path cost we avoid. Stale managed
-  /// refs (Model/Texture2D/Effect) in slots above <c>count</c> persist only until
-  /// overwritten by a longer frame or released at <c>Dispose</c> (which clears).
-  /// This matches <c>RenderBuffer2D.Clear</c> and the raylib 3D buffer.
+  /// Resets the count every frame (clearing thousands of struct-DU slots per frame
+  /// is a hot-path cost we avoid), but periodically zeroes the backing array (~every
+  /// 300 frames) so stale managed refs (Model/Texture2D/Effect) in slots above count
+  /// can't keep unloaded assets alive indefinitely after a scene shrinks. Dispose also
+  /// clears. This matches <c>RenderBuffer2D.Clear</c> and the raylib buffers.
   /// </remarks>
-  member _.Clear() = count <- 0
+  member _.Clear() =
+    count <- 0
+    // Periodically zero the backing array so stale managed refs (Model/Texture2D/Effect)
+    // in slots above count don't keep unloaded assets alive indefinitely after a scene
+    // shrinks or chunks evict. ~5s at 60fps; Array.Clear on structs is a cheap memset.
+    clearCounter <- clearCounter + 1
+
+    if clearCounter >= 300 then
+      clearCounter <- 0
+      Array.Clear(items, 0, items.Length)
 
   /// <summary>
   /// Sorts commands using the provided comparer.

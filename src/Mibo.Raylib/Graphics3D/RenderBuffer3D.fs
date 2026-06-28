@@ -26,6 +26,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
     ArrayPool<Command3D>.Shared.Rent(defaultValueArg capacity 1024)
 
   let mutable count = 0
+  let mutable clearCounter = 0
 
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
@@ -53,7 +54,13 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   /// Clears all commands from the buffer without deallocating the backing array.
   /// Call this at the start of each frame before populating with new commands.
   /// </summary>
-  member _.Clear() = count <- 0
+  member _.Clear() =
+    count <- 0
+    clearCounter <- clearCounter + 1
+
+    if clearCounter >= 300 then
+      clearCounter <- 0
+      Array.Clear(items, 0, items.Length)
 
   /// <summary>
   /// Sorts commands using the provided comparer.

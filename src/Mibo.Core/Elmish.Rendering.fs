@@ -75,6 +75,7 @@ type RenderBuffer<'Key, 'Cmd when 'Key: comparison>
     System.Buffers.ArrayPool<struct ('Key * 'Cmd)>.Shared.Rent initialCapacity
 
   let mutable count = 0
+  let mutable clearCounter = 0
   let mutable disposed = false
   let keyComparer = defaultArg keyComparer Comparer<'Key>.Default
 
@@ -96,7 +97,13 @@ type RenderBuffer<'Key, 'Cmd when 'Key: comparison>
       items <- newArr
 
   /// Clears all commands from the buffer without deallocating.
-  member _.Clear() = count <- 0
+  member _.Clear() =
+    count <- 0
+    clearCounter <- clearCounter + 1
+
+    if clearCounter >= 300 then
+      clearCounter <- 0
+      System.Array.Clear(items, 0, items.Length)
 
   /// Adds a command with its sort key to the buffer.
   member _.Add(key: 'Key, cmd: 'Cmd) =
