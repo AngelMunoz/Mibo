@@ -79,6 +79,11 @@ type internal PbrResources() =
   /// <summary>BasicEffect fallback for DrawPrimitive when the PBR effect can't load (B5/B6 floor).</summary>
   member val FallbackEffect: BasicEffect voption = ValueNone with get, set
 
+  /// <summary>1×1 white fallback bound for absent texture maps so textureless PBR materials
+  /// (e.g. <c>Material3D.colored</c>) sample white (identity multiplier) instead of null, which
+  /// <c>EffectPass.Apply</c> turns into black. Created once alongside the effect.</summary>
+  member val WhiteTex: Texture2D voption = ValueNone with get, set
+
   /// <summary>The minimal Instanced.fx fallback (flat albedo + 1 directional), loaded lazily.</summary>
   member val InstancedEffect: Effect voption = ValueNone with get, set
 
@@ -188,8 +193,22 @@ module internal PbrShading =
       | ValueSome e ->
         res.Params <- ValueSome(PbrUniforms.build e)
         res.Effect <- ValueSome e
+
+        match res.WhiteTex with
+        | ValueNone ->
+          let tex = new Texture2D(gd, 1, 1)
+          tex.SetData([| Color.White |])
+          res.WhiteTex <- ValueSome tex
+        | ValueSome _ -> ()
+
         true
       | ValueNone -> false
+
+  /// <summary>Extracts the cached white fallback texture (created by ensureEffect); null before load.</summary>
+  let inline whiteTex(res: PbrResources) : Texture2D =
+    match res.WhiteTex with
+    | ValueSome t -> t
+    | ValueNone -> null
 
   // ── drawPart: draw a single ModelMeshPart manually (part has no Draw() of its own). ──
   let private drawPart(gd: GraphicsDevice, part: ModelMeshPart) =
@@ -261,7 +280,7 @@ module internal PbrShading =
 
             if not res.HasLastMaterial || key <> res.LastKey then
               PbrUniforms.uploadMaterial(&p, &mat)
-              PbrUniforms.bindTextures(&p, &mat)
+              PbrUniforms.bindTextures(&p, &mat, whiteTex res)
               res.LastKey <- key
               res.HasLastMaterial <- true
 
@@ -343,7 +362,7 @@ module internal PbrShading =
 
             if not res.HasLastMaterial || key <> res.LastKey then
               PbrUniforms.uploadMaterial(&p, &mat)
-              PbrUniforms.bindTextures(&p, &mat)
+              PbrUniforms.bindTextures(&p, &mat, whiteTex res)
               res.LastKey <- key
               res.HasLastMaterial <- true
 
@@ -388,7 +407,7 @@ module internal PbrShading =
 
         if not res.HasLastMaterial || key <> res.LastKey then
           PbrUniforms.uploadMaterial(&p, &material)
-          PbrUniforms.bindTextures(&p, &material)
+          PbrUniforms.bindTextures(&p, &material, whiteTex res)
           res.LastKey <- key
           res.HasLastMaterial <- true
 
@@ -509,7 +528,7 @@ module internal PbrShading =
           PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
           // Instanced draws always upload the material (one material across all instances).
           PbrUniforms.uploadMaterial(&p, &material)
-          PbrUniforms.bindTextures(&p, &material)
+          PbrUniforms.bindTextures(&p, &material, whiteTex res)
 
           PbrUniforms.uploadLights(
             &p,

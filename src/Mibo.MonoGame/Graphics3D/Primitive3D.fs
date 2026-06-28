@@ -412,8 +412,8 @@ module Primitive3D =
     vi <- vi + 1
 
     for seg = 0 to segments - 1 do
-      indices[ii + 0] <- topBase + seg
-      indices[ii + 1] <- topBase + seg + 1
+      indices[ii + 0] <- topBase + seg + 1
+      indices[ii + 1] <- topBase + seg
       indices[ii + 2] <- topBase + segments + 1 // center
       ii <- ii + 3
 
@@ -446,8 +446,8 @@ module Primitive3D =
     vi <- vi + 1
 
     for seg = 0 to segments - 1 do
-      indices[ii + 0] <- botBase + seg + 1
-      indices[ii + 1] <- botBase + seg
+      indices[ii + 0] <- botBase + seg
+      indices[ii + 1] <- botBase + seg + 1
       indices[ii + 2] <- botBase + segments + 1 // center
       ii <- ii + 3
 

@@ -408,9 +408,12 @@ module internal PbrUniforms =
   /// <see cref="M:Microsoft.Xna.Framework.Graphics.EffectPass.Apply"/> pulls sampler textures from the
   /// effect's own parameters (EffectPass.SetShaderSamplers), NOT from <c>gd.Textures[]</c> — so the
   /// textures MUST be set here via the EffectParameter, or Apply() clobbers them to null and PBR
-  /// draws sample nothing (black).
+  /// draws sample nothing (black). <paramref name="white"/> is the 1×1 white fallback bound for any
+  /// absent map so textureless materials (e.g. <c>Material3D.colored</c>) sample white instead of black.
   /// </summary>
-  let bindTextures(p: inref<PbrEffectParams>, mat: inref<Material3D>) =
+  let bindTextures
+    (p: inref<PbrEffectParams>, mat: inref<Material3D>, white: Texture2D)
+    =
     let m = &p.Material
 
     let inline setTex (pp: EffectParameter) (t: Texture2D voption) =
@@ -418,7 +421,7 @@ module internal PbrUniforms =
         match t with
         // Annotate null as Texture: F# can't resolve the SetValue overload for an untyped null.
         | ValueSome tex -> pp.SetValue tex
-        | ValueNone -> pp.SetValue(null: Texture)
+        | ValueNone -> pp.SetValue white
 
     setTex m.AlbedoMapTex mat.AlbedoMap
     setTex m.RoughnessMapTex mat.RoughnessMap
