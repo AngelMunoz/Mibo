@@ -106,6 +106,8 @@ type internal ShadowUniforms = {
   ShadowViewProjs: EffectParameter
   ShadowUVOffsets: EffectParameter
   ShadowTexelSize: EffectParameter
+  ShadowAtlasTex: EffectParameter
+  ShadowBiases: EffectParameter
 }
 
 /// <summary>
@@ -195,6 +197,12 @@ module internal PbrUniforms =
     ShadowViewProjs = param e "shadowViewProjs"
     ShadowUVOffsets = param e "shadowUVOffsets"
     ShadowTexelSize = param e "shadowTexelSize"
+    // The atlas sampler is named "shadowAtlas" in ForwardPbr.fx (sampler2D shadowAtlas :
+    // register(s5)). NOT "texture5" — mgfxc exposes the sampler under its HLSL name, so
+    // resolving "texture5" returns null and the atlas bind silently no-ops, leaving s5
+    // unbound and the forward shader sampling 0.0 (everything shadowed).
+    ShadowAtlasTex = param e "shadowAtlas"
+    ShadowBiases = param e "shadowBiases"
   }
 
   /// <summary>Resolves all PBR effect parameter handles once after load.</summary>
@@ -252,6 +260,14 @@ module internal PbrUniforms =
   let inline setVec4Array (p: EffectParameter) (v: Vector4[]) =
     if not(obj.ReferenceEquals(p, null)) then
       p.SetValue v
+
+  let inline setVec4Element (p: EffectParameter) (i: int) (v: Vector4) =
+    if not(obj.ReferenceEquals(p, null)) && i < p.Elements.Count then
+      p.Elements[i].SetValue v
+
+  let inline setFloatElement (p: EffectParameter) (i: int) (v: float32) =
+    if not(obj.ReferenceEquals(p, null)) && i < p.Elements.Count then
+      p.Elements[i].SetValue v
 
   /// <summary>Converts an XNA <see cref="T:Microsoft.Xna.Framework.Color"/> to a normalized <see cref="T:Microsoft.Xna.Framework.Vector4"/>.</summary>
   let inline colorToVec4(c: Color) : Vector4 =

@@ -67,13 +67,34 @@ VS_OUTPUT VS_Skinned(VS_INPUT_SKINNED input) {
   return output;
 }
 
+// ── Instanced: per-instance world matrix arrives as 4 Vector4 rows on stream 1
+// (TEXCOORD1..4), matching VertexInstanceWorld and ForwardPbr.fx's VS_Instanced.
+// matModel is Identity for instanced depth (the per-instance world IS the model).
+struct VS_INPUT_INSTANCED {
+  float3 Position : POSITION0;
+  float4 Row0     : TEXCOORD1;
+  float4 Row1     : TEXCOORD2;
+  float4 Row2     : TEXCOORD3;
+  float4 Row3     : TEXCOORD4;
+};
+
+VS_OUTPUT VS_Instanced(VS_INPUT_INSTANCED input) {
+  VS_OUTPUT output;
+  float4x4 world = float4x4(input.Row0, input.Row1, input.Row2, input.Row3);
+  float4 clip = mul(float4(input.Position, 1.0), world);
+  clip = mul(clip, viewProj);
+  output.Position = clip;
+  output.Depth = clip.zw;
+  return output;
+}
+
 float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
-  // Depth in [0,1] on both backends (matches the forward shader's remapped ndc.z).
-  // Raw clip.z/clip.w is [-1,1] on OpenGL and [0,1] on DX11; remapping to [0,1]
-  // unifies the comparison. Clear color is white (1.0 = far = lit).
+  // Depth in [0,1] on both backends (matches the forward shader's raw ndc.z).
+  // The projection matrix already maps view z to [0,1] on both DX and OpenGL, so
+  // clip.z/clip.w is directly comparable with the forward shader's ndc.z. Clear
+  // color is white (1.0 = far = lit).
   float d = input.Depth.x / input.Depth.y;
-  d = d * 0.5 + 0.5;
-  return float4(d, 1.0, 1.0, 1.0);
+  return float4(d, d, d, 1.0);
 }
 
 technique Depth {
@@ -86,6 +107,13 @@ technique Depth {
 technique DepthSkinned {
   pass P0 {
     VertexShader = compile VS_SHADERMODEL VS_Skinned();
+    PixelShader = compile PS_SHADERMODEL PS_Main();
+  }
+};
+
+technique DepthInstanced {
+  pass P0 {
+    VertexShader = compile VS_SHADERMODEL VS_Instanced();
     PixelShader = compile PS_SHADERMODEL PS_Main();
   }
 };

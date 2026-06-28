@@ -108,6 +108,17 @@ type AnimatedMesh = {
   /// </remarks>
   BoneParents: int[]
   InverseBindPose: Matrix[]
+  /// <summary>Per-bone bind LOCAL pose (node-local transform from the Assimp node tree,
+  /// in MonoGame row-vector convention — transposed like <c>InverseBindPose</c>).</summary>
+  /// <remarks>
+  /// Used by <c>computeBonePalette</c> as the fallback for bones that a clip does NOT
+  /// animate. Falling back to <c>Matrix.Identity</c> here (the old behavior) collapsed
+  /// every channelless bone to the skeleton origin: in clips like 'idle'/'jump' that
+  /// animate only a subset of bones, the unanimated root/legs snapped to origin and
+  /// dragged their descendants there, making limbs vanish. The bind local pose holds
+  /// the bone at its authored rest position instead, so unanimated limbs stay put.
+  /// </remarks>
+  BindLocalPoses: Matrix[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -625,16 +636,21 @@ module Animation3DState =
   /// Sample a single bone channel at a fractional frame index, returning a
   /// bone-local transform matrix (SRT).
   /// </summary>
+  /// <param name="fallback">Pose returned when this clip has no channel for the bone
+  /// (or the channel has no keyframes). Pass the bone's bind local pose so unanimated
+  /// limbs hold their rest position — <c>Matrix.Identity</c> here collapses channelless
+  /// bones to the skeleton origin (the vanished-limbs bug).</param>
   let private sampleChannel
     (clip: Animation3DClip)
     (boneName: string)
     (frame: float32)
+    (fallback: Matrix)
     : Matrix =
     match clip.Channels.TryGetValue(boneName) with
-    | false, _ -> Matrix.Identity
+    | false, _ -> fallback
     | true, ch ->
       if ch.Keyframes.Length = 0 then
-        Matrix.Identity
+        fallback
       elif ch.Keyframes.Length = 1 then
         ch.Keyframes[0].Transform
       else
@@ -685,7 +701,10 @@ module Animation3DState =
       let clip = state.Clips.Clips[state.CurrentClipIndex]
 
       // Sample each bone's LOCAL pose for the current frame (or blend two clips).
+      // Channelless bones fall back to their bind local pose (captured at load) so they
+      // hold their rest position instead of snapping to the skeleton origin.
       let localPoses = Array.zeroCreate<Matrix> boneCount
+      let bindLocal = mesh.BindLocalPoses
 
       if state.BlendTargetIndex >= 0 then
         let clipB = state.Clips.Clips[state.BlendTargetIndex]
@@ -693,13 +712,16 @@ module Animation3DState =
 
         for i = 0 to boneCount - 1 do
           let boneName = mesh.BoneNames[i]
-          let poseA = sampleChannel clip boneName state.CurrentFrame
-          let poseB = sampleChannel clipB boneName state.BlendTargetFrame
+          let fb = bindLocal[i]
+          let poseA = sampleChannel clip boneName state.CurrentFrame fb
+          let poseB = sampleChannel clipB boneName state.BlendTargetFrame fb
           localPoses[i] <- Matrix.Lerp(poseA, poseB, blend)
       else
         for i = 0 to boneCount - 1 do
           let boneName = mesh.BoneNames[i]
-          localPoses[i] <- sampleChannel clip boneName state.CurrentFrame
+
+          localPoses[i] <-
+            sampleChannel clip boneName state.CurrentFrame bindLocal[i]
 
       // Compose parent chains: worldPose[i] = worldPose[parent] * localPose[i].
       // MonoGame uses the row-vector convention (v' = v * M; A * B applies A then B),
@@ -813,8 +835,13 @@ module AnimatedMesh =
 
         let boneParents = Array.create boneCount -1
 
+        // Per-bone bind LOCAL pose, captured from the Assimp node tree (node.Transform
+        // is node-local). Used as the fallback for channelless bones in computeBonePalette
+        // so unanimated limbs hold their rest position instead of snapping to origin.
+        let bindLocalPoses = Array.zeroCreate<Matrix> boneCount
+
         // For each bone, walk up the Assimp node tree from its node's parent until
-        // we find an ancestor whose name is a bone (record its index), or reach the
+        // we find an ancestor whose name is also a bone (record its index), or reach the
         // root (parent stays -1). We check the current node's name BEFORE the null-parent
         // short-circuit so a bone that is itself the scene-root node (e.g. "Hips" as the
         // top node in some exports) resolves correctly — its children find it rather than
@@ -843,14 +870,25 @@ module AnimatedMesh =
 
         for i = 0 to boneCount - 1 do
           match nodeByName.TryGetValue(boneNames[i]) with
-          | true, node -> boneParents[i] <- findBoneParent node.Parent
-          | false, _ -> boneParents[i] <- -1
+          | true, node ->
+            boneParents[i] <- findBoneParent node.Parent
+
+            // node.Transform is the bone's node-local bind pose in Assimp's column-vector
+            // convention; transpose to MonoGame's row-vector convention (same treatment as
+            // the inverse-bind OffsetMatrix above) so it composes consistently with the
+            // per-frame local poses that sampleChannel/buildTrsMatrix produce.
+            bindLocalPoses[i] <-
+              Matrix.Transpose(Matrix.op_Implicit node.Transform)
+          | false, _ ->
+            boneParents[i] <- -1
+            bindLocalPoses[i] <- Matrix.Identity
 
         ValueSome {
           BoneCount = boneCount
           BoneNames = boneNames
           BoneParents = boneParents
           InverseBindPose = invBind
+          BindLocalPoses = bindLocalPoses
         }
 
   /// <summary>
@@ -862,6 +900,13 @@ module AnimatedMesh =
   /// matches raylib's <c>UpdateModelAnimation</c>: interpolates keyframes (lerp),
   /// builds TRS matrices (already merged into keyframes), and multiplies by the
   /// inverse bind pose.
+  ///
+  /// NOTE: this is the legacy single-frame path with NO parent-chain composition —
+  /// channelless bones fall back to their raw inverse-bind (lines below), which is
+  /// correct only for clips that animate every bone in isolation. The animated-model
+  /// draw path uses <c>computeBonePalette</c> instead (which composes parents AND falls
+  /// back to the bind local pose), so this path is retained for API completeness but
+  /// is not exercised by the forward pipeline.
   /// </remarks>
   let computeBoneMatrices
     (clip: Animation3DClip)
