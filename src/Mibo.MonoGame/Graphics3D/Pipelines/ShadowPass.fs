@@ -45,6 +45,22 @@ type ShadowSkinnedDraw = {
   Bones: Matrix[]
 }
 
+/// <summary>An instanced caster draw collected for the shadow pass.</summary>
+/// <remarks>
+/// Instanced geometry (e.g. a game world's block grid rendered via <c>DrawInstanced</c>) MUST
+/// cast shadows. Unlike <c>ShadowMeshDraw</c> this carries many per-instance world transforms;
+/// the pass renders it via the depth effect's <c>DepthInstanced</c> technique with a two-stream
+/// vertex bind (mesh + per-instance <c>VertexInstanceWorld</c>), one <c>DrawInstancedPrimitives</c>
+/// per light. No per-instance frustum cull — the sample already chunk-culls the source commands,
+/// so the emitted count is small; the cost is bounded by the surviving instance counts.
+/// </remarks>
+[<Struct>]
+type ShadowInstancedDraw = {
+  Mesh: PrimitiveMesh
+  Transforms: Matrix[]
+  InstanceCount: int
+}
+
 /// <summary>
 /// Cached <see cref="T:Microsoft.Xna.Framework.Graphics.EffectParameter"/> handles for the
 /// depth-only shadow pass effect (<c>DepthShadow.fx</c>).
@@ -95,6 +111,21 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   /// <summary>Pooled skinned-caster draws (B12). Grows on demand.</summary>
   member val SkinnedDraws = Array.zeroCreate<ShadowSkinnedDraw> 8 with get, set
 
+  /// <summary>Pooled instanced-caster draws (the world's block grid etc.). Grows on demand.</summary>
+  member val InstancedDraws =
+    Array.zeroCreate<ShadowInstancedDraw> 32 with get, set
+
+  /// <summary>CPU staging array for the per-instance <c>VertexInstanceWorld</c> rows. Grows to the
+  /// largest instanceCount seen across collected instanced casters. Reused across frames.</summary>
+  member val InstanceStaging =
+    Array.zeroCreate<VertexInstanceWorld> 64 with get, set
+
+  /// <summary>Growable per-instance vertex buffer for instanced shadow casters. Owned by the shadow
+  /// pass (not shared with the forward-pass PBR instance VB) so the two passes never race on it.
+  /// Disposed at shutdown; recreated when an instanced caster exceeds the current capacity.</summary>
+  member val InstanceVertexBuffer: VertexBuffer voption =
+    ValueNone with get, set
+
   /// <summary>Per-light shadow slot mapping, indexed by lights.PointLights/SpotLights position; -1 = no shadow.</summary>
   member val PointShadowSlots: int[] = [||] with get, set
 
@@ -103,6 +134,10 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
 
   /// <summary>Pooled scratch for the multi-caster shadowViewProjs upload.</summary>
   member val ViewProjsScratch = Array.zeroCreate<Matrix> 16 with get, set
+
+  /// <summary>Pooled scratch for the per-caster <c>shadowBiases</c> upload (receiver-side
+  /// depth bias). Copied from <c>Atlas.Biases</c> each frame.</summary>
+  member val BiasesScratch = Array.zeroCreate<float32> 16 with get, set
 
   /// <summary>Pooled scratch for the multi-caster shadowUVOffsets upload.</summary>
   member val UVOffsetsScratch = Array.zeroCreate<Vector4> 16 with get, set
@@ -129,10 +164,10 @@ module internal ShadowPass =
   }
 
   /// <summary>
-  /// Builds the directional light's orthographic shadow ViewProj (port of canonical
-  /// <c>createDirectionalShadowCamera</c>). Fixed-size ortho box positioned behind a grid-snapped
-  /// origin along the light direction. §6.1: <c>CreateLookAt * CreateOrthographic</c> in
-  /// application order, plain matrices, no transpose.
+  /// Builds the directional light's orthographic shadow ViewProj with texel-space snapping.
+  /// World-space origin snapping alone leaves sub-texel crawl as the camera or sun moves; this
+  /// rounds the light clip-space projection to whole atlas texels so shadow-map pixels stay
+  /// locked to world geometry and the shadow stops rotating/sliding.
   /// </summary>
   let buildDirectionalViewProj
     (atlasCfg: ShadowAtlasConfig)
@@ -151,28 +186,44 @@ module internal ShadowPass =
         | ShadowOriginStrategy.SceneCenter -> Vector3.Zero
         | ShadowOriginStrategy.Custom f -> f activeCamera
 
-    let snap = atlasCfg.GridSnapSize
-
-    let snappedX =
-      if snap > 0.0f then
-        MathF.Round(rawOrigin.X / snap) * snap
-      else
-        rawOrigin.X
-
-    let snappedZ =
-      if snap > 0.0f then
-        MathF.Round(rawOrigin.Z / snap) * snap
-      else
-        rawOrigin.Z
-
-    let origin = Vector3(snappedX, rawOrigin.Y, snappedZ)
-
     let lightDistance =
       match atlasCfg.DirectionalLightDistance with
       | ValueSome d -> d
       | ValueNone -> 100.0f
 
-    let lightPos = origin + lightFromDir * lightDistance
+    let orthoSize =
+      match atlasCfg.DirectionalLightSize with
+      | ValueSome s -> s
+      | ValueNone -> 50.0f
+
+    let resolution = float32 atlasCfg.Resolution
+    let gridSize = MathF.Sqrt(float32 atlasCfg.MaxCasters)
+    let slotResolution = resolution / gridSize
+    // World-space size of one shadow texel in the directional light's X/Y plane.
+    // The config's GridSnapSize overrides this when set; otherwise we default to the
+    // texel size so the shadow-map pixels stay locked to world geometry.
+    let texelWorld = orthoSize * 2.0f / slotResolution
+    let snapSize = max atlasCfg.GridSnapSize texelWorld
+
+    // Lock the shadow origin Y to the configured world height so jumping does not slide
+    // the frustum vertically. Snap X/Z to the chosen grid for stability.
+    let originY = atlasCfg.DirectionalOriginY
+
+    let snappedX =
+      if snapSize > 0.0f then
+        MathF.Round(rawOrigin.X / snapSize) * snapSize
+      else
+        rawOrigin.X
+
+    let snappedZ =
+      if snapSize > 0.0f then
+        MathF.Round(rawOrigin.Z / snapSize) * snapSize
+      else
+        rawOrigin.Z
+
+    let snappedOrigin = Vector3(snappedX, originY, snappedZ)
+
+    let lightPos = snappedOrigin + lightFromDir * lightDistance
 
     let safeUp =
       if abs lightDir.Y > 0.99f then
@@ -180,14 +231,10 @@ module internal ShadowPass =
       else
         Vector3.UnitY
 
-    let orthoSize =
-      match atlasCfg.DirectionalLightSize with
-      | ValueSome s -> s
-      | ValueNone -> 50.0f
-
     let shadowNear = 1.0f
     let shadowFar = lightDistance + orthoSize * 2.0f
-    let view = Matrix.CreateLookAt(lightPos, origin, safeUp)
+
+    let view = Matrix.CreateLookAt(lightPos, snappedOrigin, safeUp)
 
     let proj =
       Matrix.CreateOrthographicOffCenter(
@@ -203,7 +250,8 @@ module internal ShadowPass =
 
   /// <summary>
   /// Builds a point light's shadow ViewProj — a downward-facing 90° perspective frustum
-  /// (matches canonical raylib; correct for ground-level point lights). §6.1 application order.
+  /// covering +Z. Used by the forward shader for point-light shadows. (B13 point-light
+  /// shadows are rendered as a single face into one atlas slot.)
   /// </summary>
   let buildPointViewProj(lightPos: Vector3, lightRadius: float32) : Matrix =
     let view =
@@ -419,8 +467,10 @@ module internal ShadowPass =
           let mutable castEnabled = true
           let mutable drawCount = 0
           let mutable skinnedCount = 0
+          let mutable instancedCount = 0
           let mutable shadowDraws = res.Draws
           let mutable shadowSkinnedDraws = res.SkinnedDraws
+          let mutable shadowInstancedDraws = res.InstancedDraws
 
           for i = 0 to buffer.Count - 1 do
             match buffer[i] with
@@ -463,9 +513,31 @@ module internal ShadowPass =
 
                     skinnedCount <- skinnedCount + 1
                   | _ -> ()
+            | Command3D.DrawInstanced(mesh, transforms, _material, instanceCount) when
+              castEnabled && instanceCount > 0
+              ->
+              // The world's instanced geometry (block grid, platforms, etc.) casts shadows too.
+              // Collected whole (one entry per emitted DrawInstanced); rendered via the
+              // DepthInstanced technique. No per-instance cull — the sample chunk-culls the
+              // source commands, so the emitted count is already bounded.
+              if instancedCount >= shadowInstancedDraws.Length then
+                Array.Resize(
+                  &shadowInstancedDraws,
+                  shadowInstancedDraws.Length * 2
+                )
+
+                res.InstancedDraws <- shadowInstancedDraws
+
+              shadowInstancedDraws[instancedCount] <- {
+                Mesh = mesh
+                Transforms = transforms
+                InstanceCount = instanceCount
+              }
+
+              instancedCount <- instancedCount + 1
             | _ -> ()
 
-          if drawCount = 0 && skinnedCount = 0 then
+          if drawCount = 0 && skinnedCount = 0 && instancedCount = 0 then
             ()
           else
             res.Atlas.PrepareUniforms()
@@ -489,7 +561,13 @@ module internal ShadowPass =
             // DirectionalBias as the base — per-type bias swap is deferred.
             if obj.ReferenceEquals(res.Raster, null) then
               let sr = new RasterizerState()
-              sr.CullMode <- CullMode.CullClockwiseFace
+              // Render front faces into the shadow map. The imported geometry (Kenney
+              // assets and typical MonoGame content) is clockwise-wound; keeping the
+              // front-facing sides writes the caster surfaces that are actually visible
+              // to the light. Back-face rendering was tried but produced identical
+              // self-shadowing results once receiver-side bias was added, so the
+              // simpler front-face path is kept.
+              sr.CullMode <- CullMode.CullCounterClockwiseFace
               sr.DepthBias <- biasCfg.DirectionalBias
               sr.SlopeScaleDepthBias <- biasCfg.SlopeScaleBias
               res.Raster <- sr
@@ -556,6 +634,88 @@ module internal ShadowPass =
                   depthEffect.CurrentTechnique <-
                     depthEffect.Techniques["Depth"]
 
+                // ── Instanced casters: hardware instancing via two-stream vertex bind. ──
+                if instancedCount > 0 then
+                  depthEffect.CurrentTechnique <-
+                    depthEffect.Techniques["DepthInstanced"]
+
+                  // matModel is identity for instanced draws: the per-instance world transform
+                  // is supplied as VertexInstanceWorld rows on stream 1.
+                  PbrUniforms.setMatrix depthParams.MatModel Matrix.Identity
+
+                  for d = 0 to instancedCount - 1 do
+                    let draw = shadowInstancedDraws[d]
+
+                    // Defensive: the source DrawInstanced command should always have a
+                    // transforms array matching instanceCount, but clamp to the available
+                    // data so a malformed command cannot read past the array.
+                    let instanceCount =
+                      min draw.InstanceCount draw.Transforms.Length
+
+                    if instanceCount > 0 then
+                      if res.InstanceStaging.Length < instanceCount then
+                        res.InstanceStaging <-
+                          Array.zeroCreate<VertexInstanceWorld> instanceCount
+
+                      for i = 0 to instanceCount - 1 do
+                        res.InstanceStaging[i] <-
+                          VertexInstanceWorld.Create draw.Transforms[i]
+
+                      match res.InstanceVertexBuffer with
+                      | ValueNone ->
+                        let vb =
+                          new VertexBuffer(
+                            gd,
+                            typeof<VertexInstanceWorld>,
+                            instanceCount,
+                            BufferUsage.WriteOnly
+                          )
+
+                        res.InstanceVertexBuffer <- ValueSome vb
+                      | ValueSome vb when vb.VertexCount < instanceCount ->
+                        vb.Dispose()
+
+                        let vb' =
+                          new VertexBuffer(
+                            gd,
+                            typeof<VertexInstanceWorld>,
+                            instanceCount,
+                            BufferUsage.WriteOnly
+                          )
+
+                        res.InstanceVertexBuffer <- ValueSome vb'
+                      | _ -> ()
+
+                      let instVB =
+                        match res.InstanceVertexBuffer with
+                        | ValueSome vb -> vb
+                        | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
+
+                      instVB.SetData(res.InstanceStaging, 0, instanceCount)
+
+                      gd.SetVertexBuffers(
+                        VertexBufferBinding(draw.Mesh.Vertices, 0, 0),
+                        VertexBufferBinding(instVB, 0, 1)
+                      )
+
+                      gd.Indices <- draw.Mesh.Indices
+
+                      PbrUniforms.setMatrix depthParams.ViewProj casterVP
+
+                      for pass in depthEffect.CurrentTechnique.Passes do
+                        pass.Apply()
+
+                        gd.DrawInstancedPrimitives(
+                          PrimitiveType.TriangleList,
+                          0,
+                          0,
+                          draw.Mesh.PrimitiveCount,
+                          instanceCount
+                        )
+
+                  depthEffect.CurrentTechnique <-
+                    depthEffect.Techniques["Depth"]
+
             // ── Restore device state ──
             (gd.SetRenderTarget null)
             gd.Viewport <- prevViewport
@@ -565,19 +725,30 @@ module internal ShadowPass =
 
             // ── Upload shadow uniforms to the PBR effect ──
             let active = res.Atlas.ActiveCasterCount
+            let maxC = atlasCfg.MaxCasters
 
-            // Size the packed scratch to the active caster count (reused across frames).
-            if active > 0 && res.ViewProjsScratch.Length < active then
-              res.ViewProjsScratch <- Array.zeroCreate<Matrix> active
-              res.UVOffsetsScratch <- Array.zeroCreate<Vector4> active
+            if res.ViewProjsScratch.Length <> maxC then
+              res.ViewProjsScratch <- Array.zeroCreate<Matrix> maxC
+
+            if res.UVOffsetsScratch.Length <> maxC then
+              res.UVOffsetsScratch <- Array.zeroCreate<Vector4> maxC
+
+            if res.BiasesScratch.Length <> maxC then
+              res.BiasesScratch <- Array.zeroCreate<float32> maxC
+
+            Array.Clear(res.ViewProjsScratch, 0, maxC)
+            Array.Clear(res.UVOffsetsScratch, 0, maxC)
+            Array.Clear(res.BiasesScratch, 0, maxC)
 
             if active > 0 then
               let vpArr = res.Atlas.ViewProjs
               let uvArr = res.Atlas.UVOffsets
+              let biasArr = res.Atlas.Biases
 
               for i = 0 to active - 1 do
                 res.ViewProjsScratch[i] <- vpArr[i]
                 res.UVOffsetsScratch[i] <- uvArr[i]
+                res.BiasesScratch[i] <- biasArr[i]
 
             let texel = 1.0f / float32 atlasCfg.Resolution
 
@@ -596,16 +767,21 @@ module internal ShadowPass =
                   p.Shadow.ShadowUVOffsets
                   res.UVOffsetsScratch
 
+                PbrUniforms.setFloatArray
+                  p.Shadow.ShadowBiases
+                  res.BiasesScratch
+
               PbrUniforms.setVec2
                 p.Shadow.ShadowTexelSize
                 (Vector2(texel, texel))
+
+              if not(obj.ReferenceEquals(p.Shadow.ShadowAtlasTex, null)) then
+                p.Shadow.ShadowAtlasTex.SetValue(res.Atlas.Fbo)
 
               gd.Textures[5] <- res.Atlas.Fbo
               gd.SamplerStates[5] <- SamplerState.PointClamp
             | ValueNone -> ()
 
-            // Build the result both the PBR path and user-effect scopes consume. The atlas is
-            // bound to slot 5 above for the PBR pass; SceneUpload re-binds it for user effects.
             result <-
               ValueSome {
                 Atlas = res.Atlas.Fbo

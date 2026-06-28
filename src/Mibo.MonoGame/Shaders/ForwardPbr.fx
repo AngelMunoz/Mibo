@@ -81,16 +81,25 @@ float3 cameraPos;
 
 #define MAX_SHADOW_CASTERS 16
 
-sampler2D shadowAtlas : register(s5);
+sampler2D shadowAtlas : register(s5) = sampler_state {
+  AddressU = Clamp;
+  AddressV = Clamp;
+  MinFilter = Point;
+  MagFilter = Point;
+  MipFilter = Point;
+};
 float4x4 shadowViewProjs[MAX_SHADOW_CASTERS];
 float4 shadowUVOffsets[MAX_SHADOW_CASTERS]; // xy = offset, zw = scale (atlas region remap)
 float2 shadowTexelSize;                      // 1.0 / atlas resolution (replaces textureSize)
+float shadowBiases[MAX_SHADOW_CASTERS];      // per-caster receiver-side bias (prevents self-shadow acne)
 int pointLightShadowIdx[MAX_POINT_LIGHTS];   // -1 = no shadow
 int spotLightShadowIdx[MAX_SPOT_LIGHTS];     // -1 = no shadow
 
-// Generic shadow lookup for a caster slot. Manual 3x3 PCF. Bias is baked into the shadow
-// map via RasterizerState on the shadow pass, so the comparison threshold is the receiver
-// depth directly.
+// Generic shadow lookup for a caster slot. Manual 3x3 PCF. A per-caster receiver-side
+// bias is subtracted from the receiver depth before comparison (projCoord.z - bias > d) —
+// matching the Raylib backend. The rasterizer-side DepthBias alone is insufficient: with
+// the instanced world now casting, the floor self-shadows across the whole frustum because
+// caster and receiver are the same surface; the receiver-side bias closes that gap.
 float computeShadowAt(float3 worldPos, int casterIdx) {
   if (casterIdx < 0)
     return 1.0;
@@ -102,13 +111,22 @@ float computeShadowAt(float3 worldPos, int casterIdx) {
   if (ndc.z > 1.0)
     return 1.0;
 
-  ndc = ndc * 0.5 + 0.5; // to [0,1]
-
-  if (ndc.x < 0.0 || ndc.x > 1.0 || ndc.y < 0.0 || ndc.y > 1.0)
+  // ndc.z stays in clip space [-1,1] on both backends because we write raw clip.z/clip.w
+  // into the atlas color target (no viewport transform is applied to color values).
+  // Only xy is remapped to [0,1] for atlas UV lookup.
+  if (ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0)
     return 1.0;
 
   float4 uvOff = shadowUVOffsets[casterIdx];
-  float2 atlasUV = ndc.xy * uvOff.zw + uvOff.xy;
+  // DirectX viewports map clip.y=1 to the top of the render target, while texture v
+  // increases downward. Flip y so the atlas lookup matches the viewport transform.
+  float2 atlasUV = float2(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5) * uvOff.zw + uvOff.xy;
+
+  // Receiver-side bias: shrink the receiver depth before comparing so a surface doesn't
+  // shadow itself. Rasterizer-side DepthBias alone left the floor self-shadowing because
+  // the bias direction/precision couldn't separate caster from receiver on the same plane.
+  float bias = shadowBiases[casterIdx];
+  float recvZ = ndc.z - bias;
 
   float shadow = 0.0;
   [unroll]
@@ -120,7 +138,7 @@ float computeShadowAt(float3 worldPos, int casterIdx) {
       // (the point/spot light loops break on count). tex2Dlod is gradient-free.
       float2 sampleUV = atlasUV + float2(float(x), float(y)) * shadowTexelSize;
       float d = tex2Dlod(shadowAtlas, float4(sampleUV, 0.0, 0.0)).r;
-      shadow += (ndc.z > d) ? 0.0 : 1.0;
+      shadow += (recvZ > d) ? 0.0 : 1.0;
     }
   }
   return shadow / 9.0;

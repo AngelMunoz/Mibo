@@ -109,6 +109,16 @@ type ShadowAtlasConfig = {
   DirectionalLightSize: float32 voption
 
   /// <summary>
+  /// Fixed world-space Y for the directional shadow frustum origin. Default: 0.
+  /// </summary>
+  /// <remarks>
+  /// Locking the shadow origin's Y prevents the shadow frustum from sliding vertically
+  /// when the camera target moves up/down (e.g., the player jumps). Override this if your
+  /// scene's ground level is not at Y=0.
+  /// </remarks>
+  DirectionalOriginY: float32
+
+  /// <summary>
   /// Grid snap size for shadow origin to reduce flickering. Default: 2.0.
   /// </summary>
   /// <remarks>
@@ -129,7 +139,7 @@ type ShadowAtlasConfig = {
 /// </remarks>
 [<Struct>]
 type ShadowBiasConfig = {
-  /// <summary>Bias for directional light shadows. Default 0.0005.</summary>
+  /// <summary>Bias for directional light shadows. Default 0.002.</summary>
   DirectionalBias: float32
   /// <summary>Bias for point light shadows. Default 0.01.</summary>
   PointBias: float32
@@ -141,7 +151,7 @@ type ShadowBiasConfig = {
 
 /// <summary>Convenience values for <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ShadowAtlasConfig"/>.</summary>
 module ShadowAtlasConfig =
-  /// <summary>Default atlas configuration: 2048² atlas, 16 casters (4×4 grid), camera-target origin, 2.0 grid snap.</summary>
+  /// <summary>Default atlas configuration: 2048² atlas, 16 casters (4×4 grid), camera-target origin, 2.0 grid snap, origin Y=0.</summary>
   let defaults: ShadowAtlasConfig = {
     Resolution = 2048
     MaxCasters = 16
@@ -149,6 +159,7 @@ module ShadowAtlasConfig =
     OriginStrategy = CameraTarget
     DirectionalLightDistance = ValueNone
     DirectionalLightSize = ValueNone
+    DirectionalOriginY = 0.0f
     GridSnapSize = 2.0f
   }
 
@@ -156,7 +167,7 @@ module ShadowAtlasConfig =
 module ShadowBiasConfig =
   /// <summary>Default bias values for each light type.</summary>
   let defaults: ShadowBiasConfig = {
-    DirectionalBias = 0.0005f
+    DirectionalBias = 0.002f
     PointBias = 0.01f
     SpotBias = 0.001f
     SlopeScaleBias = 0.0005f

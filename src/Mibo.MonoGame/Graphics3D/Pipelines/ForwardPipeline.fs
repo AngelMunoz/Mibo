@@ -653,6 +653,12 @@ type ForwardPipelineBase
         shadowRes.Params <- ValueNone
       | ValueNone -> ()
 
+      match shadowRes.InstanceVertexBuffer with
+      | ValueSome vb ->
+        vb.Dispose()
+        shadowRes.InstanceVertexBuffer <- ValueNone
+      | ValueNone -> ()
+
     member this.Execute(gameCtx, gameTime, buffer, _rtPool) =
       let gd = MonoGameGameContext.getGraphicsDevice gameCtx
       // Total elapsed game time, in seconds — captured once per frame for the scene bundle so an
