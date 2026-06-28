@@ -119,6 +119,13 @@ type AnimatedMesh = {
   /// the bone at its authored rest position instead, so unanimated limbs stay put.
   /// </remarks>
   BindLocalPoses: Matrix[]
+  /// <summary>Bone indices sorted by ascending hierarchy depth (parents before children).</summary>
+  /// <remarks>
+  /// Depends only on <c>BoneParents</c>, so it is precomputed once at load and reused
+  /// every frame by <c>computeBonePalette</c> — avoids the per-frame depth recursion and
+  /// sort that the hot path would otherwise pay.
+  /// </remarks>
+  BoneOrder: int[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -609,12 +616,18 @@ module Animation3DState =
 
   /// <summary>Get the total duration of the current clip in seconds at the current speed.</summary>
   let inline duration(state: Animation3DState) =
-    let clip = state.Clips.Clips[state.CurrentClipIndex]
-    float32 clip.KeyframeCount / (state.Speed * 60.0f)
+    if state.Clips.Clips.Length = 0 then
+      0.0f
+    else
+      let clip = state.Clips.Clips[state.CurrentClipIndex]
+      float32 clip.KeyframeCount / (state.Speed * 60.0f)
 
   /// <summary>Get the name of the current animation clip.</summary>
   let currentClipName(state: Animation3DState) : string =
-    state.Clips.Clips[state.CurrentClipIndex].Name
+    if state.Clips.Clips.Length = 0 then
+      ""
+    else
+      state.Clips.Clips[state.CurrentClipIndex].Name
 
   let inline withSpeed
     (speed: float32)
@@ -723,10 +736,10 @@ module Animation3DState =
           localPoses[i] <-
             sampleChannel clip boneName state.CurrentFrame bindLocal[i]
 
-      // Compose parent chains: worldPose[i] = worldPose[parent] * localPose[i].
+      // Compose parent chains: worldPose[i] = localPose[i] * worldPose[parent].
       // MonoGame uses the row-vector convention (v' = v * M; A * B applies A then B),
-      // so a child's world transform is the parent's world applied first, then the
-      // child's local offset — parent on the LEFT. Writing it the other way detaches
+      // so a child's world transform applies the child's local offset first, then the
+      // parent's world pose — local on the LEFT. Writing it the other way detaches
       // children from their parents (the "exploding joints" symptom).
       // Parents must be processed before children. The bone indices from Assimp
       // aren't guaranteed to be hierarchy-ordered, so process by ascending parent
@@ -736,28 +749,9 @@ module Animation3DState =
       let parents = mesh.BoneParents
       let worldPoses = Array.zeroCreate<Matrix> boneCount
 
-      // Compute depth (distance to root bone) for each bone to order processing.
-      // Initialized to -1 (not 0) so root bones (depth 0) are memoized correctly:
-      // a 0-init array can't distinguish "computed root" from "uncomputed", so roots
-      // would be recomputed on every recursive reach. -1 sentinel + memoize during
-      // the recursion → O(N) instead of O(N * depth).
-      let depth = Array.create boneCount -1
-
-      let rec depthOf(i: int) : int =
-        if depth[i] <> -1 then
-          depth[i]
-        else
-          let p = parents[i]
-          let d = if p < 0 then 0 else 1 + depthOf p
-          depth[i] <- d
-          d
-
-      for i = 0 to boneCount - 1 do
-        depth[i] <- depthOf i
-
       // Process bones in ascending depth order so a parent's world pose is ready.
-      let order = Array.init boneCount id
-      Array.sortInPlaceWith (fun a b -> compare depth[a] depth[b]) order
+      // The order is precomputed from the immutable BoneParents at load time.
+      let order = mesh.BoneOrder
 
       for i in order do
         let p = parents[i]
@@ -883,12 +877,35 @@ module AnimatedMesh =
             boneParents[i] <- -1
             bindLocalPoses[i] <- Matrix.Identity
 
+        // Precompute the parent-before-child processing order from the (immutable)
+        // parent map. computeBonePalette reuses this every frame instead of recomputing
+        // depth + sorting per call. Memoized recursion keeps it O(N).
+        let boneOrder =
+          let depth = Array.create boneCount -1
+
+          let rec depthOf(i: int) =
+            if depth[i] <> -1 then
+              depth[i]
+            else
+              let p = boneParents[i]
+              let d = if p < 0 then 0 else 1 + depthOf p
+              depth[i] <- d
+              d
+
+          for i = 0 to boneCount - 1 do
+            depth[i] <- depthOf i
+
+          let order = Array.init boneCount id
+          Array.sortInPlaceWith (fun a b -> compare depth[a] depth[b]) order
+          order
+
         ValueSome {
           BoneCount = boneCount
           BoneNames = boneNames
           BoneParents = boneParents
           InverseBindPose = invBind
           BindLocalPoses = bindLocalPoses
+          BoneOrder = boneOrder
         }
 
   /// <summary>

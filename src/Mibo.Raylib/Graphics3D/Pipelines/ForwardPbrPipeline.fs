@@ -443,19 +443,26 @@ module internal ShadowPassHelpers =
 
     // Only the first shadow-casting directional light is sampled by the forward shader
     // (computeDirShadow uses slot 0); registering more would waste atlas slots + render cost.
-    lights.DirLights
-    |> Seq.tryFind(fun d -> d.CastsShadows)
-    |> Option.iter(fun dir ->
+    let mutable dirShadowIdx = -1
+
+    for i = 0 to lights.DirLights.Count - 1 do
+      if dirShadowIdx < 0 && lights.DirLights[i].CastsShadows then
+        dirShadowIdx <- i
+
+    if dirShadowIdx >= 0 then
+      let dir = lights.DirLights[dirShadowIdx]
+
       tryAdd
         ShadowCasterType.Directional
         Vector3.Zero
         dir.Direction
         Vector3.Zero
         ValueNone
-      |> ignore)
+      |> ignore
 
-    lights.PointLights
-    |> Seq.iteri(fun i pt ->
+    for i = 0 to lights.PointLights.Count - 1 do
+      let pt = lights.PointLights[i]
+
       if pt.CastsShadows then
         match
           tryAdd
@@ -466,10 +473,11 @@ module internal ShadowPassHelpers =
             pt.ShadowBias
         with
         | ValueSome slot -> pointShadowSlots[i] <- slot
-        | ValueNone -> ())
+        | ValueNone -> ()
 
-    lights.SpotLights
-    |> Seq.iteri(fun i sp ->
+    for i = 0 to lights.SpotLights.Count - 1 do
+      let sp = lights.SpotLights[i]
+
       if sp.CastsShadows then
         match
           tryAdd
@@ -480,7 +488,7 @@ module internal ShadowPassHelpers =
             sp.ShadowBias
         with
         | ValueSome slot -> spotShadowSlots[i] <- slot
-        | ValueNone -> ())
+        | ValueNone -> ()
 
     struct (hasCasters, pointShadowSlots, spotShadowSlots)
 

@@ -232,6 +232,19 @@ module internal PbrShading =
         model.CopyAbsoluteBoneTransformsTo(res.BoneTransforms)
         e.CurrentTechnique <- e.Techniques["Standard"]
 
+        // Frame-global uniforms don't depend on the mesh — set once per draw, not per mesh.
+        let viewProj = state.View * state.Projection
+
+        PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
+        PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
+
+        PbrUniforms.uploadLights(
+          &p,
+          frame.Lights,
+          frame.PointShadowSlots,
+          frame.SpotShadowSlots
+        )
+
         for mesh in model.Meshes do
           let world = res.BoneTransforms[mesh.ParentBone.Index] * transform
           let mutable t = world
@@ -240,20 +253,7 @@ module internal PbrShading =
           let normalMatrix = Matrix.Transpose inv
 
           PbrUniforms.setMatrix p.Matrix.MatModel world
-
-          PbrUniforms.setMatrix
-            p.Matrix.ViewProj
-            (state.View * state.Projection)
-
           PbrUniforms.setMatrix p.Matrix.NormalMatrix normalMatrix
-          PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
-
-          PbrUniforms.uploadLights(
-            &p,
-            frame.Lights,
-            frame.PointShadowSlots,
-            frame.SpotShadowSlots
-          )
 
           for part in mesh.MeshParts do
             let mat = Material3D.fromModelMeshPart part
@@ -446,6 +446,11 @@ module internal PbrShading =
       material: Material3D,
       instanceCount: int
     ) =
+    // Clamp to the transforms array: an instanceCount larger than the buffer
+    // would index out of range when staging per-instance world matrices.
+    let instanceCount =
+      min instanceCount (if isNull transforms then 0 else transforms.Length)
+
     if instanceCount <= 0 then
       ()
     else
@@ -617,6 +622,13 @@ module internal PbrShading =
       Matrix.Invert(&t, &inv) |> ignore
       Matrix.Transpose inv
 
+    // Techniques are stable for this effect — resolve once instead of per part per frame.
+    let standardTech =
+      effect.Techniques |> Seq.tryFind(fun t -> t.Name = "Standard")
+
+    let skinnedTech =
+      effect.Techniques |> Seq.tryFind(fun t -> t.Name = "Skinned")
+
     match draw with
     | Command3D.DrawPrimitive(mesh, transform, material) ->
       SceneUpload.uploadToEffect(
@@ -652,9 +664,7 @@ module internal PbrShading =
 
           // DrawModel binds the Standard technique (matches the PBR handleDrawModel — a static
           // model draw doesn't upload a bone palette, even if the parts are skinned).
-          match
-            effect.Techniques |> Seq.tryFind(fun t -> t.Name = "Standard")
-          with
+          match standardTech with
           | Some st -> effect.CurrentTechnique <- st
           | None -> ()
 
@@ -713,15 +723,11 @@ module internal PbrShading =
             | _ -> false
 
           if isSkinned then
-            match
-              effect.Techniques |> Seq.tryFind(fun t -> t.Name = "Skinned")
-            with
+            match skinnedTech with
             | Some sk -> effect.CurrentTechnique <- sk
             | None -> ()
           else
-            match
-              effect.Techniques |> Seq.tryFind(fun t -> t.Name = "Standard")
-            with
+            match standardTech with
             | Some st -> effect.CurrentTechnique <- st
             | None -> ()
 

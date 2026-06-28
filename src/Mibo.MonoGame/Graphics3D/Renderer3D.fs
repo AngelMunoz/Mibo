@@ -97,9 +97,12 @@ type Renderer3D<'Model>
       buffer.Clear()
 
       // Wrapped in try/finally so pooled render targets are always released
-      // (and the back-buffer restored) even if view or the pipeline throws —
-      // otherwise an exception leaves the RTs in the pool's inUse list and it
-      // allocates new targets every frame, leaking GPU memory. Mirrors Renderer2D.
+      // even if view or the pipeline throws — otherwise an exception leaves the
+      // RTs in the pool's inUse list and it allocates new targets every frame,
+      // leaking GPU memory. ReleaseAll re-pools targets but does not unbind the
+      // currently-set render target, so a bound RT stays set on an exception
+      // (the next frame's Clear would then hit it, not the back buffer).
+      // Mirrors Renderer2D.
       try
         view ctx model buffer
         pipeline.Execute(ctx, gameTime, buffer, rtPool)

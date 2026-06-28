@@ -256,8 +256,8 @@ module internal ShadowPass =
   let buildPointViewProj(lightPos: Vector3, lightRadius: float32) : Matrix =
     let view =
       Matrix.CreateLookAt(lightPos, lightPos - Vector3.UnitY, Vector3.UnitZ)
-    // Dynamic near plane: CreatePerspectiveFieldOfView throws if near >= far.
-    let nearPlane = min 0.1f (lightRadius * 0.5f)
+    // Dynamic near plane: CreatePerspectiveFieldOfView throws if near <= 0.
+    let nearPlane = max 0.0001f (min 0.1f (lightRadius * 0.5f))
 
     let proj =
       Matrix.CreatePerspectiveFieldOfView(
@@ -290,7 +290,7 @@ module internal ShadowPass =
     let fov =
       max 0.01f (min (MathF.PI - 0.01f) (2.0f * MathF.Acos(light.OuterCutoff)))
 
-    let nearPlane = min 0.1f (light.Radius * 0.5f)
+    let nearPlane = max 0.0001f (min 0.1f (light.Radius * 0.5f))
 
     let proj =
       Matrix.CreatePerspectiveFieldOfView(fov, 1.0f, nearPlane, light.Radius)
@@ -336,12 +336,23 @@ module internal ShadowPass =
     (buffer: RenderBuffer3D)
     (activeCamera: Camera3D)
     : ShadowResult voption =
-    let hasDirCaster = lights.DirLights |> Seq.exists(fun d -> d.CastsShadows)
+    let mutable hasDirCaster = false
 
-    let hasPointCaster =
-      lights.PointLights |> Seq.exists(fun p -> p.CastsShadows)
+    for i = 0 to lights.DirLights.Count - 1 do
+      if lights.DirLights[i].CastsShadows then
+        hasDirCaster <- true
 
-    let hasSpotCaster = lights.SpotLights |> Seq.exists(fun s -> s.CastsShadows)
+    let mutable hasPointCaster = false
+
+    for i = 0 to lights.PointLights.Count - 1 do
+      if lights.PointLights[i].CastsShadows then
+        hasPointCaster <- true
+
+    let mutable hasSpotCaster = false
+
+    for i = 0 to lights.SpotLights.Count - 1 do
+      if lights.SpotLights[i].CastsShadows then
+        hasSpotCaster <- true
 
     // Always init the per-light slot mappings (default -1 = no shadow). Even with no casters,
     // the forward pass reads these to upload pointLightShadowIdx/spotLightShadowIdx. Reuse across
@@ -384,7 +395,12 @@ module internal ShadowPass =
         let mutable casterSlot = 0
 
         if hasDirCaster then
-          let dirLight = lights.DirLights |> Seq.find(fun d -> d.CastsShadows)
+          let mutable dirIdx = 0
+
+          while not lights.DirLights[dirIdx].CastsShadows do
+            dirIdx <- dirIdx + 1
+
+          let dirLight = lights.DirLights[dirIdx]
 
           let vp =
             buildDirectionalViewProj
