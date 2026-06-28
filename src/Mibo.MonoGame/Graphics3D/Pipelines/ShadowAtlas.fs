@@ -139,7 +139,7 @@ type ShadowAtlasConfig = {
 /// </remarks>
 [<Struct>]
 type ShadowBiasConfig = {
-  /// <summary>Bias for directional light shadows. Default 0.0005.</summary>
+  /// <summary>Bias for directional light shadows. Default 0.002.</summary>
   DirectionalBias: float32
   /// <summary>Bias for point light shadows. Default 0.01.</summary>
   PointBias: float32

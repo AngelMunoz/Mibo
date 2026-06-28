@@ -561,9 +561,12 @@ module internal ShadowPass =
             // DirectionalBias as the base — per-type bias swap is deferred.
             if obj.ReferenceEquals(res.Raster, null) then
               let sr = new RasterizerState()
-              // Render back faces into the shadow map. The receiver (front-facing ground/platforms)
-              // then compares against depths from the back sides/bottoms of casters, which are
-              // behind the receiver and therefore do not self-shadow the top surfaces.
+              // Render front faces into the shadow map. The imported geometry (Kenney
+              // assets and typical MonoGame content) is clockwise-wound; keeping the
+              // front-facing sides writes the caster surfaces that are actually visible
+              // to the light. Back-face rendering was tried but produced identical
+              // self-shadowing results once receiver-side bias was added, so the
+              // simpler front-face path is kept.
               sr.CullMode <- CullMode.CullCounterClockwiseFace
               sr.DepthBias <- biasCfg.DirectionalBias
               sr.SlopeScaleDepthBias <- biasCfg.SlopeScaleBias
@@ -643,13 +646,18 @@ module internal ShadowPass =
                   for d = 0 to instancedCount - 1 do
                     let draw = shadowInstancedDraws[d]
 
-                    if draw.InstanceCount > 0 then
-                      if res.InstanceStaging.Length < draw.InstanceCount then
-                        res.InstanceStaging <-
-                          Array.zeroCreate<VertexInstanceWorld>
-                            draw.InstanceCount
+                    // Defensive: the source DrawInstanced command should always have a
+                    // transforms array matching instanceCount, but clamp to the available
+                    // data so a malformed command cannot read past the array.
+                    let instanceCount =
+                      min draw.InstanceCount draw.Transforms.Length
 
-                      for i = 0 to draw.InstanceCount - 1 do
+                    if instanceCount > 0 then
+                      if res.InstanceStaging.Length < instanceCount then
+                        res.InstanceStaging <-
+                          Array.zeroCreate<VertexInstanceWorld> instanceCount
+
+                      for i = 0 to instanceCount - 1 do
                         res.InstanceStaging[i] <-
                           VertexInstanceWorld.Create draw.Transforms[i]
 
@@ -659,19 +667,19 @@ module internal ShadowPass =
                           new VertexBuffer(
                             gd,
                             typeof<VertexInstanceWorld>,
-                            draw.InstanceCount,
+                            instanceCount,
                             BufferUsage.WriteOnly
                           )
 
                         res.InstanceVertexBuffer <- ValueSome vb
-                      | ValueSome vb when vb.VertexCount < draw.InstanceCount ->
+                      | ValueSome vb when vb.VertexCount < instanceCount ->
                         vb.Dispose()
 
                         let vb' =
                           new VertexBuffer(
                             gd,
                             typeof<VertexInstanceWorld>,
-                            draw.InstanceCount,
+                            instanceCount,
                             BufferUsage.WriteOnly
                           )
 
@@ -683,7 +691,7 @@ module internal ShadowPass =
                         | ValueSome vb -> vb
                         | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
 
-                      instVB.SetData(res.InstanceStaging, 0, draw.InstanceCount)
+                      instVB.SetData(res.InstanceStaging, 0, instanceCount)
 
                       gd.SetVertexBuffers(
                         VertexBufferBinding(draw.Mesh.Vertices, 0, 0),
@@ -702,7 +710,7 @@ module internal ShadowPass =
                           0,
                           0,
                           draw.Mesh.PrimitiveCount,
-                          draw.InstanceCount
+                          instanceCount
                         )
 
                   depthEffect.CurrentTechnique <-
@@ -755,17 +763,13 @@ module internal ShadowPass =
                   p.Shadow.ShadowViewProjs
                   res.ViewProjsScratch
 
-                for i = 0 to active - 1 do
-                  PbrUniforms.setVec4Element
-                    p.Shadow.ShadowUVOffsets
-                    i
-                    res.UVOffsetsScratch[i]
+                PbrUniforms.setVec4Array
+                  p.Shadow.ShadowUVOffsets
+                  res.UVOffsetsScratch
 
-                for i = 0 to active - 1 do
-                  PbrUniforms.setFloatElement
-                    p.Shadow.ShadowBiases
-                    i
-                    res.BiasesScratch[i]
+                PbrUniforms.setFloatArray
+                  p.Shadow.ShadowBiases
+                  res.BiasesScratch
 
               PbrUniforms.setVec2
                 p.Shadow.ShadowTexelSize
