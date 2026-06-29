@@ -22,7 +22,13 @@ module MGFXC =
     mgfxc.WithArguments [ "mgfxc"; input; output; "/Profile:DirectX_11" ]
 
 
-let ShaderList = [ "LitSprite.fx"; "LitSpriteNormalMap.fx" ]
+let ShaderList = [
+  "LitSprite.fx"
+  "LitSpriteNormalMap.fx"
+  "Instanced.fx"
+  "ForwardPbr.fx"
+  "DepthShadow.fx"
+]
 
 let commandsToExecute = [
   for shader in ShaderList do

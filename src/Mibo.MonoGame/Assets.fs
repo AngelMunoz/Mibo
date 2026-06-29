@@ -2,10 +2,13 @@ namespace Mibo.Elmish
 
 open System
 open System.Collections.Generic
+open System.IO
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Audio
 open Microsoft.Xna.Framework.Content
 open Microsoft.Xna.Framework.Graphics
+open Assimp
+open Mibo.Animation
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MonoGame asset service.
@@ -19,22 +22,30 @@ open Microsoft.Xna.Framework.Graphics
 // ContentManager.Load<'T> (no loose-file loading). The GraphicsDevice and
 // ContentManager are retrieved from the GameContext service registry, where
 // MiboGame registers them at startup (see MonoGameGameContext.register).
+//
+// Animation note: ModelAnimations and AnimatedMesh load the raw model file
+// (.glb/.gltf/.fbx/etc.) via AssimpNetter at runtime — the content pipeline
+// does not preserve animation data in XNB. The caller MUST ensure the raw
+// model file is included in the output directory (e.g. via
+// <CopyToOutputDirectory> or <Content> items in the .fsproj). The path is a
+// filesystem path, not a content-pipeline XNB path.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
 /// Per-game asset loader/cache service for the MonoGame backend.
 /// </summary>
 /// <remarks>
-/// Provides cached loading for textures, fonts, sounds, models, and effects via
-/// the MonoGame content pipeline. Extends <see cref="T:Mibo.Elmish.IAssetCache"/>
-/// so portable code can cache custom assets without referencing a backend.
+/// Provides cached loading for textures, fonts, sounds, models, effects,
+/// and 3D animation clips via the MonoGame content pipeline. Extends
+/// <see cref="T:Mibo.Elmish.IAssetCache"/> so portable code can cache custom
+/// assets without referencing a backend.
 /// </remarks>
 /// <example>
 /// <code>
 /// let assets = GameContext.getService&lt;IAssets&gt; ctx
 /// let tex = assets.Texture "sprites/player"
 /// let font = assets.Font "fonts/main"
-/// let config = assets.GetOrCreate "gameConfig" (fun () -> loadConfig())
+/// let clips = assets.ModelAnimations "assets/character.glb"
 /// </code>
 /// </example>
 type IAssets =
@@ -55,6 +66,32 @@ type IAssets =
   /// <summary>Loads and caches an <see cref="T:Microsoft.Xna.Framework.Graphics.Effect"/> from the content pipeline.</summary>
   abstract Effect: path: string -> Effect
 
+  /// <summary>
+  /// Loads and caches 3D animation clips from a raw model file
+  /// (.glb/.gltf/.fbx/.dae/.blend/etc.) via Assimp at runtime.
+  /// </summary>
+  /// <remarks>
+  /// The MonoGame content pipeline does not preserve animation data in XNB,
+  /// so clips are loaded directly from the raw model file via AssimpNetter.
+  /// The <paramref name="path"/> is a filesystem path (relative to the
+  /// <c>ContentManager.RootDirectory</c> or the working directory), NOT a
+  /// content-pipeline XNB path. The caller MUST ensure the raw model file is
+  /// copied to the output directory (e.g. <c>&lt;CopyToOutputDirectory&gt;</c>
+  /// in the .fsproj). Returns an empty clip set if the file has no animations.
+  /// </remarks>
+  abstract ModelAnimations: path: string -> Animation3DClips
+
+  /// <summary>
+  /// Loads and caches skeleton data (bone names + inverse-bind matrices) from
+  /// a raw model file via Assimp at runtime.
+  /// </summary>
+  /// <remarks>
+  /// Used for GPU skinning via <c>Draw3D.drawSkinnedMesh</c>. Returns
+  /// <c>ValueNone</c> if the model has no bones. Same path rules as
+  /// <see cref="M:Mibo.Elmish.IAssets.ModelAnimations"/>.
+  /// </remarks>
+  abstract AnimatedMesh: path: string -> AnimatedMesh voption
+
 /// <summary>
 /// Implementation of <see cref="T:Mibo.Elmish.IAssets"/> backed by a MonoGame
 /// <c>ContentManager</c>, with dictionary-based caches per asset type.
@@ -69,9 +106,56 @@ type AssetsService(content: ContentManager) =
   let sounds = Dictionary<string, SoundEffect>()
   let models = Dictionary<string, Model>()
   let effects = Dictionary<string, Effect>()
+  let modelAnimations = Dictionary<string, Animation3DClips>()
+  let animatedMeshes = Dictionary<string, AnimatedMesh voption>()
+  // Shared Assimp Scene cache: parsed once per path, reused by both
+  // ModelAnimations and AnimatedMesh so the file isn't imported twice.
+  // Both derive fully-owned copies (keyframe/bone arrays), so a cached
+  // Scene holds no shared mutable state with its consumers.
+  let scenes = Dictionary<string, Scene>()
 
   /// <summary>The <c>ContentManager</c> this service loads from.</summary>
   member _.Content = content
+
+  /// <summary>
+  /// Resolves a raw-file path for Assimp loading. The content pipeline uses
+  /// XNB paths (no extension); raw model files keep their extension.
+  /// Resolution order: as-given → relative to ContentManager.RootDirectory.
+  /// </summary>
+  member private _.resolveRawPath(path: string) =
+    if Path.IsPathFullyQualified path then
+      path
+    else
+      Path.Combine(content.RootDirectory, path)
+
+  /// <summary>
+  /// Loads an Assimp <c>Scene</c> from a raw model file, cached by path. The
+  /// scene is parsed once and reused for both clip extraction
+  /// (<c>ModelAnimations</c>) and skeleton extraction (<c>AnimatedMesh</c>).
+  /// </summary>
+  member private this.loadScene(path: string) : Scene =
+    match scenes.TryGetValue(path) with
+    | true, scene -> scene
+    | _ ->
+      let resolved = this.resolveRawPath path
+
+      use importer = new AssimpContext()
+
+      let scene =
+        importer.ImportFile(
+          resolved,
+          PostProcessSteps.FindDegenerates
+          ||| PostProcessSteps.FindInvalidData
+          ||| PostProcessSteps.FlipUVs
+          ||| PostProcessSteps.FlipWindingOrder
+          ||| PostProcessSteps.JoinIdenticalVertices
+          ||| PostProcessSteps.ImproveCacheLocality
+          ||| PostProcessSteps.OptimizeMeshes
+          ||| PostProcessSteps.Triangulate
+        )
+
+      scenes.Add(path, scene)
+      scene
 
   interface IAssets with
     member _.Texture(path) =
@@ -114,6 +198,24 @@ type AssetsService(content: ContentManager) =
         effects.Add(path, e)
         e
 
+    member this.ModelAnimations(path) =
+      match modelAnimations.TryGetValue(path) with
+      | true, clips -> clips
+      | _ ->
+        let scene = this.loadScene path
+        let clips = Animation3DClips.fromScene scene
+        modelAnimations.Add(path, clips)
+        clips
+
+    member this.AnimatedMesh(path) =
+      match animatedMeshes.TryGetValue(path) with
+      | true, mesh -> mesh
+      | _ ->
+        let scene = this.loadScene path
+        let mesh = AnimatedMesh.fromScene scene
+        animatedMeshes.Add(path, mesh)
+        mesh
+
     member _.Get<'T>(key: string) : 'T voption =
       match typedCache.TryGetValue(key) with
       | true, (:? 'T as v) -> ValueSome v
@@ -139,6 +241,9 @@ type AssetsService(content: ContentManager) =
       sounds.Clear()
       models.Clear()
       effects.Clear()
+      modelAnimations.Clear()
+      animatedMeshes.Clear()
+      scenes.Clear()
 
     member _.Dispose() =
       // Dispose user-created IDisposable assets. ContentManager owns the
@@ -155,6 +260,9 @@ type AssetsService(content: ContentManager) =
       sounds.Clear()
       models.Clear()
       effects.Clear()
+      modelAnimations.Clear()
+      animatedMeshes.Clear()
+      scenes.Clear()
 
 /// Factory for <see cref="T:Mibo.Elmish.IAssets"/> implementations.
 module AssetsService =

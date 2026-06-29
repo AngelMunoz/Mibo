@@ -35,7 +35,10 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
       let newArr = ArrayPool<Command3D>.Shared.Rent(newSize)
 
       Array.Copy(items, newArr, count)
-      ArrayPool<Command3D>.Shared.Return(items)
+      // clearArray = true: a Command3D holds managed refs to Model/Texture2D/Effect,
+      // so the pooled array would keep them alive across frames if not cleared.
+      // Matches RenderBuffer2D.ensureCapacity.
+      ArrayPool<Command3D>.Shared.Return(items, clearArray = true)
       items <- newArr
 
   /// <summary>The number of commands currently in the buffer.</summary>
@@ -54,8 +57,18 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   /// Clears all commands from the buffer without deallocating the backing array.
   /// Call this at the start of each frame before populating with new commands.
   /// </summary>
+  /// <remarks>
+  /// Resets the count every frame (clearing thousands of struct-DU slots per frame
+  /// is a hot-path cost we avoid), but periodically zeroes the backing array (~every
+  /// 300 frames) so stale managed refs (Model/Texture2D/Effect) in slots above count
+  /// can't keep unloaded assets alive indefinitely after a scene shrinks. Dispose also
+  /// clears. This matches <c>RenderBuffer2D.Clear</c> and the raylib buffers.
+  /// </remarks>
   member _.Clear() =
     count <- 0
+    // Periodically zero the backing array so stale managed refs (Model/Texture2D/Effect)
+    // in slots above count don't keep unloaded assets alive indefinitely after a scene
+    // shrinks or chunks evict. ~5s at 60fps; Array.Clear on structs is a cheap memset.
     clearCounter <- clearCounter + 1
 
     if clearCounter >= 300 then

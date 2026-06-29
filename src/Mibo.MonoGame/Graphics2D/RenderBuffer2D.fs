@@ -25,6 +25,7 @@ type RenderBuffer2D
   let mutable items = ArrayPool<Command2D>.Shared.Rent(initialCapacity)
   let mutable keys = ArrayPool<int64>.Shared.Rent(initialCapacity)
   let mutable count = 0
+  let mutable clearCounter = 0
 
   let getLayer(cmd: Command2D) =
     match cmd with
@@ -114,7 +115,13 @@ type RenderBuffer2D
   /// Clears all commands from the buffer without deallocating the backing array.
   /// Call this at the start of each frame before populating with new commands.
   /// </summary>
-  member _.Clear() = count <- 0
+  member _.Clear() =
+    count <- 0
+    clearCounter <- clearCounter + 1
+
+    if clearCounter >= 300 then
+      clearCounter <- 0
+      Array.Clear(items, 0, items.Length)
 
   /// <summary>
   /// Sorts commands by layer in ascending order, preserving insertion order for same-layer commands.

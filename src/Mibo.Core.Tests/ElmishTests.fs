@@ -213,7 +213,7 @@ let tests =
     testList "RenderBuffer" [
       testCase "RenderBuffer sorts by key"
       <| fun _ ->
-        let buffer = RenderBuffer<int, string>()
+        use buffer = new RenderBuffer<int, string>()
         buffer.Add(10, "last")
         buffer.Add(5, "first")
         buffer.Sort()
