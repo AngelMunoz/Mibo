@@ -22,10 +22,14 @@ type IRenderPipeline3D =
   /// handling pass order, shader binding, and render target management.
   /// </summary>
   /// <param name="gameCtx">The current game context (window dimensions, services).</param>
+  /// <param name="gameTime">The frame's time (total + elapsed) — surfaced to shaders as the <c>time</c> uniform for animation and passed to <c>drawImmediate</c> callbacks.</param>
   /// <param name="buffer">The accumulated render commands for this frame.</param>
   /// <param name="rtPool">Pooled render textures for intermediate targets (shadow maps, post-process ping-pong).</param>
   abstract Execute:
-    gameCtx: GameContext * buffer: RenderBuffer3D * rtPool: IRenderTargetPool3D ->
+    gameCtx: GameContext *
+    gameTime: GameTime *
+    buffer: RenderBuffer3D *
+    rtPool: IRenderTargetPool3D ->
       unit
 
   /// <summary>

@@ -1,8 +1,11 @@
+#nowarn "9"
+
 namespace Mibo.Elmish
 
 open System
 open System.Collections.Generic
 open System.IO
+open FSharp.NativeInterop
 open Raylib_cs
 
 /// <summary>
@@ -54,6 +57,19 @@ type AssetsService(baseAssetPath: string voption) =
     | ValueSome bp -> Path.Combine(bp, path)
     | ValueNone -> path
 
+  // Generate mipmaps + trilinear filtering on a texture. raylib's LoadTexture/
+  // LoadModel default to bilinear/point filtering with no mipmaps, which aliases
+  // specular highlights flat at perspective angles and makes PBR surfaces look
+  // matte compared to a mipmapped backend (e.g. MonoGame/DX11). Applying this on
+  // load gives model/texture surfaces clean minification and restores correct
+  // specular response. (raylib-cs 8.0: GenTextureMipmaps takes the texture byref
+  // and writes the updated mipmap count back into the same struct.)
+  let applyMipmapFilter(tex: Texture2D) =
+    let mutable t = tex
+    Raylib.GenTextureMipmaps(&t)
+    Raylib.SetTextureFilter(t, TextureFilter.Trilinear)
+    t
+
   let typedCache = Dictionary<string, obj>()
 
   let textures = Dictionary<string, Texture2D>()
@@ -71,7 +87,7 @@ type AssetsService(baseAssetPath: string voption) =
       match textures.TryGetValue(resolved) with
       | true, tex -> tex
       | _ ->
-        let tex = Raylib.LoadTexture(resolved)
+        let tex = applyMipmapFilter(Raylib.LoadTexture(resolved))
         textures.Add(resolved, tex)
         tex
 
@@ -102,6 +118,21 @@ type AssetsService(baseAssetPath: string voption) =
       | true, m -> m
       | _ ->
         let m = Raylib.LoadModel(resolved)
+
+        // Apply mipmaps + trilinear filter to every material map texture on the
+        // loaded model (see applyMipmapFilter). Material.Maps is a MaterialMap*
+        // into the material's fixed buffer; read/write via NativePtr because
+        // indexing yields a copy (struct by value).
+        for mi = 0 to m.MaterialCount - 1 do
+          let mat = NativePtr.get m.Materials mi
+
+          for mapIdx = 0 to int MaterialMapIndex.Brdf do
+            let mutable map = NativePtr.get mat.Maps mapIdx
+
+            if map.Texture.Id <> 0u then
+              map.Texture <- applyMipmapFilter(map.Texture)
+              NativePtr.set mat.Maps mapIdx map
+
         models.Add(resolved, m)
         m
 
