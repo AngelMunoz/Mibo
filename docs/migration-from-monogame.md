@@ -1,3 +1,10 @@
+---
+title: Migrating from Mibo (MonoGame)
+category: Migrating
+categoryindex: 2
+index: 2
+---
+
 # Migrating from Mibo (MonoGame) to Mibo.MonoGame
 
 > **Who this guide is for:** Users of the original `Mibo` package (the monolithic
@@ -1094,11 +1101,6 @@ subclass `ForwardPipelineBase` and override `Shade`.
 Yes, but not in the same project. Each backend is a separate assembly. Your game
 core (model, update, layout) can reference `Mibo.Core` only and be shared between
 backend-specific executables. See the appendix for the divergences to plan for.
-
-### The `Cmd<'Msg>` DU has new cases — will my pattern matches break?
-
-Yes, if they're exhaustive without a wildcard. Add `| Msg msg -> dispatch msg`
-and `| Quit -> ()` (or `| _ -> ()`).
 
 ### Do I still need to write `GameConfig` records by hand?
 

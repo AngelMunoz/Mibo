@@ -27,6 +27,7 @@
 - **Core: `Mibo.Core` project** — backend-agnostic home for `Cmd`/`Sub`/`GameTime`/`Program`/`GameContext`/layout/`HeadlessProgram`/`ElmishLoop`. The Raylib backend now references it; namespaces are unchanged. Includes `Mibo.Core.Tests`.
 - **Raylib: `RaylibProgram.withInputMapper`** — the raylib-specific input-mapper builder (decoupled from the shared Core `Program`).
 - **Raylib / MonoGame 3D:** `Draw3D.modelWith` and `modelWithPerMesh` draw a model with your own `Material3D` — the whole model, or per sub-mesh — instead of the material baked into the file. One call covers any override shape, so you don't reach for a different API per property. MonoGame also gains `animatedModelWith` / `animatedModelWithPerMesh` for skinned models.
+- **Docs:** multi-backend documentation. The site now covers the Core, Raylib, and MonoGame packages: the rendering, shaders, assets, input, and lighting pages show both backends side-by-side where their APIs diverge (the pipeline types, GLSL vs HLSL effects, loose-file vs content-pipeline assets, and viewport coordinate conventions). The original raylib-only docs are preserved as a frozen archive for the prior release.
 
 ### Changed
 
@@ -45,6 +46,7 @@
 - **Core:** `HeadlessRunner.StepUntil` off-by-one fixed (the predicate is now tested after each step; the loop exits immediately when met).
 - **Raylib:** `pollMouse` filters `Unknown` button codes; `InputMapper` binds the raylib key once per trigger (was three times).
 - **Raylib 3D:** textures and model materials now load with mipmaps and trilinear filtering. Loaded surfaces previously rendered with point filtering, so 3D models looked flat and matte compared to other backends.
+- **Docs:** the MonoGame migration guide no longer claims the backend ships without renderers — it now documents the full default pipeline and 2D/3D stacks that are available.
 
 ### Removed
 

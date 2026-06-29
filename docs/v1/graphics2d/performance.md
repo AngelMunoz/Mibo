@@ -1,26 +1,28 @@
 ---
 title: 2D Performance
-category: 2D Rendering
-categoryindex: 4
-index: 17
+category: v1
+categoryindex: 200
+index: 15
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # 2D Rendering Performance
 
 ## 1. Prefer `Draw.*` over `DrawImmediate`
 
-The `Draw.*` DSL compiles to struct commands that the backend batches into GPU draw calls automatically. Every `DrawImmediate` call forces a batch flush (costly):
+The `Draw.*` DSL compiles to struct commands that raylib batches into GPU draw calls automatically. Every `DrawImmediate` call forces a batch flush (costly):
 
 ```fsharp
-// Good: batched by the backend
+// Good: batched by raylib
 for i = 0 to 999 do
     buffer |> Draw.fillCircle (10<RenderLayer>, Color.Red) (positions[i], 5f)
 
 // Bad: one batch flush per call
 for i = 0 to 999 do
     buffer |> Draw.drawImmediate 10<RenderLayer> (fun () ->
-        // raw backend draw (e.g. raylib Raylib.DrawCircleV, or MonoGame device draw)
-        ())
+        Raylib.DrawCircleV(positions[i], 5f, Color.Red))
 ```
 
 ## 2. Group commands by layer
@@ -60,8 +62,7 @@ for hp in healthBars do
 ```fsharp
 // Good: DrawImmediate is zero-allocation
 buffer |> Draw.drawImmediate 10<RenderLayer> (fun () ->
-    // raw backend draw (e.g. raylib Raylib.DrawCircleV, or a MonoGame device draw)
-    ())
+    Raylib.DrawCircleV(pos, 5f, Color.Red))
 ```
 
 ## 5. Minimize state-switching commands
@@ -79,7 +80,7 @@ buffer
 
 ## 6. Share textures and fonts
 
-The backend's internal batching is most efficient when consecutive draw calls use the same texture. Sort your commands by texture where practical (though the renderer sorts by layer, so consider arranging layers to keep same-texture draws together).
+raylib's internal batching is most efficient when consecutive draw calls use the same texture. Sort your commands by texture where practical (though the renderer sorts by layer, so consider arranging layers to keep same-texture draws together).
 
 ## 7. The buffer is allocation-free after warmup
 
@@ -97,7 +98,7 @@ for entity in entities do
         buffer |> Draw.sprite { ... }
 ```
 
-See [Culling](../culling.html).
+See [Culling](../../culling.html).
 
 ## 9. Profiling
 
@@ -106,4 +107,4 @@ If you suspect a rendering bottleneck:
 - Reduce command count to isolate the issue
 - Check for unintended `DrawImmediate` calls
 - Verify layer count is reasonable
-- Use your backend's built-in profiling or a GPU debugger to check draw-call count
+- Use raylib's built-in profiling or a GPU debugger to check draw-call count

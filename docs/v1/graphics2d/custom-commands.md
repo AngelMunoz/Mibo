@@ -1,9 +1,12 @@
 ---
 title: Custom Commands & Escape Hatches
-category: 2D Rendering
-categoryindex: 4
-index: 16
+category: v1
+categoryindex: 200
+index: 14
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # Custom Commands & Escape Hatches
 
@@ -11,7 +14,7 @@ The 2D rendering system is built on a discriminated union (`Command2D`). The `Dr
 
 ## What and Why
 
-`DrawImmediate` lets you run arbitrary rendering code inside the command pipeline. The renderer flushes the backend's internal batch, temporarily exits any active camera and shader modes, runs your action, then restores the previous state. Your code executes outside the batch — direct backend calls (raylib rlgl/custom meshes, or MonoGame device access), custom GPU operations.
+`DrawImmediate` lets you run arbitrary rendering code inside the command pipeline. The renderer flushes raylib's internal batch, temporarily exits any active camera and shader modes, runs your action, then restores the previous state. Your code executes outside the batch — direct rlgl calls, custom meshes, GPU operations.
 
 You give up batching. You gain full control.
 

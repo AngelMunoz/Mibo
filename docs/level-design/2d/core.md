@@ -55,12 +55,11 @@ grid
     printfn "Tile at (%d, %d)" x y
 )
 
-// Iterate only visible cells (culled to viewport)
-// This is critical for performance in large levels, as it avoids
-// processing tiles that aren't on screen.
-let viewBounds = Raylib_cs.Rectangle(cameraX, cameraY, viewportWidth, viewportHeight)
+// Iterate only visible cells (culled to viewport). Pass the viewport bounds as
+// left/top/right/bottom pixel coordinates. This is critical for performance in
+// large levels, as it avoids processing tiles that aren't on screen.
 grid
-|> CellGrid2D.iterVisible viewBounds (fun x y tile ->
+|> CellGrid2D.iterVisible cameraX cameraY (cameraX + viewportWidth) (cameraY + viewportHeight) (fun x y tile ->
     // render tile at (x, y)
 )
 ```

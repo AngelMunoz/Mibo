@@ -7,7 +7,7 @@ index: 1
 
 # The Elmish Architecture in Games
 
-Mibo.Raylib uses the Elmish (MVU) pattern to provide a clean, predictable way to manage game state and side effects.
+Mibo uses the Elmish (MVU) pattern to provide a clean, predictable way to manage game state and side effects. The MVU loop lives in `Mibo.Core`, so it is identical across every backend.
 
 ## The Model
 
@@ -70,17 +70,17 @@ let subscribe (ctx: GameContext) (model: Model) =
 
 ### How it works
 
-Mibo.Raylib re-evaluates this function **every time your model changes**. It compares the new list of subscriptions to the previous one:
+Mibo re-evaluates this function **every time your model changes**. It compares the new list of subscriptions to the previous one:
 
 - **New** subscriptions are started immediately.
 - **Removed** subscriptions are stopped (and resources disposed).
 - **Unchanged** subscriptions are kept alive.
 
-This declarative approach makes managing complex event logic trivial. You don't need to manually register/unregister handlers when switching states (like from "Menu" to "Gameplay")—you just stop returning the subscription in your list, and Mibo.Raylib handles the cleanup.
+This declarative approach makes managing complex event logic trivial. You don't need to manually register/unregister handlers when switching states (like from "Menu" to "Gameplay")—you just stop returning the subscription in your list, and Mibo handles the cleanup.
 
 ## The View
 
-In Mibo.Raylib, the **View** doesn't return a visual tree like in web apps. Instead, it receives a `RenderBuffer` and submits drawing commands to it.
+In Mibo, the **View** doesn't return a visual tree like in web apps. Instead, it receives a `RenderBuffer` and submits drawing commands to it. (The buffer type is backend-specific — e.g. `RenderBuffer2D` — but the shape is the same across backends.)
 
 ```fsharp
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
@@ -96,7 +96,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
 
 ## `Tick` as a simulation boundary
 
-In Mibo.Raylib, `Tick` is typically represented as a normal Elmish message (e.g. `Tick of Mibo.Elmish.GameTime`).
+In Mibo, `Tick` is typically represented as a normal Elmish message (e.g. `Tick of Mibo.Elmish.GameTime`).
 That means time is _data_ flowing through the same `update` pipeline as input, networking, UI events, etc.
 
 A very scalable convention is:
@@ -108,9 +108,9 @@ This makes your simulation feel like a transaction: gather → simulate → comm
 
 ## Framework-managed fixed timestep
 
-If you want a stable simulation step (physics, deterministic-ish gameplay, networking-friendly structure), Mibo.Raylib can manage a fixed timestep for you.
+If you want a stable simulation step (physics, deterministic-ish gameplay, networking-friendly structure), Mibo can manage a fixed timestep for you.
 
-When enabled, the runtime converts raylib's variable `ElapsedGameTime` into **zero or more fixed-size steps per frame** and dispatches a step message for each one.
+When enabled, the runtime converts the variable `ElapsedGameTime` into **zero or more fixed-size steps per frame** and dispatches a step message for each one.
 
 ```fsharp
 type Msg =
@@ -137,7 +137,7 @@ Notes:
 
 ## Frame boundaries and dispatch modes
 
-By default, Mibo.Raylib uses immediate dispatch: messages dispatched while the runtime is draining the queue can be processed in the same raylib update call.
+By default, Mibo uses immediate dispatch: messages dispatched while the runtime is draining the queue can be processed in the same update call.
 
 For advanced use cases, you can opt into frame-bounded processing:
 
@@ -146,15 +146,15 @@ Program.mkProgram init update
 |> Program.withDispatchMode DispatchMode.FrameBounded
 ```
 
-In `DispatchMode.FrameBounded`, messages dispatched while the runtime is draining are deferred until the next raylib update. This provides a stronger "frame boundary" guarantee at the cost of (at most) one frame of latency for cascades.
+In `DispatchMode.FrameBounded`, messages dispatched while the runtime is draining are deferred until the next frame. This provides a stronger "frame boundary" guarantee at the cost of (at most) one frame of latency for cascades.
 
 ### Interaction with `Cmd.deferNextFrame`
 
-`Cmd.deferNextFrame` defers _effects_ (commands) until the next raylib update. If the effect dispatches synchronously when it runs, it will usually still be processed next frame.
+`Cmd.deferNextFrame` defers _effects_ (commands) until the next frame. If the effect dispatches synchronously when it runs, it will usually still be processed next frame.
 
 If the effect starts async work and dispatches later, and that dispatch occurs while the runtime is draining messages, then `DispatchMode.FrameBounded` will push it to the following frame.
 
-For a deeper "upgrade path" overview, see [Scaling Mibo.Raylib (Simple → Complex)](scaling.html).
+For a deeper "upgrade path" overview, see [Scaling Mibo (Simple → Complex)](scaling.html).
 
 Related:
 

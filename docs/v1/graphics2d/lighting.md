@@ -1,13 +1,16 @@
 ---
 title: 2D Lighting & Shadows
-category: 2D Rendering
-categoryindex: 4
-index: 18
+category: v1
+categoryindex: 200
+index: 12
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # 2D Lighting & Shadows
 
-Mibo includes a GPU-driven 2D lighting system with soft shadows using analytic Signed Distance Field (SDF) raymarching — no shadow atlas, no extra render passes. (Available on both backends.)
+Mibo.Raylib includes a GPU-driven 2D lighting system with soft shadows using analytic Signed Distance Field (SDF) raymarching — no shadow atlas, no extra render passes.
 
 ## What and Why
 

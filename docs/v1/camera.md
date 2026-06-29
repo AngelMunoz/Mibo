@@ -1,13 +1,16 @@
 ---
 title: Camera
-category: Rendering
-categoryindex: 3
-index: 13
+category: v1
+categoryindex: 200
+index: 4
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # Camera
 
-Cameras control what part of the world you see and how it maps to the screen. Mibo provides `Camera2D` for 2D games and `Camera3D` for 3D games. Both support single-camera, split-screen, and overlay patterns. The `Draw.beginCamera`/`Draw3D.beginCamera` DSL and the `Camera2DConfig`/`Camera3DConfig` modifiers share the same shape across backends; only the underlying camera struct's field layout is backend-specific.
+Cameras control what part of the world you see and how it maps to the screen. Mibo.Raylib provides `Camera2D` for 2D games and `Camera3D` for 3D games. Both support single-camera, split-screen, and overlay patterns.
 
 ## What and Why
 
@@ -164,7 +167,7 @@ buffer
 
 ### Creating a camera
 
-For 3D rendering, create a `Camera3D` directly. This is what `Draw3D.beginCamera` and `Camera3D.render` expect. The `Camera3D` struct is provided by your backend (raylib and MonoGame each carry their own), but the constructor shape mirrors across them:
+For 3D rendering, create a `Camera3D` (raylib struct) directly. This is what `Draw3D.beginCamera` and `Camera3D.render` expect:
 
 ```fsharp
 let camera = Camera3D(

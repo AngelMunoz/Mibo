@@ -79,4 +79,4 @@ You can add more than two renderers. Each one composites on top of the previous.
 ## See also
 
 - [ThreeDSample/Program.fs](https://github.com/...) — renderer setup with 3D scene and 2D overlay.
-- [Rendering Overview](rendering.html) — API reference for renderers and render buffers.
+- [Rendering Overview](../rendering.html) — renderers and render buffers.

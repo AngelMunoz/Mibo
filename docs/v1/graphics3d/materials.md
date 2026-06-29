@@ -1,9 +1,12 @@
 ---
 title: 3D Materials
-category: 3D Rendering
-categoryindex: 5
-index: 23
+category: v1
+categoryindex: 200
+index: 19
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # 3D Materials
 
@@ -109,30 +112,20 @@ let mat =
 
 ## Loading from model files
 
-When you load a `.obj`, `.gltf`, or `.fbx` via the asset system, the backend's native material is
-extracted into a `Material3D` automatically. The conversion helper differs by backend because the
-native material type differs:
+When you load a `.obj`, `.gltf`, or `.fbx` via the asset system, raylib materials are extracted automatically. Use `Material3D.fromRaylibMaterial` to convert:
 
 ```fsharp
-// raylib — read a raylib Material:
 let m = assets.Model("assets/mymodel.obj")
+
 for i = 0 to m.MeshCount - 1 do
     let mesh = NativePtr.get m.Meshes i
     let matIdx = NativePtr.get m.MeshMaterial i
     let raylibMat = NativePtr.get m.Materials matIdx
     let mat = Material3D.fromRaylibMaterial raylibMat
-
-// MonoGame — read a ModelMeshPart's native Effect (BasicEffect/SkinnedEffect):
-let model = assets.Model("assets/mymodel")
-for mesh in model.Meshes do
-    for part in mesh.MeshParts do
-        let mat = Material3D.fromModelMeshPart part
+    // mat now has textures and values extracted from the file
 ```
 
-In both cases the `Draw3D.drawModel` function does this conversion automatically for all
-sub-meshes — use it when you don't need per-mesh control. On MonoGame only the albedo color,
-albedo map, and opacity are extracted from native effects (normal/roughness/metallic maps are
-not carried by MonoGame's standard effects); assign the remaining PBR maps explicitly if needed.
+The `Draw3D.drawModel` function does this conversion automatically for all sub-meshes. Use it when you don't need per-mesh control.
 
 ## Unlit materials
 
@@ -146,32 +139,27 @@ Use for UI elements, debug markers, or anything that should appear at full brigh
 
 ## Primitive meshes
 
-Use the backend's primitive meshes with `Draw3D` for basic shapes. The mesh type differs by
-backend (raylib `Mesh` / MonoGame `PrimitiveMesh`), so the access and draw call differ:
+Use `Primitive3D.*` meshes with `Draw3D.drawMesh` for basic shapes:
 
-| Shape | raylib | MonoGame |
-|-------|--------|----------|
-| Unit sphere | `Primitive3D.sphere` | `prims.Sphere` (from `Primitive3D.create gd`) |
-| Unit cube | `Primitive3D.cube` | `prims.Cube` |
-| Unit cylinder | `Primitive3D.cylinder` | `prims.Cylinder` |
-| Unit plane | `Primitive3D.plane` | `prims.Plane` |
-| Torus | `Primitive3D.torus` | `prims.Torus` |
-| Unit cone | `Primitive3D.cone` | `prims.Cone` |
+| Mesh | Description |
+|------|-------------|
+| `Primitive3D.sphere` | Unit sphere (radius 1, 32x32 segments) |
+| `Primitive3D.cube` | Unit cube (1x1x1) |
+| `Primitive3D.cylinder` | Unit cylinder (radius 1, height 1) |
+| `Primitive3D.plane` | Unit plane (1x1) |
+| `Primitive3D.torus` | Torus (inner 0.5, outer 1) |
+| `Primitive3D.cone` | Unit cone (radius 1, height 1) |
+
+Scale via the transform matrix:
 
 ```fsharp
-// raylib:
-let transform = Matrix4x4.CreateScale(2f, 1f, 3f) * Matrix4x4.CreateTranslation(pos)
-buffer |> Draw3D.drawMesh Primitive3D.cube transform mat
+let transform =
+    Matrix4x4.CreateScale(2f, 1f, 3f)
+    * Matrix4x4.CreateTranslation(pos)
 
-// MonoGame — build the primitive set once (needs the GraphicsDevice), then draw:
-let prims = Primitive3D.create gd
-let transform = Matrix.CreateScale(2f, 1f, 3f) * Matrix.CreateTranslation(pos)
-buffer |> Draw3D.drawPrimitive prims.Cube transform mat
+buffer
+|> Draw3D.drawMesh Primitive3D.cube transform mat
 ```
-
-> _**IMPORTANT**_: Use the pipeline's draw functions (`drawMesh`/`drawPrimitive`) instead of
-> backend-native immediate draws (e.g. `Raylib.DrawCube`). Direct native draws bypass the
-> pipeline's shader and won't receive PBR lighting or shadows.
 
 > _**IMPORTANT**_: Use `Draw3D.drawMesh` with `Primitive3D.*` instead of `Raylib.DrawCube` etc. Direct raylib draws bypass the pipeline's shader and won't receive PBR lighting or shadows.
 
