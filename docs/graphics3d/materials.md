@@ -175,6 +175,47 @@ buffer |> Draw3D.drawPrimitive prims.Cube transform mat
 
 > _**IMPORTANT**_: Use `Draw3D.drawMesh` with `Primitive3D.*` instead of `Raylib.DrawCube` etc. Direct raylib draws bypass the pipeline's shader and won't receive PBR lighting or shadows.
 
+## Overriding a model's material
+
+`Draw3D.drawModel` always renders with the material baked into the file (auto-extracted per
+sub-mesh, as described above). When you want a different material — the authored values look
+wrong, you want to reuse one mesh for several looks (gold/silver/bronze variants of the same
+model), or you need a flat/debug material — use the override helpers instead of iterating the
+model's meshes by hand:
+
+```fsharp
+// Whole-model override — every sub-mesh uses the supplied material
+buffer |> Draw3D.modelWith model transform (Material3D.colored Color.Gold)
+
+// Per-sub-mesh override — a resolver returns the material for each sub-mesh
+buffer |> Draw3D.modelWithPerMesh model transform (fun i ->
+    if i = 0 then Material3D.colored Color.Gold else Material3D.defaults)
+```
+
+The override goes through the normal PBR and shadow path, so it is lit and shadowed just like
+an authored material. The default `Draw3D.drawModel` path is unchanged — overriding is opt-in
+and costs nothing when you don't use it.
+
+**Resolver index.** The `int -> Material3D` resolver is indexed by the pipeline's sub-mesh
+iteration order, which differs by backend because the native model types differ:
+
+- **raylib** — mesh index `0..model.MeshCount-1`.
+- **MonoGame** — a flat counter over `model.Meshes × MeshParts`.
+
+Write the resolver against your specific model's structure; it is not portable across backends.
+
+**Animated models (MonoGame only).** MonoGame's `Draw3D.drawAnimatedModel` carries no material
+(it auto-extracts per part, like `drawModel`), so the same override pair exists for it:
+
+```fsharp
+buffer |> Draw3D.animatedModelWith animatedModel transform material
+buffer |> Draw3D.animatedModelWithPerMesh animatedModel transform resolver
+```
+
+On raylib, animated meshes are drawn with `Draw3D.drawSkinnedMesh`, which already takes a
+`Material3D` directly — supply the material you want there; no separate override helper is
+needed.
+
 ## See also
 
 - [Overview](overview.html) — Architecture and pipeline setup
