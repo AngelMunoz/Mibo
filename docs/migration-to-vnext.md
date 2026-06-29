@@ -1,3 +1,10 @@
+---
+title: Migrating to Mibo vNext
+category: Migrating
+categoryindex: 2
+index: 1
+---
+
 # Migrating to Mibo vNext
 
 > **Status: In progress.** This document tracks the work happening on the `vnext`
@@ -18,8 +25,9 @@ Mibo.Core          ← the shared core (Cmd, Sub, GameTime, DispatchMode, FixedS
                      HeadlessProgram, IInput/IInputMapper contracts, IAssetCache,
                      the shared ElmishLoop, Layout, Layout3D)
 Mibo.Raylib        ← the raylib backend (Runtime host, Input/Assets impls, Graphics2D/3D)
-Mibo.MonoGame      ← a fresh MonoGame backend (Runtime host + Input/Assets impls; no
-                     default renderers yet — you implement IRenderer<'Model>)
+Mibo.MonoGame      ← a fresh MonoGame backend (Runtime host + Input/Assets impls, full
+                     Graphics2D + Graphics3D renderers with a Forward PBR pipeline, shadow
+                     atlas, post-processing, and built-in HLSL shaders)
 ```
 
 Mibo.Raylib is the authoritative source: the Core types are the raylib types
@@ -46,7 +54,6 @@ that leaks a backend enum/handle stay in the backend.**
 | 2  | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core | No |
 | 3  | `Layout` and `Layout3D` move to Core | No |
 | 3b | `Cmd<'Msg>` gains `Msg` case; `Cmd.ofMsg` is zero-alloc | Yes |
-| 4  | Fresh `Mibo.MonoGame` backend | n/a (new project) |
 
 ## Breaking changes
 

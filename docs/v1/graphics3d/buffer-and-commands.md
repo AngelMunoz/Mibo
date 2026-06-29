@@ -1,9 +1,12 @@
 ---
 title: 3D Buffer & Commands
-category: 3D Rendering
-categoryindex: 5
-index: 21
+category: v1
+categoryindex: 200
+index: 17
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # 3D Buffer & Commands
 
@@ -11,7 +14,7 @@ Your view function receives a `RenderBuffer3D` each frame. You populate it with 
 
 ## What and Why
 
-The buffer is a command list. You don't draw to the screen directly — you describe what to draw, and the renderer handles batching, state management, and submission to the backend. This keeps your view function pure and testable.
+The buffer is a command list. You don't draw to the screen directly — you describe what to draw, and the renderer handles batching, state management, and submission to raylib. This keeps your view function pure and testable.
 
 ## When to use
 
@@ -54,20 +57,19 @@ buffer
 
 ## Geometry commands
 
-The lighting/camera/shadow commands are identical across backends. The **geometry** commands
-differ where the mesh type differs (raylib `Mesh` / MonoGame `PrimitiveMesh`):
+Functions for drawing meshes, models, billboards, and lines.
 
-| Function | raylib | MonoGame |
-|----------|--------|----------|
-| `Draw3D.drawMesh` / `drawPrimitive` | `drawMesh mesh transform material` | `drawPrimitive mesh transform material` |
-| `Draw3D.drawModel` | `drawModel model transform` | `drawModel model transform` |
-| `Draw3D.drawBillboard` | `drawBillboard texture position size color` | `drawBillboard texture position size color` |
-| `Draw3D.drawBillboardBatch` | batched billboards | batched billboards |
-| `Draw3D.drawLine3D` | `drawLine3D start finish color` | `drawLine3D start finish color` |
-| Skinned/animated | `drawSkinnedMesh mesh transform material bones` | `drawAnimatedModel animatedModel transform` |
-| Instanced | `drawMeshInstanced mesh transforms material count` | `drawInstanced mesh transforms material count` |
+| Function | Description |
+|----------|-------------|
+| `Draw3D.drawMesh mesh transform material` | Single mesh with a material |
+| `Draw3D.drawModel model transform` | Raylib `Model` (auto-converts materials) |
+| `Draw3D.drawBillboard texture position size color` | Camera-facing textured quad |
+| `Draw3D.drawBillboardBatch textures positions sizes colors count` | Batch of billboards, one draw call |
+| `Draw3D.drawLine3D start finish color` | 3D line between two points |
+| `Draw3D.drawSkinnedMesh mesh transform material bones` | Skinned mesh with bone matrices |
+| `Draw3D.drawMeshInstanced mesh transforms material count` | Many copies of same mesh, one draw call |
 
-> _**TIP**_: Use the instanced/batched variants when drawing many copies of the same thing. One draw call is faster than many.
+> _**TIP**_: Use `drawMeshInstanced` or `drawBillboardBatch` when drawing many copies of the same thing. One draw call is faster than many.
 
 ## Camera commands
 
@@ -98,9 +100,7 @@ differ where the mesh type differs (raylib `Mesh` / MonoGame `PrimitiveMesh`):
 
 | Function | Description |
 |----------|-------------|
-| `Draw3D.drawImmediate action` | Flush batch, run raw backend calls (rlgl/raylib, or MonoGame device access via `SceneContext`), restore state |
-
-On MonoGame, also see `Draw3D.beginEffect`/`endEffect` (custom shading scope that inherits scene data) and `Draw3D.drawMeshEffect` (fully user-owned effect). See [Overview](overview.html#escape-hatches).
+| `Draw3D.drawImmediate action` | Flush batch, run raw raylib/rlgl calls, restore state |
 
 ## Camera config
 
@@ -120,8 +120,8 @@ buffer
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `Camera` | `Camera3D` | The 3D camera (backend struct; same field shape on both) |
-| `Viewport` | `Rectangle voption` | raylib: normalized screen coords (0-1); MonoGame: pixel coords. `ValueNone` = fullscreen |
+| `Camera` | `Camera3D` | The raylib camera |
+| `Viewport` | `Rectangle voption` | Normalized screen coords (0-1), `ValueNone` = fullscreen |
 | `ClearColor` | `Color voption` | `ValueSome color` to clear, `ValueNone` to skip |
 | `PostProcessPasses` | `int[] voption` | Which post-process passes to apply |
 

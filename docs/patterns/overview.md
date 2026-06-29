@@ -7,7 +7,7 @@ index: 61
 
 # Patterns Overview
 
-General game development patterns for Mibo.Raylib. Each page presents a reusable technique — not an API reference, but a working recipe for problems every game developer faces.
+General game development patterns for Mibo. Each page presents a reusable technique — not an API reference, but a working recipe for problems every game developer faces.
 
 These patterns are independent. Apply one, two, or all of them depending on what your game needs.
 

@@ -1,13 +1,16 @@
 ---
 title: 3D Lighting
-category: 3D Rendering
-categoryindex: 5
-index: 22
+category: v1
+categoryindex: 200
+index: 18
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # 3D Lighting
 
-The built-in forward pipelines support four light types with Cook-Torrance PBR shading. Lights are added per-frame via `Draw3D.*` commands inside your view function. (On raylib the pipeline is `ForwardPbrPipeline`; on MonoGame it is `ForwardPipeline`.)
+The `ForwardPbrPipeline` supports four light types with Cook-Torrance PBR shading. Lights are added per-frame via `Draw3D.*` commands inside your view function.
 
 ## What and Why
 
@@ -132,18 +135,14 @@ SpotLight3D.create (camPos, camDir, 25f)
 
 ## Light limits
 
-Both built-in pipelines default to the same light budgets:
+The `ForwardPbrPipeline` defaults to:
 
 | Type | Default max |
 |------|-------------|
-| Ambient | 1 |
-| Directional | 1 |
 | Point lights | 8 |
 | Spot lights | 4 |
 
-How you change them differs by backend:
-
-**raylib** — the budgets are runtime-configurable via the `ForwardPbrPipeline` constructor:
+Override at pipeline creation:
 
 ```fsharp
 let pipeline = ForwardPbrPipeline(
@@ -152,11 +151,7 @@ let pipeline = ForwardPbrPipeline(
 )
 ```
 
-**MonoGame** — the budgets are **baked into the compiled PBR shader** (`MAX_POINT_LIGHTS` /
-`MAX_SPOT_LIGHTS` constants in `ForwardPbr.fx`). The `ForwardPipeline` constructor takes no
-light-count argument; to change them you recompile the `.fx` with different `#define`s.
-
-Exceeding the limit silently drops extra lights on both backends.
+Exceeding the limit silently drops extra lights.
 
 ## Shadow configuration
 
@@ -165,32 +160,15 @@ Exceeding the limit silently drops extra lights on both backends.
 Shadow bias values control the tradeoff between shadow acne (too low) and peter-panning (too high). Set via `ShadowBiasConfig`:
 
 ```fsharp
-// raylib:
 let pipeline = ForwardPbrPipeline(
     shadowBiasConfig = {
-        DirectionalBias = 0.0005f      // raylib default
+        DirectionalBias = 0.002f
         PointBias = 0.01f
         SpotBias = 0.001f
-        SlopeScaleBias = 0.0005f
-    }
-)
-
-// MonoGame:
-let pipeline = ForwardPipeline(
-    shadowBias = {
-        DirectionalBias = 0.002f       // MonoGame default (higher; native depth bias)
-        PointBias = 0.01f
-        SpotBias = 0.001f
-        SlopeScaleBias = 0.0005f
+        SlopeScaleBias = 0.001f
     }
 )
 ```
-
-> _**NOTE**_: On MonoGame, `SlopeScaleBias` maps to the native
-> `RasterizerState.SlopeScaleDepthBias` (hardware polygon offset) and the per-type biases map
-> to `RasterizerState.DepthBias` — MonoGame can't use the GLSL `dFdx`/`dFdy` slope math the
-> raylib shader relies on. On raylib the slope-scale bias is applied in the GLSL depth shader.
-> The observable effect (tuning acne vs peter-panning) is the same.
 
 ### Per-light bias
 
@@ -204,47 +182,26 @@ PointLight3D.create (pos, radius)
 
 ### Atlas configuration
 
-The shadow atlas controls resolution and caster capacity. `MaxCasters` must be a perfect square
-(4, 9, 16, 25, 36) — it lays out the atlas as a √N × √N grid.
+The shadow atlas controls resolution and caster capacity:
 
 ```fsharp
-// raylib:
 let pipeline = ForwardPbrPipeline(
     shadowAtlasConfig = {
         ShadowAtlasConfig.defaults with
-            Resolution = 4096
-            MaxCasters = 9
-            DirectionalLightSize = ValueSome 30.f
-    }
-)
-
-// MonoGame (note the extra DirectionalOriginY field):
-let pipeline = ForwardPipeline(
-    shadowAtlas = {
-        ShadowAtlasConfig.defaults with
-            Resolution = 4096
-            MaxCasters = 9
-            DirectionalOriginY = 0.0f       // MonoGame-only: lock shadow frustum Y
+            Resolution = 4096           // higher = sharper shadows
+            MaxCasters = 9              // must be perfect square (4, 9, 16, 25, 36)
+            DirectionalLightSize = ValueSome 30.f  // ortho projection half-size
     }
 )
 ```
 
-| Field | Default | raylib | MonoGame | Description |
-|-------|---------|--------|----------|-------------|
-| `Resolution` | 2048 | ✓ | ✓ | Atlas texture resolution (square) |
-| `MaxCasters` | 16 | ✓ | ✓ | Maximum shadow casters (perfect square) |
-| `OriginStrategy` | `CameraTarget` | ✓ | ✓ | Where directional shadows are centered (`CameraTarget`/`SceneCenter`/`Custom`) |
-| `DirectionalLightDistance` | auto | ✓ | ✓ | Distance to place the directional light camera behind the origin |
-| `DirectionalLightSize` | auto | ✓ | ✓ | Ortho projection half-size for directional shadows |
-| `DirectionalOriginY` | 0.0 | — | ✓ | Lock the shadow frustum's vertical origin (prevents vertical sliding) |
-| `GridSnapSize` | 2.0 | ✓ | ✓ | Snap shadow origin to a grid to reduce shimmer |
-| `ShowDebugOverlay` | false | ✓ | ✓ | Overlay the atlas for debugging |
-
-> _**NOTE — shadow technique differs.**_ MonoGame cannot create a sampleable depth-only
-> render target, so it writes shadow depth into an R32F color attachment (`DepthShadow.fx`)
-> and samples it with a comparison sampler for hardware PCF. raylib samples depth textures
-> directly via GLSL derivatives. The user-facing config and behavior (shadow quality, bias
-> tuning) are equivalent; only the internal path differs.
+| Field | Default | Description |
+|-------|---------|-------------|
+| `Resolution` | 2048 | Atlas texture resolution (square) |
+| `MaxCasters` | 16 | Maximum shadow casters (must be perfect square) |
+| `OriginStrategy` | `CameraTarget` | Where directional shadows are centered |
+| `DirectionalLightSize` | auto | Ortho projection half-size for directional shadows |
+| `GridSnapSize` | 2.0 | Snap shadow origin to grid to reduce flickering |
 
 ## See also
 

@@ -47,7 +47,7 @@ A common pitfall is trying to initialize a service inside your `init` function b
 
 ### Guidance
 
-1.  **Prefer Independence**: Design services to be independent of the concrete raylib window or renderer if possible.
+1.  **Prefer Independence**: Design services to be independent of the concrete window or renderer if possible (they should live against `Mibo.Core` contracts like `GameContext`/`IAssetCache`, not a backend host).
 2.  **Escape Hatches**: If you absolutely *must* have a circular reference, handle this carefully using:
     - F# `ref` cells or mutable fields initialized later.
     - **Note**: These approaches are "know what you are doing" scenarios. Use them only when necessary.
@@ -120,7 +120,9 @@ let main _args =
         |> Program.withAssets
         |> Program.withRenderer (fun () -> Renderer2D.create view)
 
-    // Run the game
+    // Run the game — use your backend's host:
+    //   raylib:   new RaylibGame<Model, Msg>(program)
+    //   MonoGame: new MiboGame<Model, Msg>(program)
     let game = new RaylibGame<Model, Msg>(program)
     game.Run()
     0
@@ -128,7 +130,7 @@ let main _args =
 
 ## Note on Async & The Game Loop
 
-Common `Cmd.ofAsync` usage in Mibo.Raylib follows standard Elmish rules: **it does not block the game loop**.
+Common `Cmd.ofAsync` usage in Mibo follows standard Elmish rules: **it does not block the game loop**.
 
 When you dispatch an async command:
 1.  The `update` function returns immediately with the new model.

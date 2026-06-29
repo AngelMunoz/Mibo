@@ -1,20 +1,23 @@
 ---
 title: Rendering Overview
-category: Rendering
-categoryindex: 3
-index: 10
+category: v1
+categoryindex: 200
+index: 1
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # Rendering Overview
 
-Mibo uses a **deferred, layer-sorted rendering pipeline**. Instead of calling backend draw functions directly, you build a list of commands each frame, and the renderer sorts and executes them in one pass. This works the same way on every backend.
+Mibo.Raylib uses a **deferred, layer-sorted rendering pipeline**. Instead of calling raylib draw functions directly, you build a list of commands each frame, and the renderer sorts and executes them in one pass.
 
 ## The Pipeline
 
 1. Your view function builds `IRenderCommand2D` commands and adds them to a `RenderBuffer2D`
 2. The renderer sorts commands by `Layer` (ascending)
 3. The renderer executes commands in order
-4. the backend auto-batches GPU draw calls; optional post-processing passes run after
+4. raylib auto-batches GPU draw calls; optional post-processing passes run after
 
 ## Why Deferred Rendering?
 

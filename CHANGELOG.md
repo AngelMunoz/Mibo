@@ -23,6 +23,7 @@
 - **Core: `Program` builder** gains `withServiceRegistration` for backend-specific service registration.
 - **Core: `Mibo.Core` project** — backend-agnostic home for `Cmd`/`Sub`/`GameTime`/`Program`/`GameContext`/layout/`HeadlessProgram`/`ElmishLoop`. The Raylib backend now references it; namespaces are unchanged. Includes `Mibo.Core.Tests`.
 - **Raylib: `RaylibProgram.withInputMapper`** — the raylib-specific input-mapper builder (decoupled from the shared Core `Program`).
+- **Docs:** multi-backend documentation. The site now covers the Core, Raylib, and MonoGame packages: the rendering, shaders, assets, input, and lighting pages show both backends side-by-side where their APIs diverge (the pipeline types, GLSL vs HLSL effects, loose-file vs content-pipeline assets, and viewport coordinate conventions). The original raylib-only docs are preserved as a frozen archive for the prior release.
 
 ### Changed
 
@@ -38,6 +39,7 @@
 - **Core:** `Cmd.batch` no longer silently drops a lone `NowAndDeferNextFrame` effect.
 - **Core:** `HeadlessRunner.StepUntil` off-by-one fixed (the predicate is now tested after each step; the loop exits immediately when met).
 - **Raylib:** `pollMouse` filters `Unknown` button codes; `InputMapper` binds the raylib key once per trigger (was three times).
+- **Docs:** the MonoGame migration guide no longer claims the backend ships without renderers — it now documents the full default pipeline and 2D/3D stacks that are available.
 
 ### Removed
 

@@ -1,13 +1,13 @@
 ---
-title: Scaling Mibo.Raylib
+title: Scaling Mibo
 category: Architecture
 categoryindex: 1
 index: 5
 ---
 
-# Scaling Mibo.Raylib (Simple → Complex)
+# Scaling Mibo (Simple → Complex)
 
-Mibo.Raylib is designed to stay fun for small games while still giving you an upgrade path for "serious" games.
+Mibo is designed to stay fun for small games while still giving you an upgrade path for "serious" games.
 This document is a practical ladder you can climb as complexity increases—without rewriting your engine.
 
 The recurring theme is:
@@ -26,7 +26,7 @@ The recurring theme is:
 
 **Update discipline:** handle one message at a time, return `Cmd.none` most of the time.
 
-**Mibo.Raylib helpers you'll use:**
+**Mibo helpers you'll use:**
 
 - `Program.mkProgram`, `Program.withRenderer`, `Program.withSubscription`
 - `Cmd.ofMsg`, `Cmd.batch`
@@ -44,20 +44,10 @@ let update msg model =
     match msg with
     | Teleport pos -> { model with Position = pos }, Cmd.none
 
-let view ctx model (buffer: RenderBuffer<RenderCmd2D>) =
-    // Deferred sprite draw
-    buffer.Add(
-        0<RenderLayer>,
-        DrawSprite {
-            Texture = texture
-            Dest = Raylib_cs.Rectangle(model.Position.X, model.Position.Y, 32.0f, 32.0f)
-            Source = Raylib_cs.Rectangle(0.0f, 0.0f, 32.0f, 32.0f)
-            Origin = System.Numerics.Vector2.Zero
-            Rotation = 0.0f
-            Color = Color.White
-            Layer = 0<RenderLayer>
-        }
-    )
+let view ctx model (buffer: RenderBuffer2D) =
+    // Deferred sprite draw via the Draw.* DSL (same shape on every backend)
+    buffer
+    |> Draw.sprite texture model.Position
 ```
 
 ## Level 1 — Add semantic input
@@ -68,7 +58,7 @@ let view ctx model (buffer: RenderBuffer<RenderCmd2D>) =
 
 **Pattern:** map hardware input → semantic actions → update your model.
 
-**Mibo.Raylib helpers you'll use:**
+**Mibo helpers you'll use:**
 
 - `InputMap` + `InputMapper.subscribe`
 - model field like `Actions: ActionState<_>` updated by an `InputMapped` message
@@ -85,9 +75,9 @@ type Action = MoveLeft | MoveRight | Jump
 
 let inputMap =
     InputMap.empty
-    |> InputMap.key MoveLeft KeyboardKey.Left
-    |> InputMap.key MoveRight KeyboardKey.Right
-    |> InputMap.key Jump KeyboardKey.Space
+    |> InputMap.key MoveLeft KeyCode.Left
+    |> InputMap.key MoveRight KeyCode.Right
+    |> InputMap.key Jump KeyCode.Space
 
 type Model = {
     Position: System.Numerics.Vector2
@@ -270,7 +260,7 @@ Profile first, optimize second. Start with idiomatic code and apply these patter
 
 **Goal:** support many subsystems without turning update into spaghetti.
 
-Mibo.Raylib provides a type-guided pipeline in `Mibo.Elmish.System`:
+Mibo provides a type-guided pipeline in `Mibo.Elmish.System`:
 
 - `System.pipeMutable` for mutation-heavy phases
 - `System.snapshot` to freeze a readonly view
@@ -318,7 +308,7 @@ match msg with
 
 **Pattern:** run your simulation in fixed slices.
 
-You can do this manually (accumulator in the model), or use Mibo.Raylib's framework-managed fixed timestep:
+You can do this manually (accumulator in the model), or use Mibo's framework-managed fixed timestep:
 
 ```fsharp
 Program.mkProgram init update
@@ -365,13 +355,13 @@ let update msg model =
 
 **Best for:** Strict lockstep architectures or rollback networking where you need a guarantee that no "stray" messages can slip into the current frame after processing starts.
 
-By default, Mibo.Raylib processes messages **immediately**: a message dispatched while the runtime is draining the queue can be processed in the same raylib update call.
+By default, Mibo processes messages **immediately**: a message dispatched while the runtime is draining the queue can be processed in the same update call.
 
 For some advanced architectures (strict frame boundaries, rollback/lockstep friendliness, avoiding re-entrant cascades), you may want:
 
 > messages dispatched while processing frame N are not eligible until frame N+1.
 
-Mibo.Raylib supports this via `DispatchMode`:
+Mibo supports this via `DispatchMode`:
 
 - `DispatchMode.Immediate` (default): maximum responsiveness
 - `DispatchMode.FrameBounded`: stronger frame boundary, up to 1-frame extra latency for cascades
@@ -385,7 +375,7 @@ Program.mkProgram init update
 
 ### Interaction with `Cmd.deferNextFrame`
 
-`Cmd.deferNextFrame` delays an _effect_ until the next raylib update call.
+`Cmd.deferNextFrame` delays an _effect_ until the next frame.
 In `FrameBounded` mode:
 
 - if the deferred effect dispatches immediately when it runs (synchronous dispatch), it will typically be processed **next frame** as expected

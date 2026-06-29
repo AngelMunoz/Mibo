@@ -416,4 +416,4 @@ let multiFloor =
 - **Line of sight:** Check that corners provide actual cover.
 - **Door usability:** Do doors block movement awkwardly? Are they wide enough?
 
-> **See also:** [API Reference](../../reference/index.html) for complete Interior module documentation
+> **See also:** [3D Layout Engine](core.html) for complete Interior module documentation

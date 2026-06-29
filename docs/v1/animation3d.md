@@ -1,23 +1,16 @@
 ---
 title: Animation 3D
-category: Amenities
-categoryindex: 5
-index: 23
+category: v1
+categoryindex: 200
+index: 7
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # Animation 3D (Skeletal Animation)
 
-Mibo provides a three-tier 3D skeletal animation system in `Mibo.Animation`. It supports per-model CPU skinning, shared-mesh GPU skinning, and animation blending.
-
-> _**NOTE — backend differences.**_ The types (`Animation3DClips`, `Animation3DState`,
-> `AnimatedMesh`) mirror across backends, but the skinning path differs:
-> - **raylib**: CPU skinning via `Raylib.UpdateModelAnimation` / `UpdateModelAnimationEx`
->   (mutates the model's bone matrices); render with `Draw3D.drawModel` (per-entity model copy)
->   or `Draw3D.drawSkinnedMesh` (shared mesh + bone matrices).
-> - **MonoGame**: clips load from the raw model file via Assimp (`assets.ModelAnimations` →
-> `Animation3DClips`); render with `Draw3D.drawAnimatedModel animatedModel transform` (the bone
-> palette is derived internally from an `AnimatedModel` state value — the caller never handles
-> a `Matrix[]`).
+Mibo provides a three-tier 3D skeletal animation system in `Mibo.Animation`. It supports per-model CPU skinning, shared-mesh GPU skinning, and animation blending via `UpdateModelAnimationEx`.
 
 ## Core Types
 
@@ -252,7 +245,7 @@ buffer |> Draw3D.drawModel model.PlayerAnim.Model transform
 
 ## Model Format
 
-Skeletal animation models are typically **glTF/GLB** (recommended — it bundles geometry, textures, and animation data in a single file). raylib also supports **IQM**; MonoGame loads animations from the raw file via Assimp at runtime (the content pipeline does not preserve animation data in `.xnb`).
+Raylib supports **glTF/GLB** and **IQM** for skeletal animation. GLB is recommended — it bundles geometry, textures, and animation data in a single file.
 
 Animations are loaded from the model file via `assets.ModelAnimations`. The animation names come from the file's embedded animation names (e.g., "idle", "walk", "jump" in a Kenney character model).
 
@@ -260,7 +253,7 @@ Animations are loaded from the model file via `assets.ModelAnimations`. The anim
 
 1. **Resolve clip names once at init**: Use `tryGetClipIndex` + `playByIndex` to avoid string lookups in the hot path
 2. **Share Animation3DClips**: Create clips once, reuse across all entities using the same model
-3. **Tier 2 for many entities**: Share a single mesh and avoid per-entity model copies — use `AnimatedMesh` + `computeBoneMatrices` + `Draw3D.drawSkinnedMesh` (raylib), or the shared-mesh path with `Draw3D.drawAnimatedModel` (MonoGame)
+3. **Tier 2 for many entities**: Use `AnimatedMesh` + `computeBoneMatrices` + `DrawSkinnedMesh` to avoid per-entity model copies
 4. **Blend duration**: Keep blend durations short (0.1–0.3s) to minimize double-animation overhead
 
 ## See Also

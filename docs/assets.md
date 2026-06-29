@@ -7,60 +7,96 @@ index: 21
 
 # Assets (loading + caching)
 
-Mibo.Raylib provides a simple `IAssets` interface for loading and caching game assets. It wraps raylib's resource loader functions with automatic caching so you never load the same texture twice.
+Mibo provides an `IAssets` interface for loading and caching game assets. Each backend implements it against its native resource system with automatic caching, so you never load the same asset twice. The shape is the same across backends; the concrete asset *types* differ (raylib types vs XNA/MonoGame types).
 
-## The `IAssets` interface
+## Two layers
+
+- **`IAssetCache`** (`Mibo.Core`, backend-agnostic) — the generic cache surface: `Get`/`Create`/`GetOrCreate`/`Clear`/`Dispose` for *any* user asset by string key. Portable code (and the Headless runner) can use this without referencing a backend.
+- **`IAssets`** (backend-specific, extends `IAssetCache`) — the typed loaders (`Texture`, `Font`, `Sound`, `Model`, …). These return backend-native types.
+
+## The `IAssets` interface (per backend)
+
+The typed loaders differ because the native types differ:
 
 ```fsharp
+// raylib backend — returns Raylib_cs types
 type IAssets =
+  inherit IAssetCache
   abstract Texture: path: string -> Texture2D
-  abstract Font: path: string -> Font
-  abstract Sound: path: string -> Sound
-  abstract Model: path: string -> Model
-  abstract Get: key: string -> 'T voption
-  abstract Create: key: string * factory: (unit -> 'T) -> 'T
-  abstract GetOrCreate: key: string * factory: (unit -> 'T) -> 'T
-  abstract Clear: unit -> unit
-  abstract Dispose: unit -> unit
-```
+  abstract Font:     path: string -> Font
+  abstract Sound:    path: string -> Sound
+  abstract Model:    path: string -> Model
+  abstract ModelAnimations: path: string -> ModelAnimation[]
 
-Each method loads the file on first call and caches it. Subsequent calls return the cached reference.
+// MonoGame backend — returns Microsoft.Xna.Framework types
+type IAssets =
+  inherit IAssetCache
+  abstract Texture: path: string -> Texture2D
+  abstract Font:     path: string -> SpriteFont
+  abstract Sound:    path: string -> SoundEffect
+  abstract Model:    path: string -> Model
+  abstract Effect:   path: string -> Effect
+  abstract ModelAnimations: path: string -> Animation3DClips
+  abstract AnimatedMesh:    path: string -> AnimatedMesh voption
+```
 
 ## Usage
 
-Access assets through the `GameContext`:
+Access assets through the `GameContext`. The `path` convention differs by backend:
 
 ```fsharp
 let init (ctx: GameContext): struct(Model * Cmd<Msg>) =
+  // raylib: paths are loose files on disk
   let player = ctx.Assets.Texture("sprites/player.png")
   let font = ctx.Assets.Font("fonts/ui.ttf")
-  let bgm = ctx.Assets.Sound("audio/background.wav")
   let enemyModel = ctx.Assets.Model("models/enemy.glb")
 
-  { PlayerTex = player
-    Font = font
-    Bgm = bgm
-    Enemy = enemyModel }, Cmd.none
+  // MonoGame: paths are content-pipeline asset names (no extension);
+  // the .xnb must be built by the MonoGame content pipeline.
+  // let player = ctx.Assets.Texture("sprites/player")
+  // let font = ctx.Assets.Font("fonts/ui")
+  ...
 ```
 
-All these functions cache results automatically:
+| Method | raylib returns | MonoGame returns | Notes |
+|--------|----------------|------------------|-------|
+| `Texture` | `Texture2D` | `Texture2D` | 2D image |
+| `Font` | `Font` | `SpriteFont` | raylib: TrueType file; MonoGame: compiled `.spritefont` |
+| `Sound` | `Sound` | `SoundEffect` | Audio |
+| `Model` | `Model` | `Model` | 3D model |
+| `Effect` | — | `Effect` | MonoGame: compiled `.mgfx` |
+| `ModelAnimations` | `ModelAnimation[]` | `Animation3DClips` | Skeletal animation clips |
+| `AnimatedMesh` | — | `AnimatedMesh voption` | MonoGame: loaded via Assimp at runtime |
 
-| Method       | Returns           | Description                     |
-|--------------|-------------------|---------------------------------|
-| `Texture`    | `Texture2D`       | 2D image asset                  |
-| `Font`       | `Font`            | TrueType/bitmap font            |
-| `Sound`      | `Sound`           | Audio effect                    |
-| `Model`      | `Model`           | 3D model                        |
-| `Get`        | `'T voption`      | Retrieve cached custom asset    |
-| `Create`     | `'T`              | Create and cache custom asset   |
-| `GetOrCreate`| `'T`              | Get cached or create + cache    |
-| `Clear`      | `unit`            | Clear custom asset caches       |
+> _**NOTE (MonoGame animations)**_: MonoGame's content pipeline does not preserve animation
+> data in `.xnb`. `ModelAnimations`/`AnimatedMesh` load the **raw** model file
+> (`.glb`/`.gltf`/`.fbx`) via Assimp at runtime — the path is a filesystem path, and you must
+> include the raw file in the output directory (e.g. `<CopyToOutputDirectory>` / `<Content>` in
+> the `.fsproj`).
+
+## Backend-neutral caching (`IAssetCache`)
+
+The inherited `IAssetCache` members work on any backend and let portable code cache custom
+assets without referencing backend types:
+
+```fsharp
+let cache = GameContext.getService<IAssetCache> ctx
+let config = cache.GetOrCreate("gameConfig", fun () -> loadConfig())
+```
+
+| Member | Description |
+|--------|-------------|
+| `Get<'T> key` | Retrieve a cached custom asset (`'T voption`) |
+| `Create(key, factory)` | Create + cache a custom asset |
+| `GetOrCreate(key, factory)` | Get cached, or create + cache |
+| `Clear()` | Clear custom-asset caches |
+| `Dispose()` | Unload resources + clear caches |
 
 ## Cache Behavior
 
 **Automatic caching applies to:**
-- All standard assets (texture, font, sound, model)
-- First call loads from disk; subsequent calls return cached reference
+- All typed assets (texture, font, sound, model) — first call loads, subsequent calls return the cached reference.
+- Custom assets via `IAssetCache`.
 
 **Clearing caches:**
 
@@ -72,9 +108,9 @@ This unloads all GPU resources and clears all caches.
 
 ## Performance Notes
 
-- First load reads from disk; subsequent loads return cached reference
-- No built-in eviction — caches grow with unique keys loaded
-- GPU resources are created once and cached
+- First load reads from disk; subsequent loads return the cached reference.
+- No built-in eviction — caches grow with unique keys loaded.
+- GPU resources are created once and cached.
 
 For large games, consider chunked loading (per level/biome) with separate `IAssets` scopes.
 

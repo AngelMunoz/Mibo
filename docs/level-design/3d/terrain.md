@@ -463,4 +463,4 @@ let island =
 - **Complex functions:** Expensive math in height functions can slow generation.
 - **Culling:** Use `iterVolume` when rendering to only process visible cells.
 
-> **See also:** [API Reference](../../reference/index.html) for complete Terrain module documentation
+> **See also:** [3D Layout Engine](core.html) for complete Terrain module documentation

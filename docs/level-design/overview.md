@@ -182,7 +182,8 @@ Mibo includes pre-built stamps for common game types:
 
 ### 3D Grids
 
-Both `CellGrid3D` and `HexGrid3D` have dedicated renderer modules with matching API surfaces:
+Both `CellGrid3D` and `HexGrid3D` have dedicated renderer modules with matching API surfaces,
+available on both backends (raylib and MonoGame):
 
 - `CellGridRenderer3D` / `HexGrid3DRenderer` — Full rendering helpers
 - `render` — Basic iteration with world position conversion
@@ -190,6 +191,11 @@ Both `CellGrid3D` and `HexGrid3D` have dedicated renderer modules with matching 
 - `renderWithIndices` — Access to grid coordinates during rendering
 - `renderInstanced` — GPU instancing for many copies of the same mesh
 - `renderVolumeInstanced` — GPU instancing with frustum culling
+
+> _**NOTE**_: The layout geometry (`CellGrid3D`, `HexGrid3D`, stamps) lives in `Mibo.Core` and
+> is available on every backend. The instanced-draw renderer bridge depends on the backend's
+> native mesh/command types, so it ships per backend — both the raylib and MonoGame backends
+> provide a matching implementation with the same API surface.
 
 See the [3D Layout Engine](3d/core.html) and [3D Hex Grid](3d/hex.html) docs for usage.
 

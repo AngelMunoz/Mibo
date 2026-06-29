@@ -7,13 +7,13 @@ index: 20
 
 # Input (raw + mapped)
 
-Mibo.Raylib supports input via **semantic input mapping** (hardware → actions) using `InputMap` + `InputMapper.subscribe`.
+Mibo supports input via **semantic input mapping** (hardware → actions) using `InputMap` + `InputMapper.subscribe`. The input contracts (`IInput`, `IInputMapper`, `InputMap`, `ActionState`, the key/mouse/gamepad/gesture *codes*) live in `Mibo.Core`, so input handling is portable across backends.
 
-Subscription-based input is available for keyboard, mouse, touch, gamepad, and gestures. Direct polling is also available via `InputPolling`.
+Subscription-based input is available for keyboard, mouse, touch, gamepad, and gestures.
 
 ## Semantic input mapping (actions)
 
-Gameplay reads better when it talks about **actions** (Jump, Fire, Interact) instead of **keys**. Mibo.Raylib provides `InputMap` and `ActionState` for this purpose.
+Gameplay reads better when it talks about **actions** (Jump, Fire, Interact) instead of **keys**. Mibo provides `InputMap` and `ActionState` for this purpose.
 
 ### Define your action type
 
@@ -27,16 +27,21 @@ type Action =
 
 ### Build an `InputMap`
 
+Use the backend-neutral **code DUs** (`KeyCode`, `MouseButtonCode`, `GamepadButtonCode`, `GestureKind`) from `Mibo.Input` — no need to reference `Raylib_cs`:
+
 ```fsharp
-open Raylib_cs
 open Mibo.Input
 
 let map =
     InputMap.empty
-    |> InputMap.key MoveLeft KeyboardKey.A
-    |> InputMap.key MoveLeft KeyboardKey.Left
-    |> InputMap.key Jump KeyboardKey.Space
+    |> InputMap.key MoveLeft KeyCode.A
+    |> InputMap.key MoveLeft KeyCode.Left
+    |> InputMap.key Jump KeyCode.Space
 ```
+
+> _**NOTE**_: These code DUs are `[<RequireQualifiedAccess>]` — always write `KeyCode.W`, not
+> bare `W`. raylib users migrating from the old API: `KeyboardKey.X` → `KeyCode.X` (number keys
+> renamed: `KeyboardKey.Zero/One/…` → `KeyCode.D0/D1/…`).
 
 ### Subscribe with `InputMapper.subscribe`
 
@@ -74,7 +79,17 @@ let update msg model =
         struct ({ model with Actions = actions }, Cmd.none)
 ```
 
-For a zero-subscription alternative, use `Program.withInputMapper` which registers an `IInputMapper<'Action>` service you can query inline.
+For a zero-subscription alternative, register an `IInputMapper<'Action>` service via the per-backend builder (`Program.withInputMapper` is backend-specific because it instantiates the backend's mapper):
+
+```fsharp
+// raylib backend:
+program |> RaylibProgram.withInputMapper map
+
+// MonoGame backend:
+program |> MonoGameProgram.withInputMapper map
+```
+
+This registers `IInput` automatically; you can then query the `IInputMapper<'Action>` service inline. (The `InputMapper.subscribe` subscription path above is backend-neutral and works on either backend without a per-backend builder.)
 
 `ActionState` gives you three sets each frame:
 
