@@ -1902,51 +1902,52 @@ type ForwardPipelineBase
     userEffectMaterial.Shader <- userShader
 
     // Populate the reusable material's maps from a Material3D (textures the user shader samples).
+    // The material is reused across draws, so missing maps MUST be reset to the default texture —
+    // otherwise the previous draw's texture leaks into this one (gemini review #53).
     let inline populateMaps(mat3d: Material3D) =
-      match mat3d.AlbedoMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(
-          &userEffectMaterial,
-          MaterialMapIndex.Albedo,
-          t
-        )
-      | ValueNone -> ()
+      // raylib-cs 8.0.0 has no GetTextureDefault(); GetShapesTexture() returns the default
+      // 1x1 white Texture2D raylib uses for untextured draws.
+      let defaultTex = Raylib.GetShapesTexture()
 
-      match mat3d.RoughnessMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(
-          &userEffectMaterial,
-          MaterialMapIndex.Roughness,
-          t
-        )
-      | ValueNone -> ()
+      Raylib.SetMaterialTexture(
+        &userEffectMaterial,
+        MaterialMapIndex.Albedo,
+        match mat3d.AlbedoMap with
+        | ValueSome t -> t
+        | ValueNone -> defaultTex
+      )
 
-      match mat3d.MetallicMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(
-          &userEffectMaterial,
-          MaterialMapIndex.Metalness,
-          t
-        )
-      | ValueNone -> ()
+      Raylib.SetMaterialTexture(
+        &userEffectMaterial,
+        MaterialMapIndex.Roughness,
+        match mat3d.RoughnessMap with
+        | ValueSome t -> t
+        | ValueNone -> defaultTex
+      )
 
-      match mat3d.NormalMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(
-          &userEffectMaterial,
-          MaterialMapIndex.Normal,
-          t
-        )
-      | ValueNone -> ()
+      Raylib.SetMaterialTexture(
+        &userEffectMaterial,
+        MaterialMapIndex.Metalness,
+        match mat3d.MetallicMap with
+        | ValueSome t -> t
+        | ValueNone -> defaultTex
+      )
 
-      match mat3d.EmissionMap with
-      | ValueSome t ->
-        Raylib.SetMaterialTexture(
-          &userEffectMaterial,
-          MaterialMapIndex.Emission,
-          t
-        )
-      | ValueNone -> ()
+      Raylib.SetMaterialTexture(
+        &userEffectMaterial,
+        MaterialMapIndex.Normal,
+        match mat3d.NormalMap with
+        | ValueSome t -> t
+        | ValueNone -> defaultTex
+      )
+
+      Raylib.SetMaterialTexture(
+        &userEffectMaterial,
+        MaterialMapIndex.Emission,
+        match mat3d.EmissionMap with
+        | ValueSome t -> t
+        | ValueNone -> defaultTex
+      )
 
     Raylib.BeginShaderMode userShader
 
@@ -2444,7 +2445,7 @@ type ForwardPipelineBase
 /// <code lang="fsharp">
 /// let toon =
 ///   { new ForwardPipelineBase() with
-///       override _.Shade(&amp;frame, activeEffect, &amp;currentCamera, draw) = ... }
+///       override _.Shade(frame, activeEffect, &amp;currentCamera, draw) = ... }
 /// </code>
 /// </para>
 /// </remarks>

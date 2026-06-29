@@ -166,8 +166,15 @@ module SceneUpload =
     if matModelLoc >= 0 then
       Raylib.SetShaderValueMatrix(shader, matModelLoc, world)
 
+    // Compose with Raymath.MatrixMultiply (not System.Numerics '*') so the result matches the
+    // proven shadow VP (ForwardPbrPipeline: Rlgl matrices arrive in raylib's column-major rlMatrix
+    // layout; the System.Numerics operator treats them as row-major and yields a different matrix).
     if viewProjLoc >= 0 then
-      Raylib.SetShaderValueMatrix(shader, viewProjLoc, view * projection)
+      Raylib.SetShaderValueMatrix(
+        shader,
+        viewProjLoc,
+        Raymath.MatrixMultiply(view, projection)
+      )
 
     if normalMatrixLoc >= 0 then
       Raylib.SetShaderValueMatrix(shader, normalMatrixLoc, normalMatrix)
@@ -296,7 +303,8 @@ module SceneUpload =
           if vpLoc >= 0 then
             Raylib.SetShaderValueMatrix(shader, vpLoc, s.ViewProjs[i])
 
-        setVec4 shader (loc shader $"shadowUVOffsets[%d{i}]") s.UVOffsets[i]
+        if i < s.UVOffsets.Length then
+          setVec4 shader (loc shader $"shadowUVOffsets[%d{i}]") s.UVOffsets[i]
 
       // Bind the atlas to texture slot 15 (the raylib convention the PBR path uses).
       if s.Atlas.Id <> 0u then
