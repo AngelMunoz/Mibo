@@ -16,13 +16,13 @@ Mibo is a lightweight, **Elmish-based game framework** built on a **backend-agno
 
 Mibo is split into three packages so your game logic stays portable while the rendering backend stays swappable:
 
-`
+```text
 Mibo.Core          ← the shared core (Cmd, Sub, System, GameTime, Program, IRenderer,
                      GameContext, IInput/IInputMapper contracts, IAssetCache,
                      HeadlessProgram, Layout/Layout3D)
 Mibo.Raylib        ← the raylib backend (host: RaylibGame, GLSL shaders)
 Mibo.MonoGame      ← the MonoGame backend (host: MiboGame, HLSL .fx shaders)
-`
+```
 
 **The guiding rule:** if it is a contract that the Program builder, a runtime host, the headless runner, or portable user code needs, it lives in Mibo.Core. Backend-specific implementations and any type that leaks a backend handle stay in the backend.
 
@@ -37,16 +37,16 @@ Both backends ship the same rendering surface: a 2D batch renderer and a 3D **Fo
 
 To get started, you need the [dotnet SDK](https://get.dot.net) installed. The templates currently target the raylib backend:
 
-``bash
+```bash
 dotnet new install Mibo.Raylib.Templates
 dotnet new mibo-2d -o MyGame
 cd MyGame
 dotnet run
-``
+```
 
 A minimal program looks the same regardless of backend — only the host type and the package reference change:
 
-``fsharp
+```fsharp
 open Mibo.Elmish
 
 let program =
@@ -62,7 +62,7 @@ game.Run()
 // MonoGame:
 // let game = new MiboGame<Model, Msg>(program)
 // game.Run()
-``
+```
 
 You can then start building your game using any of the following:
 

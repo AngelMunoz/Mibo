@@ -221,6 +221,6 @@ model, maybeSave model
 
 ## See Also
 
-- [Elmish runtime](elmish.html) - The update loop
+- [Elmish runtime](../elmish.html) - The update loop
 - [Subscriptions](subscriptions.html) - External event sources
-- [Service composition](services.html) - Dependency injection patterns
+- [Service composition](../services.html) - Dependency injection patterns

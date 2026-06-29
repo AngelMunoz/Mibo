@@ -47,7 +47,7 @@ let update msg model =
 let view ctx model (buffer: RenderBuffer2D) =
     // Deferred sprite draw via the Draw.* DSL (same shape on every backend)
     buffer
-    |> Draw.sprite texture model.Position
+    |> Draw.sprite (SpriteState.create(texture, model.Position, model.SourceRect))
 ```
 
 ## Level 1 — Add semantic input

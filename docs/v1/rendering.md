@@ -37,7 +37,7 @@ The 2D pipeline is built on `Renderer2D<'Model>` in the `Mibo.Elmish.Graphics2D`
 - [Custom Commands](graphics2d/custom-commands.html) — `IRenderCommand2D` and escape hatches
 - [Performance](graphics2d/performance.html) — Writing performant 2D rendering code
 - [Camera](camera.html) — Cameras and coordinate systems
-- [Culling](culling.html) — Visibility testing
+- [Culling](../culling.html) — Visibility testing
 
 ## 3D Rendering
 

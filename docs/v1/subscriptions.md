@@ -229,4 +229,4 @@ fun dispatch ->
 
 - [Input](input.html) - Input handling
 - [Commands](commands.html) - One-time side effects
-- [Elmish runtime](elmish.html) - How the loop works
+- [Elmish runtime](../elmish.html) - How the loop works

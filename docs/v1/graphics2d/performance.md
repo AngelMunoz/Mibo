@@ -98,7 +98,7 @@ for entity in entities do
         buffer |> Draw.sprite { ... }
 ```
 
-See [Culling](../culling.html).
+See [Culling](../../culling.html).
 
 ## 9. Profiling
 
