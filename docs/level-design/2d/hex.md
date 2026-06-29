@@ -559,4 +559,4 @@ let strategyMap =
 
 ## API Reference
 
-For complete function signatures, see the [API Reference](../../reference/index.html).
+For complete function signatures, see the [2D Layout Engine](core.html).

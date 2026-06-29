@@ -391,4 +391,4 @@ Always playtest your sections:
 - Are hazard pits fair or frustrating?
 - Is the level flow obvious to players?
 
-> **See also:** [API Reference](../../reference/index.html) for complete Platformer module documentation
+> **See also:** [2D Layout Engine](core.html) for complete Platformer module documentation

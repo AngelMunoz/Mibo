@@ -662,4 +662,4 @@ let civMap =
 
 ## API Reference
 
-For complete function signatures, see the [API Reference](../../reference/index.html).
+For complete function signatures, see the [3D Layout Engine](core.html).

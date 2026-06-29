@@ -1,9 +1,12 @@
 ---
 title: 2D Rendering Overview
-category: 2D Rendering
-categoryindex: 4
-index: 11
+category: v1
+categoryindex: 200
+index: 10
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # 2D Rendering
 
@@ -17,7 +20,7 @@ A deferred renderer means you describe *what to draw* without worrying about *wh
 - **Camera transforms** — `Draw.beginCamera` / `Draw.endCamera` bracket world-space content.
 - **Shader modes** — `Draw.beginShader` / `Draw.endShader` enable per-section effects.
 - **Post-processing** — Screen-space shader passes applied after the scene renders.
-- **GPU batching** — the backend auto-batches standard draw calls; the renderer never interferes.
+- **GPU batching** — raylib auto-batches standard draw calls; the renderer never interferes.
 
 This is especially useful for:
 
@@ -31,8 +34,8 @@ This is especially useful for:
 | Situation | Approach |
 |-----------|----------|
 | Sprites, text, shapes, tiles | Use `Draw.*` commands (deferred) |
-| Custom GPU work (e.g. raw rlgl meshes, instancing) | Use `Draw.drawImmediate` (escape hatch) |
-| One-off GPU operations | Prefer deferred; use immediate only when the backend lacks the API |
+| Custom rlgl meshes, instancing | Use `Draw.drawImmediate` (escape hatch) |
+| One-off GPU operations | Prefer deferred; use immediate only when raylib lacks the API |
 
 ## How it works
 

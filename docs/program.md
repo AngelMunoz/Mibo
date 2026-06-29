@@ -7,7 +7,9 @@ index: 2
 
 # Programs & Composition
 
-A `Program<'Model,'Msg>` is a **declarative configuration pipeline** for your Mibo.Raylib game. It defines how the runtime should orchestrate your state, services, and rendering loop.
+A `Program<'Model,'Msg>` is a **declarative configuration pipeline** for your Mibo game. It defines how the runtime should orchestrate your state, services, and rendering loop.
+
+The `Program` builder lives in `Mibo.Core`, so the same combinators work on every backend. Only the host type and a couple of backend-specific extensions differ (see [Backend wiring](#backend-wiring) below).
 
 Instead of heavy inheritance or global state, you build your program by starting with a core and layering capabilities using high-level combinators.
 
@@ -20,7 +22,7 @@ Every program starts with `Program.mkProgram init update`.
 
 ## Typical Composition
 
-Most Mibo.Raylib games follow this "standard" setup in `Program.fs`:
+Most Mibo games follow this "standard" setup in `Program.fs`:
 
 ```fsharp
 let program =
@@ -28,16 +30,18 @@ let program =
   // 1. Configure window settings via GameConfig
   |> Program.withConfig (fun cfg ->
       { cfg with Width = 1280; Height = 720; Title = "My Game"; TargetFPS = 60 })
-  // 2. Add Mibo.Raylib services
-  |> Program.withAssets   // No-op currently; caching is automatic in IAssets
+  // 2. Add services (Core builder; asset caching is automatic via IAssets/IAssetCache)
+  |> Program.withAssets
   |> Program.withTick Tick // Enqueue a message every frame
   // 3. Define the view
   |> Program.withRenderer (fun () ->
-      let pipeline = ForwardPbrPipeline(...)
-      Renderer3D.create pipeline View.view)
+      let pipeline = ForwardPbrPipeline(...)   // raylib: ForwardPbrPipeline
+      Renderer3D.create pipeline View.view)    // MonoGame: ForwardPipeline
   |> Program.withRenderer (fun () -> Renderer2D.create viewUi)
 
-// Run the game
+// Run the game with your backend's host:
+//   raylib:   new RaylibGame<Model, Msg>(program)
+//   MonoGame: new MiboGame<Model, Msg>(program)
 let game = new RaylibGame<Model, Msg>(program)
 game.Run()
 ```
@@ -47,7 +51,7 @@ game.Run()
 ## Amenities & Services
 
 ### `withAssets`
-A no-op placeholder for API consistency. Asset loading and caching are handled automatically through `IAssets` (via `ctx.Assets.Texture(...)`, `ctx.Assets.Font(...)`, etc.) without needing explicit opt-in. Use `withAssetsBasePath` to configure a root path.
+A placeholder for API consistency. Asset loading and caching are handled through the backend's `IAssets` (which extends the Core `IAssetCache`), so you access textures/fonts/etc. via `ctx.Assets` without explicit opt-in. Use `withAssetsBasePath` to configure a root path. The concrete asset *types* differ per backend (raylib vs XNA), but the `Get`/`GetOrCreate`/`Create` caching surface is backend-neutral through `IAssetCache`.
 
 ### `withInput`
 Registers the `IInput` service, enabling Keyboard, Mouse, Touch, Gamepad, and Gesture subscriptions.
@@ -69,7 +73,7 @@ See [The Subscription](elmish.html#the-subscription) in the Elmish guide for a d
 
 ## Runtime & Performance Knobs
 
-Mibo.Raylib gives you fine-grained control over how the game loop behaves.
+Mibo gives you fine-grained control over how the game loop behaves.
 
 ### `withTick`
 Standard per-frame update. Pass a constructor (e.g., `Tick`) and the runtime will dispatch it every frame with the current `GameTime`. Use this for UI animations, camera smoothing, or simple timers.
@@ -93,7 +97,7 @@ Controls when messages are processed.
 
 ---
 
-## Raylib Integration
+## Renderers & Backend wiring
 
 ### `withRenderer`
 Adds an `IRenderer` to the stack. Renderers run in the **order they are added**. It is common to add a 3D renderer first, followed by a 2D UI renderer.
@@ -102,12 +106,20 @@ Adds an `IRenderer` to the stack. Renderers run in the **order they are added**.
 |> Program.withRenderer (fun () -> Renderer2D.create view)
 ```
 
-<!--
-`withComponent` and `withComponentRef` are not applicable to raylib — 
-Mibo for MonoGame had an IGameComponent system that doesn't map to raylib.
-The `Draw.drawImmediate` escape hatch + custom `IRenderCommand2D` serve
-the same purpose.
--->
+### Backend wiring
+
+The `Program` builder is in `Mibo.Core`, but a few pieces are backend-specific:
+
+| Concern | raylib backend | MonoGame backend |
+|---------|----------------|------------------|
+| Host type | `RaylibGame<'Model,'Msg>` | `MiboGame<'Model,'Msg>` |
+| Input mapper builder | `RaylibProgram.withInputMapper` | `MonoGameProgram.withInputMapper` |
+| 3D pipeline | `ForwardPbrPipeline` | `ForwardPipeline` |
+| Shader language | GLSL | HLSL (`.fx` → `.mgfx`) |
+
+`withInputMapper` is the only builder that cannot live in Core, because it instantiates the backend's `IInputMapper` implementation. If you prefer to stay fully "Elmish" (no service access), use the backend-neutral `InputMapper.subscribe` instead and handle a single message.
+
+> _**TIP**_: The `Draw.drawImmediate` escape hatch (raylib) and custom `IRenderCommand2D` serve the same role as raw backend integration points when you need GPU work outside the deferred command buffer.
 
 ---
 

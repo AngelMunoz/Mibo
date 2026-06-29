@@ -1,9 +1,12 @@
 ---
 title: Animation
-category: Amenities
-categoryindex: 5
-index: 22
+category: v1
+categoryindex: 200
+index: 6
 ---
+
+> **⚠ Archived v1 docs (raylib-only).** These are the original docs for the raylib-only release. The current multi-backend docs (Mibo.Core + Mibo.Raylib + Mibo.MonoGame) live at the [site root](../index.html).
+
 
 # Animation (2D Sprite Animation)
 
@@ -220,12 +223,12 @@ let sprite = oldSprite |> AnimatedSprite.playByIndex walkIndex
 
 Mibo is format-agnostic: a `SpriteSheet` is simply a **Texture** plus a set of **Source Rectangles**.
 
-The concrete types are backend-native: `Texture2D`/`Rectangle` from `Raylib_cs` (raylib) or `Microsoft.Xna.Framework` (MonoGame). Load them via `ctx.Assets.Texture(...)`:
+Textures are `Raylib_cs.Texture2D` and rectangles are `Raylib_cs.Rectangle`.
 
 ```fsharp
 // Example: pseudo-code for a custom loader
 let loadHero (ctx: GameContext) =
-    let tex = ctx.Assets.Texture("hero_atlas")  // raylib: "hero_atlas.png"; MonoGame: "hero_atlas" (content name)
+    let tex = Raylib.LoadTexture "hero_atlas"
     let frames = MyJsonParser.parse "hero_metadata.json"
     SpriteSheet.fromFrames tex (Vector2(32.f, 32.f)) frames
 ```
