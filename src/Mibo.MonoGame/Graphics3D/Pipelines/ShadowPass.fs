@@ -564,7 +564,7 @@ module internal ShadowPass =
                     shadowSkinnedDraws[skinnedCount] <- {
                       Part = part
                       Transform = transform
-                      Bones = res.BonePaletteScratch
+                      Bones = Array.empty
                     }
 
                     skinnedCount <- skinnedCount + 1
@@ -600,7 +600,7 @@ module internal ShadowPass =
                     shadowSkinnedDraws[skinnedCount] <- {
                       Part = part
                       Transform = transform
-                      Bones = res.BonePaletteScratch
+                      Bones = Array.empty
                     }
 
                     skinnedCount <- skinnedCount + 1

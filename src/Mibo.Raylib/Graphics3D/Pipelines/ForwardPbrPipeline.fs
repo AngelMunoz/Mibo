@@ -2028,12 +2028,15 @@ type ForwardPipelineBase
         populateMaps mat3d
         Raylib.DrawMesh(mesh, userEffectMaterial, transform)
 
-    | Command3D.DrawModelWith(model, transform, _) ->
+    | Command3D.DrawModelWith(model, transform, matOverride) ->
       for mi = 0 to model.MeshCount - 1 do
         let mesh = NativePtr.get model.Meshes mi
-        let matIdx = NativePtr.get model.MeshMaterial mi
-        let raylibMat = NativePtr.get model.Materials matIdx
-        let mat3d = Material3D.fromRaylibMaterial raylibMat
+
+        let mat3d =
+          match matOverride with
+          | MaterialOverride.All m -> m
+          | MaterialOverride.PerMesh f -> f mi
+
         upload transform mat3d ValueNone
         populateMaps mat3d
         Raylib.DrawMesh(mesh, userEffectMaterial, transform)
