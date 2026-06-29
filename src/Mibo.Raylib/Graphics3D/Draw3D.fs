@@ -54,6 +54,41 @@ module Draw3D =
     buffer.Add(Command3D.drawModel model transform)
     buffer
 
+  /// <summary>
+  /// Draws a raylib model with a whole-model <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/>
+  /// override — every sub-mesh uses <paramref name="material"/> instead of its authored material.
+  /// </summary>
+  let inline modelWith
+    (model: Model)
+    (transform: Matrix4x4)
+    (material: Material3D)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(
+      Command3D.drawModelWith model transform (MaterialOverride.All material)
+    )
+
+    buffer
+
+  /// <summary>
+  /// Draws a raylib model with a per-sub-mesh material resolver. <paramref name="resolver"/>
+  /// is indexed by mesh index (<c>0..model.MeshCount-1</c>) in pipeline iteration order.
+  /// </summary>
+  let inline modelWithPerMesh
+    (model: Model)
+    (transform: Matrix4x4)
+    ([<InlineIfLambda>] resolver: int -> Material3D)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(
+      Command3D.drawModelWith
+        model
+        transform
+        (MaterialOverride.PerMesh resolver)
+    )
+
+    buffer
+
   /// <summary>Draws a billboard (camera-facing quad) with a texture.</summary>
   let inline drawBillboard
     (texture: Texture2D)

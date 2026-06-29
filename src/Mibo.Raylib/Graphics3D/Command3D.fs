@@ -8,6 +8,17 @@ open Raylib_cs
 open Mibo.Elmish
 
 /// <summary>
+/// Optional material override for <see cref="M:Mibo.Elmish.Graphics3D.Command3D.DrawModelWith"/>.
+/// <para><c>All</c> applies one <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/> to every sub-mesh
+/// (allocation-free struct field). <c>PerMesh</c> takes a resolver indexed by the pipeline's sub-mesh
+/// iteration order — mesh index <c>0..model.MeshCount-1</c> on the raylib backend.</para>
+/// </summary>
+[<Struct>]
+type MaterialOverride =
+  | All of material: Material3D
+  | PerMesh of resolver: (int -> Material3D)
+
+/// <summary>
 /// Closed set of 3D render commands. Stored in <see cref="T:Mibo.Elmish.Graphics3D.RenderBuffer3D"/>
 /// and dispatched via pattern matching — no interface boxing.
 /// </summary>
@@ -15,6 +26,10 @@ open Mibo.Elmish
 type Command3D =
   | DrawMesh of mesh: Mesh * transform: Matrix4x4 * material: Material3D
   | DrawModel of model: Model * transform: Matrix4x4
+  | DrawModelWith of
+    model: Model *
+    transform: Matrix4x4 *
+    matOverride: MaterialOverride
   | DrawBillboard of
     texture: Texture2D *
     position: Vector3 *
@@ -70,6 +85,13 @@ module Command3D =
 
   let inline drawModel (model: Model) (transform: Matrix4x4) =
     Command3D.DrawModel(model, transform)
+
+  let inline drawModelWith
+    (model: Model)
+    (transform: Matrix4x4)
+    (matOverride: MaterialOverride)
+    =
+    Command3D.DrawModelWith(model, transform, matOverride)
 
   let inline drawBillboard
     (texture: Texture2D)

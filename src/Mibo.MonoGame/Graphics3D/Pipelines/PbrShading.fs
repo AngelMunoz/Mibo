@@ -238,7 +238,8 @@ module internal PbrShading =
       frame: byref<ForwardFrame>,
       res: PbrResources,
       model: Model,
-      transform: Matrix
+      transform: Matrix,
+      matOverride: MaterialOverride voption
     ) =
     if ensureEffect(gd, res) then
       match res.Effect, res.Params with
@@ -264,6 +265,8 @@ module internal PbrShading =
           frame.SpotShadowSlots
         )
 
+        let mutable partIndex = 0
+
         for mesh in model.Meshes do
           let world = res.BoneTransforms[mesh.ParentBone.Index] * transform
           let mutable t = world
@@ -275,7 +278,13 @@ module internal PbrShading =
           PbrUniforms.setMatrix p.Matrix.NormalMatrix normalMatrix
 
           for part in mesh.MeshParts do
-            let mat = Material3D.fromModelMeshPart part
+            let mat =
+              match matOverride with
+              | ValueNone -> Material3D.fromModelMeshPart part
+              | ValueSome(MaterialOverride.All m) -> m
+              | ValueSome(MaterialOverride.PerMesh f) -> f partIndex
+
+            partIndex <- partIndex + 1
             let key = materialKey &mat
 
             if not res.HasLastMaterial || key <> res.LastKey then
@@ -303,7 +312,8 @@ module internal PbrShading =
       res: PbrResources,
       model: Model,
       transform: Matrix,
-      bones: Matrix[]
+      bones: Matrix[],
+      matOverride: MaterialOverride voption
     ) =
     if ensureEffect(gd, res) then
       match res.Effect, res.Params with
@@ -322,6 +332,8 @@ module internal PbrShading =
 
         for i = palCount to bonePaletteScratch.Length - 1 do
           bonePaletteScratch[i] <- Matrix.Identity
+
+        let mutable partIndex = 0
 
         for mesh in model.Meshes do
           let world = res.BoneTransforms[mesh.ParentBone.Index] * transform
@@ -357,7 +369,13 @@ module internal PbrShading =
             else
               e.CurrentTechnique <- e.Techniques["Standard"]
 
-            let mat = Material3D.fromModelMeshPart part
+            let mat =
+              match matOverride with
+              | ValueNone -> Material3D.fromModelMeshPart part
+              | ValueSome(MaterialOverride.All m) -> m
+              | ValueSome(MaterialOverride.PerMesh f) -> f partIndex
+
+            partIndex <- partIndex + 1
             let key = materialKey &mat
 
             if not res.HasLastMaterial || key <> res.LastKey then
@@ -710,6 +728,56 @@ module internal PbrShading =
           finally
             part.Effect <- saved
 
+    | Command3D.DrawModelWith(model, transform, matOverride) ->
+      let boneCount = model.Bones.Count
+
+      if res.BoneTransforms.Length < boneCount then
+        res.BoneTransforms <- Array.zeroCreate<Matrix> boneCount
+
+      model.CopyAbsoluteBoneTransformsTo(res.BoneTransforms)
+
+      let mutable partIndex = 0
+
+      for mesh in model.Meshes do
+        let world = res.BoneTransforms[mesh.ParentBone.Index] * transform
+
+        for part in mesh.MeshParts do
+          let mat =
+            match matOverride with
+            | MaterialOverride.All m -> m
+            | MaterialOverride.PerMesh f -> f partIndex
+
+          partIndex <- partIndex + 1
+
+          // DrawModel binds the Standard technique (matches the PBR handleDrawModel — a static
+          // model draw doesn't upload a bone palette, even if the parts are skinned).
+          match standardTech with
+          | Some st -> effect.CurrentTechnique <- st
+          | None -> ()
+
+          SceneUpload.uploadToEffect(
+            gd,
+            effect,
+            state.View,
+            state.Projection,
+            camPos,
+            world,
+            normalMatrixOf world,
+            frame.Lights,
+            frame.Shadows,
+            ValueNone,
+            mat,
+            frame.Time
+          )
+
+          let saved = part.Effect
+          part.Effect <- effect
+
+          try
+            drawPart(gd, part)
+          finally
+            part.Effect <- saved
+
     | Command3D.DrawAnimatedModel(model, transform, bones) ->
       let boneCount = model.Bones.Count
 
@@ -731,6 +799,76 @@ module internal PbrShading =
 
         for part in mesh.MeshParts do
           let mat = Material3D.fromModelMeshPart part
+
+          // Select the technique by part kind, matching the PBR path: a SkinnedEffect part
+          // (the content-pipeline signal for BLENDINDICES0/BLENDWEIGHT0) needs the effect's
+          // Skinned technique so VS_Skinning + boneMatrices apply. A user effect without a
+          // Skinned technique falls back to its CurrentTechnique — safe, just unskinned.
+          let isSkinned =
+            match part.Effect with
+            | :? SkinnedEffect -> true
+            | _ -> false
+
+          if isSkinned then
+            match skinnedTech with
+            | Some sk -> effect.CurrentTechnique <- sk
+            | None -> ()
+          else
+            match standardTech with
+            | Some st -> effect.CurrentTechnique <- st
+            | None -> ()
+
+          SceneUpload.uploadToEffect(
+            gd,
+            effect,
+            state.View,
+            state.Projection,
+            camPos,
+            world,
+            normalMatrixOf world,
+            frame.Lights,
+            frame.Shadows,
+            ValueSome bonePaletteScratch,
+            mat,
+            frame.Time
+          )
+
+          let saved = part.Effect
+          part.Effect <- effect
+
+          try
+            drawPart(gd, part)
+          finally
+            part.Effect <- saved
+
+    | Command3D.DrawAnimatedModelWith(model, transform, bones, matOverride) ->
+      let boneCount = model.Bones.Count
+
+      if res.BoneTransforms.Length < boneCount then
+        res.BoneTransforms <- Array.zeroCreate<Matrix> boneCount
+
+      model.CopyAbsoluteBoneTransformsTo(res.BoneTransforms)
+      let bonePaletteScratch = frame.BonePaletteScratch
+      let palCount = min bones.Length bonePaletteScratch.Length
+
+      for i = 0 to palCount - 1 do
+        bonePaletteScratch[i] <- bones[i]
+
+      for i = palCount to bonePaletteScratch.Length - 1 do
+        bonePaletteScratch[i] <- Matrix.Identity
+
+      let mutable partIndex = 0
+
+      for mesh in model.Meshes do
+        let world = res.BoneTransforms[mesh.ParentBone.Index] * transform
+
+        for part in mesh.MeshParts do
+          let mat =
+            match matOverride with
+            | MaterialOverride.All m -> m
+            | MaterialOverride.PerMesh f -> f partIndex
+
+          partIndex <- partIndex + 1
 
           // Select the technique by part kind, matching the PBR path: a SkinnedEffect part
           // (the content-pipeline signal for BLENDINDICES0/BLENDWEIGHT0) needs the effect's

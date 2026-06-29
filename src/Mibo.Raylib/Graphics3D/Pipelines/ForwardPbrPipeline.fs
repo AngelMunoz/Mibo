@@ -321,6 +321,8 @@ module internal ShadowPassHelpers =
         meshCount <- meshCount + 1
       | Command3D.DrawModel(model, _) when shadowsEnabled ->
         meshCount <- meshCount + model.MeshCount
+      | Command3D.DrawModelWith(model, _, _) when shadowsEnabled ->
+        meshCount <- meshCount + model.MeshCount
       | Command3D.DrawMeshInstanced(_, _, _, instanceCount) when shadowsEnabled ->
         meshCount <- meshCount + instanceCount
       | _ -> ()
@@ -354,6 +356,17 @@ module internal ShadowPassHelpers =
 
         count <- count + 1
       | Command3D.DrawModel(model, transform) when shadowsEnabled ->
+        for mi = 0 to model.MeshCount - 1 do
+          let mesh = NativePtr.get model.Meshes mi
+
+          arr[count] <- {
+            Mesh = mesh
+            Transform = transform
+            Bones = ValueNone
+          }
+
+          count <- count + 1
+      | Command3D.DrawModelWith(model, transform, _) when shadowsEnabled ->
         for mi = 0 to model.MeshCount - 1 do
           let mesh = NativePtr.get model.Meshes mi
 
@@ -1062,7 +1075,8 @@ module internal PipelineFunctions =
       pointShadowSlots: int[],
       spotShadowSlots: int[],
       model: Model,
-      transform: Matrix4x4
+      transform: Matrix4x4,
+      matOverride: MaterialOverride voption
     ) =
     Raylib.BeginShaderMode shader
 
@@ -1085,7 +1099,13 @@ module internal PipelineFunctions =
       let mesh = NativePtr.get model.Meshes mi
       let matIdx = NativePtr.get model.MeshMaterial mi
       let raylibMat = NativePtr.get model.Materials matIdx
-      let mat3d = Material3D.fromRaylibMaterial raylibMat
+
+      let mat3d =
+        match matOverride with
+        | ValueNone -> Material3D.fromRaylibMaterial raylibMat
+        | ValueSome(MaterialOverride.All m) -> m
+        | ValueSome(MaterialOverride.PerMesh f) -> f mi
+
       let key = MaterialKey.fromMaterial3D &mat3d
 
       if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
@@ -1352,6 +1372,33 @@ module internal PipelineFunctions =
             &mat3d,
             1
           )
+      | Command3D.DrawModelWith(model, _, matOverride) ->
+        match matOverride with
+        | MaterialOverride.All m ->
+          warmMaterial(
+            &forward,
+            &instanced,
+            &skinned,
+            forwardShader,
+            instancedShader,
+            skinnedShader,
+            &m,
+            1
+          )
+        | MaterialOverride.PerMesh f ->
+          for mi = 0 to model.MeshCount - 1 do
+            let m = f mi
+
+            warmMaterial(
+              &forward,
+              &instanced,
+              &skinned,
+              forwardShader,
+              instancedShader,
+              skinnedShader,
+              &m,
+              1
+            )
       | Command3D.DrawSkinnedMesh(_, _, mat, _) ->
         warmMaterial(
           &forward,
@@ -1821,7 +1868,21 @@ type ForwardPipelineBase
           frame.PointShadowSlots,
           frame.SpotShadowSlots,
           model,
-          transform
+          transform,
+          ValueNone
+        )
+      | Command3D.DrawModelWith(model, transform, matOverride) ->
+        handleDrawModel(
+          forwardShader,
+          &forward,
+          frame.Lights,
+          maxPt,
+          maxSp,
+          frame.PointShadowSlots,
+          frame.SpotShadowSlots,
+          model,
+          transform,
+          ValueSome matOverride
         )
       | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
         handleDrawSkinnedMesh(
@@ -1958,6 +2019,16 @@ type ForwardPipelineBase
       Raylib.DrawMesh(mesh, userEffectMaterial, transform)
 
     | Command3D.DrawModel(model, transform) ->
+      for mi = 0 to model.MeshCount - 1 do
+        let mesh = NativePtr.get model.Meshes mi
+        let matIdx = NativePtr.get model.MeshMaterial mi
+        let raylibMat = NativePtr.get model.Materials matIdx
+        let mat3d = Material3D.fromRaylibMaterial raylibMat
+        upload transform mat3d ValueNone
+        populateMaps mat3d
+        Raylib.DrawMesh(mesh, userEffectMaterial, transform)
+
+    | Command3D.DrawModelWith(model, transform, _) ->
       for mi = 0 to model.MeshCount - 1 do
         let mesh = NativePtr.get model.Meshes mi
         let matIdx = NativePtr.get model.MeshMaterial mi
@@ -2251,6 +2322,7 @@ type ForwardPipelineBase
           // user-effect scope (ValueSome) and any Shade override route through this.Shade.
           | Command3D.DrawMesh _
           | Command3D.DrawModel _
+          | Command3D.DrawModelWith _
           | Command3D.DrawSkinnedMesh _
           | Command3D.DrawMeshInstanced _ ->
             if cameraActive then
@@ -2281,7 +2353,21 @@ type ForwardPipelineBase
                     pointShadowSlots,
                     spotShadowSlots,
                     model,
-                    transform
+                    transform,
+                    ValueNone
+                  )
+                | Command3D.DrawModelWith(model, transform, matOverride) ->
+                  handleDrawModel(
+                    forwardShader,
+                    &forward,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    model,
+                    transform,
+                    ValueSome matOverride
                   )
                 | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
                   handleDrawSkinnedMesh(
