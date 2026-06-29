@@ -11,6 +11,7 @@
     <Compile Include="InputMapper.fs" />
     <Compile Include="Animation3D.fs" />
     <Compile Include="Assets.fs" />
+    <Compile Include="Program.fs" />
     <Compile Include="Runtime.fs" />
     <Compile Include="Animation.fs" />
     <Compile Include="Camera3D.fs" />
@@ -49,7 +50,6 @@
     <Compile Include="Graphics2D/Lighting/LightCommands.fs" />
     <Compile Include="Graphics2D/Lighting/GridOccluders.fs" />
     <Compile Include="Graphics2D/Lighting/Particle.fs" />
-    <Compile Include="Program.fs" />
     <EmbeddedResource Include="Shaders\LitSprite.dx.mgfx" />
     <EmbeddedResource Include="Shaders\LitSprite.ogl.mgfx" />
     <EmbeddedResource Include="Shaders\LitSpriteNormalMap.dx.mgfx" />
