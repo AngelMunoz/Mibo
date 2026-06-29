@@ -156,6 +156,45 @@ module Draw3D =
     buffer
 
   // ──────────────────────────────────────────────
+  // Per-group shading scopes
+  // ──────────────────────────────────────────────
+
+  /// <summary>
+  /// Opens a per-group shading scope: draws between this and <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.endEffect"/>
+  /// are shaded by <paramref name="shader"/> instead of the default PBR shader. The shader inherits
+  /// the gathered scene data (camera matrices, lights, material, bones, time) — <b>not</b> the PBR
+  /// shader itself: it need only declare the uniform subset it consumes, and absent uniforms
+  /// are skipped. This lets a toon/cel/wireframe shader reuse the scene's camera + lighting without
+  /// re-implementing the gather. The scope closes at <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.endEffect"/>
+  /// or automatically at the next <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.endCamera"/> (scopes do not
+  /// persist across cameras).
+  /// </summary>
+  /// <remarks>
+  /// <b>Shadows + lights + animation are inherited by declaration.</b> The scene gather (camera,
+  /// lights, the shadow pass output, material, bones, and the frame's elapsed <c>time</c>) is uploaded
+  /// to the user shader by name via <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SceneUpload"/>: a
+  /// shader that declares the matching uniforms (e.g. <c>dirLightDir</c>, <c>boneMatrices</c>,
+  /// <c>shadowViewProjs</c>, <c>time</c>) inherits and samples them; one that declares none of them
+  /// is unaffected. So a toon/water scope can opt into shadows, skinned animation, and a shader
+  /// animation clock simply by declaring those uniforms.
+  /// <para>
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.drawMeshInstanced"/> inside a scope falls back to the PBR
+  /// path — hardware instancing needs a per-instance vertex stream a generic inherited shader won't declare.
+  /// </para>
+  /// </remarks>
+  let inline beginEffect (shader: Shader) (buffer: RenderBuffer3D) =
+    buffer.Add(Command3D.beginEffect shader)
+    buffer
+
+  /// <summary>
+  /// Closes the shading scope opened by <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.beginEffect"/>;
+  /// subsequent draws revert to the default PBR path. No-op if no scope is open.
+  /// </summary>
+  let inline endEffect(buffer: RenderBuffer3D) =
+    buffer.Add(Command3D.endEffect())
+    buffer
+
+  // ──────────────────────────────────────────────
   // Lighting
   // ──────────────────────────────────────────────
 
@@ -186,8 +225,19 @@ module Draw3D =
   // Escape Hatches
   // ──────────────────────────────────────────────
 
-  /// <summary>Flushes raylib's batch, exits camera, runs action, restores state.</summary>
-  let inline drawImmediate (action: unit -> unit) (buffer: RenderBuffer3D) =
+  /// <summary>
+  /// Runs a fully-custom draw with the scene data the pipeline gathered this frame. The callback
+  /// receives a <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SceneContext"/> — the active camera
+  /// (view/projection/config), the accumulated lights, the shadow pass output, and the elapsed time —
+  /// so a custom shader (water/refraction, screen-space, multi-pass) can read the scene without
+  /// re-implementing the gather. The pipeline restores the camera scope around the callback; any
+  /// other raylib device state you mutate is your responsibility.
+  /// </summary>
+  /// <param name="action">A callback invoked once with the frame's <c>SceneContext</c>.</param>
+  let inline drawImmediate
+    ([<InlineIfLambda>] action: Pipelines.SceneContext -> unit)
+    (buffer: RenderBuffer3D)
+    =
     buffer.Add(Command3D.drawImmediate action)
     buffer
 

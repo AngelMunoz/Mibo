@@ -47,7 +47,9 @@ type Command3D =
   | AddSpotLight of AddSlight: SpotLight3D
   | EnableShadows
   | DisableShadows
-  | DrawImmediate of action: (unit -> unit)
+  | BeginEffect of shader: Shader
+  | EndEffect
+  | DrawImmediate of action: (Pipelines.SceneContext -> unit)
 
 /// <summary>
 /// Factory functions that create <see cref="T:Mibo.Elmish.Graphics3D.Command3D"/> values
@@ -127,5 +129,8 @@ module Command3D =
   let inline enableShadows() = Command3D.EnableShadows
   let inline disableShadows() = Command3D.DisableShadows
 
-  let inline drawImmediate(action: unit -> unit) =
+  let inline beginEffect(shader: Shader) = Command3D.BeginEffect(shader)
+  let inline endEffect() = Command3D.EndEffect
+
+  let inline drawImmediate(action: Pipelines.SceneContext -> unit) =
     Command3D.DrawImmediate(action)

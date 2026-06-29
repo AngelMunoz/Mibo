@@ -242,14 +242,34 @@ let command3DFactoryTests =
 
     test "drawImmediate creates DrawImmediate" {
       let mutable called = false
-      let action() = called <- true
+
+      let action(_ctx: Pipelines.SceneContext) = called <- true
       let cmd = Command3D.drawImmediate action
 
       match cmd with
       | Command3D.DrawImmediate a ->
-        a()
+        // The callback requires a SceneContext; pass an uninitialized one to test invocability.
+        let ctx = Unchecked.defaultof<Pipelines.SceneContext>
+        a ctx
         Expect.isTrue called "Action should be invocable"
       | _ -> Tests.failtest "Expected DrawImmediate"
+    }
+
+    test "beginEffect creates BeginEffect" {
+      let shader = Unchecked.defaultof<Shader>
+      let cmd = Command3D.beginEffect shader
+
+      match cmd with
+      | Command3D.BeginEffect _ -> ()
+      | _ -> Tests.failtest "Expected BeginEffect"
+    }
+
+    test "endEffect creates EndEffect" {
+      let cmd = Command3D.endEffect()
+
+      match cmd with
+      | Command3D.EndEffect -> ()
+      | _ -> Tests.failtest "Expected EndEffect"
     }
   ]
 
@@ -1397,7 +1417,7 @@ let preScanTests =
           Unchecked.defaultof<_>
         )
 
-      Expect.equal lights.Ambient.Count 1 "Should have 1 ambient"
+      Expect.isTrue lights.Ambient.IsSome "Should have 1 ambient"
       Expect.equal lights.DirLights.Count 1 "Should have 1 dir light"
       Expect.equal lights.PointLights.Count 1 "Should have 1 point light"
       Expect.equal lights.SpotLights.Count 1 "Should have 1 spot light"

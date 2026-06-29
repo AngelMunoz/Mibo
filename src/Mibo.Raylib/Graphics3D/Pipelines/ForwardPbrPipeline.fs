@@ -282,17 +282,6 @@ type internal ShadowDepthResources = {
 }
 
 // ------------------------------------------------------------------
-// Light Buffers (reference type)
-// ------------------------------------------------------------------
-
-type internal LightBuffers = {
-  Ambient: ResizeArray<AmbientLight3D>
-  DirLights: ResizeArray<DirectionalLight3D>
-  PointLights: ResizeArray<PointLight3D>
-  SpotLights: ResizeArray<SpotLight3D>
-}
-
-// ------------------------------------------------------------------
 // Frame State (uses voption)
 // ------------------------------------------------------------------
 
@@ -566,12 +555,8 @@ module internal ShadowPassHelpers =
 module internal PipelineFunctions =
 
   /// Create an empty LightBuffers instance.
-  let createLightBuffers(maxPt: int, maxSp: int) : LightBuffers = {
-    Ambient = ResizeArray<AmbientLight3D> 1
-    DirLights = ResizeArray<DirectionalLight3D> 1
-    PointLights = ResizeArray<PointLight3D> maxPt
-    SpotLights = ResizeArray<SpotLight3D> maxSp
-  }
+  let createLightBuffers(maxPt: int, maxSp: int) : LightBuffers =
+    LightBuffers.create 1 maxPt maxSp
 
   let inline colorToVec3(c: Color) =
     Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
@@ -749,12 +734,11 @@ module internal PipelineFunctions =
     ) =
     let locs = variant.Locs
 
-    match lights.Ambient.Count with
-    | 0 ->
+    match lights.Ambient with
+    | ValueNone ->
       setShaderVec3 shader locs.Ambient.Color Vector3.Zero
       setShaderFloat shader locs.Ambient.Intensity 0.0f
-    | _ ->
-      let a = lights.Ambient[0]
+    | ValueSome a ->
       setShaderVec3 shader locs.Ambient.Color (colorToVec3 a.Color)
       setShaderFloat shader locs.Ambient.Intensity a.Intensity
 
@@ -981,11 +965,7 @@ module internal PipelineFunctions =
       Raylib.SetShaderValueMatrix(shader, boneLoc + i, bones[i])
 
   /// Clear all light buffers.
-  let inline clearLights(lights: LightBuffers) =
-    lights.Ambient.Clear()
-    lights.DirLights.Clear()
-    lights.PointLights.Clear()
-    lights.SpotLights.Clear()
+  let inline clearLights(lights: LightBuffers) = LightBuffers.clear lights
 
   /// Warm material caches for a single material using the appropriate variant.
   let inline warmMaterial
@@ -1279,8 +1259,7 @@ module internal PipelineFunctions =
     ) =
     match command with
     | Command3D.SetAmbientLight l ->
-      lights.Ambient.Clear()
-      lights.Ambient.Add l
+      lights.Ambient <- ValueSome l
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
@@ -1342,9 +1321,7 @@ module internal PipelineFunctions =
           frameState with
               ShadowOrigin = ValueSome origin
         }
-      | Command3D.SetAmbientLight l ->
-        lights.Ambient.Clear()
-        lights.Ambient.Add l
+      | Command3D.SetAmbientLight l -> lights.Ambient <- ValueSome l
       | Command3D.AddDirectionalLight l -> lights.DirLights.Add l
       | Command3D.AddPointLight l -> lights.PointLights.Add l
       | Command3D.AddSpotLight l -> lights.SpotLights.Add l
@@ -1607,39 +1584,76 @@ module internal PipelineFunctions =
     struct (hasCasters, pointSlots, spotSlots)
 
 // ------------------------------------------------------------------
-// ForwardPbrPipeline — closure-over-object-expression factory
+// ForwardFrame — per-frame scene state the Shade hook reads (byref, no alloc).
+// ------------------------------------------------------------------
+
+/// <summary>Per-frame scene state passed to <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase.Shade"/>.</summary>
+[<Struct>]
+type ForwardFrame = {
+  /// <summary>The frame's accumulated lights.</summary>
+  Lights: LightBuffers
+  /// <summary>Per-light shadow atlas slots (-1 = no shadow), indexed by PointLights position.</summary>
+  PointShadowSlots: int[]
+  /// <summary>Per-light shadow atlas slots (-1 = no shadow), indexed by SpotLights position.</summary>
+  SpotShadowSlots: int[]
+  /// <summary>The frame's shadow pass output — ValueNone when no shadow-casting light.
+  /// The user-effect scope uploads these uniforms by name so a custom shader can opt into shadows.</summary>
+  Shadows: ShadowResult voption
+  /// <summary>Total elapsed game time, in seconds — the <c>time</c> uniform for animated shaders.</summary>
+  Time: float32
+}
+
+// ------------------------------------------------------------------
+// ForwardPipelineBase — abstract staged forward pipeline base.
+//
+// Owns the gather + shadow pass + forward-pass orchestration + a virtual Shade
+// for per-draw shading. The default Shade routes the shaded draw kinds through
+// the cached Cook-Torrance PBR shaders, or — when a user-effect scope is open
+// (beginEffect/endEffect) — name-resolved SceneUpload to the user shader.
+// Override Shade to plug a different shading strategy while inheriting the
+// camera/light/shadow gather and orchestration.
 // ------------------------------------------------------------------
 
 /// <summary>
-/// Refactored Forward PBR pipeline. Eliminates 3x shader variant duplication
-/// by using parameterized ShaderVariant structs. No PipelineContext class —
-/// all mutable state lives in the object-expression closure.
+/// Abstract staged forward 3D pipeline base for the raylib backend. Implements
+/// <see cref="T:Mibo.Elmish.Graphics3D.IRenderPipeline3D"/> by dispatching
+/// <see cref="T:Mibo.Elmish.Graphics3D.Command3D"/> values, split into reusable stages —
+/// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase.Execute"/> (orchestration),
+/// the pre-scan gather, the shadow pass, and a virtual <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase.Shade"/>
+/// for per-draw shading. The default <c>Shade</c> routes the shaded draw kinds (mesh / skinned
+/// mesh / model / instanced) through the cached Cook-Torrance PBR shaders, so models and instanced
+/// geometry get PBR + point/spot lights + shadows automatically. When a user-effect scope is open
+/// (<c>beginEffect</c>/<c>endEffect</c>), the default <c>Shade</c> uploads the scene data to the
+/// user shader by name via <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SceneUpload"/>.
 /// </summary>
 /// <remarks>
-/// Implements the same <see cref="T:Mibo.Elmish.Graphics3D.IRenderPipeline3D"/> interface.
-/// Swap by changing one line:
-/// <code>
+/// <para>
+/// Override <c>Shade</c> to plug a different shading strategy (toon, cel, custom). The scene
+/// gather, shadow pass, and forward-pass dispatch are inherited.
+/// </para>
+/// <para>
+/// Register via:
+/// <code lang="fsharp">
 /// Renderer3D.create (ForwardPbrPipeline()) view
 /// </code>
+/// </para>
 /// </remarks>
-type ForwardPbrPipeline
+[<AbstractClass>]
+type ForwardPipelineBase
   (
-    [<Struct>] ?postProcess: PostProcessConfig3D,
-    [<Struct>] ?maxPointLights: int,
-    [<Struct>] ?maxSpotLights: int,
-    [<Struct>] ?shadowAtlasConfig: ShadowAtlasConfig,
-    [<Struct>] ?shadowBiasConfig: ShadowBiasConfig
+    ?postProcess: PostProcessConfig3D,
+    ?maxPointLights: int,
+    ?maxSpotLights: int,
+    ?shadowAtlasConfig: ShadowAtlasConfig,
+    ?shadowBiasConfig: ShadowBiasConfig
   ) =
 
-  let ppConfig = ValueOption.defaultValue PostProcessConfig3D.none postProcess
-  let maxPt = ValueOption.defaultValue 8 maxPointLights
-  let maxSp = ValueOption.defaultValue 4 maxSpotLights
+  let ppConfig = defaultArg postProcess PostProcessConfig3D.none
+  let maxPt = defaultArg maxPointLights 8
+  let maxSp = defaultArg maxSpotLights 4
 
-  let atlasCfg =
-    ValueOption.defaultValue ShadowAtlasConfig.defaults shadowAtlasConfig
-
-  let biasCfg =
-    ValueOption.defaultValue ShadowBiasConfig.defaults shadowBiasConfig
+  let atlasCfg = defaultArg shadowAtlasConfig ShadowAtlasConfig.defaults
+  let biasCfg = defaultArg shadowBiasConfig ShadowBiasConfig.defaults
 
   // ── Mutable state ─────────────────────────────────────────
   let mutable forwardShader: Shader = Unchecked.defaultof<Shader>
@@ -1664,18 +1678,19 @@ type ForwardPbrPipeline
 
   let mutable shadowAtlas: ShadowAtlas = Unchecked.defaultof<ShadowAtlas>
 
+  // Reusable material for the user-effect scope (shadeWithEffect). Its .Shader is set per-scope
+  // and its maps are populated per-draw from the Material3D — avoids per-draw LoadMaterialDefault
+  // leaks. Built lazily on first user-effect draw.
+  let mutable userEffectMaterial: Material = Unchecked.defaultof<Material>
+  let mutable userEffectMaterialCreated = false
+
   // Per-light shadow caster slot mapping (computed in runShadowPass, read in uploadLights).
   // Indexed by lights.PointLights/SpotLights buffer position; -1 = no shadow. Reallocated per
   // frame to match the live light counts.
   let mutable pointShadowSlots: int[] = [||]
   let mutable spotShadowSlots: int[] = [||]
 
-  let lights: LightBuffers = {
-    Ambient = ResizeArray<AmbientLight3D> 1
-    DirLights = ResizeArray<DirectionalLight3D> 1
-    PointLights = ResizeArray<PointLight3D> maxPt
-    SpotLights = ResizeArray<SpotLight3D> maxSp
-  }
+  let lights: LightBuffers = createLightBuffers(maxPt, maxSp)
 
   let ppPasses: PostProcessPass3D[] =
     match ppConfig.Passes with
@@ -1732,6 +1747,255 @@ type ForwardPbrPipeline
         Raylib.EndTextureMode()
         src <- target
       | ValueNone -> ()
+
+  // ----------------------------------------------------------------
+  // Per-draw shading hook — overridable.
+  //
+  // The default implementation routes the shaded draw kinds through the cached
+  // PBR fast path, or — when a user-effect scope is open (beginEffect/endEffect) —
+  // name-resolved SceneUpload to the user shader. Override Shade to plug a
+  // different strategy while inheriting the gather + orchestration.
+  //
+  // activeEffect: ValueNone on the default path → PBR; ValueSome shader → shade
+  // with the user shader (it inherits scene DATA, not the PBR shader).
+  //
+  // PERF: the default PBR path (activeEffect = ValueNone) is dispatched inline in
+  // Execute's forward loop — it does NOT route through this virtual call, to keep
+  // the hot path zero-cost. Shade is invoked for user-effect scopes (ValueSome)
+  // and by subclass overrides. To intercept ALL draws (including the default path),
+  // override Execute instead.
+  // ----------------------------------------------------------------
+
+  /// <summary>
+  /// Per-draw shading hook for user-effect scopes (beginEffect/endEffect). Override to plug a
+  /// custom shading strategy (toon, cel, wireframe) while inheriting the camera/light/shadow
+  /// gather and forward-pass orchestration from
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase.Execute"/>.
+  /// </summary>
+  /// <remarks>
+  /// The default PBR path is dispatched inline in <c>Execute</c> for performance and does not
+  /// route through this virtual call. <c>Shade</c> is invoked for user-effect scopes
+  /// (<c>activeEffect = ValueSome</c>). To intercept all draws including the default PBR path,
+  /// override <c>Execute</c> instead.
+  /// </remarks>
+  /// <param name="frame">The frame's scene bundle (lights, shadow slots, shadow output, time).</param>
+  /// <param name="activeEffect">ValueNone on the default PBR path; ValueSome shader when a user-effect scope is open.</param>
+  /// <param name="currentCamera">The active camera.</param>
+  /// <param name="draw">The draw command to shade.</param>
+  abstract Shade:
+    frame: ForwardFrame *
+    activeEffect: Shader voption *
+    currentCamera: byref<Camera3D> *
+    draw: Command3D ->
+      unit
+
+  /// <summary>
+  /// Default shading: PBR cached fast path (ValueNone) or name-resolved SceneUpload to the
+  /// user shader (ValueSome). DrawMeshInstanced under a user scope falls back to PBR.
+  /// </summary>
+  default this.Shade(frame, activeEffect, currentCamera, draw) =
+    match activeEffect with
+    | ValueNone ->
+      // Default path: cached PBR fast path.
+      match draw with
+      | Command3D.DrawMesh(mesh, transform, material) ->
+        handleDrawMesh(
+          forwardShader,
+          &forward,
+          frame.Lights,
+          maxPt,
+          maxSp,
+          frame.PointShadowSlots,
+          frame.SpotShadowSlots,
+          mesh,
+          transform,
+          material
+        )
+      | Command3D.DrawModel(model, transform) ->
+        handleDrawModel(
+          forwardShader,
+          &forward,
+          frame.Lights,
+          maxPt,
+          maxSp,
+          frame.PointShadowSlots,
+          frame.SpotShadowSlots,
+          model,
+          transform
+        )
+      | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
+        handleDrawSkinnedMesh(
+          skinnedShader,
+          &skinned,
+          frame.Lights,
+          maxPt,
+          maxSp,
+          frame.PointShadowSlots,
+          frame.SpotShadowSlots,
+          currentCamera,
+          mesh,
+          transform,
+          material,
+          bones
+        )
+      | Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount) ->
+        handleDrawMeshInstanced(
+          instancedShader,
+          &instanced,
+          frame.Lights,
+          maxPt,
+          maxSp,
+          frame.PointShadowSlots,
+          frame.SpotShadowSlots,
+          currentCamera,
+          mesh,
+          transforms,
+          material,
+          instanceCount
+        )
+      | _ -> ()
+    | ValueSome userShader ->
+      this.shadeWithEffect(frame, userShader, &currentCamera, draw)
+
+  /// <summary>
+  /// Shades a draw with a user-supplied shader via name-resolved SceneUpload. The shader inherits
+  /// scene data (camera/lights/material/bones/time), NOT the PBR shader itself. DrawMeshInstanced
+  /// falls back to the PBR path (hardware instancing needs a per-instance vertex stream a generic
+  /// inherited shader won't declare).
+  /// </summary>
+  member private _.shadeWithEffect
+    (
+      frame: ForwardFrame,
+      userShader: Shader,
+      currentCamera: byref<Camera3D>,
+      draw: Command3D
+    ) =
+    let inline normalMatrixOf(world: Matrix4x4) = computeNormalMatrix world
+    let camPos = currentCamera.Position
+
+    // Capture the view/projection from raylib's current rlgl state (set by BeginMode3D).
+    let view = Rlgl.GetMatrixModelview()
+    let projection = Rlgl.GetMatrixProjection()
+
+    let inline upload world material bones =
+      SceneUpload.uploadToShader(
+        userShader,
+        view,
+        projection,
+        camPos,
+        world,
+        normalMatrixOf world,
+        frame.Lights,
+        frame.Shadows,
+        bones,
+        material,
+        frame.Time
+      )
+
+    // Lazily create the reusable user-effect material on first use, then set its shader to the
+    // active user shader. Maps are populated per-draw below. Avoids per-draw LoadMaterialDefault
+    // leaks (the material is owned by the pipeline and unloaded at Shutdown).
+    if not userEffectMaterialCreated then
+      userEffectMaterial <- Raylib.LoadMaterialDefault()
+      userEffectMaterialCreated <- true
+
+    userEffectMaterial.Shader <- userShader
+
+    // Populate the reusable material's maps from a Material3D (textures the user shader samples).
+    // The material is reused across draws, so missing maps MUST be reset to the default texture —
+    // otherwise the previous draw's texture leaks into this one (gemini review #53).
+    let inline populateMaps(mat3d: Material3D) =
+      // raylib-cs 8.0.0 has no GetTextureDefault(); GetShapesTexture() returns the default
+      // 1x1 white Texture2D raylib uses for untextured draws.
+      let defaultTex = Raylib.GetShapesTexture()
+
+      Raylib.SetMaterialTexture(
+        &userEffectMaterial,
+        MaterialMapIndex.Albedo,
+        match mat3d.AlbedoMap with
+        | ValueSome t -> t
+        | ValueNone -> defaultTex
+      )
+
+      Raylib.SetMaterialTexture(
+        &userEffectMaterial,
+        MaterialMapIndex.Roughness,
+        match mat3d.RoughnessMap with
+        | ValueSome t -> t
+        | ValueNone -> defaultTex
+      )
+
+      Raylib.SetMaterialTexture(
+        &userEffectMaterial,
+        MaterialMapIndex.Metalness,
+        match mat3d.MetallicMap with
+        | ValueSome t -> t
+        | ValueNone -> defaultTex
+      )
+
+      Raylib.SetMaterialTexture(
+        &userEffectMaterial,
+        MaterialMapIndex.Normal,
+        match mat3d.NormalMap with
+        | ValueSome t -> t
+        | ValueNone -> defaultTex
+      )
+
+      Raylib.SetMaterialTexture(
+        &userEffectMaterial,
+        MaterialMapIndex.Emission,
+        match mat3d.EmissionMap with
+        | ValueSome t -> t
+        | ValueNone -> defaultTex
+      )
+
+    Raylib.BeginShaderMode userShader
+
+    match draw with
+    | Command3D.DrawMesh(mesh, transform, material) ->
+      upload transform material ValueNone
+      populateMaps material
+      Raylib.DrawMesh(mesh, userEffectMaterial, transform)
+
+    | Command3D.DrawModel(model, transform) ->
+      for mi = 0 to model.MeshCount - 1 do
+        let mesh = NativePtr.get model.Meshes mi
+        let matIdx = NativePtr.get model.MeshMaterial mi
+        let raylibMat = NativePtr.get model.Materials matIdx
+        let mat3d = Material3D.fromRaylibMaterial raylibMat
+        upload transform mat3d ValueNone
+        populateMaps mat3d
+        Raylib.DrawMesh(mesh, userEffectMaterial, transform)
+
+    | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
+      upload transform material (ValueSome bones)
+      populateMaps material
+      Raylib.DrawMesh(mesh, userEffectMaterial, transform)
+
+    | Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount) ->
+      // Instancing under a user scope falls back to the PBR path (see remarks).
+      Raylib.EndShaderMode()
+
+      handleDrawMeshInstanced(
+        instancedShader,
+        &instanced,
+        frame.Lights,
+        maxPt,
+        maxSp,
+        frame.PointShadowSlots,
+        frame.SpotShadowSlots,
+        currentCamera,
+        mesh,
+        transforms,
+        material,
+        instanceCount
+      )
+
+      Raylib.BeginShaderMode userShader
+
+    | _ -> ()
+
+    Raylib.EndShaderMode()
 
   // ── IRenderPipeline3D ────────────────────────────────────────
 
@@ -1809,6 +2073,9 @@ type ForwardPbrPipeline
       Raylib.UnloadMaterial depthShadowMaterial
       Raylib.UnloadMaterial depthShadowSkinnedMaterial
 
+      if userEffectMaterialCreated then
+        Raylib.UnloadMaterial userEffectMaterial
+
       for KeyValue(_, mat) in forward.MaterialCache.cache do
         Raylib.UnloadMaterial mat
 
@@ -1817,7 +2084,9 @@ type ForwardPbrPipeline
       if shadowAtlas <> Unchecked.defaultof<ShadowAtlas> then
         shadowAtlas.Shutdown()
 
-    member _.Execute(gameCtx, buffer, rtPool) =
+    member this.Execute(gameCtx, gameTime, buffer, rtPool) =
+      let frameTime = float32 gameTime.TotalTime.TotalSeconds
+
       // ── Step 1: Pre-scan buffer (camera, lights, shadow origin, warm caches) ──
       clearLights lights
 
@@ -1887,16 +2156,44 @@ type ForwardPbrPipeline
         )
       | ValueNone -> ()
 
-      // ── Step 4: Clear lights for forward pass (dispatch will re-add them) ──
+      // ── Step 4: Build the per-frame scene bundle (ForwardFrame + ShadowResult) ──
+      let shadowResult: ShadowResult voption =
+        if hasShadowCasters && shadowAtlas.ActiveCasterCount > 0 then
+          ValueSome {
+            Atlas = shadowAtlas.Fbo.Depth
+            ViewProjs = shadowAtlas.ViewProjs
+            UVOffsets = shadowAtlas.UVOffsets
+            ActiveCasterCount = shadowAtlas.ActiveCasterCount
+            TexelSize = 1.0f / float32 atlasCfg.Resolution
+            DirLightCastsShadows =
+              lights.DirLights.Count > 0 && lights.DirLights[0].CastsShadows
+            PointLightShadowIdx = pointShadowSlots
+            SpotLightShadowIdx = spotShadowSlots
+          }
+        else
+          ValueNone
+
+      let mutable frame: ForwardFrame = {
+        Lights = lights
+        PointShadowSlots = pointShadowSlots
+        SpotShadowSlots = spotShadowSlots
+        Shadows = shadowResult
+        Time = frameTime
+      }
+
+      // ── Step 5: Clear lights for forward pass (dispatch will re-add them) ──
       clearLights lights
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
 
-      // ── Step 5: Forward pass (dispatch all commands) ──
+      // ── Step 6: Forward pass (dispatch all commands) ──
       let mutable cameraActive = false
       let mutable currentCamera = Unchecked.defaultof<Camera3D>
       let mutable shaderActive = false
+      // Per-group shading scope (beginEffect/endEffect). ValueNone → default PBR path;
+      // ValueSome shader → shade with the user shader. Reset on camera boundaries (§7.2).
+      let mutable activeEffect: Shader voption = ValueNone
 
       let dispatchForwardPass() =
         for i = 0 to buffer.Count - 1 do
@@ -1913,6 +2210,8 @@ type ForwardPbrPipeline
             Raylib.BeginMode3D cam
             cameraActive <- true
             currentCamera <- cam
+            // New camera block: scopes don't persist across cameras (§7.2).
+            activeEffect <- ValueNone
 
           | Command3D.BeginCameraConfig cfg ->
             if cameraActive then
@@ -1926,6 +2225,8 @@ type ForwardPbrPipeline
             Raylib.BeginMode3D cfg.Camera
             cameraActive <- true
             currentCamera <- cfg.Camera
+            // New camera block: scopes don't persist across cameras (§7.2).
+            activeEffect <- ValueNone
 
           | Command3D.EndCamera ->
             if cameraActive then
@@ -1937,73 +2238,87 @@ type ForwardPbrPipeline
               cameraActive <- false
 
             Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
+            // EndCamera closes any open effect scope (§7.2).
+            activeEffect <- ValueNone
 
-          // ── Drawing commands (delegated to handlers) ──
-          | Command3D.DrawMesh(mesh, transform, material) ->
-            if cameraActive then
-              handleDrawMesh(
-                forwardShader,
-                &forward,
-                lights,
-                maxPt,
-                maxSp,
-                pointShadowSlots,
-                spotShadowSlots,
-                mesh,
-                transform,
-                material
-              )
+          // ── Per-group shading scope ──
+          | Command3D.BeginEffect shader -> activeEffect <- ValueSome shader
+          | Command3D.EndEffect -> activeEffect <- ValueNone
 
-          | Command3D.DrawModel(model, transform) ->
+          // ── Drawing commands ──
+          // The default PBR path (activeEffect = ValueNone) calls the inline handlers directly
+          // to keep the hot path inlined (a virtual Shade call per draw regresses FPS). The
+          // user-effect scope (ValueSome) and any Shade override route through this.Shade.
+          | Command3D.DrawMesh _
+          | Command3D.DrawModel _
+          | Command3D.DrawSkinnedMesh _
+          | Command3D.DrawMeshInstanced _ ->
             if cameraActive then
-              handleDrawModel(
-                forwardShader,
-                &forward,
-                lights,
-                maxPt,
-                maxSp,
-                pointShadowSlots,
-                spotShadowSlots,
-                model,
-                transform
-              )
-
-          | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
-            if cameraActive then
-              handleDrawSkinnedMesh(
-                skinnedShader,
-                &skinned,
-                lights,
-                maxPt,
-                maxSp,
-                pointShadowSlots,
-                spotShadowSlots,
-                currentCamera,
-                mesh,
-                transform,
-                material,
-                bones
-              )
-
-          | Command3D.DrawMeshInstanced(mesh,
-                                        transforms,
-                                        material,
-                                        instanceCount) ->
-            if cameraActive then
-              handleDrawMeshInstanced(
-                instancedShader,
-                &instanced,
-                lights,
-                maxPt,
-                maxSp,
-                pointShadowSlots,
-                spotShadowSlots,
-                currentCamera,
-                mesh,
-                transforms,
-                material,
-                instanceCount
-              )
+              match activeEffect with
+              | ValueNone ->
+                // Default path: inline PBR fast path (hot path — no virtual call).
+                match buffer[i] with
+                | Command3D.DrawMesh(mesh, transform, material) ->
+                  handleDrawMesh(
+                    forwardShader,
+                    &forward,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    mesh,
+                    transform,
+                    material
+                  )
+                | Command3D.DrawModel(model, transform) ->
+                  handleDrawModel(
+                    forwardShader,
+                    &forward,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    model,
+                    transform
+                  )
+                | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
+                  handleDrawSkinnedMesh(
+                    skinnedShader,
+                    &skinned,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    currentCamera,
+                    mesh,
+                    transform,
+                    material,
+                    bones
+                  )
+                | Command3D.DrawMeshInstanced(mesh,
+                                              transforms,
+                                              material,
+                                              instanceCount) ->
+                  handleDrawMeshInstanced(
+                    instancedShader,
+                    &instanced,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    currentCamera,
+                    mesh,
+                    transforms,
+                    material,
+                    instanceCount
+                  )
+                | _ -> ()
+              | ValueSome _ ->
+                this.Shade(frame, activeEffect, &currentCamera, buffer[i])
 
           | Command3D.DrawBillboard(tex, pos, size, color) ->
             if cameraActive then
@@ -2031,10 +2346,15 @@ type ForwardPbrPipeline
           | Command3D.AddSpotLight _ as cmd ->
             handleLightCommand(lights, cmd, &forward, &instanced, &skinned)
 
-          // ── Immediate mode (inline — unique save/restore pattern) ──
+          // ── Immediate mode: hand the callback the gathered scene data ──
           | Command3D.DrawImmediate action ->
             let savedCam = cameraActive
             let savedShader = shaderActive
+
+            // Capture the view/projection from raylib's current rlgl state before exiting the
+            // camera scope (AGENTS.md "VP Matrix Capture" — must read inside BeginMode3D).
+            let view = Rlgl.GetMatrixModelview()
+            let projection = Rlgl.GetMatrixProjection()
 
             if shaderActive then
               Raylib.EndShaderMode()
@@ -2044,8 +2364,17 @@ type ForwardPbrPipeline
               Raylib.EndMode3D()
               cameraActive <- false
 
+            let ctx: SceneContext = {
+              Camera = currentCamera
+              View = view
+              Projection = projection
+              Lights = lights
+              Shadows = frame.Shadows
+              Time = frame.Time
+            }
+
             try
-              action()
+              action ctx
             finally
               if savedCam then
                 Raylib.BeginMode3D currentCamera
@@ -2085,3 +2414,54 @@ type ForwardPbrPipeline
           gameCtx.WindowWidth,
           gameCtx.WindowHeight
         )
+
+// ------------------------------------------------------------------
+// ForwardPbrPipeline — the default PBR subclass (thin).
+//
+// Inherits the gather + shadow pass + forward-pass orchestration from
+// ForwardPipelineBase unchanged, using the base's default Cook-Torrance PBR
+// Shade. Register the same way as before:
+//   Renderer3D.create (ForwardPbrPipeline()) view
+// To plug a different shading strategy (toon, cel, custom), build an object
+// expression over ForwardPipelineBase and override Shade.
+// ------------------------------------------------------------------
+
+/// <summary>
+/// The default raylib 3D forward PBR pipeline: a thin <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase"/>
+/// that inherits the camera/light/shadow gather and forward-pass orchestration unchanged, using
+/// the base's default Cook-Torrance PBR <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase.Shade"/>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Registered via:
+/// <code lang="fsharp">
+/// Renderer3D.create (ForwardPbrPipeline()) view
+/// </code>
+/// </para>
+/// <para>
+/// To plug a different shading strategy (toon, cel, custom), build an object expression over
+/// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ForwardPipelineBase"/> and override <c>Shade</c> —
+/// the scene gather, shadow pass, and forward-pass dispatch are inherited:
+/// <code lang="fsharp">
+/// let toon =
+///   { new ForwardPipelineBase() with
+///       override _.Shade(frame, activeEffect, &amp;currentCamera, draw) = ... }
+/// </code>
+/// </para>
+/// </remarks>
+type ForwardPbrPipeline
+  (
+    ?postProcess: PostProcessConfig3D,
+    ?maxPointLights: int,
+    ?maxSpotLights: int,
+    ?shadowAtlasConfig: ShadowAtlasConfig,
+    ?shadowBiasConfig: ShadowBiasConfig
+  ) =
+  inherit
+    ForwardPipelineBase(
+      ?postProcess = postProcess,
+      ?maxPointLights = maxPointLights,
+      ?maxSpotLights = maxSpotLights,
+      ?shadowAtlasConfig = shadowAtlasConfig,
+      ?shadowBiasConfig = shadowBiasConfig
+    )
