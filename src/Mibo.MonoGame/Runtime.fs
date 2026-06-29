@@ -34,8 +34,10 @@ open Mibo.Input
 /// delegates message processing to <c>ElmishLoop</c> — it holds no
 /// dispatch/update state of its own.
 /// </remarks>
-type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
+type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
   inherit Game()
+
+  let program = mgProgram.Program
 
   let graphics =
     new GraphicsDeviceManager(this, GraphicsProfile = GraphicsProfile.HiDef)
@@ -70,6 +72,12 @@ type MiboGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) as this =
         TimeSpan.FromSeconds(1.0 / float config.TargetFPS)
     else
       this.IsFixedTimeStep <- false
+
+    // Apply device-level config callbacks after the Core GameConfig.
+    // These run before Initialize/GraphicsDevice creation, so settings like
+    // GraphicsProfile, vsync, fullscreen, and window policy take effect.
+    for configure in List.rev mgProgram.DeviceConfig do
+      configure(this, graphics)
 
   // ── Initialize: build renderers (the MG GraphicsDevice exists by now).
   // LoadContent (below) finishes wiring and starts the loop.

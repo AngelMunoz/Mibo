@@ -74,10 +74,10 @@ Most `open` declarations stay the same — the `Mibo.Elmish`, `Mibo.Input`, and
 | Area | Breaking? | Effort |
 |------|-----------|--------|
 | Package references | Yes | Low — replace `Mibo` with `Mibo.Core` + `Mibo.MonoGame` |
-| Program setup | Yes | Medium — `withConfig` and `withRenderer` signatures changed |
+| Program setup | Yes | Medium — `withConfig` split into `GameConfig` + `MonoGameProgram` wrapper; `withRenderer` signature changed |
 | GameContext access | Yes | Medium — direct fields → service registry |
 | Input types | Yes | Medium — MonoGame enums → backend-neutral codes |
-| InputMapper setup | Yes | Low — `Program.withInputMapper` → `MonoGameProgram.withInputMapper` |
+| InputMapper setup | Yes | Low — `Program.withInputMapper` → `MonoGameProgram.withInputMapper` (on the `MonoGameProgram` wrapper) |
 | Assets | Yes | Low — `Assets.texture path ctx` → `assets.Texture path`; `IAssets` now extends `IAssetCache` |
 | Cmd / Sub | Yes | Low — new `Msg` and `Quit` cases in DU |
 | Content pipeline & asset paths | Maybe | Low–Medium — only if you relied on XNB-baked animation data |
@@ -117,10 +117,12 @@ Or if consuming as NuGet packages:
 
 The `Program` builder changed in two significant ways:
 
-### `withConfig` signature changed
+### `withConfig` split into two layers
 
 The old API gave you direct access to MonoGame's `Game` and
-`GraphicsDeviceManager`. The new API takes a `GameConfig` transform function.
+`GraphicsDeviceManager` in a single callback. The new API splits this into a
+backend-neutral `GameConfig` transform (window size/title/FPS) and a
+MonoGame-specific device-level callback.
 
 ```fsharp
 // Before
@@ -132,7 +134,7 @@ Program.mkProgram init update
   gdm.PreferredBackBufferHeight <- 720
   gdm.SynchronizeWithVerticalRetrace <- true)
 
-// After
+// After — window-level config via Core GameConfig
 Program.mkProgram init update
 |> Program.withConfig (fun cfg ->
   { cfg with
@@ -140,6 +142,11 @@ Program.mkProgram init update
       Width = 1280
       Height = 720
       TargetFPS = 60 })
+// ... then wrap with MonoGameProgram and add device-level config:
+|> MonoGameProgram.ofProgram
+|> MonoGameProgram.withConfig (fun (game, gdm) ->
+  game.Content.RootDirectory <- "Content"
+  gdm.SynchronizeWithVerticalRetrace <- true)
 ```
 
 `GameConfig` is a struct record (in `Mibo.Core`, namespace `Mibo.Elmish`):
@@ -159,9 +166,11 @@ type GameConfig = {
 Helper functions are available: `GameConfig.withWidth`, `withHeight`,
 `withTitle`, `withTargetFPS`, `withMinWidth`, `withMinHeight`.
 
-> **Note:** `Content.RootDirectory` is no longer set via `withConfig`. Set it on
-> the host after construction (see "Game host" below), or load assets by full
-> path.
+`MonoGameProgram.withConfig` receives the `Game` and `GraphicsDeviceManager`
+and runs in the `MiboGame` constructor, **before** `Initialize` /
+`GraphicsDevice` creation — so `GraphicsProfile`, vsync
+(`SynchronizeWithVerticalRetrace`), `IsFullScreen`, `HardwareModeSwitch`,
+`Window.AllowUserResizing`, and `Content.RootDirectory` all take effect.
 
 **If you need direct access to `Game` or `GraphicsDeviceManager`** (e.g. for
 platform-specific configuration not covered by `GameConfig`), use
@@ -215,13 +224,22 @@ let game = ElmishGame(program)
 game.Run()
 
 // After
-let game = MiboGame(program)
-game.Content.RootDirectory <- "Content"   // if you use the content pipeline
+let mgProgram =
+  program
+  |> MonoGameProgram.ofProgram
+  // optional device-level config (GraphicsProfile, vsync, Content.RootDirectory, etc.)
+  |> MonoGameProgram.withConfig (fun (game, gdm) ->
+    game.Content.RootDirectory <- "Content")
+
+let game = MiboGame(mgProgram)
 game.Run()
 ```
 
 `MiboGame` inherits from `Microsoft.Xna.Framework.Game` just like `ElmishGame`
-did. The constructor and `.Run()` are the same; only the class name changed.
+did, and `.Run()` is the same. The constructor now takes a `MonoGameProgram`
+(the Core `Program` wrapped via `MonoGameProgram.ofProgram`). Device-level
+settings go through `MonoGameProgram.withConfig` so they apply before device
+creation.
 
 ---
 
@@ -356,12 +374,14 @@ Program.mkProgram init update
 
 // After
 Program.mkProgram init update
+|> MonoGameProgram.ofProgram
 |> MonoGameProgram.withInputMapper inputMap
 ```
 
-`MonoGameProgram.withInputMapper` lives on a MonoGame-specific module (in
-`Mibo.MonoGame`, namespace `Mibo.Elmish`) and also calls `Program.withInput`
-automatically.
+`MonoGameProgram.withInputMapper` lives on the MonoGame-specific
+`MonoGameProgram` module (in `Mibo.MonoGame`, namespace `Mibo.Elmish`) and
+operates on a `MonoGameProgram` (wrapping the Core `Program` via
+`ofProgram`). It also calls `Program.withInput` automatically.
 
 The subscription-based path (`InputMapper.subscribe` / `subscribeStatic`) works
 the same and lives in the `Mibo.Input` namespace (in the MonoGame backend):
@@ -1014,25 +1034,30 @@ let program =
     { cfg with Title = "Platformer"; Width = 1280; Height = 720 })
   |> Program.withRenderer (fun () -> Renderer2D.create view)
   |> Program.withInput
-  |> MonoGameProgram.withInputMapper inputMap
   |> Program.withAssets
   |> Program.withSubscription (InputMapper.subscribeStatic inputMap Action)
   |> Program.withTick Tick
 
+let mgProgram =
+  program
+  |> MonoGameProgram.ofProgram
+  |> MonoGameProgram.withInputMapper inputMap
+  |> MonoGameProgram.withConfig (fun (game, _gdm) ->
+    game.Content.RootDirectory <- "Content")
+
 [<EntryPoint>]
 let main _ =
-  let game = new MiboGame<Model, Msg>(program)
-  game.Content.RootDirectory <- "Content"
+  let game = new MiboGame<Model, Msg>(mgProgram)
   game.Run()
   0
 ```
 
 ### Key differences highlighted
 
-1. `ElmishGame` → `MiboGame` (and `Content.RootDirectory` set on the host)
-2. `Program.withConfig (fun (game, gdm) -> ...)` → `Program.withConfig (fun cfg -> { cfg with ... })`
+1. `ElmishGame(program)` → `MiboGame(mgProgram)` (Core `Program` wrapped via `MonoGameProgram.ofProgram`; device-level config via `MonoGameProgram.withConfig`)
+2. `Program.withConfig (fun (game, gdm) -> ...)` → `Program.withConfig (fun cfg -> { cfg with ... })` for window-level; `MonoGameProgram.withConfig (fun (game, gdm) -> ...)` for device-level (GraphicsProfile, vsync, `Content.RootDirectory`)
 3. `Batch2DRenderer.create game view` → `Renderer2D.create view` (factory takes `unit`)
-4. `Program.withInputMapper` → `MonoGameProgram.withInputMapper`
+4. `Program.withInputMapper` → `MonoGameProgram.withInputMapper` (on the `MonoGameProgram` wrapper)
 5. `Assets.texture "player" ctx` → `GameContext.getService<IAssets> ctx` + `assets.Texture "player"`
 6. `Keys.A` → `KeyCode.A` (backend-neutral input codes)
 7. `sprite { }` CE / `buffer.Sprite(...)` → `SpriteState.create` + `Draw.sprite … buffer`
@@ -1051,7 +1076,7 @@ are the divergences to plan for (surfaced by comparing the `MonoThreeD` and
 
 | Concern | Mibo.MonoGame | Mibo.Raylib |
 |---------|---------------|-------------|
-| Host | `MiboGame(program)` + `game.Content.RootDirectory <- "Content"` | `RaylibGame(program)` + `Program.withAssetsBasePath AppContext.BaseDirectory` |
+| Host | `MiboGame(mgProgram)` + `MonoGameProgram.withConfig` for `Content.RootDirectory` | `RaylibGame(program)` + `Program.withAssetsBasePath AppContext.BaseDirectory` |
 | Input mapper | `MonoGameProgram.withInputMapper` | `RaylibProgram.withInputMapper` |
 | 3D pipeline | `ForwardPipeline(shadowBias=, shadowAtlas=)` | `ForwardPbrPipeline(shadowBiasConfig=, shadowAtlasConfig=)` (different field names) |
 | Shadow config | `ShadowBiasConfig.defaults`, `ShadowAtlasConfig { Resolution; GridSnapSize }` | explicit per-light biases, `shadowAtlasConfig { Resolution; DirectionalLightSize }` |
