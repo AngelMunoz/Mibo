@@ -46,6 +46,44 @@ module Draw3D =
     buffer
 
   /// <summary>
+  /// Draws a static model with a whole-model <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/>
+  /// override — every mesh part uses <paramref name="material"/> instead of its authored material.
+  /// Auto-PBR + lights + shadows.
+  /// </summary>
+  let inline modelWith
+    (model: Model)
+    (transform: Matrix)
+    (material: Material3D)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(
+      Command3D.DrawModelWith(model, transform, MaterialOverride.All material)
+    )
+
+    buffer
+
+  /// <summary>
+  /// Draws a static model with a per-mesh-part material resolver. <paramref name="resolver"/>
+  /// is indexed by a flat counter over <c>model.Meshes × MeshParts</c> in pipeline iteration order.
+  /// Auto-PBR + lights + shadows.
+  /// </summary>
+  let inline modelWithPerMesh
+    (model: Model)
+    (transform: Matrix)
+    ([<InlineIfLambda>] resolver: int -> Material3D)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(
+      Command3D.DrawModelWith(
+        model,
+        transform,
+        MaterialOverride.PerMesh resolver
+      )
+    )
+
+    buffer
+
+  /// <summary>
   /// Draws an animated model. The 3D analog of the 2D <c>litAnimatedSprite</c>: takes the
   /// runtime state value (<see cref="T:Mibo.Animation.AnimatedModel"/>) + a transform, derives
   /// the bone palette internally from the state, and emits a <c>DrawAnimatedModel</c> command.
@@ -63,6 +101,58 @@ module Draw3D =
       | ValueNone -> [||]
 
     buffer.Add(Command3D.DrawAnimatedModel(am.Model, transform, bones))
+    buffer
+
+  /// <summary>
+  /// Draws an animated model with a whole-model <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/>
+  /// override. Bone palette is derived internally from the state, same as <c>drawAnimatedModel</c>.
+  /// </summary>
+  let inline animatedModelWith
+    (am: AnimatedModel)
+    (transform: Matrix)
+    (material: Material3D)
+    (buffer: RenderBuffer3D)
+    =
+    let bones =
+      match am.Mesh with
+      | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
+      | ValueNone -> [||]
+
+    buffer.Add(
+      Command3D.DrawAnimatedModelWith(
+        am.Model,
+        transform,
+        bones,
+        MaterialOverride.All material
+      )
+    )
+
+    buffer
+
+  /// <summary>
+  /// Draws an animated model with a per-mesh-part material resolver (flat index over
+  /// <c>model.Meshes × MeshParts</c>). Bone palette is derived internally from the state.
+  /// </summary>
+  let inline animatedModelWithPerMesh
+    (am: AnimatedModel)
+    (transform: Matrix)
+    ([<InlineIfLambda>] resolver: int -> Material3D)
+    (buffer: RenderBuffer3D)
+    =
+    let bones =
+      match am.Mesh with
+      | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
+      | ValueNone -> [||]
+
+    buffer.Add(
+      Command3D.DrawAnimatedModelWith(
+        am.Model,
+        transform,
+        bones,
+        MaterialOverride.PerMesh resolver
+      )
+    )
+
     buffer
 
   /// <summary>
@@ -264,7 +354,7 @@ module Draw3D =
   /// </summary>
   /// <param name="action">A callback invoked once with the frame's <c>SceneContext</c>.</param>
   let inline drawImmediate
-    (action: Pipelines.SceneContext -> unit)
+    ([<InlineIfLambda>] action: Pipelines.SceneContext -> unit)
     (buffer: RenderBuffer3D)
     =
     buffer.Add(Command3D.DrawImmediate action)

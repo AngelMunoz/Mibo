@@ -248,7 +248,25 @@ type ForwardPipelineBase
       // Default path: cached PBR fast path.
       match draw with
       | Command3D.DrawModel(model, transform) ->
-        PbrShading.drawModel(gd, &state, &frame, pbrRes, model, transform)
+        PbrShading.drawModel(
+          gd,
+          &state,
+          &frame,
+          pbrRes,
+          model,
+          transform,
+          ValueNone
+        )
+      | Command3D.DrawModelWith(model, transform, matOverride) ->
+        PbrShading.drawModel(
+          gd,
+          &state,
+          &frame,
+          pbrRes,
+          model,
+          transform,
+          ValueSome matOverride
+        )
       | Command3D.DrawAnimatedModel(model, transform, bones) ->
         PbrShading.drawAnimatedModel(
           gd,
@@ -257,7 +275,19 @@ type ForwardPipelineBase
           pbrRes,
           model,
           transform,
-          bones
+          bones,
+          ValueNone
+        )
+      | Command3D.DrawAnimatedModelWith(model, transform, bones, matOverride) ->
+        PbrShading.drawAnimatedModel(
+          gd,
+          &state,
+          &frame,
+          pbrRes,
+          model,
+          transform,
+          bones,
+          ValueSome matOverride
         )
       | Command3D.DrawPrimitive(mesh, transform, material) ->
         PbrShading.drawPrimitive(
@@ -828,7 +858,9 @@ type ForwardPipelineBase
         // is the current scope (ValueNone on the default path). The default Shade branches on it:
         // PBR-cached fast path when None, SceneUpload name-resolved path when Some.
         | Command3D.DrawModel _
+        | Command3D.DrawModelWith _
         | Command3D.DrawAnimatedModel _
+        | Command3D.DrawAnimatedModelWith _
         | Command3D.DrawPrimitive _
         | Command3D.DrawInstanced _ ->
           if state.HasCamera then

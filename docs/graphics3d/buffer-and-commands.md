@@ -61,10 +61,11 @@ differ where the mesh type differs (raylib `Mesh` / MonoGame `PrimitiveMesh`):
 |----------|--------|----------|
 | `Draw3D.drawMesh` / `drawPrimitive` | `drawMesh mesh transform material` | `drawPrimitive mesh transform material` |
 | `Draw3D.drawModel` | `drawModel model transform` | `drawModel model transform` |
+| `Draw3D.modelWith` / `modelWithPerMesh` | `modelWith model transform material` · `modelWithPerMesh model transform resolver` | same (overrides a model's baked material, whole or per-sub-mesh) |
 | `Draw3D.drawBillboard` | `drawBillboard texture position size color` | `drawBillboard texture position size color` |
 | `Draw3D.drawBillboardBatch` | batched billboards | batched billboards |
 | `Draw3D.drawLine3D` | `drawLine3D start finish color` | `drawLine3D start finish color` |
-| Skinned/animated | `drawSkinnedMesh mesh transform material bones` | `drawAnimatedModel animatedModel transform` |
+| Skinned/animated | `drawSkinnedMesh mesh transform material bones` (material supplied directly) | `drawAnimatedModel animatedModel transform` · `animatedModelWith` / `animatedModelWithPerMesh` to override its material |
 | Instanced | `drawMeshInstanced mesh transforms material count` | `drawInstanced mesh transforms material count` |
 
 > _**TIP**_: Use the instanced/batched variants when drawing many copies of the same thing. One draw call is faster than many.

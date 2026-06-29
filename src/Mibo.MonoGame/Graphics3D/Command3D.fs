@@ -6,6 +6,18 @@ open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
 
 /// <summary>
+/// Optional material override for <see cref="M:Mibo.Elmish.Graphics3D.Command3D.DrawModelWith"/> /
+/// <see cref="M:Mibo.Elmish.Graphics3D.Command3D.DrawAnimatedModelWith"/>.
+/// <para><c>All</c> applies one <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/> to every mesh part
+/// (allocation-free struct field). <c>PerMesh</c> takes a resolver indexed by a flat counter over
+/// <c>model.Meshes × MeshParts</c> in pipeline iteration order.</para>
+/// </summary>
+[<Struct>]
+type MaterialOverride =
+  | All of material: Material3D
+  | PerMesh of resolver: (int -> Material3D)
+
+/// <summary>
 /// Closed set of 3D render commands. Stored in <see cref="T:Mibo.Elmish.Graphics3D.RenderBuffer3D"/>
 /// and dispatched via pattern matching — no interface boxing.
 /// </summary>
@@ -18,6 +30,15 @@ open Mibo.Elmish
 type Command3D =
   | DrawModel of model: Model * transform: Matrix
   | DrawAnimatedModel of model: Model * transform: Matrix * bones: Matrix[]
+  | DrawModelWith of
+    model: Model *
+    transform: Matrix *
+    matOverride: MaterialOverride
+  | DrawAnimatedModelWith of
+    model: Model *
+    transform: Matrix *
+    bones: Matrix[] *
+    matOverride: MaterialOverride
   | DrawInstanced of
     mesh: PrimitiveMesh *
     transforms: Matrix[] *

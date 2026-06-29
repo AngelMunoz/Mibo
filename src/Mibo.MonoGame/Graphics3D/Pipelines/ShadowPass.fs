@@ -45,6 +45,19 @@ type ShadowSkinnedDraw = {
   Bones: Matrix[]
 }
 
+/// <summary>A static <c>ModelMeshPart</c> caster collected for the shadow pass.</summary>
+/// <remarks>
+/// Like <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ShadowSkinnedDraw"/>, this carries no
+/// world-space bounds: a bare <c>ModelMeshPart</c> has no parent reference, so the part's
+/// <c>ModelMesh.BoundingSphere</c> isn't reachable at collection time. Static-model casters are
+/// therefore drawn unconditionally (no per-light frustum cull) — correct for typical scene sizes.
+/// </remarks>
+[<Struct>]
+type ShadowModelPartDraw = {
+  Part: ModelMeshPart
+  Transform: Matrix
+}
+
 /// <summary>An instanced caster draw collected for the shadow pass.</summary>
 /// <remarks>
 /// Instanced geometry (e.g. a game world's block grid rendered via <c>DrawInstanced</c>) MUST
@@ -110,6 +123,10 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
 
   /// <summary>Pooled skinned-caster draws (B12). Grows on demand.</summary>
   member val SkinnedDraws = Array.zeroCreate<ShadowSkinnedDraw> 8 with get, set
+
+  /// <summary>Pooled static-ModelMeshPart caster draws (DrawModel/DrawModelWith). Grows on demand.</summary>
+  member val ModelPartDraws =
+    Array.zeroCreate<ShadowModelPartDraw> 32 with get, set
 
   /// <summary>Pooled instanced-caster draws (the world's block grid etc.). Grows on demand.</summary>
   member val InstancedDraws =
@@ -484,9 +501,11 @@ module internal ShadowPass =
           let mutable drawCount = 0
           let mutable skinnedCount = 0
           let mutable instancedCount = 0
+          let mutable modelPartCount = 0
           let mutable shadowDraws = res.Draws
           let mutable shadowSkinnedDraws = res.SkinnedDraws
           let mutable shadowInstancedDraws = res.InstancedDraws
+          let mutable shadowModelPartDraws = res.ModelPartDraws
 
           for i = 0 to buffer.Count - 1 do
             match buffer[i] with
@@ -509,6 +528,101 @@ module internal ShadowPass =
             | Command3D.DrawAnimatedModel(model, transform, bones) when
               castEnabled
               ->
+              for mesh in model.Meshes do
+                for part in mesh.MeshParts do
+                  match part.Effect with
+                  | :? SkinnedEffect ->
+                    if skinnedCount >= shadowSkinnedDraws.Length then
+                      Array.Resize(
+                        &shadowSkinnedDraws,
+                        shadowSkinnedDraws.Length * 2
+                      )
+
+                      res.SkinnedDraws <- shadowSkinnedDraws
+
+                    shadowSkinnedDraws[skinnedCount] <- {
+                      Part = part
+                      Transform = transform
+                      Bones = bones
+                    }
+
+                    skinnedCount <- skinnedCount + 1
+                  | _ -> ()
+            | Command3D.DrawModel(model, transform) when castEnabled ->
+              for mesh in model.Meshes do
+                for part in mesh.MeshParts do
+                  match part.Effect with
+                  | :? SkinnedEffect ->
+                    if skinnedCount >= shadowSkinnedDraws.Length then
+                      Array.Resize(
+                        &shadowSkinnedDraws,
+                        shadowSkinnedDraws.Length * 2
+                      )
+
+                      res.SkinnedDraws <- shadowSkinnedDraws
+
+                    shadowSkinnedDraws[skinnedCount] <- {
+                      Part = part
+                      Transform = transform
+                      Bones = Array.empty
+                    }
+
+                    skinnedCount <- skinnedCount + 1
+                  | _ ->
+                    if modelPartCount >= shadowModelPartDraws.Length then
+                      Array.Resize(
+                        &shadowModelPartDraws,
+                        shadowModelPartDraws.Length * 2
+                      )
+
+                      res.ModelPartDraws <- shadowModelPartDraws
+
+                    shadowModelPartDraws[modelPartCount] <- {
+                      Part = part
+                      Transform = transform
+                    }
+
+                    modelPartCount <- modelPartCount + 1
+            | Command3D.DrawModelWith(model, transform, _) when castEnabled ->
+              // Override material is irrelevant to depth; gather identically to DrawModel.
+              for mesh in model.Meshes do
+                for part in mesh.MeshParts do
+                  match part.Effect with
+                  | :? SkinnedEffect ->
+                    if skinnedCount >= shadowSkinnedDraws.Length then
+                      Array.Resize(
+                        &shadowSkinnedDraws,
+                        shadowSkinnedDraws.Length * 2
+                      )
+
+                      res.SkinnedDraws <- shadowSkinnedDraws
+
+                    shadowSkinnedDraws[skinnedCount] <- {
+                      Part = part
+                      Transform = transform
+                      Bones = Array.empty
+                    }
+
+                    skinnedCount <- skinnedCount + 1
+                  | _ ->
+                    if modelPartCount >= shadowModelPartDraws.Length then
+                      Array.Resize(
+                        &shadowModelPartDraws,
+                        shadowModelPartDraws.Length * 2
+                      )
+
+                      res.ModelPartDraws <- shadowModelPartDraws
+
+                    shadowModelPartDraws[modelPartCount] <- {
+                      Part = part
+                      Transform = transform
+                    }
+
+                    modelPartCount <- modelPartCount + 1
+            | Command3D.DrawAnimatedModelWith(model, transform, bones, _) when
+              castEnabled
+              ->
+              // Mirror DrawAnimatedModel: SkinnedEffect parts only.
               for mesh in model.Meshes do
                 for part in mesh.MeshParts do
                   match part.Effect with
@@ -553,7 +667,12 @@ module internal ShadowPass =
               instancedCount <- instancedCount + 1
             | _ -> ()
 
-          if drawCount = 0 && skinnedCount = 0 && instancedCount = 0 then
+          if
+            drawCount = 0
+            && skinnedCount = 0
+            && instancedCount = 0
+            && modelPartCount = 0
+          then
             ()
           else
             res.Atlas.PrepareUniforms()
@@ -613,6 +732,21 @@ module internal ShadowPass =
                     for pass in depthEffect.CurrentTechnique.Passes do
                       pass.Apply()
                       draw.Mesh.Draw(gd, depthEffect)
+
+                // ── Static ModelMeshPart casters (DrawModel/DrawModelWith, plain Depth technique) ──
+                if modelPartCount > 0 then
+                  for d = 0 to modelPartCount - 1 do
+                    let draw = shadowModelPartDraws[d]
+                    PbrUniforms.setMatrix depthParams.MatModel draw.Transform
+                    PbrUniforms.setMatrix depthParams.ViewProj casterVP
+
+                    let saved = draw.Part.Effect
+                    draw.Part.Effect <- depthEffect
+
+                    try
+                      drawPart(gd, draw.Part)
+                    finally
+                      draw.Part.Effect <- saved
 
                 // ── Skinned casters (B12: DepthSkinned technique, bone palette upload) ──
                 if skinnedCount > 0 then

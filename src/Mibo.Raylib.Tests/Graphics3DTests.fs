@@ -58,6 +58,45 @@ let command3DFactoryTests =
       | _ -> Tests.failtest "Expected DrawModel"
     }
 
+    test "drawModelWith creates DrawModelWith with All override" {
+      let mat = Material3D.colored Color.Red
+
+      let cmd =
+        Command3D.drawModelWith model identity (MaterialOverride.All mat)
+
+      match cmd with
+      | Command3D.DrawModelWith(m, t, MaterialOverride.All o) ->
+        Expect.equal m model "Model should match"
+        Expect.equal t identity "Transform should match"
+
+        Expect.equal
+          o.AlbedoColor
+          Color.Red
+          "Override material albedo should match"
+      | _ -> Tests.failtest "Expected DrawModelWith (All)"
+    }
+
+    test "drawModelWith creates DrawModelWith with PerMesh override" {
+      let resolver(_mi: int) = Material3D.colored Color.Blue
+
+      let cmd =
+        Command3D.drawModelWith
+          model
+          identity
+          (MaterialOverride.PerMesh resolver)
+
+      match cmd with
+      | Command3D.DrawModelWith(m, t, MaterialOverride.PerMesh f) ->
+        Expect.equal m model "Model should match"
+        Expect.equal t identity "Transform should match"
+
+        Expect.equal
+          (f 0).AlbedoColor
+          Color.Blue
+          "Resolver material albedo should match"
+      | _ -> Tests.failtest "Expected DrawModelWith (PerMesh)"
+    }
+
     test "drawBillboard creates DrawBillboard with correct fields" {
       let cmd = Command3D.drawBillboard tex v3a v2a Color.Blue
 
@@ -759,6 +798,31 @@ let draw3DDSLTests =
       match buf.Item 2 with
       | Command3D.SetShadowOrigin _ -> ()
       | _ -> Tests.failtest "Third should be SetShadowOrigin"
+    }
+
+    test "Draw3D.modelWith adds a DrawModelWith(All) command" {
+      use buf = new RenderBuffer3D()
+      let mat = Material3D.colored Color.Green
+      buf |> Draw3D.modelWith model identity mat |> ignore
+
+      Expect.equal buf.Count 1 "Should have 1 command"
+
+      match buf.Item 0 with
+      | Command3D.DrawModelWith(_, _, MaterialOverride.All o) ->
+        Expect.equal o.AlbedoColor Color.Green "Override albedo should match"
+      | _ -> Tests.failtest "Expected DrawModelWith (All)"
+    }
+
+    test "Draw3D.modelWithPerMesh adds a DrawModelWith(PerMesh) command" {
+      use buf = new RenderBuffer3D()
+      let resolver(_mi: int) = Material3D.colored Color.White
+      buf |> Draw3D.modelWithPerMesh model identity resolver |> ignore
+
+      Expect.equal buf.Count 1 "Should have 1 command"
+
+      match buf.Item 0 with
+      | Command3D.DrawModelWith(_, _, MaterialOverride.PerMesh _) -> ()
+      | _ -> Tests.failtest "Expected DrawModelWith (PerMesh)"
     }
 
     test "Draw3D.drop returns unit" {
