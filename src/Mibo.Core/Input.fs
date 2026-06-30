@@ -314,6 +314,21 @@ type GestureDelta = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
+/// Mouse capture mode for first-person / pointer-lock style input.
+/// </summary>
+[<RequireQualifiedAccess>]
+type MouseCapture =
+  /// <summary>Normal cursor behavior — the OS cursor moves freely within the window.</summary>
+  | Free
+  /// <summary>
+  /// The cursor is hidden and confined; mouse movement produces deltas that
+  /// allow unlimited rotation (e.g. first-person camera look). The backend
+  /// implements this via its native mechanism (raylib's DisableCursor,
+  /// MonoGame's re-center-after-poll).
+  /// </summary>
+  | Captured
+
+/// <summary>
 /// Per-game input service providing reactive observables for hardware input.
 /// </summary>
 /// <remarks>
@@ -325,6 +340,7 @@ type GestureDelta = {
 /// </remarks>
 type IInput =
   abstract Poll: unit -> unit
+  abstract SetMouseCapture: MouseCapture -> unit
   abstract KeyboardDelta: IObservable<KeyboardDelta>
   abstract MouseDelta: IObservable<MouseDelta>
   abstract TouchDelta: IObservable<TouchDelta>

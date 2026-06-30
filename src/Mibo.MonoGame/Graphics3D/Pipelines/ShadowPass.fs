@@ -291,7 +291,8 @@ module internal ShadowPass =
   /// <c>pos + dir</c>, with FOV from the outer cutoff cone. §6.1 application order.
   /// </summary>
   let buildSpotViewProj(light: SpotLight3D) : Matrix =
-    let lightDir = Vector3.Normalize light.Direction
+    let lightDir =
+      Vector3.Normalize(Conversions.fromNumericsVector3 light.Direction)
 
     let safeUp =
       if abs lightDir.Y > 0.99f then
@@ -300,7 +301,8 @@ module internal ShadowPass =
         Vector3.UnitY
 
     let view =
-      Matrix.CreateLookAt(light.Position, light.Position + lightDir, safeUp)
+      let pos = Conversions.fromNumericsVector3 light.Position
+      Matrix.CreateLookAt(pos, pos + lightDir, safeUp)
 
     // Outer cutoff is a cosine; half-angle FOV = acos(outerCutoff), full FOV = 2× that.
     // Clamp to a safe open interval — CreatePerspectiveFieldOfView throws if FOV ∉ (0, π).
@@ -418,19 +420,15 @@ module internal ShadowPass =
             dirIdx <- dirIdx + 1
 
           let dirLight = lights.DirLights[dirIdx]
+          let dir = Conversions.fromNumericsVector3 dirLight.Direction
 
-          let vp =
-            buildDirectionalViewProj
-              atlasCfg
-              res.Origin
-              dirLight.Direction
-              activeCamera
+          let vp = buildDirectionalViewProj atlasCfg res.Origin dir activeCamera
 
           match
             res.Atlas.AddCaster(
               ShadowCasterType.Directional,
               Vector3.Zero,
-              dirLight.Direction,
+              dir,
               Vector3.Zero,
               true,
               ValueNone
@@ -446,12 +444,13 @@ module internal ShadowPass =
           let pt = lights.PointLights[i]
 
           if pt.CastsShadows then
-            let vp = buildPointViewProj(pt.Position, pt.Radius)
+            let ptPos = Conversions.fromNumericsVector3 pt.Position
+            let vp = buildPointViewProj(ptPos, pt.Radius)
 
             match
               res.Atlas.AddCaster(
                 ShadowCasterType.Point,
-                pt.Position,
+                ptPos,
                 Vector3.Zero,
                 Vector3.Zero,
                 true,
@@ -471,12 +470,15 @@ module internal ShadowPass =
           if sp.CastsShadows then
             let vp = buildSpotViewProj sp
 
+            let spPos = Conversions.fromNumericsVector3 sp.Position
+            let spDir = Conversions.fromNumericsVector3 sp.Direction
+
             match
               res.Atlas.AddCaster(
                 ShadowCasterType.Spot,
-                sp.Position,
-                sp.Direction,
-                sp.Position + sp.Direction,
+                spPos,
+                spDir,
+                spPos + spDir,
                 true,
                 sp.ShadowBias
               )

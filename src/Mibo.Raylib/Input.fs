@@ -649,4 +649,9 @@ module Input =
         member _.GamepadDelta = gamepadDelta.Publish
         member _.GamepadConnection = gamepadConnection.Publish
         member _.GestureDelta = gestureDelta.Publish
+
+        member _.SetMouseCapture(capture) =
+          match capture with
+          | MouseCapture.Captured -> Raylib.DisableCursor()
+          | MouseCapture.Free -> Raylib.EnableCursor()
     }

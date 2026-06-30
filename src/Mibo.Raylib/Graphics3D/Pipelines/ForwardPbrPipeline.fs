@@ -571,10 +571,11 @@ module internal PipelineFunctions =
   let createLightBuffers(maxPt: int, maxSp: int) : LightBuffers =
     LightBuffers.create 1 maxPt maxSp
 
-  let inline colorToVec3(c: Color) =
-    Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
+  let inline colorToVec3(c: Mibo.Color) = Mibo.Color.toVector3 c
 
-  let inline colorToVec4(c: Color) =
+  let inline colorToVec4(c: Mibo.Color) = Mibo.Color.toVector4 c
+
+  let inline nativeColorToVec4(c: Color) =
     Vector4(
       float32 c.R / 255.0f,
       float32 c.G / 255.0f,
@@ -820,10 +821,19 @@ module internal PipelineFunctions =
       mat3d: inref<Material3D>,
       nm: Matrix4x4
     ) =
-    setShaderVec4 shader matLocs.AlbedoColor (colorToVec4 mat3d.AlbedoColor)
+    setShaderVec4
+      shader
+      matLocs.AlbedoColor
+      (nativeColorToVec4 mat3d.AlbedoColor)
+
     setShaderFloat shader matLocs.Roughness mat3d.Roughness
     setShaderFloat shader matLocs.Metallic mat3d.Metallic
-    setShaderVec4 shader matLocs.EmissionColor (colorToVec4 mat3d.EmissionColor)
+
+    setShaderVec4
+      shader
+      matLocs.EmissionColor
+      (nativeColorToVec4 mat3d.EmissionColor)
+
     setShaderFloat shader matLocs.Opacity mat3d.Opacity
     setShaderVec2 shader matLocs.Tiling mat3d.Tiling
 

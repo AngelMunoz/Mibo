@@ -7,6 +7,8 @@
 
   <ItemGroup>
     <Compile Include="Properties/AssemblyInfo.fs" />
+    <Compile Include="Color.fs" />
+    <Compile Include="Animation3D.fs" />
     <Compile Include="Elmish.Time.fs" />
     <Compile Include="Elmish.Commands.fs" />
     <Compile Include="Elmish.System.fs" />
@@ -37,6 +39,7 @@
     <Compile Include="Layout3D/LayeredHex3D.fs" />
     <Compile Include="Layout3D/Interior.fs" />
     <Compile Include="Layout3D/Terrain.fs" />
+  <Compile Include="Graphics3D/Light3D.fs" />
   </ItemGroup>
 
   <ItemGroup>

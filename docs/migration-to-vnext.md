@@ -54,6 +54,7 @@ that leaks a backend enum/handle stay in the backend.**
 | 2  | Shared `ElmishLoop` extracted; `HeadlessRunner`/`HeadlessProgram` move to Core | No |
 | 3  | `Layout` and `Layout3D` move to Core | No |
 | 3b | `Cmd<'Msg>` gains `Msg` case; `Cmd.ofMsg` is zero-alloc | Yes |
+| 4  | Shared types extracted to Core: `Mibo.Color`, `Light3D` definitions, `Animation3DState` state machine, `MouseCapture` | Yes |
 
 ## Breaking changes
 
@@ -419,6 +420,146 @@ every `update` branch that returns a follow-up message uses it. The previous
 implementation allocated an `Effect<'Msg>` delegate and a closure on every call.
 The new `Msg` case eliminates both allocations, reducing GC pressure in the
 hot path.
+
+### Phase 4 — Shared types to Core (`Mibo.Color`, `Light3D`, `Animation3DState`, `MouseCapture`)
+
+**Breaking.** The last major batch of backend-duplicated types has been promoted
+into `Mibo.Core` so there is a single implementation. The guiding rule: **if the
+type is identical across both backends (or can be made backend-neutral with a
+conversion at the boundary), it belongs in Core.**
+
+The changes fall into four groups.
+
+#### 4a — `Mibo.Color` (backend-neutral color)
+
+A new `[<Struct>]` byte RGBA color lives in `Mibo.Core`. It replaces the
+backend-specific `Color` (`Raylib_cs.Color` / `Microsoft.Xna.Framework.Color`)
+wherever it is used as a *contract* — currently in the shared light definitions
+(Phase 4b). Rendering code still uses native colors for anything that touches a
+backend draw call directly.
+
+```fsharp
+// Mibo.Core (namespace Mibo)
+[<Struct>]
+type Color =
+  val R: byte; val G: byte; val B: byte; val A: byte
+  static member White  = Color(255uy, 255uy, 255uy, 255uy)
+  static member Black  = Color(0uy,   0uy,   0uy,   255uy)
+  // Red, Green, Blue, SkyBlue, Orange, …
+  member toVector3: unit -> Vector3  // [r;g;b] / 255.0f
+  member toVector4: unit -> Vector4  // [r;g;b;a] / 255.0f
+```
+
+Each backend ships a conversion module and an implicit conversion:
+
+- raylib: `Mibo.RaylibColor.toRaylibColor` / `fromRaylibColor` (+ `op_Implicit`)
+- MonoGame: `Mibo.MonoGameColor.toMonoGameColor` / `fromMonoGameColor` (+ `op_Implicit`)
+
+> _**F# note**_: `op_Implicit` works for passing values that take an implicit
+> conversion, but **cannot be called as `.op_Implicit(x)`** in F# syntax. Use the
+> named module function (`Mibo.MonoGameColor.toMonoGameColor c`) when you need an
+> explicit conversion.
+
+#### 4b — Light definitions move to Core
+
+`AmbientLight3D`, `DirectionalLight3D`, `PointLight3D`, `SpotLight3D`, and their
+builder modules previously existed as **byte-for-byte identical copies** in both
+backends. They now live once in `Mibo.Core/Graphics3D/Light3D.fs` and use
+`Mibo.Color` + `System.Numerics.Vector3`.
+
+**Migration:**
+
+| Field | Before | After |
+|-------|--------|-------|
+| `*.Color` | native `Color` | `Mibo.Color` |
+| `*.Direction` (MonoGame backend) | `Microsoft.Xna.Framework.Vector3` | `System.Numerics.Vector3` |
+| `*.Position` (MonoGame backend) | `Microsoft.Xna.Framework.Vector3` | `System.Numerics.Vector3` |
+
+```fsharp
+// Before (raylib-only or duplicated)
+open Raylib_cs
+let light = DirectionalLight3D.create (Vector3(0.3f, -0.7f, -0.5f))
+            |> DirectionalLight3D.withColor Color.White
+
+// After (any backend — the light definition is in Core)
+open Mibo   // Mibo.Color lives here
+let light = DirectionalLight3D.create (Vector3(0.3f, -0.7f, -0.5f))
+            |> DirectionalLight3D.withColor Mibo.Color.White
+```
+
+> _**MonoGame note**_: MonoGame types interop freely with `System.Numerics`
+> via `op_Implicit` / `ToNumerics()`, so passing an `XNA.Vector3` where a
+> `System.Numerics.Vector3` is expected just works at the call site.
+
+#### 4c — `Animation3DState` playback clock in Core
+
+The pure state machine that drives 3D skeletal animation playback
+(`create`, `play`, `blendTo`, `update`, etc.) was line-for-line identical across
+both backends — only the underlying clip data type differed. It now lives in
+`Mibo.Core/Animation3D.fs`.
+
+- **New:** `Animation3DClipsInfo` (clip names + keyframe counts) — built at load
+  time from each backend's native clip data. Each backend's `Animation3DClips`
+  gains a `ClipsInfo: Animation3DClipsInfo` field.
+- **Delegation:** both backends' `Animation3DState` delegate playback to the Core
+  state machine via inlineable struct-mapping helpers — **zero hot-path cost**
+  (all inline struct copies).
+- **Bug fix:** `update` blend target wrapping now respects `Loop = false`
+  consistently on both backends (previously raylib always wrapped the blend
+  target regardless of the loop flag).
+
+**Migration:** the public API (`Animation3DState.create`/`play`/`blendTo`/`update`,
+etc.) is unchanged at call sites. Construct `Animation3DClips` via the backend
+module functions — do not construct the struct literal directly (the
+`ClipsInfo` field is internal and populated by the loader).
+
+#### 4d — `MouseCapture` + `IInput.SetMouseCapture`
+
+A new `MouseCapture` DU (`Free` / `Captured`) and `IInput.SetMouseCapture` method
+let games request pointer-locked, unlimited-rotation mouse input via a
+backend-neutral contract. Previously this required backend-specific hacks
+(raylib: call `DisableCursor` yourself; MonoGame: a user-authored
+`GameComponent` to re-center the mouse).
+
+```fsharp
+// Before (raylib-only)
+open Raylib_cs
+Raylib.DisableCursor()
+
+// After (any backend)
+let input = Input.getService ctx
+input.SetMouseCapture(MouseCapture.Captured)
+```
+
+- raylib: native `DisableCursor` / `EnableCursor`.
+- MonoGame: re-centers the mouse inside its own `Poll()` (edge-based, to avoid
+  WinForms message-pump jitter). The external `GameComponent` hacks
+  (`CursorClampComponent` / `MouseCenterComponent`) are no longer needed.
+
+#### 4e — Dead raylib `Camera`/`Ray` types and math functions removed
+
+**Breaking (raylib only).** The raylib backend carried a `Camera` struct
+(view + projection `Matrix4x4`) plus `Camera3D.lookAt` / `orbit` /
+`screenPointToRay` / `fromRaylib` built on top of it. **Raylib never used these**
+— it uses the native `Raylib_cs.Camera3D` for rendering. They were dead code
+inherited from the early single-backend era.
+
+Removed:
+- `Mibo.Camera` struct (view/projection matrices)
+- `Mibo.Ray` struct
+- `Camera3D.lookAt`, `Camera3D.orbit`, `Camera3D.screenPointToRay`,
+  `Camera3D.fromRaylib`
+
+> _**MonoGame note**_: the MonoGame backend's `Camera3D.lookAt` / `orbit` /
+> `screenPointToRay` are **not** removed — on MonoGame, `Camera3D` is a struct
+> built around view/projection matrices (it's the only camera option), and
+> those functions are live. Only the raylib-side dead copies were removed.
+
+**Migration (raylib):** if you used `Camera3D.screenPointToRay` for mouse
+picking on raylib, you'll need a replacement. Use raylib's native
+`Raylib.GetMouseRay` or compute the ray from the `Camera3D` + viewport manually
+(`Matrix4x4` unproject). For orbit-style cameras, build the
+`Raylib_cs.Camera3D` from spherical coordinates directly.
 
 
 

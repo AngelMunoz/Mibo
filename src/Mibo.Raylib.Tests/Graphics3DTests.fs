@@ -209,12 +209,12 @@ let command3DFactoryTests =
     }
 
     test "setAmbientLight creates SetAmbientLight" {
-      let light = AmbientLight3D.create Color.White
+      let light = AmbientLight3D.create Mibo.Color.White
       let cmd = Command3D.setAmbientLight light
 
       match cmd with
       | Command3D.SetAmbientLight l ->
-        Expect.equal l.Color Color.White "Color should match"
+        Expect.equal l.Color Mibo.Color.White "Color should match"
 
         Expect.floatClose
           Accuracy.medium
@@ -437,8 +437,8 @@ let material3DTests =
 let light3DTests =
   testList "3D Light builders" [
     test "AmbientLight3D.create sets color and default intensity" {
-      let l = AmbientLight3D.create Color.White
-      Expect.equal l.Color Color.White "Color should match"
+      let l = AmbientLight3D.create Mibo.Color.White
+      Expect.equal l.Color Mibo.Color.White "Color should match"
 
       Expect.floatClose
         Accuracy.medium
@@ -449,7 +449,8 @@ let light3DTests =
 
     test "AmbientLight3D.withIntensity overrides intensity" {
       let l =
-        AmbientLight3D.create Color.White |> AmbientLight3D.withIntensity 0.5f
+        AmbientLight3D.create Mibo.Color.White
+        |> AmbientLight3D.withIntensity 0.5f
 
       Expect.floatClose
         Accuracy.medium
@@ -461,7 +462,7 @@ let light3DTests =
     test "DirectionalLight3D.create sets direction and defaults" {
       let l = DirectionalLight3D.create v3a
       Expect.equal l.Direction v3a "Direction should match"
-      Expect.equal l.Color Color.White "Default color should be White"
+      Expect.equal l.Color Mibo.Color.White "Default color should be White"
 
       Expect.floatClose
         Accuracy.medium
@@ -475,11 +476,11 @@ let light3DTests =
     test "DirectionalLight3D with* overrides" {
       let l =
         DirectionalLight3D.create v3a
-        |> DirectionalLight3D.withColor Color.Red
+        |> DirectionalLight3D.withColor Mibo.Color.Red
         |> DirectionalLight3D.withIntensity 0.8f
         |> DirectionalLight3D.withCastsShadows false
 
-      Expect.equal l.Color Color.Red "Color should be overridden"
+      Expect.equal l.Color Mibo.Color.Red "Color should be overridden"
 
       Expect.floatClose
         Accuracy.medium
@@ -493,7 +494,7 @@ let light3DTests =
     test "PointLight3D.create sets position, radius, and defaults" {
       let l = PointLight3D.create(v3a, 50.0f)
       Expect.equal l.Position v3a "Position should match"
-      Expect.equal l.Color Color.White "Default color should be White"
+      Expect.equal l.Color Mibo.Color.White "Default color should be White"
 
       Expect.floatClose
         Accuracy.medium
@@ -520,13 +521,13 @@ let light3DTests =
     test "PointLight3D with* overrides" {
       let l =
         PointLight3D.create(v3a, 50.0f)
-        |> PointLight3D.withColor Color.Blue
+        |> PointLight3D.withColor Mibo.Color.Blue
         |> PointLight3D.withIntensity 0.5f
         |> PointLight3D.withFalloff 1.0f
         |> PointLight3D.withCastsShadows true
         |> PointLight3D.withShadowBias 0.005f
 
-      Expect.equal l.Color Color.Blue "Color should be overridden"
+      Expect.equal l.Color Mibo.Color.Blue "Color should be overridden"
 
       Expect.floatClose
         Accuracy.medium
@@ -556,7 +557,7 @@ let light3DTests =
       let l = SpotLight3D.create(v3a, v3b, 100.0f)
       Expect.equal l.Position v3a "Position should match"
       Expect.equal l.Direction v3b "Direction should match"
-      Expect.equal l.Color Color.White "Default color should be White"
+      Expect.equal l.Color Mibo.Color.White "Default color should be White"
 
       Expect.floatClose
         Accuracy.medium
@@ -589,13 +590,13 @@ let light3DTests =
     test "SpotLight3D with* overrides" {
       let l =
         SpotLight3D.create(v3a, v3b, 100.0f)
-        |> SpotLight3D.withColor Color.Green
+        |> SpotLight3D.withColor Mibo.Color.Green
         |> SpotLight3D.withIntensity 0.7f
         |> SpotLight3D.withCutoff 0.3f 0.6f
         |> SpotLight3D.withCastsShadows true
         |> SpotLight3D.withShadowBias 0.01f
 
-      Expect.equal l.Color Color.Green "Color should be overridden"
+      Expect.equal l.Color Mibo.Color.Green "Color should be overridden"
 
       Expect.floatClose
         Accuracy.medium
@@ -854,7 +855,7 @@ let draw3DDSLTests =
 
     test "Draw3D lighting commands chain correctly" {
       use buf = new RenderBuffer3D()
-      let ambient = AmbientLight3D.create Color.White
+      let ambient = AmbientLight3D.create Mibo.Color.White
       let dirLight = DirectionalLight3D.create v3a
       let ptLight = PointLight3D.create(v3b, 50.0f)
       let spotLight = SpotLight3D.create(v3a, v3b, 100.0f)
@@ -1460,7 +1461,11 @@ let preScanTests =
 
     test "collects lights from buffer" {
       use buffer = new RenderBuffer3D()
-      buffer.Add(Command3D.setAmbientLight(AmbientLight3D.create Color.White))
+
+      buffer.Add(
+        Command3D.setAmbientLight(AmbientLight3D.create Mibo.Color.White)
+      )
+
       buffer.Add(Command3D.addDirectionalLight(DirectionalLight3D.create v3a))
       buffer.Add(Command3D.addPointLight(PointLight3D.create(v3b, 10.0f)))
       buffer.Add(Command3D.addSpotLight(SpotLight3D.create(v3c, v3a, 5.0f)))

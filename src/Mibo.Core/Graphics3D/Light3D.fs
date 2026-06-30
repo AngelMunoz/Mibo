@@ -1,6 +1,19 @@
 namespace Mibo.Elmish.Graphics3D
 
-open Microsoft.Xna.Framework
+open System.Numerics
+open Mibo
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Backend-neutral 3D light definitions.
+//
+// These structs use Mibo.Color (backend-neutral byte RGBA) and System.Numerics
+// vectors. Both raylib and MonoGame previously had byte-for-byte identical
+// copies of this file, differing only in which Color/Vector3 namespace they
+// opened. This is the single shared implementation.
+//
+// Backends convert Mibo.Color → native Color or normalized Vector3/4 at the
+// pipeline upload boundary (inlineable, zero cost).
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>Ambient light configuration for 3D scenes.</summary>
 [<Struct>]

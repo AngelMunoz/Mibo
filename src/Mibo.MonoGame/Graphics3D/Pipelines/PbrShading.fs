@@ -118,7 +118,9 @@ module internal PbrShading =
   let private applyLighting(effect: IEffectLights, lights: LightBuffers) =
     match lights.Ambient with
     | ValueSome a ->
-      effect.AmbientLightColor <- a.Color.ToVector3() * a.Intensity
+      effect.AmbientLightColor <-
+        Conversions.fromNumericsVector3(Mibo.Color.toVector3 a.Color)
+        * a.Intensity
     | ValueNone -> effect.AmbientLightColor <- Vector3.Zero
 
     let dirs = lights.DirLights
@@ -128,7 +130,10 @@ module internal PbrShading =
       let d = dirs[0]
       effect.DirectionalLight0.Enabled <- true
       effect.DirectionalLight0.Direction <- d.Direction
-      effect.DirectionalLight0.DiffuseColor <- d.Color.ToVector3() * d.Intensity
+
+      effect.DirectionalLight0.DiffuseColor <-
+        Conversions.fromNumericsVector3(Mibo.Color.toVector3 d.Color)
+        * d.Intensity
     else
       effect.DirectionalLight0.Enabled <- false
 
@@ -136,7 +141,10 @@ module internal PbrShading =
       let d = dirs[1]
       effect.DirectionalLight1.Enabled <- true
       effect.DirectionalLight1.Direction <- d.Direction
-      effect.DirectionalLight1.DiffuseColor <- d.Color.ToVector3() * d.Intensity
+
+      effect.DirectionalLight1.DiffuseColor <-
+        Conversions.fromNumericsVector3(Mibo.Color.toVector3 d.Color)
+        * d.Intensity
     else
       effect.DirectionalLight1.Enabled <- false
 
@@ -144,7 +152,10 @@ module internal PbrShading =
       let d = dirs[2]
       effect.DirectionalLight2.Enabled <- true
       effect.DirectionalLight2.Direction <- d.Direction
-      effect.DirectionalLight2.DiffuseColor <- d.Color.ToVector3() * d.Intensity
+
+      effect.DirectionalLight2.DiffuseColor <-
+        Conversions.fromNumericsVector3(Mibo.Color.toVector3 d.Color)
+        * d.Intensity
     else
       effect.DirectionalLight2.Enabled <- false
 
@@ -603,7 +614,9 @@ module internal PbrShading =
           | p ->
             let amb =
               match frame.Lights.Ambient with
-              | ValueSome a -> a.Color.ToVector3() * a.Intensity
+              | ValueSome a ->
+                Conversions.fromNumericsVector3(Mibo.Color.toVector3 a.Color)
+                * a.Intensity
               | ValueNone -> Vector3.Zero
 
             p.SetValue amb
@@ -616,7 +629,11 @@ module internal PbrShading =
 
             match effect.Parameters.["DirLightColor"] with
             | null -> ()
-            | pc -> pc.SetValue(d.Color.ToVector3() * d.Intensity)
+            | pc ->
+              pc.SetValue(
+                Conversions.fromNumericsVector3(Mibo.Color.toVector3 d.Color)
+                * d.Intensity
+              )
           | _, _ ->
             match effect.Parameters.["DirLightColor"] with
             | null -> ()

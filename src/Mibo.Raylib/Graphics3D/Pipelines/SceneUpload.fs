@@ -121,8 +121,8 @@ module SceneUpload =
       float32 c.A / 255.0f
     )
 
-  let inline private colorToVec3(c: Color) : Vector3 =
-    Vector3(float32 c.R / 255.0f, float32 c.G / 255.0f, float32 c.B / 255.0f)
+  let inline private colorToVec3(c: Mibo.Color) : Vector3 =
+    Mibo.Color.toVector3 c
 
   /// <summary>
   /// Uploads the full scene-data contract to <paramref name="shader"/> by resolving each uniform

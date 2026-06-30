@@ -5,6 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Properties/AssemblyInfo.fs" />
+    <Compile Include="Color.fs" />
     <Compile Include="RaylibHelpers.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="InputMapper.fs" />
@@ -28,7 +29,6 @@
     <Compile Include="Graphics2D/Lighting/GridOccluders.fs" />
     <Compile Include="Graphics2D/Lighting/LightCommands.fs" />
     <Compile Include="Graphics2D/Lighting/Particle.fs" />
-    <Compile Include="Graphics3D/Light3D.fs" />
     <Compile Include="Graphics3D/Material3D.fs" />
     <Compile Include="Graphics3D/Primitive3D.fs" />
     <Compile Include="Graphics3D/RenderTargetPool3D.fs" />

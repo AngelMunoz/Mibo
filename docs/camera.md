@@ -176,13 +176,17 @@ let camera = Camera3D(
 )
 ```
 
-For third-person or inspection cameras, use `Camera3D.orbit` which returns a `Camera3D` via spherical coordinates:
+For third-person or inspection cameras, build the `Camera3D` from spherical
+coordinates directly. (The MonoGame backend provides a `Camera3D.orbit` helper
+that returns a `Camera3D`; raylib users construct the `Raylib_cs.Camera3D` from
+yaw/pitch/radius manually.)
 
-```fsharp
-let orbitCam = Camera3D.orbit target yaw pitch radius fov aspect near far
-```
-
-> _**NOTE**_: `Camera3D.lookAt` and `Camera3D.orbit` return a `Camera` struct (view + projection matrices). This is useful for ray casting (`Camera3D.screenPointToRay`) but not for rendering. For rendering, create `Camera3D` directly or use `Camera3D.render` to build a config.
+> _**NOTE — backend difference.**_ On MonoGame, `Camera3D` is a view/projection
+> struct and carries `Camera3D.lookAt` / `orbit` / `screenPointToRay` helpers
+> (ray casting, orbit cameras). The raylib backend uses the native
+> `Raylib_cs.Camera3D` for rendering and does **not** carry those helpers — they
+> were dead code and have been removed. For mouse picking on raylib, use raylib's
+> native `Raylib.GetMouseRay`.
 
 ### Using in a view
 
@@ -255,12 +259,16 @@ buffer
 
 ### Mouse picking
 
-Cast a ray from a screen position into the 3D scene:
+Cast a ray from a screen position into the 3D scene. The API differs per backend:
 
 ```fsharp
-let ray = Camera3D.screenPointToRay camera mousePos viewportWidth viewportHeight
+// raylib: use the native helper
+let ray = Raylib.GetMouseRay(mousePos, camera)
 // ray.Position  — origin point
 // ray.Direction — normalized direction into the scene
+
+// MonoGame: use the Camera3D helper
+let ray = Camera3D.screenPointToRay camera mousePos viewportWidth viewportHeight
 ```
 
 ---

@@ -142,6 +142,10 @@ How you opt in with your own shading depends on the backend:
 
 See [3D Rendering Overview](graphics3d/overview.html#escape-hatches) for examples.
 
+For the **full list of uniform names** the `beginEffect` scope uploads (so you
+know exactly what to declare in your shader to inherit the scene), see
+[Shader Uniform Reference](shader-uniforms.html).
+
 ## DisableRuntimeMarshalling and `SetShaderValue` (raylib only)
 
 > This caveat applies **only to the raylib backend**, which uses
