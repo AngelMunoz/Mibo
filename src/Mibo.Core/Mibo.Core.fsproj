@@ -10,7 +10,6 @@
     <Compile Include="Color.fs" />
     <Compile Include="Animation3D.fs" />
     <Compile Include="Elmish.Time.fs" />
-    <Compile Include="Elmish.Time.fs" />
     <Compile Include="Elmish.Commands.fs" />
     <Compile Include="Elmish.System.fs" />
     <Compile Include="Elmish.Subscriptions.fs" />

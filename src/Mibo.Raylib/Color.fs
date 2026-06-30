@@ -32,3 +32,8 @@ module RaylibColorExtensions =
     /// <summary>Implicit conversion to raylib <c>Color</c>.</summary>
     static member op_Implicit(c: Color) : Raylib_cs.Color =
       RaylibColor.toRaylibColor c
+
+  type Raylib_cs.Color with
+
+    /// <summary>Convert this raylib <c>Color</c> to a backend-neutral <see cref="T:Mibo.Color"/>.</summary>
+    member c.ToMiboColor() : Color = RaylibColor.fromRaylibColor c

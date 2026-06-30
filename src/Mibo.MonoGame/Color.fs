@@ -30,3 +30,8 @@ module MonoGameColorExtensions =
     /// <summary>Implicit conversion to MonoGame <c>Color</c>.</summary>
     static member op_Implicit(c: Color) : Microsoft.Xna.Framework.Color =
       MonoGameColor.toMonoGameColor c
+
+  type Microsoft.Xna.Framework.Color with
+
+    /// <summary>Convert this MonoGame <c>Color</c> to a backend-neutral <see cref="T:Mibo.Color"/>.</summary>
+    member c.ToMiboColor() : Color = MonoGameColor.fromMonoGameColor c

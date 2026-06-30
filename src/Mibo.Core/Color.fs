@@ -1,7 +1,5 @@
 namespace Mibo
 
-open System
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Backend-neutral Color type.
 //
@@ -16,9 +14,10 @@ open System
 
 /// <summary>
 /// A 32-bit RGBA color (8 bits per channel). Backend-neutral — converts to
-/// raylib <c>Color</c> or MonoGame <c>Color</c> at the boundary.
+/// raylib <c>Color</c> or MonoGame <c>Color</c> at the boundary. Structural
+/// equality and comparison are provided automatically by the F# record.
 /// </summary>
-[<Struct; CustomEquality; CustomComparison>]
+[<Struct>]
 type Color = {
   /// <summary>Red channel (0-255).</summary>
   R: byte
@@ -28,26 +27,7 @@ type Color = {
   B: byte
   /// <summary>Alpha channel (0-255).</summary>
   A: byte
-} with
-
-  override this.GetHashCode() =
-    HashCode.Combine(this.R, this.G, this.B, this.A)
-
-  override this.Equals(other: obj) =
-    match other with
-    | :? Color as c ->
-      this.R = c.R && this.G = c.G && this.B = c.B && this.A = c.A
-    | _ -> false
-
-  interface IComparable with
-    member this.CompareTo(other: obj) =
-      match other with
-      | :? Color as c ->
-        if this.R <> c.R then compare this.R c.R
-        elif this.G <> c.G then compare this.G c.G
-        elif this.B <> c.B then compare this.B c.B
-        else compare this.A c.A
-      | _ -> -1
+}
 
 /// <summary>Convenience constructors and conversions for <see cref="T:Mibo.Color"/>.</summary>
 module Color =
