@@ -194,7 +194,9 @@ buffer
 - `drawImmediate` (callback receives a `SceneContext` with the graphics device + gathered scene
   data) for raw device access.
 
-See [Shaders](../shaders.html) for loading custom shaders/effects per backend.
+See [Shaders](../shaders.html) for loading custom shaders/effects per backend, and the
+[Shader Uniform Reference](../shader-uniforms.html) for the exact uniform names the
+`beginEffect` scope uploads (declare only what your shader consumes).
 
 ## See also
 

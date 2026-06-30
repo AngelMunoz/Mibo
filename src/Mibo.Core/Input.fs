@@ -314,16 +314,6 @@ type GestureDelta = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
-/// Per-game input service providing reactive observables for hardware input.
-/// </summary>
-/// <remarks>
-/// The contract is defined in <c>Mibo.Core</c>; each backend
-/// (<c>Mibo.Raylib</c>, <c>Mibo.MonoGame</c>) supplies a concrete implementation
-/// that polls its native API and emits backend-neutral delta values.
-/// Implementations are registered into <see cref="T:Mibo.Elmish.GameContext"/>
-/// by the runtime host and accessed via <see cref="M:Mibo.Input.Input.getService"/>.
-/// </remarks>
-/// <summary>
 /// Mouse capture mode for first-person / pointer-lock style input.
 /// </summary>
 [<RequireQualifiedAccess>]
@@ -338,6 +328,16 @@ type MouseCapture =
   /// </summary>
   | Captured
 
+/// <summary>
+/// Per-game input service providing reactive observables for hardware input.
+/// </summary>
+/// <remarks>
+/// The contract is defined in <c>Mibo.Core</c>; each backend
+/// (<c>Mibo.Raylib</c>, <c>Mibo.MonoGame</c>) supplies a concrete implementation
+/// that polls its native API and emits backend-neutral delta values.
+/// Implementations are registered into <see cref="T:Mibo.Elmish.GameContext"/>
+/// by the runtime host and accessed via <see cref="M:Mibo.Input.Input.getService"/>.
+/// </remarks>
 type IInput =
   abstract Poll: unit -> unit
   abstract SetMouseCapture: MouseCapture -> unit

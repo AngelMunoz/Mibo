@@ -259,12 +259,16 @@ buffer
 
 ### Mouse picking
 
-Cast a ray from a screen position into the 3D scene:
+Cast a ray from a screen position into the 3D scene. The API differs per backend:
 
 ```fsharp
-let ray = Camera3D.screenPointToRay camera mousePos viewportWidth viewportHeight
+// raylib: use the native helper
+let ray = Raylib.GetMouseRay(mousePos, camera)
 // ray.Position  — origin point
 // ray.Direction — normalized direction into the scene
+
+// MonoGame: use the Camera3D helper
+let ray = Camera3D.screenPointToRay camera mousePos viewportWidth viewportHeight
 ```
 
 ---
