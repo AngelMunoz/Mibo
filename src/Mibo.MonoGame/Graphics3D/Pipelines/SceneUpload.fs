@@ -206,7 +206,10 @@ module SceneUpload =
     // ── Lights: ambient (single slot) ──
     match lights.Ambient with
     | ValueSome a ->
-      setVec3 (p "ambientColor") (a.Color.ToVector3())
+      setVec3
+        (p "ambientColor")
+        (Conversions.fromNumericsVector3(Mibo.Color.toVector3 a.Color))
+
       setFloat (p "ambientIntensity") a.Intensity
     | ValueNone ->
       setVec3 (p "ambientColor") Vector3.Zero
@@ -220,8 +223,12 @@ module SceneUpload =
       setFloat (p "dirLightIntensity") 0.0f
     | _ ->
       let d = lights.DirLights[0]
-      setVec3 (p "dirLightDir") d.Direction
-      setVec3 (p "dirLightColor") (d.Color.ToVector3())
+      setVec3 (p "dirLightDir") (Conversions.fromNumericsVector3 d.Direction)
+
+      setVec3
+        (p "dirLightColor")
+        (Conversions.fromNumericsVector3(Mibo.Color.toVector3 d.Color))
+
       setFloat (p "dirLightIntensity") d.Intensity
 
     // ── Lights: point (upload active count slots) ──
@@ -236,8 +243,11 @@ module SceneUpload =
 
     for i = 0 to ptCount - 1 do
       let l = lights.PointLights[i]
-      pointPos[i] <- l.Position
-      pointColor[i] <- l.Color.ToVector3()
+      pointPos[i] <- Conversions.fromNumericsVector3 l.Position
+
+      pointColor[i] <-
+        Conversions.fromNumericsVector3(Mibo.Color.toVector3 l.Color)
+
       pointIntensity[i] <- l.Intensity
       pointRadius[i] <- l.Radius
       pointFalloff[i] <- l.Falloff
@@ -267,9 +277,12 @@ module SceneUpload =
 
     for i = 0 to spCount - 1 do
       let l = lights.SpotLights[i]
-      spotPos[i] <- l.Position
-      spotDir[i] <- l.Direction
-      spotColor[i] <- l.Color.ToVector3()
+      spotPos[i] <- Conversions.fromNumericsVector3 l.Position
+      spotDir[i] <- Conversions.fromNumericsVector3 l.Direction
+
+      spotColor[i] <-
+        Conversions.fromNumericsVector3(Mibo.Color.toVector3 l.Color)
+
       spotIntensity[i] <- l.Intensity
       spotRadius[i] <- l.Radius
       spotInner[i] <- l.InnerCutoff

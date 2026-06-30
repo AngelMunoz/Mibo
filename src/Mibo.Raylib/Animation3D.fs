@@ -20,6 +20,8 @@ type Animation3DClips = {
   Clips: ModelAnimation[]
   ClipNames: IReadOnlyDictionary<string, int>
   ClipIndices: ModelAnimation[]
+  /// <summary>Backend-neutral clip metadata for the shared Core state machine.</summary>
+  ClipsInfo: Animation3DClipsInfo
 }
 
 /// <summary>
@@ -60,10 +62,14 @@ module Animation3DClips =
     for i = 0 to anims.Length - 1 do
       dict[anims[i].NameToString()] <- i
 
+    let namesAndCounts =
+      anims |> Array.map(fun a -> (a.NameToString(), a.KeyFrameCount))
+
     {
       Clips = anims
       ClipNames = dict
       ClipIndices = anims
+      ClipsInfo = Animation3DClipsInfo.create namesAndCounts
     }
 
   /// <summary>
@@ -74,13 +80,11 @@ module Animation3DClips =
     (name: string)
     (clips: Animation3DClips)
     : int voption =
-    match clips.ClipNames.TryGetValue(name) with
-    | true, idx -> ValueSome idx
-    | false, _ -> ValueNone
+    Animation3DClipsInfo.tryGetClipIndex name clips.ClipsInfo
 
   /// <summary>Get the list of animation names in this clip set.</summary>
   let names(clips: Animation3DClips) : string[] =
-    clips.ClipNames.Keys |> Seq.toArray
+    Animation3DClipsInfo.names clips.ClipsInfo
 
   /// <summary>Get the number of animation clips.</summary>
   let inline count(clips: Animation3DClips) : int = clips.Clips.Length
@@ -89,6 +93,45 @@ module Animation3DClips =
   let inline isEmpty(clips: Animation3DClips) : bool = clips.Clips.Length = 0
 
 module Animation3DState =
+  // ── Helpers: map between the raylib state and the Core state ───────────────
+  // The playback fields are identical primitive types. We extract a Core state,
+  // delegate the pure clock logic, then write the changed fields back. The Core
+  // functions are fully inlinable, so the JIT sees straight struct copies — no
+  // virtual dispatch, no boxing.
+
+  let inline private toCoreState
+    (s: Animation3DState)
+    : Mibo.Animation.Animation3DState =
+    {
+      Clips = s.Clips.ClipsInfo
+      CurrentClipIndex = s.CurrentClipIndex
+      CurrentFrame = s.CurrentFrame
+      Speed = s.Speed
+      Loop = s.Loop
+      Finished = s.Finished
+      BlendTargetIndex = s.BlendTargetIndex
+      BlendTargetFrame = s.BlendTargetFrame
+      BlendProgress = s.BlendProgress
+      BlendDuration = s.BlendDuration
+    }
+
+  let inline private fromCoreState
+    (s: Animation3DState)
+    (core: Mibo.Animation.Animation3DState)
+    : Animation3DState =
+    {
+      s with
+          CurrentClipIndex = core.CurrentClipIndex
+          CurrentFrame = core.CurrentFrame
+          Speed = core.Speed
+          Loop = core.Loop
+          Finished = core.Finished
+          BlendTargetIndex = core.BlendTargetIndex
+          BlendTargetFrame = core.BlendTargetFrame
+          BlendProgress = core.BlendProgress
+          BlendDuration = core.BlendDuration
+    }
+
   /// <summary>Create a new 3D animation state starting on the specified clip.</summary>
   /// <param name="model">The model to animate. Must be a unique instance per entity.</param>
   /// <param name="clips">The loaded animation clip set.</param>
@@ -100,23 +143,21 @@ module Animation3DState =
     (clipName: string)
     (fps: float32)
     : Animation3DState =
-    let idx =
-      match clips.ClipNames.TryGetValue(clipName) with
-      | true, i -> i
-      | false, _ -> 0
+    let core =
+      Mibo.Animation.Animation3DState.create clips.ClipsInfo clipName fps
 
     {
       Model = model
       Clips = clips
-      CurrentClipIndex = idx
-      CurrentFrame = 0.0f
-      Speed = fps / 60.0f
-      Loop = true
-      Finished = false
-      BlendTargetIndex = -1
-      BlendTargetFrame = 0.0f
-      BlendProgress = 0.0f
-      BlendDuration = 0.0f
+      CurrentClipIndex = core.CurrentClipIndex
+      CurrentFrame = core.CurrentFrame
+      Speed = core.Speed
+      Loop = core.Loop
+      Finished = core.Finished
+      BlendTargetIndex = core.BlendTargetIndex
+      BlendTargetFrame = core.BlendTargetFrame
+      BlendProgress = core.BlendProgress
+      BlendDuration = core.BlendDuration
     }
 
   /// <summary>Create a new 3D animation state starting on the specified clip index.</summary>
@@ -126,106 +167,70 @@ module Animation3DState =
     (clipIndex: int)
     (fps: float32)
     : Animation3DState =
-    let idx =
-      if clipIndex >= 0 && clipIndex < clips.Clips.Length then
+    let core =
+      Mibo.Animation.Animation3DState.createByIndex
+        clips.ClipsInfo
         clipIndex
-      else
-        0
+        fps
 
     {
       Model = model
       Clips = clips
-      CurrentClipIndex = idx
-      CurrentFrame = 0.0f
-      Speed = fps / 60.0f
-      Loop = true
-      Finished = false
-      BlendTargetIndex = -1
-      BlendTargetFrame = 0.0f
-      BlendProgress = 0.0f
-      BlendDuration = 0.0f
+      CurrentClipIndex = core.CurrentClipIndex
+      CurrentFrame = core.CurrentFrame
+      Speed = core.Speed
+      Loop = core.Loop
+      Finished = core.Finished
+      BlendTargetIndex = core.BlendTargetIndex
+      BlendTargetFrame = core.BlendTargetFrame
+      BlendProgress = core.BlendProgress
+      BlendDuration = core.BlendDuration
     }
 
   /// <summary>Play an animation by name. Resets the frame if switching clips.</summary>
   let play (clipName: string) (state: Animation3DState) : Animation3DState =
-    match state.Clips.ClipNames.TryGetValue(clipName) with
-    | false, _ -> state
-    | true, idx when idx = state.CurrentClipIndex && not state.Finished -> state
-    | true, idx ->
-        {
-          state with
-              CurrentClipIndex = idx
-              CurrentFrame = 0.0f
-              Finished = false
-              BlendTargetIndex = -1
-              BlendTargetFrame = 0.0f
-              BlendProgress = 0.0f
-              BlendDuration = 0.0f
-        }
+    let core = Mibo.Animation.Animation3DState.play clipName (toCoreState state)
+    fromCoreState state core
 
   /// <summary>
   /// Play by clip index (zero string allocation).
   /// </summary>
-  /// <remarks>For maximum performance, resolve clip names to indices once at load time.</remarks>
   let playByIndex
     (clipIndex: int)
     (state: Animation3DState)
     : Animation3DState =
-    if clipIndex = state.CurrentClipIndex && not state.Finished then
-      state
-    elif clipIndex < 0 || clipIndex >= state.Clips.Clips.Length then
-      state
-    else
-      {
-        state with
-            CurrentClipIndex = clipIndex
-            CurrentFrame = 0.0f
-            Finished = false
-            BlendTargetIndex = -1
-            BlendTargetFrame = 0.0f
-            BlendProgress = 0.0f
-            BlendDuration = 0.0f
-      }
+    let core =
+      Mibo.Animation.Animation3DState.playByIndex clipIndex (toCoreState state)
+
+    fromCoreState state core
 
   /// <summary>Play animation only if not already playing it.</summary>
   let playIfNot
     (clipName: string)
     (state: Animation3DState)
     : Animation3DState =
-    match state.Clips.ClipNames.TryGetValue(clipName) with
-    | true, idx when idx = state.CurrentClipIndex -> state
-    | true, _ -> play clipName state
-    | false, _ -> state
+    let core =
+      Mibo.Animation.Animation3DState.playIfNot clipName (toCoreState state)
+
+    fromCoreState state core
 
   /// <summary>
   /// Start blending from the current animation to a target animation.
   /// </summary>
-  /// <param name="clipName">The name of the animation to blend towards.</param>
+  /// <param name="clipName">The animation to blend towards.</param>
   /// <param name="duration">The blend duration in seconds.</param>
-  /// <param name="state">The current animation state.</param>
-  /// <remarks>
-  /// During the blend, both animations play simultaneously and their bone transforms
-  /// are interpolated using <c>UpdateModelAnimationEx</c>. Once the blend completes,
-  /// the target animation becomes the current animation.
-  /// </remarks>
   let blendTo
     (clipName: string)
     (duration: float32)
     (state: Animation3DState)
     : Animation3DState =
-    match state.Clips.ClipNames.TryGetValue(clipName) with
-    | false, _ -> state
-    | true, idx when idx = state.CurrentClipIndex && state.BlendTargetIndex < 0 ->
-      state
-    | true, idx when idx = state.BlendTargetIndex -> state
-    | true, idx ->
-        {
-          state with
-              BlendTargetIndex = idx
-              BlendTargetFrame = 0.0f
-              BlendProgress = 0.0f
-              BlendDuration = if duration > 0.0f then duration else 0.001f
-        }
+    let core =
+      Mibo.Animation.Animation3DState.blendTo
+        clipName
+        duration
+        (toCoreState state)
+
+    fromCoreState state core
 
   /// <summary>Start blending to a target animation by clip index.</summary>
   let blendToByIndex
@@ -233,30 +238,22 @@ module Animation3DState =
     (duration: float32)
     (state: Animation3DState)
     : Animation3DState =
-    if clipIndex < 0 || clipIndex >= state.Clips.Clips.Length then
-      state
-    elif clipIndex = state.CurrentClipIndex && state.BlendTargetIndex < 0 then
-      state
-    elif clipIndex = state.BlendTargetIndex then
-      state
-    else
-      {
-        state with
-            BlendTargetIndex = clipIndex
-            BlendTargetFrame = 0.0f
-            BlendProgress = 0.0f
-            BlendDuration = if duration > 0.0f then duration else 0.001f
-      }
+    let core =
+      Mibo.Animation.Animation3DState.blendToByIndex
+        clipIndex
+        duration
+        (toCoreState state)
+
+    fromCoreState state core
 
   /// <summary>Is currently blending between two animations?</summary>
-  let inline isBlending(state: Animation3DState) = state.BlendTargetIndex >= 0
+  let inline isBlending(state: Animation3DState) =
+    Mibo.Animation.Animation3DState.isBlending(toCoreState state)
 
   /// <summary>Force restart the current animation from the beginning.</summary>
-  let restart(state: Animation3DState) : Animation3DState = {
-    state with
-        CurrentFrame = 0.0f
-        Finished = false
-  }
+  let restart(state: Animation3DState) : Animation3DState =
+    let core = Mibo.Animation.Animation3DState.restart(toCoreState state)
+    fromCoreState state core
 
   /// <summary>
   /// Advance the animation by delta time.
@@ -266,71 +263,10 @@ module Animation3DState =
     (deltaSeconds: float32)
     (state: Animation3DState)
     : Animation3DState =
-    if state.Finished && state.BlendTargetIndex < 0 then
-      state
-    elif state.Clips.Clips.Length = 0 then
-      state
-    else
-      let clip = state.Clips.ClipIndices.[state.CurrentClipIndex]
+    let core =
+      Mibo.Animation.Animation3DState.update deltaSeconds (toCoreState state)
 
-      if clip.KeyFrameCount <= 0 then
-        state
-      else
-        let framesToAdvance = deltaSeconds * state.Speed * 60.0f
-        let nextFrame = state.CurrentFrame + framesToAdvance
-
-        let mutable s = state
-
-        if nextFrame >= float32 clip.KeyFrameCount then
-          if state.Loop then
-            s <- {
-              s with
-                  CurrentFrame = nextFrame % float32 clip.KeyFrameCount
-            }
-          else
-            s <- {
-              s with
-                  Finished = true
-                  CurrentFrame = float32(clip.KeyFrameCount - 1)
-            }
-        else
-          s <- { s with CurrentFrame = nextFrame }
-
-        if s.BlendTargetIndex >= 0 then
-          let targetClip = s.Clips.ClipIndices.[s.BlendTargetIndex]
-
-          let nextTargetFrame = s.BlendTargetFrame + framesToAdvance
-
-          let targetFrame =
-            if targetClip.KeyFrameCount > 0 then
-              if nextTargetFrame >= float32 targetClip.KeyFrameCount then
-                nextTargetFrame % float32 targetClip.KeyFrameCount
-              else
-                nextTargetFrame
-            else
-              0.0f
-
-          let newProgress = s.BlendProgress + deltaSeconds / s.BlendDuration
-
-          if newProgress >= 1.0f then
-            {
-              s with
-                  CurrentClipIndex = s.BlendTargetIndex
-                  CurrentFrame = targetFrame
-                  Finished = false
-                  BlendTargetIndex = -1
-                  BlendTargetFrame = 0.0f
-                  BlendProgress = 0.0f
-                  BlendDuration = 0.0f
-            }
-          else
-            {
-              s with
-                  BlendTargetFrame = targetFrame
-                  BlendProgress = newProgress
-            }
-        else
-          s
+    fromCoreState state core
 
   /// <summary>
   /// Apply the current animation frame to the model's bone matrices.
@@ -360,34 +296,37 @@ module Animation3DState =
       Raylib.UpdateModelAnimation(state.Model, clip, state.CurrentFrame)
 
   /// <summary>Is the current animation finished? (always false for looping animations).</summary>
-  let inline isFinished(state: Animation3DState) = state.Finished
+  let inline isFinished(state: Animation3DState) =
+    Mibo.Animation.Animation3DState.isFinished(toCoreState state)
 
   /// <summary>Is currently playing the specified animation?</summary>
   let isPlaying (clipName: string) (state: Animation3DState) =
-    match state.Clips.ClipNames.TryGetValue(clipName) with
-    | true, idx -> idx = state.CurrentClipIndex && not state.Finished
-    | false, _ -> false
+    Mibo.Animation.Animation3DState.isPlaying clipName (toCoreState state)
 
   /// <summary>Get the total duration of the current clip in seconds at the current speed.</summary>
   let inline duration(state: Animation3DState) =
-    let clip = state.Clips.ClipIndices.[state.CurrentClipIndex]
-    float32 clip.KeyFrameCount / (state.Speed * 60.0f)
+    Mibo.Animation.Animation3DState.duration(toCoreState state)
 
   /// <summary>Get the name of the current animation clip.</summary>
   let currentClipName(state: Animation3DState) : string =
-    state.Clips.ClipIndices.[state.CurrentClipIndex].NameToString()
+    Mibo.Animation.Animation3DState.currentClipName(toCoreState state)
 
   let inline withSpeed
     (speed: float32)
     (state: Animation3DState)
     : Animation3DState =
-    { state with Speed = speed }
+    let core =
+      Mibo.Animation.Animation3DState.withSpeed speed (toCoreState state)
+
+    fromCoreState state core
 
   let inline withLoop
     (loop: bool)
     (state: Animation3DState)
     : Animation3DState =
-    { state with Loop = loop }
+    let core = Mibo.Animation.Animation3DState.withLoop loop (toCoreState state)
+
+    fromCoreState state core
 
 /// <summary>
 /// A mesh with skeleton data for GPU skinning.

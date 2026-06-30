@@ -374,10 +374,46 @@ module private InputPolling =
 
     prevKeyboard <- curr
 
-  let pollMouse (prevMouse: byref<MouseState>) (trigger: MouseDelta -> unit) =
+  let pollMouseCapturing
+    (prevMouse: byref<MouseState>)
+    (captureMode: MouseCapture)
+    (game: Microsoft.Xna.Framework.Game)
+    (trigger: MouseDelta -> unit)
+    =
     let curr = Mouse.GetState()
 
-    let posChanged = curr.X <> prevMouse.X || curr.Y <> prevMouse.Y
+    // When captured, compute delta from the last known position and re-center
+    // only when the mouse approaches the window edge. This gives unlimited
+    // mouse movement for FPS-style look without the cursor reaching the edge,
+    // while keeping deltas smooth (re-centering every frame can cause jitter
+    // on WinForms where Mouse.SetPosition is asynchronous via the message pump).
+    let (deltaX, deltaY, reportedX, reportedY, newPrevX, newPrevY) =
+      match captureMode with
+      | MouseCapture.Captured ->
+        let w = game.Window.ClientBounds.Width
+        let h = game.Window.ClientBounds.Height
+        let cx, cy = w / 2, h / 2
+        let margin = 50 // pixels from edge before re-centering
+
+        let dx, dy = curr.X - prevMouse.X, curr.Y - prevMouse.Y
+
+        // Re-center only when near the edge to avoid jitter from async SetPosition
+        let nearEdge =
+          curr.X < margin
+          || curr.X > w - margin
+          || curr.Y < margin
+          || curr.Y > h - margin
+
+        if nearEdge then
+          Mouse.SetPosition(cx, cy)
+          dx, dy, cx, cy, cx, cy
+        else
+          dx, dy, curr.X, curr.Y, curr.X, curr.Y
+      | MouseCapture.Free ->
+        let dx, dy = curr.X - prevMouse.X, curr.Y - prevMouse.Y
+        dx, dy, curr.X, curr.Y, curr.X, curr.Y
+
+    let posChanged = deltaX <> 0 || deltaY <> 0
     let scrollDelta = curr.ScrollWheelValue - prevMouse.ScrollWheelValue
 
     let scrollDeltaH =
@@ -408,9 +444,8 @@ module private InputPolling =
       posChanged || scrollDelta <> 0 || scrollDeltaH <> 0 || hasButtonChange
     then
       trigger {
-        Position = Vector2(float32 curr.X, float32 curr.Y)
-        PositionDelta =
-          Vector2(float32(curr.X - prevMouse.X), float32(curr.Y - prevMouse.Y))
+        Position = Vector2(float32 reportedX, float32 reportedY)
+        PositionDelta = Vector2(float32 deltaX, float32 deltaY)
         Buttons = {
           Pressed = pressed.ToArray()
           Released = released.ToArray()
@@ -419,7 +454,18 @@ module private InputPolling =
         ScrollDeltaV = Vector2(float32 scrollDeltaH, float32 scrollDelta)
       }
 
-    prevMouse <- curr
+    prevMouse <-
+      Microsoft.Xna.Framework.Input.MouseState(
+        newPrevX,
+        newPrevY,
+        curr.ScrollWheelValue,
+        curr.LeftButton,
+        curr.MiddleButton,
+        curr.RightButton,
+        curr.XButton1,
+        curr.XButton2,
+        curr.HorizontalScrollWheelValue
+      )
 
   let pollTouch(trigger: TouchDelta -> unit) =
     // MonoGame's TouchPanel exposes raw touch points. High-level gesture
@@ -583,7 +629,7 @@ module private InputPolling =
 
 module Input =
 
-  let internal create(_game: Microsoft.Xna.Framework.Game) : IInput =
+  let internal create(game: Microsoft.Xna.Framework.Game) : IInput =
     let keyboardDelta = Event<KeyboardDelta>()
     let mouseDelta = Event<MouseDelta>()
     let touchDelta = Event<TouchDelta>()
@@ -596,6 +642,7 @@ module Input =
     let mutable prevMouse = Mouse.GetState()
     let prevConnected = Array.create 4 false
     let prevGamepad = Array.init 4 (fun i -> GamePad.GetState(i))
+    let mutable mouseCapture = MouseCapture.Free
 
     { new IInput with
         member _.Poll() =
@@ -605,7 +652,12 @@ module Input =
             releasedKeysBuf
             keyboardDelta.Trigger
 
-          InputPolling.pollMouse &prevMouse mouseDelta.Trigger
+          InputPolling.pollMouseCapturing
+            &prevMouse
+            mouseCapture
+            game
+            mouseDelta.Trigger
+
           InputPolling.pollTouch touchDelta.Trigger
 
           InputPolling.pollGamepad
@@ -619,6 +671,8 @@ module Input =
         member _.TouchDelta = touchDelta.Publish
         member _.GamepadDelta = gamepadDelta.Publish
         member _.GamepadConnection = gamepadConnection.Publish
+
+        member _.SetMouseCapture(mode) = mouseCapture <- mode
 
         // MonoGame has no built-in high-level gesture detection matching the
         // Core GestureKind set. Gestures are a known 80/20 gap — this stream

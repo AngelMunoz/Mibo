@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <Compile Include="GameContext.fs" />
+    <Compile Include="Color.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="InputMapper.fs" />
     <Compile Include="Animation3D.fs" />
@@ -18,7 +19,6 @@
     <Compile Include="Culling.fs" />
     <Compile Include="Graphics2D/ShaderLoader.fs" />
     <Compile Include="Graphics3D/Conversions.fs" />
-    <Compile Include="Graphics3D/Light3D.fs" />
     <Compile Include="Graphics3D/Material3D.fs" />
     <Compile Include="Graphics3D/Primitive3D.fs" />
     <Compile Include="Graphics3D/SceneContext.fs" />

@@ -317,7 +317,10 @@ module internal PbrUniforms =
     // Ambient (single slot; zeroes when absent).
     match lights.Ambient with
     | ValueSome a ->
-      setVec3 ambient.Color (a.Color.ToVector3())
+      setVec3
+        ambient.Color
+        (Conversions.fromNumericsVector3(Mibo.Color.toVector3 a.Color))
+
       setFloat ambient.Intensity a.Intensity
     | ValueNone ->
       setVec3 ambient.Color Vector3.Zero
@@ -331,8 +334,12 @@ module internal PbrUniforms =
       setFloat dir.Intensity 0.0f
     | _ ->
       let d = lights.DirLights[0]
-      setVec3 dir.Dir d.Direction
-      setVec3 dir.Color (d.Color.ToVector3())
+      setVec3 dir.Dir (Conversions.fromNumericsVector3 d.Direction)
+
+      setVec3
+        dir.Color
+        (Conversions.fromNumericsVector3(Mibo.Color.toVector3 d.Color))
+
       setFloat dir.Intensity d.Intensity
 
     // Point lights — upload active count slots.
@@ -341,8 +348,11 @@ module internal PbrUniforms =
 
     for i = 0 to ptCount - 1 do
       let l = lights.PointLights[i]
-      pointLightPosScratch[i] <- l.Position
-      pointLightColorScratch[i] <- l.Color.ToVector3()
+      pointLightPosScratch[i] <- Conversions.fromNumericsVector3 l.Position
+
+      pointLightColorScratch[i] <-
+        Conversions.fromNumericsVector3(Mibo.Color.toVector3 l.Color)
+
       pointLightIntensityScratch[i] <- l.Intensity
       pointLightRadiusScratch[i] <- l.Radius
       pointLightFalloffScratch[i] <- l.Falloff
@@ -363,9 +373,12 @@ module internal PbrUniforms =
 
     for i = 0 to spCount - 1 do
       let l = lights.SpotLights[i]
-      spotLightPosScratch[i] <- l.Position
-      spotLightDirScratch[i] <- l.Direction
-      spotLightColorScratch[i] <- l.Color.ToVector3()
+      spotLightPosScratch[i] <- Conversions.fromNumericsVector3 l.Position
+      spotLightDirScratch[i] <- Conversions.fromNumericsVector3 l.Direction
+
+      spotLightColorScratch[i] <-
+        Conversions.fromNumericsVector3(Mibo.Color.toVector3 l.Color)
+
       spotLightIntensityScratch[i] <- l.Intensity
       spotLightRadiusScratch[i] <- l.Radius
       spotLightInnerScratch[i] <- l.InnerCutoff

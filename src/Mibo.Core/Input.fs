@@ -323,8 +323,24 @@ type GestureDelta = {
 /// Implementations are registered into <see cref="T:Mibo.Elmish.GameContext"/>
 /// by the runtime host and accessed via <see cref="M:Mibo.Input.Input.getService"/>.
 /// </remarks>
+/// <summary>
+/// Mouse capture mode for first-person / pointer-lock style input.
+/// </summary>
+[<RequireQualifiedAccess>]
+type MouseCapture =
+  /// <summary>Normal cursor behavior — the OS cursor moves freely within the window.</summary>
+  | Free
+  /// <summary>
+  /// The cursor is hidden and confined; mouse movement produces deltas that
+  /// allow unlimited rotation (e.g. first-person camera look). The backend
+  /// implements this via its native mechanism (raylib's DisableCursor,
+  /// MonoGame's re-center-after-poll).
+  /// </summary>
+  | Captured
+
 type IInput =
   abstract Poll: unit -> unit
+  abstract SetMouseCapture: MouseCapture -> unit
   abstract KeyboardDelta: IObservable<KeyboardDelta>
   abstract MouseDelta: IObservable<MouseDelta>
   abstract TouchDelta: IObservable<TouchDelta>
