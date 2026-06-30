@@ -430,8 +430,18 @@ module Animation3DState =
     let core =
       Mibo.Animation.Animation3DState.create clips.ClipsInfo clipName fps
 
-    fromCoreState Unchecked.defaultof<_> core
-    |> fun s -> { s with Clips = clips }
+    {
+      Clips = clips
+      CurrentClipIndex = core.CurrentClipIndex
+      CurrentFrame = core.CurrentFrame
+      Speed = core.Speed
+      Loop = core.Loop
+      Finished = core.Finished
+      BlendTargetIndex = core.BlendTargetIndex
+      BlendTargetFrame = core.BlendTargetFrame
+      BlendProgress = core.BlendProgress
+      BlendDuration = core.BlendDuration
+    }
 
   /// <summary>Create a new 3D animation state starting on the specified clip index.</summary>
   let createByIndex
@@ -445,8 +455,18 @@ module Animation3DState =
         clipIndex
         fps
 
-    fromCoreState Unchecked.defaultof<_> core
-    |> fun s -> { s with Clips = clips }
+    {
+      Clips = clips
+      CurrentClipIndex = core.CurrentClipIndex
+      CurrentFrame = core.CurrentFrame
+      Speed = core.Speed
+      Loop = core.Loop
+      Finished = core.Finished
+      BlendTargetIndex = core.BlendTargetIndex
+      BlendTargetFrame = core.BlendTargetFrame
+      BlendProgress = core.BlendProgress
+      BlendDuration = core.BlendDuration
+    }
 
   /// <summary>Play an animation by name. Resets the frame if switching clips.</summary>
   let play (clipName: string) (state: Animation3DState) : Animation3DState =

@@ -389,7 +389,7 @@ module private InputPolling =
     // on WinForms where Mouse.SetPosition is asynchronous via the message pump).
     let (deltaX, deltaY, reportedX, reportedY, newPrevX, newPrevY) =
       match captureMode with
-      | MouseCapture.Captured ->
+      | MouseCapture.Captured when game.IsActive ->
         let w = game.Window.ClientBounds.Width
         let h = game.Window.ClientBounds.Height
         let cx, cy = w / 2, h / 2
@@ -409,7 +409,7 @@ module private InputPolling =
           dx, dy, cx, cy, cx, cy
         else
           dx, dy, curr.X, curr.Y, curr.X, curr.Y
-      | MouseCapture.Free ->
+      | _ ->
         let dx, dy = curr.X - prevMouse.X, curr.Y - prevMouse.Y
         dx, dy, curr.X, curr.Y, curr.X, curr.Y
 
