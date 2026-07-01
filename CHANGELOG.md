@@ -41,9 +41,6 @@
 - **Raylib: `RaylibProgram.withInputMapper`** — the raylib-specific input-mapper builder (decoupled from the shared Core `Program`).
 - **Raylib / MonoGame 3D:** `Draw3D.modelWith` and `modelWithPerMesh` draw a model with your own `Material3D` — the whole model, or per sub-mesh — instead of the material baked into the file. One call covers any override shape, so you don't reach for a different API per property. MonoGame also gains `animatedModelWith` / `animatedModelWithPerMesh` for skinned models.
 - **Docs:** multi-backend documentation. The site now covers the Core, Raylib, and MonoGame packages: the rendering, shaders, assets, input, and lighting pages show both backends side-by-side where their APIs diverge (the pipeline types, GLSL vs HLSL effects, loose-file vs content-pipeline assets, and viewport coordinate conventions). The original raylib-only docs are preserved as a frozen archive for the prior release.
-
-### Changed
-
 - **Raylib 3D — Breaking:** `IRenderPipeline3D.Execute` gains a `GameTime` argument (surfaced to shaders as the `time` uniform and passed to `drawImmediate` callbacks). Custom raylib pipelines must add the parameter. Matches the MonoGame backend.
 - **Raylib 3D — Breaking (behavioral):** `Draw3D.drawImmediate` callback changed from `unit -> unit` to `SceneContext -> unit`. The callback now receives the frame's gathered scene (camera, view/projection, lights, shadows, `time`) instead of no data.
 - **Raylib — Breaking:** `Mibo.Elmish.Camera` is now a `[<Struct>]` (was a reference record). It flows through the view function every frame, so stack-allocating it removes per-frame Gen0 pressure. Code that held it by reference or relied on reference-identity semantics needs review.
