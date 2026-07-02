@@ -106,26 +106,27 @@ type internal PbrResources() =
   // seen. A raw array (not ResizeArray) so we can pass it directly to CopyAbsoluteBoneTransformsTo.
   member val BoneTransforms = Array.zeroCreate<Matrix> 64 with get, set
 
-  /// <summary>User effects that have opted into instancing by exposing an <c>Instanced</c>
-  /// technique (the convention ForwardPbr.fx and Instanced.fx already use). Membership is probed
-  /// once per effect on first instanced draw inside a <c>beginEffect</c> scope; an effect that
-  /// doesn't expose the technique is absent and instanced draws fall back to the PBR instanced
-  /// path. See docs/graphics3d/instancing.md.</summary>
-  member val InstanceCapableEffects: System.Collections.Generic.HashSet<Effect> =
-    System.Collections.Generic.HashSet<Effect>() with get, set
+  /// <summary>Per-effect memoization of the <c>Instanced</c>-technique probe (the convention
+  /// ForwardPbr.fx and Instanced.fx already use). Maps every effect seen on first instanced draw
+  /// inside a <c>beginEffect</c> scope to whether it exposes the technique, so neither outcome is
+  /// re-probed. An effect that doesn't expose it is absent and instanced draws fall back to the PBR
+  /// instanced path. See docs/graphics3d/instancing.md.</summary>
+  member val InstanceCapableEffects: System.Collections.Generic.Dictionary<
+    Effect,
+    bool
+   > = System.Collections.Generic.Dictionary<Effect, bool>() with get, set
 
   /// <summary>True iff <paramref name="effect"/> has been seen to expose an <c>Instanced</c>
-  /// technique. Probes + memoizes on first lookup; returns false without probing again.</summary>
+  /// technique. Probes + memoizes on first lookup (both outcomes); subsequent lookups are a
+  /// dictionary read, never a re-probe.</summary>
   member this.IsInstanceCapable(effect: Effect) : bool =
-    if this.InstanceCapableEffects.Contains(effect) then
-      true
-    else
+    match this.InstanceCapableEffects.TryGetValue(effect) with
+    | true, capable -> capable
+    | false, _ ->
       let capable =
         not(obj.ReferenceEquals(effect.Techniques["Instanced"], null))
 
-      if capable then
-        this.InstanceCapableEffects.Add(effect) |> ignore
-
+      this.InstanceCapableEffects[effect] <- capable
       capable
 
 /// <summary>The extracted PBR draw handlers + the user-effect scope shading path.</summary>
