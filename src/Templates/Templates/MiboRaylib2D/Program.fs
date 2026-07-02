@@ -20,14 +20,14 @@ type GameAction =
 
 let inputMap =
   InputMap.empty
-  |> InputMap.key MoveLeft KeyboardKey.Left
-  |> InputMap.key MoveLeft KeyboardKey.A
-  |> InputMap.key MoveRight KeyboardKey.Right
-  |> InputMap.key MoveRight KeyboardKey.D
-  |> InputMap.key MoveUp KeyboardKey.Up
-  |> InputMap.key MoveUp KeyboardKey.W
-  |> InputMap.key MoveDown KeyboardKey.Down
-  |> InputMap.key MoveDown KeyboardKey.S
+  |> InputMap.key MoveLeft KeyCode.Left
+  |> InputMap.key MoveLeft KeyCode.A
+  |> InputMap.key MoveRight KeyCode.Right
+  |> InputMap.key MoveRight KeyCode.D
+  |> InputMap.key MoveUp KeyCode.Up
+  |> InputMap.key MoveUp KeyCode.W
+  |> InputMap.key MoveDown KeyCode.Down
+  |> InputMap.key MoveDown KeyCode.S
 
 // ─────────────────────────────────────────────────────────────
 // Model

@@ -1,11 +1,8 @@
-module MiboRaylib3D.Program
+module MiboMono2D
 
-open System
-open System.Numerics
-open Raylib_cs
+open Microsoft.Xna.Framework
 open Mibo.Elmish
-open Mibo.Elmish.Graphics3D
-open Mibo.Elmish.Graphics3D.Pipelines
+open Mibo.Elmish.Graphics2D
 open Mibo.Input
 
 // ─────────────────────────────────────────────────────────────
@@ -14,8 +11,6 @@ open Mibo.Input
 
 [<Struct>]
 type GameAction =
-  | MoveForward
-  | MoveBackward
   | MoveLeft
   | MoveRight
   | MoveUp
@@ -23,24 +18,22 @@ type GameAction =
 
 let inputMap =
   InputMap.empty
-  |> InputMap.key MoveForward KeyCode.W
-  |> InputMap.key MoveForward KeyCode.Up
-  |> InputMap.key MoveBackward KeyCode.S
-  |> InputMap.key MoveBackward KeyCode.Down
-  |> InputMap.key MoveLeft KeyCode.A
   |> InputMap.key MoveLeft KeyCode.Left
-  |> InputMap.key MoveRight KeyCode.D
+  |> InputMap.key MoveLeft KeyCode.A
   |> InputMap.key MoveRight KeyCode.Right
-  |> InputMap.key MoveUp KeyCode.Space
-  |> InputMap.key MoveDown KeyCode.LeftShift
+  |> InputMap.key MoveRight KeyCode.D
+  |> InputMap.key MoveUp KeyCode.Up
+  |> InputMap.key MoveUp KeyCode.W
+  |> InputMap.key MoveDown KeyCode.Down
+  |> InputMap.key MoveDown KeyCode.S
 
 // ─────────────────────────────────────────────────────────────
 // Model
 // ─────────────────────────────────────────────────────────────
-[<Struct>]
+
 type Model = {
-  Position: Vector3
-  Velocity: Vector3
+  Position: Vector2
+  Velocity: Vector2
   Input: ActionState<GameAction>
 }
 
@@ -59,8 +52,8 @@ type Msg =
 
 let init(_ctx: GameContext) : struct (Model * Cmd<Msg>) =
   let model = {
-    Position = Vector3.Zero
-    Velocity = Vector3(2.f, 1.5f, 2.f)
+    Position = Vector2(400.f, 300.f)
+    Velocity = Vector2(200.f, 150.f)
     Input = ActionState.empty
   }
 
@@ -70,57 +63,51 @@ let init(_ctx: GameContext) : struct (Model * Cmd<Msg>) =
 // Update
 // ─────────────────────────────────────────────────────────────
 
-let moveSpeed = 5.f
+let speed = 200.f
 
 let computeManualVelocity(input: ActionState<GameAction>) =
-  let dx =
-    if input.Held.Contains MoveLeft then -moveSpeed
-    elif input.Held.Contains MoveRight then moveSpeed
-    else 0.f
-
-  let dy =
-    if input.Held.Contains MoveUp then moveSpeed
-    elif input.Held.Contains MoveDown then -moveSpeed
-    else 0.f
-
-  let dz =
-    if input.Held.Contains MoveForward then -moveSpeed
-    elif input.Held.Contains MoveBackward then moveSpeed
-    else 0.f
-
-  Vector3(dx, dy, dz)
-
-let bounce (bounds: float32) (position: Vector3) (velocity: Vector3) =
-
   let x =
-    if position.X < -bounds || position.X > bounds then
+    if input.Held.Contains MoveLeft then -speed
+    elif input.Held.Contains MoveRight then speed
+    else 0.f
+
+  let y =
+    if input.Held.Contains MoveUp then -speed
+    elif input.Held.Contains MoveDown then speed
+    else 0.f
+
+  Vector2(x, y)
+
+let bounce
+  (min: Vector2)
+  (max: Vector2)
+  (position: Vector2)
+  (velocity: Vector2)
+  =
+  let x =
+    if position.X < min.X || position.X > max.X then
       -velocity.X
     else
       velocity.X
 
   let y =
-    if position.Y < -bounds || position.Y > bounds then
+    if position.Y < min.Y || position.Y > max.Y then
       -velocity.Y
     else
       velocity.Y
 
-  let z =
-    if position.Z < -bounds || position.Z > bounds then
-      -velocity.Z
-    else
-      velocity.Z
-
-  Vector3(x, y, z)
+  Vector2(x, y)
 
 let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
   match msg with
-  | InputChanged input -> struct ({ model with Input = input }, Cmd.none)
-
+  | InputChanged input -> { model with Input = input }, Cmd.none
   | Tick gt ->
     let dt = float32 gt.ElapsedGameTime.TotalSeconds
     let manual = computeManualVelocity model.Input
     let position = model.Position + (model.Velocity * dt) + (manual * dt)
-    let velocity = bounce 5.f position model.Velocity
+
+    let velocity =
+      bounce Vector2.Zero (Vector2(768.f, 568.f)) position model.Velocity
 
     {
       model with
@@ -133,65 +120,28 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 // View
 // ─────────────────────────────────────────────────────────────
 
-let view (_ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
-  let camera =
-    Camera3D(
-      Vector3(12.f, 12.f, 12.f),
-      Vector3.Zero,
-      Vector3.UnitY,
-      55.0f,
-      CameraProjection.Perspective
-    )
+let view (_ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
+  let rect = Rectangle(int model.Position.X, int model.Position.Y, 32, 32)
 
-  let transform =
-    Raymath.MatrixTranslate(
-      model.Position.X,
-      model.Position.Y,
-      model.Position.Z
-    )
-
-  let material = Material3D.colored Color.Red
-
-  buffer
-  |> Draw3D.beginCameraWith(
-    Camera3D.render camera |> Camera3D.withClear Color.RayWhite
-  )
-  |> Draw3D.setAmbientLight {
-    Color = Mibo.Color.White
-    Intensity = 0.5f
-  }
-  |> Draw3D.addDirectionalLight {
-    Direction = Vector3(1.f, -1.f, 1.f)
-    Color = Mibo.Color.White
-    Intensity = 1.f
-    CastsShadows = false
-  }
-  |> Draw3D.drawMesh Primitive3D.cube transform material
-  |> Draw3D.endCamera
-  |> Draw3D.drop
+  buffer |> Draw.fillRect (0<RenderLayer>, Color.Red) rect |> Draw.drop
 
 // ─────────────────────────────────────────────────────────────
 // Program
 // ─────────────────────────────────────────────────────────────
 
-[<EntryPoint>]
-let main _ =
-  let program =
-    Program.mkProgram init update
-    |> Program.withConfig(fun cfg -> {
-      cfg with
-          Width = 800
-          Height = 600
-          Title = "Mibo Raylib 3D Game"
-          TargetFPS = 60
-    })
-    |> Program.withInput
-    |> Program.withSubscription(fun ctx _model ->
-      InputMapper.subscribeStatic inputMap InputChanged ctx)
-    |> Program.withTick Tick
-    |> Program.withRenderer(fun () ->
-      Renderer3D.create (ForwardPbrPipeline()) view)
-
-  let game = new RaylibGame<Model, Msg>(program)
-  game.Run()
-  0
+/// Builds the full Mibo program. The thin client projects
+/// (DesktopGL, WindowsDX) call this and pass the result to MiboGame.
+let create() : Program<Model, Msg> =
+  Program.mkProgram init update
+  |> Program.withConfig(fun cfg -> {
+    cfg with
+        Width = 800
+        Height = 600
+        Title = "Mibo MonoGame 2D Game"
+        TargetFPS = 60
+  })
+  |> Program.withInput
+  |> Program.withSubscription(fun ctx _model ->
+    InputMapper.subscribeStatic inputMap InputChanged ctx)
+  |> Program.withTick Tick
+  |> Program.withRenderer(fun () -> Renderer2D.create view)

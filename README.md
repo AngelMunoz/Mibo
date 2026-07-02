@@ -1,9 +1,9 @@
-# Mibo.Raylib
+# Mibo
 
 > Install the templates:
 >
 > ```bash
-> dotnet new install Mibo.Raylib.Templates
+> dotnet new install Mibo.Templates
 > dotnet new mibo-2d -o MyGame
 > cd MyGame
 > dotnet run
@@ -11,9 +11,9 @@
 
 > **NOTE for ADVENTURERS:** raylib is a programming library to enjoy videogames programming; no fancy interface, no visual helpers, no debug button... just coding in the most pure spartan-programmers way.
 
-Following that spirit, Mibo.Raylib keeps it lean, just F# and the Elmish loop with a handful of commodities to get out of your way and let you enjoy the craft.
+Following that spirit, Mibo keeps it lean, just F# and the Elmish loop with a handful of commodities to get out of your way and let you enjoy the craft.
 
-Mibo.Raylib is a port of my first attempt at this [Mibo_monogame](https://github.com/AngelMunoz/Mibo_monogame) micro-framework from **MonoGame** to **raylib-cs**, designed to allow **F#** developers to write games using familiar Elmish patterns for all kinds of game genres and sizes.
+Mibo is an Elmish-based **F#** game framework with two interchangeable backends — **raylib-cs** and **MonoGame** (DesktopGL/OpenGL and WindowsDX/DirectX) — designed to allow developers to write games using familiar MVU patterns for all kinds of game genres and sizes.
 
 Mibo aims to solve 80/20 of use cases for enabling developers to focus on game logic rather than boilerplate code, providing guidelines and architecture for structuring game code, handling input, rendering, asset management, and time management among others.
 
@@ -82,15 +82,16 @@ You'll find examples of
 
 ## License
 
-Mibo.Raylib is distributed under the [zlib/libpng License](LICENSE).
+Mibo is distributed under the [zlib/libpng License](LICENSE).
 
 ## Built on
 
-Mibo.Raylib is built on top of:
+Mibo is built on top of:
 
-- [raylib](https://github.com/raysan5/raylib) — the cross-platform graphics library that powers the rendering, input, and audio layers
+- [raylib](https://github.com/raysan5/raylib) — the cross-platform graphics library that powers the raylib backend's rendering, input, and audio layers
 - [raylib-cs](https://github.com/raylib-cs/raylib-cs) — the C# bindings that make raylib accessible from .NET
+- [MonoGame](https://github.com/MonoGame/MonoGame) — the cross-platform framework that powers the MonoGame backend (DesktopGL/OpenGL and WindowsDX/DirectX)
 
 ## Feedback
 
-Issues and PRs are very welcome. If you're interested in using F# for game development beyond simple 2D games, Mibo.Raylib aims to be a practical, batteries-included framework that scales with your ambition.
+Issues and PRs are very welcome. If you're interested in using F# for game development beyond simple 2D games, Mibo aims to be a practical, batteries-included framework that scales with your ambition.

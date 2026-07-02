@@ -3,7 +3,7 @@
   "author": "Mibo Authors",
   "classifications": ["Game", "Mibo", "Raylib", "3D"],
   "name": "Mibo Raylib 3D Game",
-  "identity": "Mibo.Raylib.Templates.3D",
+  "identity": "Mibo.Templates.Raylib.3D",
   "shortName": "mibo-3d",
   "tags": {
     "language": "F#",

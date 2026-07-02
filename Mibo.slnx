@@ -5,6 +5,6 @@
     <Project Path="src/Mibo.MonoGame/Mibo.MonoGame.fsproj" />
     <Project Path="src/Mibo.Raylib/Mibo.Raylib.fsproj" />
     <Project Path="src/Mibo.Raylib.Tests/Mibo.Raylib.Tests.fsproj" />
-    <Project Path="src/Templates/Mibo.Raylib.Templates.csproj" />
+    <Project Path="src/Templates/Mibo.Templates.csproj" />
   </Folder>
 </Solution>
