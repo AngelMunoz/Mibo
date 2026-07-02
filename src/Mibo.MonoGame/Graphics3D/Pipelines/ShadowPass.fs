@@ -941,6 +941,7 @@ module internal ShadowPass =
                 UVOffsets = res.UVOffsetsScratch
                 ActiveCasterCount = active
                 TexelSize = texel
+                Biases = res.BiasesScratch
                 DirLightCastsShadows = hasDirCaster
                 PointLightShadowIdx = res.PointShadowSlots
                 SpotLightShadowIdx = res.SpotShadowSlots

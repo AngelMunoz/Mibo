@@ -41,11 +41,13 @@ open Mibo.Elmish.Graphics3D
 /// <para>
 /// <b>Shadows are opt-in by declaration.</b> A user effect that wants shadow sampling declares the
 /// shadow uniforms (<c>shadowViewProjs</c>, <c>shadowUVOffsets</c>, <c>shadowTexelSize</c>,
-/// <c>dirLightCastsShadows</c>, <c>pointLightShadowIdx</c>, <c>spotLightShadowIdx</c>) and a
-/// <c>texture5</c> sampler; when the frame's shadow pass produced an atlas, those uniforms are
-/// uploaded by name and the atlas is bound to sampler slot 5 (PointClamp). An effect that declares
-/// none of them renders unshadowed — no cost, no sampling. When the frame has no shadow-casting
-/// light, <c>dirLightCastsShadows</c> is set to 0 and nothing else shadow-related is uploaded.
+/// <c>shadowBiases</c>, <c>dirLightCastsShadows</c>, <c>pointLightShadowIdx</c>,
+/// <c>spotLightShadowIdx</c>) and a
+/// <c>shadowAtlas</c> sampler (declared as <c>sampler2D shadowAtlas : register(s5)</c>); when the
+/// frame's shadow pass produced an atlas, those uniforms are uploaded by name and the atlas is bound
+/// to the sampler at slot 5 (PointClamp). An effect that declares none of them renders unshadowed —
+/// no cost, no sampling. When the frame has no shadow-casting light,
+/// <c>dirLightCastsShadows</c> is set to 0 and nothing else shadow-related is uploaded.
 /// </para>
 /// </remarks>
 module SceneUpload =
@@ -96,8 +98,8 @@ module SceneUpload =
     if not(obj.ReferenceEquals(p, null)) then
       p.SetValue v
 
-  /// <summary>Binds the shadow atlas to a named sampler texture param (texture5 slot).</summary>
-  let inline private setTex5 (pp: EffectParameter) (tex: Texture2D) =
+  /// <summary>Binds the shadow atlas to the effect's named shadow sampler param.</summary>
+  let inline private setShadowAtlas (pp: EffectParameter) (tex: Texture2D) =
     if not(obj.ReferenceEquals(pp, null)) then
       pp.SetValue tex
 
@@ -315,10 +317,13 @@ module SceneUpload =
       setMatrixArray (p "shadowViewProjs") s.ViewProjs
       setVec4Array (p "shadowUVOffsets") s.UVOffsets
       setVec2 (p "shadowTexelSize") (Vector2(s.TexelSize, s.TexelSize))
-      // Bind the atlas to the effect's own sampler param (texture5) — like the material maps, the
-      // sampler is read from the effect's parameters at Apply(), not gd.Textures[]. Also set slot 5
-      // so an effect that samples the atlas via the fixed texture slot (not a named param) works.
-      setTex5 (p "texture5") s.Atlas
+      setFloatArray (p "shadowBiases") s.Biases
+      // Bind the atlas to the effect's shadow sampler param. The atlas sampler is named
+      // "shadowAtlas" in the convention ForwardPbr.fx uses (sampler2D shadowAtlas : register(s5))
+      // — NOT "texture5": mgfxc exposes the sampler under its HLSL name, so resolving "texture5"
+      // returns null. The slot-5 bind below is a fallback for effects that don't expose a named
+      // param (and makes the register(s5) in the shader pick it up regardless).
+      setShadowAtlas (p "shadowAtlas") s.Atlas
       gd.Textures[5] <- s.Atlas
       gd.SamplerStates[5] <- SamplerState.PointClamp
     | ValueNone -> setInt (p "dirLightCastsShadows") 0

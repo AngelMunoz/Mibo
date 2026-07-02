@@ -106,6 +106,29 @@ type internal PbrResources() =
   // seen. A raw array (not ResizeArray) so we can pass it directly to CopyAbsoluteBoneTransformsTo.
   member val BoneTransforms = Array.zeroCreate<Matrix> 64 with get, set
 
+  /// <summary>Per-effect memoization of the <c>Instanced</c>-technique probe (the convention
+  /// ForwardPbr.fx and Instanced.fx already use). Maps every effect seen on first instanced draw
+  /// inside a <c>beginEffect</c> scope to whether it exposes the technique, so neither outcome is
+  /// re-probed. An effect that doesn't expose it is absent and instanced draws fall back to the PBR
+  /// instanced path. See docs/graphics3d/instancing.md.</summary>
+  member val InstanceCapableEffects: System.Collections.Generic.Dictionary<
+    Effect,
+    bool
+   > = System.Collections.Generic.Dictionary<Effect, bool>() with get, set
+
+  /// <summary>True iff <paramref name="effect"/> has been seen to expose an <c>Instanced</c>
+  /// technique. Probes + memoizes on first lookup (both outcomes); subsequent lookups are a
+  /// dictionary read, never a re-probe.</summary>
+  member this.IsInstanceCapable(effect: Effect) : bool =
+    match this.InstanceCapableEffects.TryGetValue(effect) with
+    | true, capable -> capable
+    | false, _ ->
+      let capable =
+        not(obj.ReferenceEquals(effect.Techniques["Instanced"], null))
+
+      this.InstanceCapableEffects[effect] <- capable
+      capable
+
 /// <summary>The extracted PBR draw handlers + the user-effect scope shading path.</summary>
 module internal PbrShading =
 
@@ -479,28 +502,29 @@ module internal PbrShading =
       mesh.Draw(gd, effect)
 
   /// <summary>
-  /// Handles <c>DrawInstanced</c>: native hardware instancing via two vertex streams (mesh + per-
-  /// instance VertexInstanceWorld rows). Prefers the PBR Instanced technique; falls back to minimal
-  /// Instanced.fx (flat albedo + 1 directional) when the PBR effect can't load.
+  /// Stages per-instance world matrices into the reusable <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/>
+  /// buffer (growing it on demand), uploads them, and binds the two-stream vertex layout (mesh on
+  /// stream 0, per-instance rows on stream 1). Returns the clamped instance count (0 when there is
+  /// nothing to draw) and the instance vertex buffer. Shared by the PBR instanced path and the
+  /// user-effect instanced path so the two-stream bind lives in one place.
   /// </summary>
-  let drawInstanced
+  /// <remarks>Does not bind indices or draw — the caller selects its effect/technique, uploads
+  /// scene data, and issues <c>DrawInstancedPrimitives</c>.</remarks>
+  let stageInstanceData
     (
       gd: GraphicsDevice,
-      state: byref<ForwardState>,
-      frame: byref<ForwardFrame>,
       res: PbrResources,
       mesh: PrimitiveMesh,
       transforms: Matrix[],
-      material: Material3D,
       instanceCount: int
-    ) =
+    ) : struct (int * VertexBuffer) =
     // Clamp to the transforms array: an instanceCount larger than the buffer
     // would index out of range when staging per-instance world matrices.
     let instanceCount =
       min instanceCount (if isNull transforms then 0 else transforms.Length)
 
     if instanceCount <= 0 then
-      ()
+      struct (0, Unchecked.defaultof<VertexBuffer>)
     else
       if res.InstanceStaging.Length < instanceCount then
         res.InstanceStaging <-
@@ -546,6 +570,28 @@ module internal PbrShading =
         VertexBufferBinding(instVB, 0, 1)
       )
 
+      struct (instanceCount, instVB)
+
+  /// <summary>
+  /// Handles <c>DrawInstanced</c>: native hardware instancing via two vertex streams (mesh + per-
+  /// instance VertexInstanceWorld rows). Prefers the PBR Instanced technique; falls back to minimal
+  /// Instanced.fx (flat albedo + 1 directional) when the PBR effect can't load.
+  /// </summary>
+  let drawInstanced
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      frame: byref<ForwardFrame>,
+      res: PbrResources,
+      mesh: PrimitiveMesh,
+      transforms: Matrix[],
+      material: Material3D,
+      instanceCount: int
+    ) =
+    let struct (instanceCount, _instVB) =
+      stageInstanceData(gd, res, mesh, transforms, instanceCount)
+
+    if instanceCount > 0 then
       gd.Indices <- mesh.Indices
       let viewProj = state.View * state.Projection
 
@@ -656,8 +702,9 @@ module internal PbrShading =
   /// Shades a draw with a user-supplied <c>effect</c>: uploads the gathered scene data (matrices +
   /// material + lights + bones) via <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.SceneUpload.uploadToEffect"/>
   /// (name-resolved; absent uniforms skipped), then draws through the effect's own CurrentTechnique.
-  /// The effect inherits scene DATA, not the PBR shader (v2 §3). DrawInstanced under a user scope
-  /// falls back to the PBR instanced path (instancing needs a vertex stream a generic effect won't declare).
+  /// The effect inherits scene DATA, not the PBR shader (v2 §3). DrawInstanced under a user scope is
+  /// shaded by the user effect when it exposes an <c>Instanced</c> technique (the instancing opt-in);
+  /// otherwise it falls back to the PBR instanced path. See docs/graphics3d/instancing.md.
   /// </summary>
   let shadeWithEffect
     (
@@ -929,7 +976,56 @@ module internal PbrShading =
             part.Effect <- saved
 
     | Command3D.DrawInstanced(mesh, transforms, material, count) ->
-      // Instancing under a user scope falls back to the PBR path (see remarks).
-      drawInstanced(gd, &state, &frame, res, mesh, transforms, material, count)
+      // Does the user effect opt into instancing? An effect exposing an `Instanced` technique
+      // (the convention ForwardPbr.fx and Instanced.fx already use) shades the instances directly;
+      // one that doesn't falls back to the PBR instanced path (see remarks).
+      if res.IsInstanceCapable(effect) then
+        let struct (instanceCount, _instVB) =
+          stageInstanceData(gd, res, mesh, transforms, count)
+
+        if instanceCount > 0 then
+          gd.Indices <- mesh.Indices
+
+          effect.CurrentTechnique <- effect.Techniques["Instanced"]
+
+          // matModel is identity: the per-instance world transform arrives on stream 1
+          // (VertexInstanceWorld rows), so a shader that still declares matModel sees a benign value.
+          SceneUpload.uploadToEffect(
+            gd,
+            effect,
+            state.View,
+            state.Projection,
+            camPos,
+            Matrix.Identity,
+            Matrix.Identity,
+            frame.Lights,
+            frame.Shadows,
+            ValueNone,
+            material,
+            frame.Time
+          )
+
+          for pass in effect.CurrentTechnique.Passes do
+            pass.Apply()
+
+            gd.DrawInstancedPrimitives(
+              PrimitiveType.TriangleList,
+              0,
+              0,
+              mesh.PrimitiveCount,
+              instanceCount
+            )
+      else
+        // Effect didn't opt in — fall back to the PBR instanced path (see remarks).
+        drawInstanced(
+          gd,
+          &state,
+          &frame,
+          res,
+          mesh,
+          transforms,
+          material,
+          count
+        )
 
     | _ -> ()

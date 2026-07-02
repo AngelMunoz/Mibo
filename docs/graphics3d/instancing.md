@@ -121,6 +121,30 @@ CellGridRenderer3D.renderVolumeInstanced instancedCtx bounds model.World buffer
 
 The pipeline renders all instances of a mesh type in a single GPU draw call using the instanced shader.
 
+## Shading instances with a custom effect
+
+Instanced draws normally use the built-in PBR instanced shader. To shade them
+with your own effect — for a toon, water, fog, or other stylized look — wrap
+the instanced draw in a `Draw3D.beginEffect` / `endEffect` scope and have your
+shader opt into instancing.
+
+The opt-in is by declaration, and the declaration differs by backend because
+each engine feeds per-instance data differently:
+
+- **raylib:** declare `in mat4 instanceTransform;` (raylib streams the rows at
+  a per-instance rate). `viewProj` is view-projection only; `matModel` is not
+  set for instanced draws.
+- **MonoGame:** expose a technique named **`Instanced`** whose vertex shader
+  reads the per-instance world matrix as four `float4` rows on `TEXCOORD1..4`
+  (matching `ForwardPbr.fx`'s instanced input, or the minimal `Instanced.fx`).
+
+A shader that doesn't declare the opt-in is unaffected — its instanced draws
+fall back to the PBR instanced path. Skinned + instanced draws are not
+supported (no per-instance bone palette).
+
+See [Shader Uniform Reference](../shader-uniforms.html#instancing-opt-in) for
+the full per-backend input contract and minimal example shaders.
+
 ## Performance tips
 
 - **Key function** — Keep `getKey` cheap. It's called per cell per frame.

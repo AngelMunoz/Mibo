@@ -42,9 +42,9 @@ The shader language depends on your backend — this is the main place the two b
 
 | | raylib | MonoGame |
 |---|---|---|
-| Language | GLSL (`#version 330`) | HLSL (`.fx`, compiled to `.mgfx`) |
-| Loading | `Raylib.LoadShader` / `LoadShaderFromMemory` (GLSL strings/files) | `ShaderLoader.loadEffect gd name` (embedded compiled `.mgfx`) |
-| Content pipeline | None — plain `.fs`/`.vs` files or strings | The MonoGame content pipeline compiles `.fx` → `.mgfx` for DX11 (`.dx.mgfx`) and OpenGL (`.ogl.mgfx`) |
+| Language | GLSL (`#version 330`) | HLSL (`.fx`, compiled to `.xnb`) |
+| Loading | `Raylib.LoadShader` / `LoadShaderFromMemory` (GLSL strings/files) | The content pipeline: add the `.fx` to your `.mgcb`, then `assets.Effect(name)` |
+| Content pipeline | None — plain `.fs`/`.vs` files or strings | The MonoGame content pipeline compiles `.fx` → `.xnb` for DX11 and OpenGL |
 | Params | `Raylib.SetShaderValue` / `SetShaderValueMatrix` | Set parameters on the `Effect` object directly (`effect.Parameters.[name].SetValue(...)`) |
 
 ## Built-in shaders
@@ -82,17 +82,26 @@ void main() {
 let myShader = Raylib.LoadShaderFromMemory(null, fragCode)
 ```
 
-**MonoGame** — author an HLSL `.fx`, compile it to `.mgfx` (via the 2MGFX tool / content pipeline for both DX11 and OGL), then load it. For shaders embedded as resources, use `ShaderLoader.loadEffect`; for your own compiled `.mgfx` files, load the bytes and construct an `Effect` from the `GraphicsDevice`:
+**MonoGame** — author an HLSL `.fx` and build it through the **content pipeline** (the same pipeline that compiles your models/textures). Add the `.fx` to your `.mgcb` with the `EffectImporter` / `EffectProcessor`, which compiles it to a `.xnb` for both DirectX 11 and OpenGL, then load it like any other content asset:
+
+```
+#begin Toon.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/build:Toon.fx;Toon
+```
 
 ```fsharp
 open Microsoft.Xna.Framework.Graphics
 
-// Load a compiled effect from bytes (embed it or read it from disk)
-let effect = new Effect(gd, effectBytes)
-
-// Set a uniform
-effect.Parameters.["tint"].SetValue(Microsoft.Xna.Framework.Vector4(1f, 1f, 1f, 1f))
+// Loaded through the content pipeline, like a model or texture.
+let toonEffect = assets.Effect("Toon")
 ```
+
+> Effects are content: author `.fx`, add them to the `.mgcb`, and load via
+> `assets.Effect`. The framework's `ShaderLoader.loadEffect` is an internal path
+> for the built-in shaders it embeds as resources — your game effects go through
+> the content pipeline.
 
 ## Setting parameters
 
@@ -137,7 +146,7 @@ How you opt in with your own shading depends on the backend:
 **raylib (3D)** — `Draw3D.drawImmediate` runs raw rlgl/raylib calls (the pipeline's shader is bypassed for those draws). For a full custom pipeline, implement `IRenderPipeline3D`.
 
 **MonoGame (3D)** — two opt-in paths (no raylib equivalent):
-- `Draw3D.beginEffect effect` / `Draw3D.endEffect` — a **shading scope**: draws inside are shaded by your `Effect`, which *inherits* the scene data the pipeline gathered (camera matrices, lights, the shadow pass output, material, bones, frame time). Your effect only needs to declare the uniforms it consumes (e.g. `dirLightDir`, `boneMatrices`, `shadowViewProjs`, `time`, `texture5`); absent uniforms are skipped. Ideal for toon/cel/wireframe without re-implementing the gather.
+- `Draw3D.beginEffect effect` / `Draw3D.endEffect` — a **shading scope**: draws inside are shaded by your `Effect`, which *inherits* the scene data the pipeline gathered (camera matrices, lights, the shadow pass output, material, bones, frame time). Your effect only needs to declare the uniforms it consumes (e.g. `dirLightDir`, `boneMatrices`, `shadowViewProjs`, `shadowAtlas`, `time`); absent uniforms are skipped. Ideal for toon/cel/wireframe without re-implementing the gather.
 - `Draw3D.drawMeshEffect meshPart transform effect` — a fully user-owned effect (the pipeline sets only World/View/Projection; you own all lighting/material params).
 
 See [3D Rendering Overview](graphics3d/overview.html#escape-hatches) for examples.

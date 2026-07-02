@@ -846,7 +846,8 @@ to parse skeleton/clips at runtime).
 
 ### Shaders / effects
 
-Custom HLSL effects (`.fx` compiled by MGCB to `.mgfx`) load via
+Custom HLSL effects (`.fx` compiled by the MGCB content pipeline via
+`EffectImporter`/`EffectProcessor` to `.xnb`) load via
 `assets.Effect path` as before. Note that the 2D lit-sprite and 3D PBR/shadow
 shaders are now **bundled inside the `Mibo.MonoGame` assembly** — you no longer
 need to author/ship `Shaders/lighting`, `Shaders/shadowcaster`, `Effects/PBR`,

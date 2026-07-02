@@ -1741,6 +1741,12 @@ type ForwardPipelineBase
   let mutable userEffectMaterial: Material = Unchecked.defaultof<Material>
   let mutable userEffectMaterialCreated = false
 
+  // Resolved `instanceTransform` attribute location per user shader Id, memoized on the first
+  // instanced draw inside a beginEffect/endEffect scope (-1 = the shader doesn't declare the
+  // attribute -> no opt-in -> instanced draws fall back to the PBR instanced path). Mirrors the
+  // MonoGame IsInstanceCapable memoization.
+  let mutable instanceAttrLocs: Dictionary<uint, int> = Dictionary<uint, int>()
+
   // Per-light shadow caster slot mapping (computed in runShadowPass, read in uploadLights).
   // Indexed by lights.PointLights/SpotLights buffer position; -1 = no shadow. Reallocated per
   // frame to match the live light counts.
@@ -1848,7 +1854,9 @@ type ForwardPipelineBase
 
   /// <summary>
   /// Default shading: PBR cached fast path (ValueNone) or name-resolved SceneUpload to the
-  /// user shader (ValueSome). DrawMeshInstanced under a user scope falls back to PBR.
+  /// user shader (ValueSome). DrawMeshInstanced under a user scope is shaded by the user shader
+  /// when it opts into instancing (<c>in mat4 instanceTransform;</c>); otherwise it falls back
+  /// to the PBR instanced path.
   /// </summary>
   default this.Shade(frame, activeEffect, currentCamera, draw) =
     match activeEffect with
@@ -1931,8 +1939,9 @@ type ForwardPipelineBase
   /// <summary>
   /// Shades a draw with a user-supplied shader via name-resolved SceneUpload. The shader inherits
   /// scene data (camera/lights/material/bones/time), NOT the PBR shader itself. DrawMeshInstanced
-  /// falls back to the PBR path (hardware instancing needs a per-instance vertex stream a generic
-  /// inherited shader won't declare).
+  /// under a user scope is shaded by the user shader when it opts into instancing
+  /// (<c>in mat4 instanceTransform;</c>); otherwise it falls back to the PBR instanced path. See
+  /// docs/graphics3d/instancing.md.
   /// </summary>
   member private _.shadeWithEffect
     (
@@ -2057,25 +2066,62 @@ type ForwardPipelineBase
       Raylib.DrawMesh(mesh, userEffectMaterial, transform)
 
     | Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount) ->
-      // Instancing under a user scope falls back to the PBR path (see remarks).
-      Raylib.EndShaderMode()
+      // Resolve (and memoize) the shader's `instanceTransform` attribute — the raylib opt-in for
+      // instancing under a user scope. A shader that declares it shades its own instances; one
+      // that doesn't falls back to the PBR instanced path.
+      let attrLoc =
+        match instanceAttrLocs.TryGetValue userShader.Id with
+        | true, loc -> loc
+        | false, _ ->
+          let loc =
+            Raylib.GetShaderLocationAttrib(userShader, "instanceTransform")
 
-      handleDrawMeshInstanced(
-        instancedShader,
-        &instanced,
-        frame.Lights,
-        maxPt,
-        maxSp,
-        frame.PointShadowSlots,
-        frame.SpotShadowSlots,
-        currentCamera,
-        mesh,
-        transforms,
-        material,
-        instanceCount
-      )
+          instanceAttrLocs[userShader.Id] <- loc
+          loc
 
-      Raylib.BeginShaderMode userShader
+      if attrLoc >= 0 then
+        // Opt-in: raylib streams the per-instance world matrix through the attribute the shader's
+        // Locs[MatrixModel] slot points at. Point that slot at `instanceTransform` for the duration
+        // of the draw (restoring it afterward so a non-instanced draw in the same scope still
+        // auto-uploads matModel). matModel is identity — the per-instance transform IS the model
+        // matrix; viewProj is view-projection only.
+        let matModelSlot = int ShaderLocationIndex.MatrixModel
+        let savedLoc = NativePtr.get userShader.Locs matModelSlot
+
+        NativePtr.set userShader.Locs matModelSlot attrLoc
+
+        try
+          upload Matrix4x4.Identity material ValueNone
+          populateMaps material
+
+          Raylib.DrawMeshInstanced(
+            mesh,
+            userEffectMaterial,
+            transforms,
+            instanceCount
+          )
+        finally
+          NativePtr.set userShader.Locs matModelSlot savedLoc
+      else
+        // No opt-in — fall back to the PBR instanced path (see remarks).
+        Raylib.EndShaderMode()
+
+        handleDrawMeshInstanced(
+          instancedShader,
+          &instanced,
+          frame.Lights,
+          maxPt,
+          maxSp,
+          frame.PointShadowSlots,
+          frame.SpotShadowSlots,
+          currentCamera,
+          mesh,
+          transforms,
+          material,
+          instanceCount
+        )
+
+        Raylib.BeginShaderMode userShader
 
     | _ -> ()
 
@@ -2249,6 +2295,7 @@ type ForwardPipelineBase
             UVOffsets = shadowAtlas.UVOffsets
             ActiveCasterCount = shadowAtlas.ActiveCasterCount
             TexelSize = 1.0f / float32 atlasCfg.Resolution
+            Biases = shadowAtlas.Biases
             DirLightCastsShadows =
               lights.DirLights.Count > 0 && lights.DirLights[0].CastsShadows
             PointLightShadowIdx = pointShadowSlots

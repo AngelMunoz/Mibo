@@ -213,8 +213,10 @@ module Draw3D =
   /// is unaffected. So a toon/water scope can opt into shadows, skinned animation, and a shader
   /// animation clock simply by declaring those uniforms.
   /// <para>
-  /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.drawMeshInstanced"/> inside a scope falls back to the PBR
-  /// path — hardware instancing needs a per-instance vertex stream a generic inherited shader won't declare.
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.drawMeshInstanced"/> inside a scope is shaded by the
+  /// user shader when it declares <c>in mat4 instanceTransform;</c> (the instancing opt-in); a shader
+  /// that doesn't declare it falls back to the PBR instanced path. Skinned + instanced draws are not
+  /// supported. See <c>docs/graphics3d/instancing.md</c>.
   /// </para>
   /// </remarks>
   let inline beginEffect (shader: Shader) (buffer: RenderBuffer3D) =
