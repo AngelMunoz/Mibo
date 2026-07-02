@@ -22,8 +22,7 @@ How custom shading gets into the pipeline, per backend:
 
 | Escape hatch | raylib | MonoGame | Uniforms you receive |
 |---|---|---|---|
-| `Draw3D.beginEffect` / `endEffect` | ✓ (`Shader`) | ✓ (`Effect`) | Scene data **by name** — declare only what you use; absent ones are skipped |
-| `Draw3D.beginEffectWithInstanced` | ✓ | — | As above; routes `DrawMeshInstanced` through a second shader |
+| `Draw3D.beginEffect` / `endEffect` | ✓ (`Shader`) | ✓ (`Effect`) | Scene data **by name** — declare only what you use; absent ones are skipped. Instanced draws are shaded by your shader when it opts in (see [Instancing](#instancing-opt-in)). |
 | `Draw3D.drawMeshEffect` | — | ✓ | `World`/`View`/`Projection` only (via `IEffectMatrices`); you own lighting/material |
 | `Draw3D.drawImmediate` | ✓ | ✓ | None — the pipeline shader is bypassed; you get a `SceneContext` with raw device + gathered scene fields |
 
@@ -105,20 +104,95 @@ none of these renders unshadowed at no cost.
 | `shadowViewProjs[i]` | `mat4[]` / `float4x4[]` | Per-caster view-projection (default max 16 casters) |
 | `shadowUVOffsets[i]` | `vec4[]` / `float4[]` | Per-caster atlas region (xy=offset, zw=scale) |
 | `shadowTexelSize` | `float` (raylib) / `vec2`/`float2` (MonoGame) | `1.0 / atlasResolution` for PCF spread |
+| `shadowBiases[i]` | `float[]` | Per-caster receiver-side bias (prevents self-shadow acne; raylib adds an in-shader slope-scale term, MonoGame applies it directly) |
 | `pointLightShadowIdx[i]` | `int` | Per-point-light caster slot, `-1` = none |
 | `spotLightShadowIdx[i]` | `int` | Per-spot-light caster slot, `-1` = none |
-| `shadowAtlas` (raylib) / `texture5` (MonoGame) | `sampler2D` | The depth atlas |
+| `shadowAtlas` | `sampler2D` | The depth atlas (declared as `sampler2D shadowAtlas : register(s5)` on MonoGame) |
 
 > **Shadow sampler slot differs by backend.** raylib binds the atlas to
 > **slot 15** (and sets the `shadowAtlas` sampler uniform to 15). MonoGame binds
-> it to **slot 5** (PointClamp) and exposes it as the `texture5` sampler
-> parameter. Declare the matching sampler name for your backend.
+> it to **slot 5** (PointClamp) and exposes it through the effect's `shadowAtlas`
+> sampler parameter (mgfxc names the sampler after its HLSL declaration, not the
+> register slot — so declare `sampler2D shadowAtlas : register(s5)`, matching the
+> built-in `ForwardPbr.fx`). Both backends use the same uniform name: `shadowAtlas`.
 
 ### Skinning (only for skinned draws)
 
 | Uniform | Type | Source |
 |---|---|---|
 | `boneMatrices[128]` | `mat4[]` / `float4x4[]` | Bone palette (uploaded only when bones are supplied) |
+
+### Instancing (opt-in)
+
+A `Draw3D.drawMeshInstanced` inside a `beginEffect` scope is shaded by your
+shader when it declares the instancing input; otherwise it falls back to the
+built-in PBR instanced path. The opt-in convention differs by backend because
+each engine feeds per-instance data differently — raylib uses a single vertex
+attribute and sets the divisor itself, while MonoGame requires two explicit
+vertex streams. The data is the same in both cases: a per-instance 4×4 world
+matrix.
+
+`matModel` is **not** used for instanced draws (the per-instance transform *is*
+the model matrix); the pipeline uploads identity for it, so a shader that still
+declares `matModel` sees a benign value.
+
+**raylib (GLSL `#version 330`):** declare the per-instance attribute.
+
+```glsl
+in mat4 instanceTransform;   // the opt-in: raylib streams rows at a per-instance rate
+
+uniform mat4 viewProj;       // view * projection (matModel is NOT set for instanced draws)
+uniform vec3 cameraPos;      // plus whatever scene uniforms you consume
+
+void main() {
+  vec4 world = instanceTransform * vec4(vertexPosition, 1.0);
+  gl_Position = viewProj * world;
+  // ...
+}
+```
+
+**MonoGame (HLSL, SM 3.0/5.0):** expose a technique named **`Instanced`** whose
+vertex shader reads the per-instance matrix as four `float4` rows on
+`TEXCOORD1..4` (usage indices 1-4, to avoid colliding with the mesh's own
+`TEXCOORD0` on stream 0). This matches `ForwardPbr.fx`'s `VS_INPUT_INSTANCED`
+and the minimal `Instanced.fx`.
+
+```hlsl
+float4x4 viewProj;          // plus whatever scene uniforms you consume
+
+struct VS_INPUT_INSTANCED {
+  // Stream 0 (per-vertex mesh)
+  float3 Position : POSITION0;
+  float3 Normal   : NORMAL0;
+  float2 TexCoord : TEXCOORD0;
+  // Stream 1 (per-instance) — 4 rows composing a 4x4 world matrix
+  float4 Row0 : TEXCOORD1;
+  float4 Row1 : TEXCOORD2;
+  float4 Row2 : TEXCOORD3;
+  float4 Row3 : TEXCOORD4;
+};
+
+VS_OUTPUT VS_Instanced(VS_INPUT_INSTANCED input) {
+  VS_OUTPUT o;
+  float4x4 world = float4x4(input.Row0, input.Row1, input.Row2, input.Row3);
+  float4 wp = mul(float4(input.Position, 1.0), world);   // row-vector convention
+  o.Position = mul(wp, viewProj);
+  // ...
+  return o;
+}
+
+technique Instanced {   // the opt-in: the pipeline selects this technique for instanced draws
+  pass P0 {
+    VertexShader = compile VS_SHADERMODEL VS_Instanced();
+    PixelShader  = compile PS_SHADERMODEL PS_Main();
+  }
+}
+```
+
+> **Skinned + instanced is not supported.** There is no per-instance bone
+> palette; an animated crowd requires a separate scheme (e.g. a texture or
+> buffer of bone matrices indexed per instance). Until such a path exists, keep
+> animated models on non-instanced draws.
 
 ## `drawMeshEffect` (MonoGame only)
 

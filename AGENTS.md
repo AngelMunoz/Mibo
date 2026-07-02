@@ -51,7 +51,9 @@ Changelog Format:
 
 ## [Unreleased]
 
-Content that is pending for release goes here.
+### Added
+
+- Instanced draws inside a `beginEffect`/`endEffect` scope are now shaded by the user shader when it opts into instancing (raylib: `in mat4 instanceTransform;`; MonoGame: an `Instanced` technique reading `TEXCOORD1..4`). Effects that don't opt in keep the previous PBR-instanced fallback. Skinned + instanced remains unsupported. See `docs/shader-uniforms.md` → "Instancing (opt-in)".
 
 ## [1.0.0] - 2026.01.13
 
@@ -145,3 +147,14 @@ When capturing the View-Projection matrix for shadow mapping:
 - **MUST** capture inside `BeginMode3D` using `Rlgl.GetMatrixModelview() * Rlgl.GetMatrixProjection()`
 - This matches what the batch computes for `mvp` (for identity model transforms)
 - Precomputing VP outside `BeginMode3D` or using `Matrix4x4.CreateLookAt * CreatePerspectiveFieldOfView` may produce different results due to raylib's internal matrix adjustments
+
+## Instancing opt-in for `beginEffect` shaders
+
+Instanced draws inside a `Draw3D.beginEffect`/`endEffect` scope are shaded by the user shader only when the shader opts in. The opt-in convention is backend-specific (each engine feeds per-instance data differently); the data is the same — a per-instance 4×4 world matrix.
+
+- **raylib:** the shader declares `in mat4 instanceTransform;`. The pipeline resolves that attribute once per shader (`GetShaderLocationAttrib`) and points the shader's `Locs[ShaderLocationIndex.MatrixModel]` slot at it for the duration of the instanced draw (restoring it afterward, so a non-instanced draw in the same scope still auto-uploads `matModel`). `matModel` is unused for instanced draws; `viewProj` is view-projection only.
+- **MonoGame:** the effect exposes a technique named `Instanced` whose vertex shader reads the per-instance matrix as four `float4` rows on `TEXCOORD1..4` (the `VertexInstanceWorld` layout, usage indices 1-4 to avoid the mesh's `TEXCOORD0` on stream 0). The pipeline binds the two-stream vertex layout (mesh on stream 0, instance rows on stream 1) and calls `DrawInstancedPrimitives` through the user effect.
+
+A shader/effect that doesn't declare the opt-in is unaffected: instanced draws fall back to the built-in PBR instanced path. Skinned + instanced draws are not supported (no per-instance bone palette).
+
+See `docs/shader-uniforms.md` → "Instancing (opt-in)" for the full contract and example shaders.

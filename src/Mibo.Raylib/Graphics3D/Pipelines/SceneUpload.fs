@@ -37,13 +37,13 @@ open Mibo.Elmish.Graphics3D
 /// (<c>albedoColor</c>, <c>texture0..4</c>, <c>roughness</c>/<c>metallic</c>/<c>emissionColor</c>/
 /// <c>opacity</c>/<c>tiling</c>/<c>useNormalMap</c>), lights (ambient + 1 directional + N point +
 /// M spot, including per-light shadow indices), shadows (the atlas + <c>shadowViewProjs[]</c>/
-/// <c>shadowUVOffsets[]</c>/<c>shadowTexelSize</c>/<c>dirLightCastsShadows</c>, when the frame has a
+/// <c>shadowUVOffsets[]</c>/<c>shadowBiases[]</c>/<c>dirLightCastsShadows</c>, when the frame has a
 /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ShadowResult"/>), and bones
 /// (<c>boneMatrices</c>, only when supplied).
 /// </para>
 /// <para>
 /// <b>Shadows are opt-in by declaration.</b> A user shader that wants shadow sampling declares the
-/// shadow uniforms (<c>shadowViewProjs[]</c>, <c>shadowUVOffsets[]</c>, <c>shadowTexelSize</c>,
+/// shadow uniforms (<c>shadowViewProjs[]</c>, <c>shadowUVOffsets[]</c>, <c>shadowBiases[]</c>,
 /// <c>dirLightCastsShadows</c>, <c>pointLightShadowIdx[]</c>, <c>spotLightShadowIdx[]</c>) and a
 /// <c>shadowAtlas</c> sampler; when the frame's shadow pass produced an atlas, those uniforms are
 /// uploaded by name and the atlas is bound to sampler slot 15. A shader that declares none of them
@@ -305,6 +305,9 @@ module SceneUpload =
 
         if i < s.UVOffsets.Length then
           setVec4 shader (loc shader $"shadowUVOffsets[%d{i}]") s.UVOffsets[i]
+
+        if i < s.Biases.Length then
+          setFloat shader (loc shader $"shadowBiases[%d{i}]") s.Biases[i]
 
       // Bind the atlas to texture slot 15 (the raylib convention the PBR path uses).
       if s.Atlas.Id <> 0u then

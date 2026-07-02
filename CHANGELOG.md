@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **3D:** instanced draws inside a `beginEffect`/`endEffect` scope are now shaded by your own shader/effect when it opts into instancing — raylib declares `in mat4 instanceTransform;`, MonoGame exposes an `Instanced` technique. Effects that don't opt in keep the previous PBR-instanced fallback. Skinned + instanced isn't supported (no per-instance bone palette). See the "Instancing (opt-in)" section of `docs/shader-uniforms.md`.
+
+### Fixed
+
+- **3D:** a custom `beginEffect`/`endEffect` shader/effect that opts into shadows now receives them correctly. The scene-upload path bound the shadow atlas under the wrong sampler name on MonoGame (`texture5` instead of `shadowAtlas` — the name `mgfxc` exposes samplers under), never uploaded the per-caster `shadowBiases`, and omitted the bias from the `ShadowResult` bundle entirely. Declare `sampler2D shadowAtlas : register(s5)` (MonoGame) / the `shadowAtlas`/`shadowBiases` uniforms (raylib) to opt in.
+
 ## [2.0.0-rc-001] - 2026-07-01
 
 ### Added

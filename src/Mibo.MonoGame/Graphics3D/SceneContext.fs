@@ -97,6 +97,10 @@ type ShadowResult = {
   /// <summary><c>1.0f / atlasResolution</c> — for the <c>shadowTexelSize</c> PCF spread.</summary>
   TexelSize: float32
 
+  /// <summary>The per-caster receiver-side bias (<c>shadowBiases[]</c>), preventing self-shadow
+  /// acne when a surface both casts and receives (e.g. the instanced floor).</summary>
+  Biases: float32[]
+
   /// <summary>Whether the directional light casts shadows (the <c>dirLightCastsShadows</c> flag).</summary>
   DirLightCastsShadows: bool
 
