@@ -1,21 +1,21 @@
 ---
-title: Migrating to Mibo vNext
+title: Migrating to Mibo v2
 category: Migrating
 categoryindex: 2
 index: 1
 ---
 
-# Migrating to Mibo vNext
+# Migrating to Mibo v2
 
-> **Status: In progress.** This document tracks the work happening on the `vnext`
+> **Status: In progress.** This document tracks the work happening on the `v2`
 > branch to make Mibo backend-agnostic, and collects **every breaking change** a
 > user will face when moving from the current `1.3.0` (raylib-only) release to the
 > upcoming major version. It is updated as each phase lands — if a phase is not
 > listed here, it has not shipped yet.
 >
-> If you are tracking `vnext`, read this document first whenever you pull.
+> If you are tracking `v2`, read this document first whenever you pull.
 
-## What vNext is
+## What v2 is
 
 Mibo is being split into a backend-agnostic core and pluggable backends:
 
@@ -250,7 +250,7 @@ live in the shared Core `Program` builder. On the raylib backend it is now
 // Before (1.3.0)
 program |> Program.withInputMapper inputMap
 
-// After (vNext, raylib backend)
+// After (v2, raylib backend)
 program |> RaylibProgram.withInputMapper inputMap
 ```
 
@@ -345,7 +345,7 @@ an `Effect` delegate:
 let inline ofMsg(msg: 'Msg) : Cmd<'Msg> =
   Single(Effect<'Msg>(fun dispatch -> dispatch msg))  // allocates
 
-// After (vNext)
+// After (v2)
 let inline ofMsg(msg: 'Msg) : Cmd<'Msg> = Msg msg  // zero-alloc
 ```
 

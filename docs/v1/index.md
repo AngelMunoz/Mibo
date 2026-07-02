@@ -26,7 +26,7 @@ Mibo.Raylib        ← raylib backend (host: RaylibGame, GLSL shaders)
 Mibo.MonoGame      ← MonoGame backend (host: MiboGame, HLSL .fx shaders)
 ```
 
-See [Migrating to Mibo vNext](../migration-to-vnext.html) for the full list of breaking
+See [Migrating to Mibo v2](../migration-to-v2.html) for the full list of breaking
 changes, and [Migrating from MonoGame](../migration-from-monogame.html) for the original
 MonoGame → Mibo migration guide.
 

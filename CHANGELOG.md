@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.0.0-rc-001] - 2026-07-01
+
 ### Added
 
 - **Core: backend-neutral `Color` type** — a byte RGBA struct (`Mibo.Color`) with `toVector3`/`toVector4` conversions and named constants (`White`, `Black`, `Red`, etc.). Shared light/camera definitions use this instead of a backend-specific `Color`. Each backend provides inlineable `op_Implicit` conversions to/from its native color type.

@@ -8,8 +8,8 @@ index: 2
 # Migrating from Mibo (MonoGame) to Mibo.MonoGame
 
 > **Who this guide is for:** Users of the original `Mibo` package (the monolithic
-> MonoGame library at `github.com/AngelMunoz/Mibo`) who want to migrate to the
-> new split architecture (`Mibo.Core` + `Mibo.MonoGame`).
+> MonoGame library at `github.com/AngelMunoz/Mibo`) who want to migrate to
+> **Mibo v2**'s split architecture (`Mibo.Core` + `Mibo.MonoGame`).
 >
 > This is a severely breaking migration. The original Mibo was a single assembly
 > with the Elmish engine, input, assets, 2D/3D rendering, animation, camera helpers,
