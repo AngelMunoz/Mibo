@@ -7,77 +7,178 @@ index: 62
 
 # Composable Systems
 
-## What and Why
+## The problem
 
-As your game grows, the `update` function becomes a dumping ground — input handling, physics, AI, particles, UI state, all tangled together. Changing one thing breaks another. Testing is impossible because everything depends on everything else.
+As a game grows, the `update` function becomes a dumping ground — input, physics, AI, particles, audio, UI state, all tangled together. Changing one thing breaks another. Testing is impossible because everything depends on everything else. The function grows to hundreds of lines and nobody wants to touch it.
 
-The pattern: break your update into small, independent functions (systems) that run in a fixed order. Each system owns one concern. They compose with a pipeline that makes ordering explicit.
+The solution is to split the game into **independent sub-systems** that each own one concern, and coordinate them through a **router** — not a god-function that reaches into every piece of state.
 
-## Use Cases
+## The routed sub-system architecture
 
-### Any action game
-Input → Physics → Particles → Rendering. Four systems, each one testable in isolation.
+The unit of decomposition is a **sub-system**: an independent module that owns its **model**, its **message type**, and its **update function**. Sub-systems never call or import each other. The root `update` is a **router** that dispatches messages to sub-systems and translates the declarative values they emit into commands for the consumers that care.
 
-### Strategy game
-Input → Economy → AI → Combat → UI. Economy runs before AI so AI sees updated resource counts. Combat runs before UI so health bars reflect the latest damage.
+```
+  Msg ──┬──▶ Input.update      ──▶ model.Input
+        ├──▶ Physics.update    ──▶ model.Player
+        ├──▶ Weapon.update     ──▶ model.Weapon + WeaponEvent
+        └──▶ EnemyAi.update    ──▶ model.Enemy + EnemyEvent
 
-### Multiplayer game
-Input → Simulation → Network Sync → Prediction. The network system reads the simulation result and sends it. The prediction system runs after receiving remote state.
-
-### Platformer
-Input → Movement → Collision → Camera → Particles. Camera runs after collision so it reads the resolved position, not the pre-collision one.
-
-## The Technique
-
-Each system is a function with the same signature:
-
-```fsharp
-let mySystem (dt: float32) (model: Model) : struct (Model * Cmd<Msg>) =
-  // do work, mutate model, return
-  struct (model, Cmd.none)
+  WeaponEvent  ──▶ router ──▶ Cmd<AudioMsg> + Cmd<EffectMsg>
+  EnemyEvent   ──▶ router ──▶ Cmd<PlayerMsg> + Cmd<AudioMsg>
 ```
 
-Compose them with a pipeline:
+The router is the **only** place that knows which systems consume which events. Each sub-system stays independently testable because it has no dependencies on its siblings.
+
+### 1. The root `update` is a router, not game logic
+
+The root `update` function (wherever you wire up `Program.mkProgram`) routes messages to the matching sub-system and translates emitted events into `Cmd<Msg>` for other systems. It contains **no game logic** — only dispatch and translation.
+
+```fsharp
+let update msg model =
+    match msg with
+    | WeaponMsg wmsg ->
+        let weapon, events = Weapon.update wmsg model.Weapon
+        // router: translate the sub-system's events into commands for consumers
+        let cmd = events |> Seq.collect translateWeaponEvent |> Cmd.batch
+        { model with Weapon = weapon }, cmd
+    | Tick gt -> runTickPipeline gt model
+    // ...
+```
+
+### 2. Each sub-system owns its slice
+
+A sub-system owns its model, its message type, and its update. It mutates/returns **only** its own state. It never imports another sub-system's update or reaches into another sub-system's model.
+
+```fsharp
+module Weapon =
+    type Model = { Ammo: int; Cooldown: float32; ... }
+    type Msg = | Fire | Reload | RefillAmmo
+
+    let update (msg: Msg) (model: Model) : Model * WeaponEvent seq =
+        // touches only model.Ammo / model.Cooldown — nothing else
+        ...
+```
+
+### 3. Cross-system communication is declarative
+
+When a sub-system needs to affect another, it returns **declarative values** — Events (what happened) or Intents (what should happen). These are pure data. The router translates each into `Cmd<Msg>` for the relevant systems. The emitting system does not know (or import) its consumers.
+
+```fsharp
+type WeaponEvent =
+    | Fired of pos: Vector3 * dir: Vector3
+    | EnemyKilled of pos: Vector3
+
+// router-side translation:
+let translateWeaponEvent = function
+    | WeaponEvent.Fired(pos, dir) ->
+        [| AudioMsg.OneShot(fire, pos); EffectMsg.SpawnSmoke(pos, dir) |]
+    | WeaponEvent.EnemyKilled(pos) ->
+        [| AudioMsg.OneShot(injured, pos); PlayerMsg.AddScore 100 |]
+```
+
+The weapon system never imports audio or effects. It just emits `Fired` and moves on. Add a new consumer (a screen-shake system, an achievement tracker) by adding a translation in the router — the weapon system is untouched.
+
+### 4. Read access goes through a read-only query — but mind the hot path
+
+When a sub-system needs to **read** another's state, the router passes it read-only access — never a direct mutable reference to another sub-system's model. There are two forms, and the choice depends on call frequency.
+
+**Cold path (event-driven, turn-based): a closure query record.** The query hides the source model behind function fields. Building it per-message is acceptable. Each field is a closure over the root model:
+
+```fsharp
+[<Struct>]
+type TargetingQuery = {
+    UnitAt: Vector2 -> UnitId voption
+    IsReachable: Vector2 -> bool
+    CurrentFaction: Faction
+}
+
+let query = {
+    UnitAt = fun cell -> model.Units |> Map.tryFind cell
+    IsReachable = fun cell -> model.Map.Reachable.Contains cell
+    CurrentFaction = model.Turn.CurrentFaction
+}
+```
+
+**Hot path (per-tick, real-time): direct values.** Function-typed record fields are boxed `FSharpFunc` closures — each `fun` allocates, and calls dispatch indirectly (the JIT will **not** inline across them). Building a closure-bearing query inside `Tick` allocates every frame and defeats inlining. For real-time AI, pass the needed values directly instead:
+
+```fsharp
+// signature: direct values, no closures, no query record
+let update (dt: float32) (playerPos: Vector3) (enemies: Enemy[]) (colliders: BoundingBox[]) : EnemyEvent seq
+```
+
+No closures — `playerPos` is a struct value, `enemies`/`colliders` are direct array references. Every read inside is a direct field access or an `inline` function call. The caller extracts values once:
+
+```fsharp
+let playerPos = model.Player.Position                       // one struct copy
+let events = EnemyAi.update dt playerPos model.Enemy.Items model.Colliders
+```
+
+The read-only contract still holds — the AI receives `playerPos` (a value, it cannot mutate the player) and mutates only its own `enemies`. Decoupling is achieved by *passing values*, not by wrapping reads in closures.
+
+> **Rule:** closure query = cold path only (event-driven, turn-based). Per-tick reads = direct values (real-time). Never construct a closure-bearing query inside `Tick` — it allocates per frame and cannot be inlined.
+
+### 5. `Cmd.map` lifts sub-commands
+
+Sub-system commands are `Cmd<SubMsg>`. The router lifts them into the root `Msg` via `Cmd.map`:
+
+```fsharp
+let cmd = Weapon.update wmsg model.Weapon |> snd
+          |> Seq.collect translateWeaponEvent |> Cmd.batch
+```
+
+For a sub-system whose commands don't need cross-system translation, lift directly:
+
+```fsharp
+let childCmd = Child.update cmsg model.Child |> snd
+model, Cmd.map ChildMsg childCmd
+```
+
+## The Tick pipeline: composing sub-systems per frame
+
+Real-time games run many sub-systems every tick in a fixed order (physics before AI, AI before effects). Mibo's `System` pipeline makes that ordering explicit and enforces a **snapshot boundary** between mutation and query phases. Each phase calls a sub-system that owns its slice; the pipeline is the composition mechanism, not a replacement for the architecture.
+
+```fsharp
+| Tick gt ->
+    let dt = float32 gt.ElapsedGameTime.TotalSeconds
+
+    System.start model
+    // ── mutation phases: each sub-system mutates only its own slice ──
+    |> System.pipeMutable (Physics.update dt)     // model.Player
+    |> System.pipeMutable (weaponSystem dt)        // model.Weapon  → WeaponEvent → Cmd
+    |> System.pipeMutable (enemySystem dt)         // model.Enemy   → EnemyEvent  → Cmd
+    |> Model.toSnapshot                            // ── readonly boundary ──
+    // ── readonly phases: backend services read a consistent this-frame state ──
+    |> System.pipe (fun snap ->
+        audio.Update(dt, snap)
+        snap, Cmd.none)
+    |> System.finish (fun _ -> model)
+```
+
+The pipeline and the routed-sub-system architecture compose. A sub-system in the pipeline still owns its slice and emits events; the router still translates them. The pipeline just makes per-tick ordering and the mutable/readonly boundary explicit.
+
+### Snapshot boundary
+
+The `snapshot` call changes the pipeline's type from the mutable `Model` to a readonly `Snapshot` — a struct record sharing sub-model references (zero allocation). After it, only `System.pipe` (readonly) phases are allowed. The compiler prevents a query phase from accidentally mutating state that a later mutation phase expects untouched.
 
 ```fsharp
 System.start model
-|> System.pipeMutable (inputSystem dt)
-|> System.pipeMutable (physicsSystem dt)
-|> System.pipeMutable (aiSystem dt)
-|> System.pipeMutable (particleSystem dt)
-|> System.finish id
+|> System.pipeMutable (Physics.update dt)
+|> System.pipeMutable (Particles.update dt)
+|> System.snapshot Model.toSnapshot
+|> System.pipe (Ai.decide dt)        // readonly — reads the snapshot
+|> System.finish Model.fromSnapshot
 ```
-
-`pipeMutable` passes the model by reference — no allocation per system call. Use `pipe` for immutable updates if you prefer functional style.
-
-### Snapshot boundaries
-
-For larger games, add a type-enforced boundary between mutable and readonly phases:
-
-```fsharp
-System.start model
-|> System.pipeMutable (inputSystem dt)
-|> System.pipeMutable (physicsSystem dt)
-|> System.snapshot Model.toReadonly
-|> System.pipe (aiSystem dt)
-|> System.finish Model.fromReadonly
-```
-
-After the snapshot, the compiler prevents accidental mutation in downstream systems.
-
-## Key Insight
-
-Ordering is the whole point. Input must run before physics. Physics must run before rendering. The pipeline makes this ordering visible and enforced — not buried in a 200-line `update` function where a misplaced line breaks everything.
 
 ## When to use
 
-- Your update function has grown past ~50 lines.
-- You have multiple phases that need predictable ordering.
-- You want to test phases independently.
-- You need to swap phases (e.g., replay mode skips physics).
-- You're adding features and afraid to touch the update function.
+- Your `update` has grown past ~50 lines, or a single concern (physics, AI, combat) is hard to change in isolation.
+- You have cross-cutting interactions ("enemy died" should trigger a sound, a score bump, and a particle burst) and they're currently implemented by one system reaching into several models.
+- You want sub-systems to be unit-testable without standing up the whole game.
+
+You don't need it for a small game where a single `update` with pattern matching is still easy to read — see [Scaling Mibo](../scaling.html) for when each rung pays off.
 
 ## See also
 
-- [ThreeDSample/Systems.fs](https://github.com/...) — nine systems composed in a real game.
-- [System Pipeline](../system.html) — the `System.start`, `pipeMutable`, `snapshot` pipeline.
+- [System Pipeline](../system.html) — the `System.start`, `pipeMutable`, `snapshot` API.
+- [Commands](../commands.html) — `Cmd.map` and `Cmd.batch` for lifting/combining sub-system commands.
+- [Scaling Mibo](../scaling.html) — where this pattern sits on the complexity ladder.

@@ -15,7 +15,7 @@ These patterns are independent. Apply one, two, or all of them depending on what
 
 | Pattern | What it solves |
 |---------|---------------|
-| [Composable Systems](composable-systems.html) | Breaking monolithic updates into small, ordered, testable phases |
+| [Composable Systems](composable-systems.html) | Splitting a game into independent sub-systems (owned state, declarative events) coordinated by a router |
 | [Background Work](background-work.html) | Running heavy computation off the main thread without blocking the game loop |
 | [Pooled Particles](pooled-particles.html) | Zero-GC particle effects with pre-allocated arrays and fade-and-compact |
 | [Layered Rendering](layered-rendering.html) | Compositing multiple render passes — HUDs, minimaps, debug overlays |
