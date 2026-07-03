@@ -22,6 +22,7 @@
     <Compile Include="Graphics2D/Lighting/LitShader.fs" />
     <Compile Include="Graphics2D/Lighting/LightContext.fs" />
     <Compile Include="Graphics2D/Lighting/ParticleTypes.fs" />
+    <Compile Include="Graphics2D/PostProcessContext2D.fs" />
     <Compile Include="Graphics2D/Command2D.fs" />
     <Compile Include="Graphics2D/RenderBuffer.fs" />
     <Compile Include="Graphics2D/RenderTargetPool.fs" />
@@ -34,12 +35,12 @@
     <Compile Include="Graphics3D/Primitive3D.fs" />
     <Compile Include="Graphics3D/RenderTargetPool3D.fs" />
     <Compile Include="Graphics3D/SceneContext.fs" />
+    <Compile Include="Graphics3D/PostProcessContext3D.fs" />
     <Compile Include="Graphics3D/Command3D.fs" />
     <Compile Include="Graphics3D/RenderBuffer3D.fs" />
     <Compile Include="Graphics3D/RenderPipeline3D.fs" />
     <Compile Include="Graphics3D/Renderer3D.fs" />
     <Compile Include="Graphics3D/Draw3D.fs" />
-    <Compile Include="Graphics3D/Pipelines/PostProcess3D.fs" />
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
     <Compile Include="Graphics3D/Pipelines/Shaders.fs" />
     <Compile Include="Graphics3D/Pipelines/SceneUpload.fs" />

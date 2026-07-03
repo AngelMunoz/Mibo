@@ -1321,7 +1321,8 @@ module internal PipelineFunctions =
       skinned: byref<ShaderVariant>,
       forwardShader: Shader,
       instancedShader: Shader,
-      skinnedShader: Shader
+      skinnedShader: Shader,
+      ppActions: ResizeArray<PostProcessContext3D -> unit> voption
     ) : FrameState =
     let mutable frameState = {
       Camera = ValueNone
@@ -1431,6 +1432,10 @@ module internal PipelineFunctions =
           &mat,
           2
         )
+      | Command3D.PostProcess action ->
+        match ppActions with
+        | ValueSome list -> list.Add action
+        | ValueNone -> ()
       | _ -> ()
 
     frameState
@@ -1698,14 +1703,12 @@ type ForwardFrame = {
 [<AbstractClass>]
 type ForwardPipelineBase
   (
-    ?postProcess: PostProcessConfig3D,
     ?maxPointLights: int,
     ?maxSpotLights: int,
     ?shadowAtlasConfig: ShadowAtlasConfig,
     ?shadowBiasConfig: ShadowBiasConfig
   ) =
 
-  let ppConfig = defaultArg postProcess PostProcessConfig3D.none
   let maxPt = defaultArg maxPointLights 8
   let maxSp = defaultArg maxSpotLights 4
 
@@ -1718,7 +1721,6 @@ type ForwardPipelineBase
   let mutable skinnedShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowSkinnedShader: Shader = Unchecked.defaultof<Shader>
-  let mutable postProcessShader: Shader = Unchecked.defaultof<Shader>
 
   let mutable depthShadowMaterial: Material = Unchecked.defaultof<Material>
 
@@ -1755,61 +1757,51 @@ type ForwardPipelineBase
 
   let lights: LightBuffers = createLightBuffers(maxPt, maxSp)
 
-  let ppPasses: PostProcessPass3D[] =
-    match ppConfig.Passes with
-    | ValueSome passes -> passes
-    | ValueNone -> Array.empty
-
   let applyPostProcess
     (ctx: GameContext)
     (sceneTarget: RenderTexture2D)
     (rtPool: IRenderTargetPool3D)
+    (actions: ResizeArray<PostProcessContext3D -> unit>)
+    (frameTime: float32)
     =
-    let mutable src = sceneTarget
-    let w = ctx.WindowWidth
-    let h = ctx.WindowHeight
+    if actions.Count = 0 then
+      ()
+    else
+      let mutable src = sceneTarget
+      let w = ctx.WindowWidth
+      let h = ctx.WindowHeight
 
-    for i = 0 to ppPasses.Length - 1 do
-      let pass = ppPasses[i]
-      let isLast = i = ppPasses.Length - 1
+      for i = 0 to actions.Count - 1 do
+        let isLast = i = actions.Count - 1
 
-      let dst: RenderTexture2D voption =
-        if isLast then
-          ValueNone
-        else
-          ValueSome(rtPool.Acquire(w, h))
+        let dst: RenderTexture2D voption =
+          if isLast then
+            ValueNone
+          else
+            ValueSome(rtPool.Acquire(w, h))
 
-      match dst with
-      | ValueSome target ->
-        Raylib.BeginTextureMode target
-        Raylib.ClearBackground Color.Black
-      | ValueNone -> ()
+        match dst with
+        | ValueSome target ->
+          Raylib.BeginTextureMode target
+          Raylib.ClearBackground Color.Black
+        | ValueNone -> ()
 
-      Raylib.BeginShaderMode pass.Shader
+        let ppCtx: PostProcessContext3D = {
+          Source = src
+          Depth = ValueNone
+          Width = w
+          Height = h
+          Time = frameTime
+          Context = ctx
+        }
 
-      match pass.OnSetup with
-      | ValueSome f -> f pass.Shader ctx
-      | ValueNone -> ()
+        actions[i]ppCtx
 
-      let sourceRect = Raylib_cs.Rectangle(0.0f, 0.0f, float32 w, float32 -h)
-      let destRect = Raylib_cs.Rectangle(0.0f, 0.0f, float32 w, float32 h)
-
-      Raylib.DrawTexturePro(
-        src.Texture,
-        sourceRect,
-        destRect,
-        Vector2.Zero,
-        0.0f,
-        Color.White
-      )
-
-      Raylib.EndShaderMode()
-
-      match dst with
-      | ValueSome target ->
-        Raylib.EndTextureMode()
-        src <- target
-      | ValueNone -> ()
+        match dst with
+        | ValueSome target ->
+          Raylib.EndTextureMode()
+          src <- target
+        | ValueNone -> ()
 
   // ----------------------------------------------------------------
   // Per-draw shading hook — overridable.
@@ -2149,7 +2141,6 @@ type ForwardPipelineBase
 
       depthShadowShader <- Shaders.loadDepthShadowShader()
       depthShadowSkinnedShader <- Shaders.loadDepthShadowSkinnedShader()
-      postProcessShader <- Shaders.loadPostProcessShader()
 
       depthShadowMaterial <- Raylib.LoadMaterialDefault()
       depthShadowMaterial.Shader <- depthShadowShader
@@ -2198,7 +2189,6 @@ type ForwardPipelineBase
       Raylib.UnloadShader skinnedShader
       Raylib.UnloadShader depthShadowShader
       Raylib.UnloadShader depthShadowSkinnedShader
-      Raylib.UnloadShader postProcessShader
 
       Raylib.UnloadMaterial depthShadowMaterial
       Raylib.UnloadMaterial depthShadowSkinnedMaterial
@@ -2217,8 +2207,17 @@ type ForwardPipelineBase
     member this.Execute(gameCtx, gameTime, buffer, rtPool) =
       let frameTime = float32 gameTime.TotalTime.TotalSeconds
 
-      // ── Step 1: Pre-scan buffer (camera, lights, shadow origin, warm caches) ──
+      // Pre-scan: gather camera, lights, shadow origin, warm material caches, and — when present —
+      // post-process actions in a single pass over the buffer.
       clearLights lights
+
+      // Allocated only when the view emits at least one post-process command, so frames with none
+      // skip the allocation and the per-command scan entirely.
+      let ppActions: ResizeArray<PostProcessContext3D -> unit> voption =
+        if buffer.PostProcessCount > 0 then
+          ValueSome(ResizeArray(buffer.PostProcessCount))
+        else
+          ValueNone
 
       let frameState =
         preScan(
@@ -2229,14 +2228,15 @@ type ForwardPipelineBase
           &skinned,
           forwardShader,
           instancedShader,
-          skinnedShader
+          skinnedShader,
+          ppActions
         )
 
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
 
-      // ── Step 2: Shadow pass (render all casters to atlas) ──
+      // Shadow pass — render all casters into the atlas
       let struct (meshDraws, meshDrawCount, skinnedStart) =
         collectMeshDraws buffer
 
@@ -2272,7 +2272,7 @@ type ForwardPipelineBase
       finally
         ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
 
-      // ── Step 3: Upload shadow atlas uniforms to all shaders ──
+      // Upload shadow atlas uniforms to all shaders
       match frameState.Camera with
       | ValueSome cam ->
         uploadShadowUniforms(
@@ -2286,7 +2286,7 @@ type ForwardPipelineBase
         )
       | ValueNone -> ()
 
-      // ── Step 4: Build the per-frame scene bundle (ForwardFrame + ShadowResult) ──
+      // Build the per-frame scene bundle (lights + shadow result)
       let shadowResult: ShadowResult voption =
         if hasShadowCasters && shadowAtlas.ActiveCasterCount > 0 then
           ValueSome {
@@ -2312,18 +2312,18 @@ type ForwardPipelineBase
         Time = frameTime
       }
 
-      // ── Step 5: Clear lights for forward pass (dispatch will re-add them) ──
+      // Clear lights; the forward pass re-adds them per camera block
       clearLights lights
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
 
-      // ── Step 6: Forward pass (dispatch all commands) ──
+      // Forward pass — dispatch all commands
       let mutable cameraActive = false
       let mutable currentCamera = Unchecked.defaultof<Camera3D>
       let mutable shaderActive = false
       // Per-group shading scope (beginEffect/endEffect). ValueNone → default PBR path;
-      // ValueSome shader → shade with the user shader. Reset on camera boundaries (§7.2).
+      // ValueSome shader → shade with the user shader. Reset on camera boundaries.
       let mutable activeEffect: Shader voption = ValueNone
 
       let dispatchForwardPass() =
@@ -2341,7 +2341,7 @@ type ForwardPipelineBase
             Raylib.BeginMode3D cam
             cameraActive <- true
             currentCamera <- cam
-            // New camera block: scopes don't persist across cameras (§7.2).
+            // New camera block: scopes don't persist across cameras.
             activeEffect <- ValueNone
 
           | Command3D.BeginCameraConfig cfg ->
@@ -2356,7 +2356,7 @@ type ForwardPipelineBase
             Raylib.BeginMode3D cfg.Camera
             cameraActive <- true
             currentCamera <- cfg.Camera
-            // New camera block: scopes don't persist across cameras (§7.2).
+            // New camera block: scopes don't persist across cameras.
             activeEffect <- ValueNone
 
           | Command3D.EndCamera ->
@@ -2369,7 +2369,7 @@ type ForwardPipelineBase
               cameraActive <- false
 
             Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
-            // EndCamera closes any open effect scope (§7.2).
+            // EndCamera closes any open effect scope.
             activeEffect <- ValueNone
 
           // ── Per-group shading scope ──
@@ -2534,6 +2534,9 @@ type ForwardPipelineBase
           | Command3D.SetShadowOrigin _ -> ()
           | Command3D.EnableShadows -> ()
           | Command3D.DisableShadows -> ()
+          // Post-process actions are collected above and run after the scene renders to
+          // an offscreen target; nothing to do during the forward pass.
+          | Command3D.PostProcess _ -> ()
 
         // End remaining shader/camera state after dispatch
         if shaderActive then
@@ -2542,19 +2545,18 @@ type ForwardPipelineBase
         if cameraActive then
           Raylib.EndMode3D()
 
-      // ── Step 5b: Dispatch (direct or via scene RT for post-process) ──
-      match ppConfig.Passes with
-      | ValueNone
-      | ValueSome [||] -> dispatchForwardPass()
-      | _ ->
+      // Render the forward pass direct, or via a scene RT when post-process commands are present.
+      match ppActions with
+      | ValueNone -> dispatchForwardPass()
+      | ValueSome actions ->
         let sceneRT = rtPool.Acquire(gameCtx.WindowWidth, gameCtx.WindowHeight)
         Raylib.BeginTextureMode sceneRT
         Raylib.ClearBackground Color.Black
         dispatchForwardPass()
         Raylib.EndTextureMode()
-        applyPostProcess gameCtx sceneRT rtPool
+        applyPostProcess gameCtx sceneRT rtPool actions frameTime
 
-      // ── Step 6: Debug overlay (optional) ──
+      // Debug overlay (optional)
       if atlasCfg.ShowDebugOverlay then
         shadowAtlas.RenderDebugOverlay(
           gameCtx.WindowWidth,
@@ -2597,7 +2599,6 @@ type ForwardPipelineBase
 /// </remarks>
 type ForwardPbrPipeline
   (
-    ?postProcess: PostProcessConfig3D,
     ?maxPointLights: int,
     ?maxSpotLights: int,
     ?shadowAtlasConfig: ShadowAtlasConfig,
@@ -2605,7 +2606,6 @@ type ForwardPbrPipeline
   ) =
   inherit
     ForwardPipelineBase(
-      ?postProcess = postProcess,
       ?maxPointLights = maxPointLights,
       ?maxSpotLights = maxSpotLights,
       ?shadowAtlasConfig = shadowAtlasConfig,

@@ -957,6 +957,39 @@ let drawDSLTests =
       let result = Draw.drop buf
       Expect.equal result () "drop should return unit"
     }
+
+    test "Draw.postProcess adds a PostProcess command to the buffer" {
+      let buf = RenderBuffer2D()
+
+      buf |> Draw.postProcess(fun _ -> ()) |> ignore
+
+      Expect.equal buf.Count 1 "Should have 1 command after postProcess"
+
+      match buf.Item 0 with
+      | Command2D.PostProcess _ -> ()
+      | _ -> Tests.failtest "Expected PostProcess"
+    }
+
+    test "PostProcessCount tracks PostProcess commands and resets on Clear" {
+      let buf = RenderBuffer2D()
+
+      Expect.equal
+        buf.PostProcessCount
+        0
+        "Fresh buffer has no post-process commands"
+
+      buf |> Draw.postProcess(fun _ -> ()) |> ignore
+      buf |> Draw.postProcess(fun _ -> ()) |> ignore
+      buf.Add(Command2D.clear 0<RenderLayer> Color.Black)
+
+      Expect.equal
+        buf.PostProcessCount
+        2
+        "Should count only PostProcess commands"
+
+      buf.Clear()
+      Expect.equal buf.PostProcessCount 0 "Clear should reset PostProcessCount"
+    }
   ]
 
 // ──────────────────────────────────────────────
@@ -1241,14 +1274,6 @@ let renderer2DConfigTests =
       | ValueSome c ->
         Expect.equal c Color.Black "Default clear color should be Black"
       | ValueNone -> Tests.failtest "Expected ValueSome for ClearColor"
-    }
-
-    test "defaults has no post-process" {
-      let cfg = Renderer2DConfig.defaults
-
-      Expect.isFalse
-        cfg.PostProcess.IsSome
-        "Default should have no post-process"
     }
 
     test "noClear has ValueNone clear color" {

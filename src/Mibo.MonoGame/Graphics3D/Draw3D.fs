@@ -362,5 +362,21 @@ module Draw3D =
     buffer.Add(Command3D.DrawImmediate action)
     buffer
 
+  /// <summary>
+  /// Enqueues a model-aware post-process pass. The action runs once, after the whole scene
+  /// renders to an offscreen target; it receives a <see cref="T:Mibo.Elmish.Graphics3D.PostProcessContext3D"/>
+  /// carrying the scene texture (+ optional depth), a fullscreen quad, and the device. The action
+  /// binds its effect, sets model-derived parameters, binds <c>Source</c> to the sampler, and calls
+  /// <c>Quad.Draw(effect)</c>. Emit it conditionally from the view based on game state. Chain
+  /// multiple passes — they ping-pong in buffer order, the last drawing to the back-buffer.
+  /// </summary>
+  /// <param name="action">Invoked once per frame with the post-process context.</param>
+  let inline postProcess
+    ([<InlineIfLambda>] action: PostProcessContext3D -> unit)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(Command3D.PostProcess action)
+    buffer
+
   /// <summary>Terminal function that discards the buffer, silencing the unused-value warning. Does nothing.</summary>
   let inline drop(_buffer: RenderBuffer3D) = ()

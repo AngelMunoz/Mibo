@@ -311,6 +311,8 @@ type Command2D =
     particleData: Particle2D[] *
     particleCount: int *
     layer: int<RenderLayer>
+  // Post-Process
+  | PostProcess of ppAction: (PostProcessContext2D -> unit)
 
 /// <summary>
 /// Factory functions that create <see cref="T:Mibo.Elmish.Graphics2D.Command2D"/> values.
@@ -695,6 +697,15 @@ module Command2D =
     (particleCount: int)
     =
     Command2D.Particle(texture, particleData, particleCount, layer)
+
+  /// <summary>
+  /// Creates a model-aware post-process pass. The action runs once per frame, after the
+  /// whole scene renders to an offscreen target; it receives a <see cref="T:Mibo.Elmish.Graphics2D.PostProcessContext2D"/>
+  /// with the scene texture, the device, and a fullscreen quad, and must draw the quad
+  /// with its own effect. Emit it conditionally from the view based on game state.
+  /// </summary>
+  let inline postProcess(action: PostProcessContext2D -> unit) =
+    Command2D.PostProcess(action)
 
 /// <summary>Convenience builders for <see cref="T:Mibo.Elmish.Graphics2D.SpriteState"/>.</summary>
 module SpriteState =
