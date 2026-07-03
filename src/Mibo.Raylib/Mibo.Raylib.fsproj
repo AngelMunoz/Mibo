@@ -21,6 +21,7 @@
     <Compile Include="Graphics2D/Lighting/LitShader.fs" />
     <Compile Include="Graphics2D/Lighting/LightContext.fs" />
     <Compile Include="Graphics2D/Lighting/ParticleTypes.fs" />
+    <Compile Include="Graphics2D/PostProcessContext2D.fs" />
     <Compile Include="Graphics2D/Command2D.fs" />
     <Compile Include="Graphics2D/RenderBuffer.fs" />
     <Compile Include="Graphics2D/RenderTargetPool.fs" />

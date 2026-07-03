@@ -8,43 +8,31 @@ open Raylib_cs
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D.Lighting
 
-/// <summary>A single post-processing pass applied to the rendered scene.</summary>
-[<Struct>]
-type PostProcessPass = {
+// ═══════════════════════════════════════════════════════════════════
+// Post-process drain — ping-pongs the scene through each emitted action
+// ═══════════════════════════════════════════════════════════════════
 
-  /// <summary>Shader used for this pass. Receives the scene/render-texture as <c>texture0</c>.</summary>
-  Shader: Shader
-
-  /// <summary>
-  /// Optional callback to set shader uniforms before rendering the fullscreen quad.
-  /// Called once per frame when this pass executes. The raylib <see cref="T:Raylib_cs.Shader"/>
-  /// is already active via <c>BeginShaderMode</c> when this callback runs.
-  /// </summary>
-  OnSetup: (Shader -> GameContext -> unit) voption
-}
-
-/// <summary>Post-processing chain for 2D rendering.</summary>
-module PostProcess2D =
+module private PostProcessDrain =
 
   /// <summary>
-  /// Applies a chain of post-processing passes via ping-pong render textures.
-  /// The scene is already rendered to <paramref name="sceneTarget"/>. Each pass
-  /// renders to a pooled RT (except the last, which renders to the backbuffer).
+  /// Runs each post-process action in order, ping-ponging the scene texture through
+  /// pooled render textures. Each action receives the current source as a
+  /// <see cref="T:Mibo.Elmish.Graphics2D.PostProcessContext2D"/> and owns its shader +
+  /// fullscreen draw. The last action draws to the back-buffer.
   /// </summary>
   let apply
-    (
-      ctx: GameContext,
-      sceneTarget: RenderTexture2D,
-      passes: PostProcessPass[],
-      rtPool: IRenderTargetPool
-    ) =
+    (ctx: GameContext)
+    (sceneTarget: RenderTexture2D)
+    (rtPool: IRenderTargetPool)
+    (actions: ResizeArray<PostProcessContext2D -> unit>)
+    (frameTime: float32)
+    =
     let mutable src = sceneTarget
     let w = ctx.WindowWidth
     let h = ctx.WindowHeight
 
-    for i = 0 to passes.Length - 1 do
-      let pass = passes[i]
-      let isLast = i = passes.Length - 1
+    for i = 0 to actions.Count - 1 do
+      let isLast = i = actions.Count - 1
 
       let dst: RenderTexture2D voption =
         if isLast then
@@ -58,26 +46,15 @@ module PostProcess2D =
         Raylib.ClearBackground(Color.Black)
       | ValueNone -> ()
 
-      Raylib.BeginShaderMode(pass.Shader)
+      let ppCtx: PostProcessContext2D = {
+        Source = src
+        Width = w
+        Height = h
+        Time = frameTime
+        Context = ctx
+      }
 
-      match pass.OnSetup with
-      | ValueSome f -> f pass.Shader ctx
-      | ValueNone -> ()
-
-      let sourceRect = Rectangle(0f, 0f, float32 w, float32 -h)
-
-      let destRect = Rectangle(0f, 0f, float32 w, float32 h)
-
-      Raylib.DrawTexturePro(
-        src.Texture,
-        sourceRect,
-        destRect,
-        Vector2.Zero,
-        0f,
-        Color.White
-      )
-
-      Raylib.EndShaderMode()
+      actions[i]ppCtx
 
       match dst with
       | ValueSome target ->
@@ -88,13 +65,6 @@ module PostProcess2D =
 /// <summary>Configuration for the <see cref="T:Mibo.Elmish.Graphics2D.Renderer2D`1"/>.</summary>
 [<Struct>]
 type Renderer2DConfig = {
-
-  /// <summary>
-  /// Optional post-processing passes. Applied in order after the scene is rendered
-  /// to a render texture, chaining via pooled render textures between passes.
-  /// The last pass renders directly to the backbuffer.
-  /// </summary>
-  PostProcess: PostProcessPass[] voption
 
   /// <summary>
   /// Background clear color applied before rendering commands.
@@ -109,22 +79,16 @@ type Renderer2DConfig = {
 module Renderer2DConfig =
 
   /// <summary>
-  /// Default configuration: no post-processing, black clear color.
-  /// Suitable for most 2D games that don't need screen-space effects.
+  /// Default configuration: black clear color. Post-processing is driven by
+  /// <c>Command2D.PostProcess</c> emitted from the view, not configured here.
   /// </summary>
-  let defaults: Renderer2DConfig = {
-    PostProcess = ValueNone
-    ClearColor = ValueSome Color.Black
-  }
+  let defaults: Renderer2DConfig = { ClearColor = ValueSome Color.Black }
 
   /// <summary>
   /// Configuration that skips clearing the background.
   /// Use when this renderer composites on top of another renderer's output.
   /// </summary>
-  let noClear: Renderer2DConfig = {
-    PostProcess = ValueNone
-    ClearColor = ValueNone
-  }
+  let noClear: Renderer2DConfig = { ClearColor = ValueNone }
 
 // ═══════════════════════════════════════════════════════════════════
 // Private command handlers — extracted from Renderer2D for readability
@@ -482,6 +446,8 @@ module private CommandHandlers =
             )
 
           Raylib.DrawTexturePro(texture, src, dst, Vector2.Zero, 0.f, p.Color)
+      // Post-process actions are drained after the scene renders; nothing to do here.
+      | Command2D.PostProcess _ -> ()
 
     endShader &state
     endCamera &state
@@ -497,10 +463,9 @@ module private CommandHandlers =
 /// in order. raylib handles internal draw-call batching automatically.
 /// </para>
 /// <para>
-/// When <see cref="P:Mibo.Elmish.Graphics2D.Renderer2DConfig.PostProcess"/> is
-/// configured, the scene renders to a <see cref="T:Raylib_cs.RenderTexture2D"/>
-/// and each pass is applied sequentially via ping-pong render textures from the
-/// <see cref="T:Mibo.Elmish.Graphics2D.IRenderTargetPool"/>.
+/// When the view emits <c>Command2D.PostProcess</c> actions, the scene renders to a
+/// <see cref="T:Raylib_cs.RenderTexture2D"/> and each action runs in order, chaining via
+/// ping-pong render textures from the <see cref="T:Mibo.Elmish.Graphics2D.IRenderTargetPool"/>.
 /// </para>
 /// <para>
 /// Register via <c>Program.withRenderer</c>:
@@ -527,7 +492,7 @@ type Renderer2D<'Model>
   let mutable _windowHeight = 0
 
   interface IRenderer<'Model> with
-    member _.Draw(ctx, model, _gameTime) =
+    member _.Draw(ctx, model, gameTime) =
       _windowWidth <- ctx.WindowWidth
       _windowHeight <- ctx.WindowHeight
       buffer.Clear()
@@ -543,16 +508,21 @@ type Renderer2D<'Model>
         WindowHeight = _windowHeight
       }
 
-      match config.PostProcess with
-      | ValueNone ->
+      let ppActions = ResizeArray<PostProcessContext2D -> unit>()
+
+      for i = 0 to buffer.Count - 1 do
+        match buffer[i] with
+        | Command2D.PostProcess a -> ppActions.Add a
+        | _ -> ()
+
+      if ppActions.Count = 0 then
         match config.ClearColor with
         | ValueSome c -> Raylib.ClearBackground(c)
         | ValueNone -> ()
 
         CommandHandlers.execute(&state, buffer)
-      | ValueSome passes ->
+      else
         let sceneRT = rtPool.Acquire(ctx.WindowWidth, ctx.WindowHeight)
-
         Raylib.BeginTextureMode(sceneRT)
 
         match config.ClearColor with
@@ -562,7 +532,13 @@ type Renderer2D<'Model>
         CommandHandlers.execute(&state, buffer)
         Raylib.EndTextureMode()
 
-        PostProcess2D.apply(ctx, sceneRT, passes, rtPool)
+        PostProcessDrain.apply
+          ctx
+          sceneRT
+          rtPool
+          ppActions
+          (float32 gameTime.TotalTime.TotalSeconds)
+
         rtPool.ReleaseAll()
 
       _camera <- state.Camera
@@ -577,7 +553,8 @@ type Renderer2D<'Model>
 module Renderer2D =
 
   /// <summary>
-  /// Creates a renderer with default configuration (no post-processing, black clear color).
+  /// Creates a renderer with default configuration (black clear color). Post-processing
+  /// is driven by <c>Command2D.PostProcess</c> emitted from the view.
   /// </summary>
   /// <param name="view">
   /// The view function that populates the render buffer each frame.
