@@ -104,6 +104,7 @@ All commands live in two modules in `Mibo.Elmish.Graphics2D`:
 | | `Draw.clearScissor layer` | Disable scissor |
 | | `Draw.setLineWidth layer width` | Set line thickness |
 | | `Draw.setViewport layer (x, y, w, h)` | Set viewport |
+| | `Draw.setSamplerState layer sampler` | Set sprite sampler (MonoGame) |
 | **Clear** | `Draw.clear layer color` | Clear background |
 | **Immediate** | `Draw.drawImmediate layer action` | Escape hatch (see [Custom Commands](custom-commands.html)) |
 
@@ -133,9 +134,23 @@ buffer
 
 Blend mode, scissor rect, line width, and viewport are reset at the start of each frame.
 
+### Sampler state (MonoGame only)
+
+`Draw.setSamplerState layer sampler` sets the sampler used for subsequent sprites, modeled on `setBlend`. It applies to subsequent draws and flushes/restarts the sprite batch. This is **MonoGame-only** — `SamplerState` is `Microsoft.Xna.Framework.Graphics.SamplerState` (e.g. `SamplerState.PointClamp`, `SamplerState.LinearClamp`).
+
+```fsharp
+buffer
+|> Draw.setSamplerState 0<RenderLayer> SamplerState.PointClamp
+|> Draw.sprite (SpriteState.create (atlas, dest, src))
+```
+
+The sampler defaults to `SamplerState.LinearClamp` and is reset each frame, alongside blend mode, scissor, line width, and viewport.
+
+> **raylib** has no equivalent command — a texture's filter is a property of the texture, not the batch. Override the load-time default with the `Texture.filter` helper: `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point` (apply once at load/init, not per frame). See [Assets](../assets.html).
+
 ## Text and sprite state types
 
-Sprite and text use state records. Use the `create` builders for quick setup:
+Sprite and text use state records. Use the `create` builders for quick setup. A `SpriteState` exposes the full field set: `Texture`, `Dest`, `Source`, `Origin`, `Rotation` (radians), `Color`, `Layer`, and `NormalMap` (for 2D lighting).
 
 ```fsharp
 // Sprite: texture + destination + source rect
@@ -143,6 +158,9 @@ let sprite = SpriteState.create(tex, Rectangle(100f, 100f, 32f, 32f), Rectangle(
 
 // Sprite with custom color
 let redSprite = { sprite with Color = Color.Red; Layer = 10<RenderLayer> }
+
+// SpriteState also exposes Rotation (radians), Origin (pivot, pixels), and NormalMap (2D lighting).
+let spinning = { sprite with Rotation = 0.785f } // ~45 degrees
 
 // Text: font + string + position
 let scoreText = TextState.create(font, "Score: 100", Vector2(10f, 10f))

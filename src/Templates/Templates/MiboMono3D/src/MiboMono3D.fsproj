@@ -6,12 +6,16 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Program.fs" />
+    <Compile Include="Library.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Mibo.MonoGame" Version="2.0.0-*" />
     <PackageReference Include="MonoGame.Framework.Native" Version="3.8.4.1" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <MonoGameContentReference Include="../Content/Content.mgcb" />
   </ItemGroup>
 
 </Project>

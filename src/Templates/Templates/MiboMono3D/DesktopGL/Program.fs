@@ -5,7 +5,7 @@ open MiboMono3D
 
 [<EntryPoint>]
 let main _ =
-  let mgProgram = MiboMono3D.create() |> MonoGameProgram.ofProgram
+  let mgProgram = MiboMono3D.create()
 
   use game = new MiboGame<Model, Msg>(mgProgram)
   game.Run()

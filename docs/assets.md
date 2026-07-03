@@ -46,15 +46,16 @@ Access assets through the `GameContext`. The `path` convention differs by backen
 
 ```fsharp
 let init (ctx: GameContext): struct(Model * Cmd<Msg>) =
+  let assets = GameContext.getService<IAssets> ctx
   // raylib: paths are loose files on disk
-  let player = ctx.Assets.Texture("sprites/player.png")
-  let font = ctx.Assets.Font("fonts/ui.ttf")
-  let enemyModel = ctx.Assets.Model("models/enemy.glb")
+  let player = assets.Texture("sprites/player.png")
+  let font = assets.Font("fonts/ui.ttf")
+  let enemyModel = assets.Model("models/enemy.glb")
 
   // MonoGame: paths are content-pipeline asset names (no extension);
   // the .xnb must be built by the MonoGame content pipeline.
-  // let player = ctx.Assets.Texture("sprites/player")
-  // let font = ctx.Assets.Font("fonts/ui")
+  // let player = assets.Texture("sprites/player")
+  // let font = assets.Font("fonts/ui")
   ...
 ```
 
@@ -74,7 +75,25 @@ let init (ctx: GameContext): struct(Model * Cmd<Msg>) =
 > include the raw file in the output directory (e.g. `<CopyToOutputDirectory>` / `<Content>` in
 > the `.fsproj`).
 
-## Backend-neutral caching (`IAssetCache`)
+## Texture configuration (raylib)
+
+The raylib loader generates mipmaps and forces **trilinear** filtering on every texture at load time — good for 3D/PBR surfaces, but it makes tiles sampled from a gutterless spritesheet bleed at the edges. A texture's filter is a property of the texture itself (not the draw batch), so override it per texture with the `Texture` helper module:
+
+```fsharp
+let assets = GameContext.getService<IAssets> ctx
+// Point (nearest) filtering — stops adjacent tiles bleeding into each other.
+let atlas = assets.Texture("tiles.png") |> Texture.filter TextureFilter.Point
+```
+
+| Helper | Description |
+|--------|-------------|
+| `Texture.filter TextureFilter.Point tex` | Set the texture's filter (overrides the load-time trilinear default) |
+| `Texture.wrap TextureWrap.Repeat tex` | Set the wrap/addressing mode (Clamp/Repeat/MirrorClamp/MirrorRepeat) |
+| `Texture.mipmaps tex` | Generate mipmaps (the loader already does this on load) |
+
+Apply it once (e.g. in `init`) — not every frame — since it mutates the cached texture's sampler. (`TextureFilter` is `Raylib_cs.TextureFilter`: `Point`, `Bilinear`, `Trilinear`, `Aniso4x/8x/16x`; `TextureWrap` is `Raylib_cs.TextureWrap`: `Clamp`, `Repeat`, `MirrorClamp`, `MirrorRepeat`.) MonoGame controls sampling per draw via `Draw.setSamplerState` instead; see [2D Buffer & Commands](graphics2d/buffer-and-commands.html).
+
+
 
 The inherited `IAssetCache` members work on any backend and let portable code cache custom
 assets without referencing backend types:
@@ -101,7 +120,8 @@ let config = cache.GetOrCreate("gameConfig", fun () -> loadConfig())
 **Clearing caches:**
 
 ```fsharp
-ctx.Assets.Dispose()
+let assets = GameContext.getService<IAssets> ctx
+assets.Dispose()
 ```
 
 This unloads all GPU resources and clears all caches.

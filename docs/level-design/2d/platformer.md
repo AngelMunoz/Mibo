@@ -23,7 +23,7 @@ Most platformer levels start with a foundation - ground, walls, and platforms:
 
 ```fsharp
 let basicLevel =
-    CellGrid2D.create 100 20 (Vector2(32f, 32f)) Vector2.Zero
+    CellGrid2D.create 100 20 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
     |> Layout.run (fun section ->
         section
         // Ground floor
@@ -217,7 +217,7 @@ Use `LayeredGrid2D` for separate collision, decoration, and entity layers:
 
 ```fsharp
 let layeredPlatformer =
-    LayeredGrid2D.create 100 25 (Vector2(32f, 32f)) Vector2.Zero
+    LayeredGrid2D.create 100 25 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
     |> LayeredLayout.layer 0 (fun section ->
         // Layer 0: Collision (walls, platforms, hazards)
         section
@@ -319,7 +319,7 @@ let levelSection section =
     |> Layout.section 83 5 (Layout.set 0 0 ChestTile)
 
 let level =
-    CellGrid2D.create 100 20 (Vector2(32f, 32f)) Vector2.Zero
+    CellGrid2D.create 100 20 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
     |> Layout.run levelSection
 ```
 

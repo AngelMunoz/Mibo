@@ -129,9 +129,10 @@ let view (_ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
 // Program
 // ─────────────────────────────────────────────────────────────
 
-/// Builds the full Mibo program. The thin client projects
-/// (DesktopGL, WindowsDX) call this and pass the result to MiboGame.
-let create() : Program<Model, Msg> =
+/// Builds the full Mibo MonoGame program with the content root configured for the
+/// MonoGame content pipeline. The thin client projects (DesktopGL, WindowsDX)
+/// pass this directly to MiboGame.
+let create() : MonoGameProgram<Model, Msg> =
   Program.mkProgram init update
   |> Program.withConfig(fun cfg -> {
     cfg with
@@ -145,3 +146,6 @@ let create() : Program<Model, Msg> =
     InputMapper.subscribeStatic inputMap InputChanged ctx)
   |> Program.withTick Tick
   |> Program.withRenderer(fun () -> Renderer2D.create view)
+  |> MonoGameProgram.ofProgram
+  |> MonoGameProgram.withConfig(fun (game, deviceManager) ->
+    game.Content.RootDirectory <- "Content")

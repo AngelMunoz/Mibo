@@ -66,7 +66,7 @@ buffer |> Draw.drawImmediate 10<RenderLayer> (fun () ->
 
 ## 5. Minimize state-switching commands
 
-Commands like `setBlend`, `setScissor`, `beginCamera`, and `beginShader` flush the draw batch. Group draw calls that share state together:
+Commands like `setBlend`, `setSamplerState`, `setScissor`, `beginCamera`, and `beginShader` flush the draw batch. Group draw calls that share state together:
 
 ```fsharp
 // Good: one blend switch for all additive particles
@@ -80,6 +80,22 @@ buffer
 ## 6. Share textures and fonts
 
 The backend's internal batching is most efficient when consecutive draw calls use the same texture. Sort your commands by texture where practical (though the renderer sorts by layer, so consider arranging layers to keep same-texture draws together).
+
+## Tile-atlas bleeding
+
+Tiles sampled from a gutterless spritesheet (no padding between tiles) bleed at the edges under linear filtering, producing dark seams between abutting tiles.
+
+**MonoGame:** use `Draw.setSamplerState layer SamplerState.PointClamp` for the tile draws — point filtering reads exact texels, so there's no bleed. Note it flushes the batch, so group tile draws together. Alternatively, inset each tile's source rectangle by 1px.
+
+```fsharp
+// Point filtering stops adjacent tiles from bleeding into each other.
+buffer |> Draw.setSamplerState 0<RenderLayer> SamplerState.PointClamp
+
+for tile in visibleTiles do
+    buffer |> Draw.sprite (SpriteState.create (atlas, tile.Dest, tile.Src)) |> ignore
+```
+
+**raylib:** there is no per-draw sampler — a texture's filter is set on the texture itself. Use the `Texture.filter` helper once at load time (e.g. `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point`), or inset source rectangles by 1px.
 
 ## 7. The buffer is allocation-free after warmup
 

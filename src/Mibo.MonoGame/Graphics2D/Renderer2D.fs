@@ -167,6 +167,7 @@ module private CommandHandlers =
     HasScissor: bool
     ScissorRect: Rectangle
     Blend: BlendMode
+    Sampler: SamplerState
     Shader: Effect voption
     HasRenderTarget: bool
     RenderTarget: RenderTarget2D voption
@@ -181,6 +182,7 @@ module private CommandHandlers =
     mutable HasScissor: bool
     mutable ScissorRect: Rectangle
     mutable Blend: BlendMode
+    mutable Sampler: SamplerState
     mutable Shader: Effect voption
     mutable HasRenderTarget: bool
     mutable RenderTarget: RenderTarget2D voption
@@ -227,13 +229,14 @@ module private CommandHandlers =
       sb: SpriteBatch,
       matrix: Matrix,
       blend: BlendMode,
+      sampler: SamplerState,
       rasterizer: RasterizerState,
       effect: Effect voption
     ) =
     sb.Begin(
       SpriteSortMode.Deferred,
       toBlendState blend,
-      SamplerState.LinearClamp,
+      sampler,
       DepthStencilState.None,
       rasterizer,
       (match effect with
@@ -265,7 +268,16 @@ module private CommandHandlers =
     =
     let matrix = currentMatrix &state
     let raster = currentRasterizer &state
-    beginSpriteBatch(res.SpriteBatch, matrix, state.Blend, raster, state.Shader)
+
+    beginSpriteBatch(
+      res.SpriteBatch,
+      matrix,
+      state.Blend,
+      state.Sampler,
+      raster,
+      state.Shader
+    )
+
     res.PrimitiveBatch.SetTransform(matrix)
     res.PrimitiveBatch.SetBlendState(toBlendState state.Blend)
     res.PrimitiveBatch.SetRasterizerState(raster)
@@ -289,6 +301,7 @@ module private CommandHandlers =
         HasScissor = state.HasScissor
         ScissorRect = state.ScissorRect
         Blend = state.Blend
+        Sampler = state.Sampler
         Shader = state.Shader
         HasRenderTarget = state.HasRenderTarget
         RenderTarget = state.RenderTarget
@@ -310,6 +323,7 @@ module private CommandHandlers =
       state.HasScissor <- frame.HasScissor
       state.ScissorRect <- frame.ScissorRect
       state.Blend <- frame.Blend
+      state.Sampler <- frame.Sampler
       state.Shader <- frame.Shader
       state.HasRenderTarget <- frame.HasRenderTarget
       state.RenderTarget <- frame.RenderTarget
@@ -1492,6 +1506,10 @@ module private CommandHandlers =
         state.Blend <- mode
         endAndRestart res &state
 
+      | Command2D.SetSamplerState(sampler, _) ->
+        state.Sampler <- sampler
+        endAndRestart res &state
+
       | Command2D.SetScissor(x, y, w, h, _) ->
         flushBatches res
         state.HasScissor <- true
@@ -1651,6 +1669,7 @@ type Renderer2D<'Model>
         sb,
         initialMatrix,
         BlendMode.NonPremultiplied,
+        SamplerState.LinearClamp,
         CommandHandlers.defaultRasterizer,
         ValueNone
       )
@@ -1664,6 +1683,7 @@ type Renderer2D<'Model>
         HasScissor = false
         ScissorRect = Rectangle.Empty
         Blend = BlendMode.NonPremultiplied
+        Sampler = SamplerState.LinearClamp
         Shader = ValueNone
         HasRenderTarget = false
         RenderTarget = ValueNone

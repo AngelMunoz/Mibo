@@ -69,6 +69,7 @@ type RenderBuffer2D
     | Command2D.BeginTarget(_, layer) -> layer
     | Command2D.EndTarget layer -> layer
     | Command2D.SetBlend(_, layer) -> layer
+    | Command2D.SetSamplerState(_, layer) -> layer
     | Command2D.SetScissor(_, _, _, _, layer) -> layer
     | Command2D.ClearScissor layer -> layer
     | Command2D.SetLineWidth(_, layer) -> layer

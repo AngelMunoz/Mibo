@@ -9,6 +9,13 @@ index: 21
 
 The Layout engine provides a tile-based level design system for 2D games. It lives in `Mibo.Layout`.
 
+> **`Vector2` namespace (MonoGame).** The Core layout APIs (`CellGrid2D`, `LayeredGrid2D`, and the 3D variants) always take `System.Numerics.Vector2`. MonoGame projects `open Microsoft.Xna.Framework`, so a bare `Vector2(...)` resolves to XNA's vector type and the Core layout calls fail to compile (`FS0193`). Qualify those calls explicitly:
+> ```fsharp
+> let grid =
+>     CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
+> ```
+> Backend-specific APIs (each backend's `Camera2D.create`/`Camera3D`, `SpriteState`, `TextState`) use that backend's native vector type — raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework` — so bare `Vector2(...)` is fine there as long as the matching namespace is open.
+
 ## Core Concepts
 
 The system is built on three primitives:
@@ -26,7 +33,7 @@ open Mibo.Layout
 open System.Numerics
 
 // Create a 100x50 grid with 32x32 pixel cells
-let grid = CellGrid2D.create 100 50 (Vector2(32f, 32f)) Vector2.Zero
+let grid = CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
 ```
 
 Each cell holds `'T voption` - either `ValueSome content` or `ValueNone` (empty). This struct-based option type has zero heap allocation per cell.
@@ -43,7 +50,7 @@ match CellGrid2D.get 5 3 grid with
 | ValueNone -> // empty
 
 // Get world position for a cell
-let worldPos = CellGrid2D.getWorldPos 5 3 grid  // Vector2(160f, 96f)
+let worldPos = CellGrid2D.getWorldPos 5 3 grid  // System.Numerics.Vector2(160f, 96f)
 ```
 
 ### Iteration
@@ -84,7 +91,7 @@ The `Layout` module provides a fluent DSL for placing content. All functions ret
 open Mibo.Layout
 
 let myGrid =
-    CellGrid2D.create 20 15 (Vector2(32f, 32f)) Vector2.Zero
+    CellGrid2D.create 20 15 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
     |> Layout.run (fun section ->
         section
         |> Layout.fill 0 0 20 15 FloorTile      // Fill entire area
@@ -178,7 +185,7 @@ For multi-layer content (background, foreground, decorations), use `LayeredGrid2
 
 ```fsharp
 let level =
-    LayeredGrid2D.create 100 50 (Vector2(32f, 32f)) Vector2.Zero
+    LayeredGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
     |> LayeredLayout.layer 0 (fun section ->
         // Layer 0: Ground/Collision
         section |> Layout.fill 0 45 100 5 GroundTile

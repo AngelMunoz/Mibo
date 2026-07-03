@@ -51,7 +51,14 @@ game.Run()
 ## Amenities & Services
 
 ### `withAssets`
-A placeholder for API consistency. Asset loading and caching are handled through the backend's `IAssets` (which extends the Core `IAssetCache`), so you access textures/fonts/etc. via `ctx.Assets` without explicit opt-in. Use `withAssetsBasePath` to configure a root path. The concrete asset *types* differ per backend (raylib vs XNA), but the `Get`/`GetOrCreate`/`Create` caching surface is backend-neutral through `IAssetCache`.
+A placeholder for API consistency. Asset loading and caching are handled through the backend's `IAssets` (which extends the Core `IAssetCache`), so assets are obtained from the service registry via `GameContext.getService<IAssets> ctx`. No explicit opt-in is needed:
+
+```fsharp
+let assets = GameContext.getService<IAssets> ctx
+let tex = assets.Texture("sprites/player")
+```
+
+Use `withAssetsBasePath` to configure a root path. The concrete asset *types* differ per backend (raylib vs XNA), but the `Get`/`GetOrCreate`/`Create` caching surface is backend-neutral through `IAssetCache`.
 
 ### `withInput`
 Registers the `IInput` service, enabling Keyboard, Mouse, Touch, Gamepad, and Gesture subscriptions.

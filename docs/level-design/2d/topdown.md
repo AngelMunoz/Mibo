@@ -23,7 +23,7 @@ Every top-down level starts with rooms:
 
 ```fsharp
 let singleRoom =
-    CellGrid2D.create 20 15 (Vector2(32f, 32f)) Vector2.Zero
+    CellGrid2D.create 20 15 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
     |> Layout.run (fun section ->
         section
             |> TopDown.room 12 8 FloorTile WallTile
@@ -298,7 +298,7 @@ let roguelikeFloor section =
     |> Layout.section 36 28 (Layout.set 0 0 StairsDownTile)
 
 let floor =
-    CellGrid2D.create 50 40 (Vector2(32f, 32f)) Vector2.Zero
+    CellGrid2D.create 50 40 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
     |> Layout.run roguelikeFloor
 ```
 
@@ -308,7 +308,7 @@ Use `LayeredGrid2D` for separate structure, decoration, and entity layers:
 
 ```fsharp
 let layeredDungeon =
-    LayeredGrid2D.create 50 50 (Vector2(32f, 32f)) Vector2.Zero
+    LayeredGrid2D.create 50 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
     |> LayeredLayout.layer 0 (fun section ->
         // Layer 0: Structure (collision)
         section
