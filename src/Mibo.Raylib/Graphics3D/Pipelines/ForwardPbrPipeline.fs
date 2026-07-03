@@ -1698,14 +1698,12 @@ type ForwardFrame = {
 [<AbstractClass>]
 type ForwardPipelineBase
   (
-    ?postProcess: PostProcessConfig3D,
     ?maxPointLights: int,
     ?maxSpotLights: int,
     ?shadowAtlasConfig: ShadowAtlasConfig,
     ?shadowBiasConfig: ShadowBiasConfig
   ) =
 
-  let ppConfig = defaultArg postProcess PostProcessConfig3D.none
   let maxPt = defaultArg maxPointLights 8
   let maxSp = defaultArg maxSpotLights 4
 
@@ -1718,7 +1716,6 @@ type ForwardPipelineBase
   let mutable skinnedShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowSkinnedShader: Shader = Unchecked.defaultof<Shader>
-  let mutable postProcessShader: Shader = Unchecked.defaultof<Shader>
 
   let mutable depthShadowMaterial: Material = Unchecked.defaultof<Material>
 
@@ -1755,61 +1752,51 @@ type ForwardPipelineBase
 
   let lights: LightBuffers = createLightBuffers(maxPt, maxSp)
 
-  let ppPasses: PostProcessPass3D[] =
-    match ppConfig.Passes with
-    | ValueSome passes -> passes
-    | ValueNone -> Array.empty
-
   let applyPostProcess
     (ctx: GameContext)
     (sceneTarget: RenderTexture2D)
     (rtPool: IRenderTargetPool3D)
+    (actions: ResizeArray<PostProcessContext3D -> unit>)
+    (frameTime: float32)
     =
-    let mutable src = sceneTarget
-    let w = ctx.WindowWidth
-    let h = ctx.WindowHeight
+    if actions.Count = 0 then
+      ()
+    else
+      let mutable src = sceneTarget
+      let w = ctx.WindowWidth
+      let h = ctx.WindowHeight
 
-    for i = 0 to ppPasses.Length - 1 do
-      let pass = ppPasses[i]
-      let isLast = i = ppPasses.Length - 1
+      for i = 0 to actions.Count - 1 do
+        let isLast = i = actions.Count - 1
 
-      let dst: RenderTexture2D voption =
-        if isLast then
-          ValueNone
-        else
-          ValueSome(rtPool.Acquire(w, h))
+        let dst: RenderTexture2D voption =
+          if isLast then
+            ValueNone
+          else
+            ValueSome(rtPool.Acquire(w, h))
 
-      match dst with
-      | ValueSome target ->
-        Raylib.BeginTextureMode target
-        Raylib.ClearBackground Color.Black
-      | ValueNone -> ()
+        match dst with
+        | ValueSome target ->
+          Raylib.BeginTextureMode target
+          Raylib.ClearBackground Color.Black
+        | ValueNone -> ()
 
-      Raylib.BeginShaderMode pass.Shader
+        let ppCtx: PostProcessContext3D = {
+          Source = src
+          Depth = ValueNone
+          Width = w
+          Height = h
+          Time = frameTime
+          Context = ctx
+        }
 
-      match pass.OnSetup with
-      | ValueSome f -> f pass.Shader ctx
-      | ValueNone -> ()
+        actions[i]ppCtx
 
-      let sourceRect = Raylib_cs.Rectangle(0.0f, 0.0f, float32 w, float32 -h)
-      let destRect = Raylib_cs.Rectangle(0.0f, 0.0f, float32 w, float32 h)
-
-      Raylib.DrawTexturePro(
-        src.Texture,
-        sourceRect,
-        destRect,
-        Vector2.Zero,
-        0.0f,
-        Color.White
-      )
-
-      Raylib.EndShaderMode()
-
-      match dst with
-      | ValueSome target ->
-        Raylib.EndTextureMode()
-        src <- target
-      | ValueNone -> ()
+        match dst with
+        | ValueSome target ->
+          Raylib.EndTextureMode()
+          src <- target
+        | ValueNone -> ()
 
   // ----------------------------------------------------------------
   // Per-draw shading hook — overridable.
@@ -2149,7 +2136,6 @@ type ForwardPipelineBase
 
       depthShadowShader <- Shaders.loadDepthShadowShader()
       depthShadowSkinnedShader <- Shaders.loadDepthShadowSkinnedShader()
-      postProcessShader <- Shaders.loadPostProcessShader()
 
       depthShadowMaterial <- Raylib.LoadMaterialDefault()
       depthShadowMaterial.Shader <- depthShadowShader
@@ -2198,7 +2184,6 @@ type ForwardPipelineBase
       Raylib.UnloadShader skinnedShader
       Raylib.UnloadShader depthShadowShader
       Raylib.UnloadShader depthShadowSkinnedShader
-      Raylib.UnloadShader postProcessShader
 
       Raylib.UnloadMaterial depthShadowMaterial
       Raylib.UnloadMaterial depthShadowSkinnedMaterial
@@ -2534,6 +2519,9 @@ type ForwardPipelineBase
           | Command3D.SetShadowOrigin _ -> ()
           | Command3D.EnableShadows -> ()
           | Command3D.DisableShadows -> ()
+          // Post-process actions are collected above and run after the scene renders to
+          // an offscreen target; nothing to do during the forward pass.
+          | Command3D.PostProcess _ -> ()
 
         // End remaining shader/camera state after dispatch
         if shaderActive then
@@ -2542,17 +2530,23 @@ type ForwardPipelineBase
         if cameraActive then
           Raylib.EndMode3D()
 
-      // ── Step 5b: Dispatch (direct or via scene RT for post-process) ──
-      match ppConfig.Passes with
-      | ValueNone
-      | ValueSome [||] -> dispatchForwardPass()
-      | _ ->
+      // ── Render the forward pass direct, or via a scene RT when post-process commands are present ──
+      let ppActions = ResizeArray<PostProcessContext3D -> unit>()
+
+      for i = 0 to buffer.Count - 1 do
+        match buffer[i] with
+        | Command3D.PostProcess a -> ppActions.Add a
+        | _ -> ()
+
+      if ppActions.Count = 0 then
+        dispatchForwardPass()
+      else
         let sceneRT = rtPool.Acquire(gameCtx.WindowWidth, gameCtx.WindowHeight)
         Raylib.BeginTextureMode sceneRT
         Raylib.ClearBackground Color.Black
         dispatchForwardPass()
         Raylib.EndTextureMode()
-        applyPostProcess gameCtx sceneRT rtPool
+        applyPostProcess gameCtx sceneRT rtPool ppActions frameTime
 
       // ── Step 6: Debug overlay (optional) ──
       if atlasCfg.ShowDebugOverlay then
@@ -2597,7 +2591,6 @@ type ForwardPipelineBase
 /// </remarks>
 type ForwardPbrPipeline
   (
-    ?postProcess: PostProcessConfig3D,
     ?maxPointLights: int,
     ?maxSpotLights: int,
     ?shadowAtlasConfig: ShadowAtlasConfig,
@@ -2605,7 +2598,6 @@ type ForwardPbrPipeline
   ) =
   inherit
     ForwardPipelineBase(
-      ?postProcess = postProcess,
       ?maxPointLights = maxPointLights,
       ?maxSpotLights = maxSpotLights,
       ?shadowAtlasConfig = shadowAtlasConfig,
