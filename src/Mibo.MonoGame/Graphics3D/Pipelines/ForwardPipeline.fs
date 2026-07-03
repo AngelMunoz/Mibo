@@ -182,13 +182,8 @@ module private ForwardHelpers =
 /// </remarks>
 [<AbstractClass>]
 type ForwardPipelineBase
-  (
-    ?postProcess: PostProcessConfig3D,
-    ?shadowAtlas: ShadowAtlasConfig,
-    ?shadowBias: ShadowBiasConfig
-  ) =
+  (?shadowAtlas: ShadowAtlasConfig, ?shadowBias: ShadowBiasConfig) =
 
-  let ppConfig = defaultArg postProcess PostProcessConfig3D.none
   let atlasCfg = defaultArg shadowAtlas ShadowAtlasConfig.defaults
   let biasCfg = defaultArg shadowBias ShadowBiasConfig.defaults
 
@@ -212,6 +207,9 @@ type ForwardPipelineBase
   // DrawUserIndexedPrimitives. Created on first use against the real device.
   let mutable billboardEffect: BasicEffect voption = ValueNone
   let mutable lineEffect: BasicEffect voption = ValueNone
+
+  // Post-process: a fullscreen quad created against the device on the first post-process frame.
+  let mutable fullScreenQuad: FullScreenQuad voption = ValueNone
 
   let mutable billboardStaging: VertexPositionColorTexture[] =
     Array.zeroCreate<VertexPositionColorTexture> 256
@@ -689,7 +687,7 @@ type ForwardPipelineBase
         shadowRes.InstanceVertexBuffer <- ValueNone
       | ValueNone -> ()
 
-    member this.Execute(gameCtx, gameTime, buffer, _rtPool) =
+    member this.Execute(gameCtx, gameTime, buffer, rtPool) =
       let gd = MonoGameGameContext.getGraphicsDevice gameCtx
       // Total elapsed game time, in seconds — captured once per frame for the scene bundle so an
       // animated custom shader (water ripples, flowing textures) has a `time` uniform to read.
@@ -723,6 +721,10 @@ type ForwardPipelineBase
         SavedViewport = gd.Viewport
       }
 
+      // Post-process actions collected here, drained after the forward pass renders the scene
+      // to an offscreen target. Hoisted before the pre-scan so both passes can see them.
+      let ppActions = ResizeArray<PostProcessContext3D -> unit>()
+
       // Pre-scan: lights, camera, and shadow commands (shadow origin / toggle) need to be
       // known before the shadow pass runs. Draw commands are handled in the forward pass.
       for i = 0 to buffer.Count - 1 do
@@ -749,6 +751,7 @@ type ForwardPipelineBase
         | Command3D.AddSpotLight s -> lights.SpotLights.Add s
         | Command3D.SetShadowOrigin origin ->
           shadowRes.Origin <- ValueSome origin
+        | Command3D.PostProcess action -> ppActions.Add action
         | _ -> ()
 
       // ── Step 2: Shadow pass (directional shadows only; B10) ──
@@ -780,6 +783,19 @@ type ForwardPipelineBase
       // camera block establishes its own matrices, and draws outside any camera block are
       // skipped. So reset to "no active camera" before the forward loop.
       state.HasCamera <- false
+
+      // When post-process commands are present, render the forward pass to an offscreen target
+      // so each action can sample the scene texture. Otherwise render direct to the back-buffer.
+      let usePostProcess = ppActions.Count > 0
+
+      let sceneRT: RenderTarget2D voption =
+        if usePostProcess then
+          let target = rtPool.Acquire(gameCtx.WindowWidth, gameCtx.WindowHeight)
+          gd.SetRenderTarget(target)
+          gd.Clear(Microsoft.Xna.Framework.Color.Black)
+          ValueSome target
+        else
+          ValueNone
 
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
@@ -902,6 +918,10 @@ type ForwardPipelineBase
         | Command3D.EnableShadows
         | Command3D.DisableShadows -> ()
 
+        // Post-process actions were collected in the pre-scan and run after the scene
+        // renders to an offscreen target; nothing to do during the forward pass.
+        | Command3D.PostProcess _ -> ()
+
         // ── Escape hatch: full device control + the gathered scene data ──
         | Command3D.DrawImmediate action ->
           let savedHasCamera = state.HasCamera
@@ -923,16 +943,57 @@ type ForwardPipelineBase
             // Restore viewport; camera state is logical (matrices), nothing to restore on gd.
             gd.Viewport <- savedViewport
             state.HasCamera <- savedHasCamera
-      // Post-process gate: B5 ships with no passes (PostProcessConfig3D.none), so this
-      // branch is never taken. The scene renders directly to the back-buffer. B9 wires
-      // the full post-process chain.
-      match ppConfig.Passes with
-      | ValueNone
-      | ValueSome [||] -> ()
-      | _ ->
-        // Full post-process ping-pong lands in B9. Until then, passes are unsupported.
-        // Silently ignored rather than throwing so the pipeline stays usable.
-        ()
+
+      // ── Post-process: ping-pong the scene through each action ──
+      match sceneRT with
+      | ValueNone -> ()
+      | ValueSome sceneTarget ->
+        // Return to the back-buffer before draining (the forward pass drew into sceneTarget).
+        gd.SetRenderTarget(null)
+
+        match fullScreenQuad with
+        | ValueNone -> fullScreenQuad <- ValueSome(new FullScreenQuad(gd))
+        | ValueSome _ -> ()
+
+        let mutable src = sceneTarget
+
+        let quad =
+          fullScreenQuad |> ValueOption.defaultValue Unchecked.defaultof<_>
+
+        for i = 0 to ppActions.Count - 1 do
+          let isLast = i = ppActions.Count - 1
+
+          let dst =
+            if isLast then
+              null
+            else
+              rtPool.Acquire(src.Width, src.Height)
+
+          if not isLast then
+            gd.SetRenderTarget(dst)
+
+          gd.Clear(
+            ClearOptions.Target,
+            Microsoft.Xna.Framework.Color.Black,
+            0.0f,
+            0
+          )
+
+          let ppCtx: PostProcessContext3D = {
+            Source = src
+            Depth = ValueNone
+            Width = src.Width
+            Height = src.Height
+            Time = frameTime
+            Device = gd
+            Quad = quad
+            Context = gameCtx
+          }
+
+          ppActions[i]ppCtx
+
+          if not isLast then
+            src <- dst
 
 // ------------------------------------------------------------------
 // ForwardPipeline — the default PBR subclass (v2 pipeline-staging)
@@ -962,14 +1023,6 @@ type ForwardPipelineBase
 /// </para>
 /// </remarks>
 type ForwardPipeline
-  (
-    ?postProcess: PostProcessConfig3D,
-    ?shadowAtlas: ShadowAtlasConfig,
-    ?shadowBias: ShadowBiasConfig
-  ) =
+  (?shadowAtlas: ShadowAtlasConfig, ?shadowBias: ShadowBiasConfig) =
   inherit
-    ForwardPipelineBase(
-      ?postProcess = postProcess,
-      ?shadowAtlas = shadowAtlas,
-      ?shadowBias = shadowBias
-    )
+    ForwardPipelineBase(?shadowAtlas = shadowAtlas, ?shadowBias = shadowBias)

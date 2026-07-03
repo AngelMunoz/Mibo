@@ -77,3 +77,4 @@ type Command3D =
   | BeginEffect of effect: Effect
   | EndEffect
   | DrawImmediate of action: (Pipelines.SceneContext -> unit)
+  | PostProcess of ppAction: (PostProcessContext3D -> unit)

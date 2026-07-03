@@ -22,12 +22,13 @@
     <Compile Include="Graphics3D/Material3D.fs" />
     <Compile Include="Graphics3D/Primitive3D.fs" />
     <Compile Include="Graphics3D/SceneContext.fs" />
+    <Compile Include="Graphics3D/FullScreenQuad.fs" />
+    <Compile Include="Graphics3D/PostProcessContext3D.fs" />
     <Compile Include="Graphics3D/Command3D.fs" />
     <Compile Include="Graphics3D/RenderBuffer3D.fs" />
     <Compile Include="Graphics3D/RenderTargetPool3D.fs" />
     <Compile Include="Graphics3D/RenderPipeline3D.fs" />
     <Compile Include="Graphics3D/Renderer3D.fs" />
-    <Compile Include="Graphics3D/Pipelines/PostProcess3D.fs" />
     <Compile Include="Graphics3D/Pipelines/SceneData.fs" />
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
     <Compile Include="Graphics3D/Pipelines/PbrUniforms.fs" />
