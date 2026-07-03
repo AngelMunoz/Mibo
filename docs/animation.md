@@ -220,12 +220,13 @@ let sprite = oldSprite |> AnimatedSprite.playByIndex walkIndex
 
 Mibo is format-agnostic: a `SpriteSheet` is simply a **Texture** plus a set of **Source Rectangles**.
 
-The concrete types are backend-native: `Texture2D`/`Rectangle` from `Raylib_cs` (raylib) or `Microsoft.Xna.Framework` (MonoGame). Load them via `ctx.Assets.Texture(...)`:
+The concrete types are backend-native: `Texture2D`/`Rectangle` from `Raylib_cs` (raylib) or `Microsoft.Xna.Framework` (MonoGame). Obtain them via the service registry — `GameContext.getService<IAssets> ctx` — then call its loaders:
 
 ```fsharp
 // Example: pseudo-code for a custom loader
 let loadHero (ctx: GameContext) =
-    let tex = ctx.Assets.Texture("hero_atlas")  // raylib: "hero_atlas.png"; MonoGame: "hero_atlas" (content name)
+    let assets = GameContext.getService<IAssets> ctx
+    let tex = assets.Texture("hero_atlas")  // raylib: "hero_atlas.png"; MonoGame: "hero_atlas" (content name)
     let frames = MyJsonParser.parse "hero_metadata.json"
     SpriteSheet.fromFrames tex (Vector2(32.f, 32.f)) frames
 ```

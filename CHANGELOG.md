@@ -6,9 +6,18 @@
 
 - **3D:** instanced draws inside a `beginEffect`/`endEffect` scope are now shaded by your own shader/effect when it opts into instancing — raylib declares `in mat4 instanceTransform;`, MonoGame exposes an `Instanced` technique. Effects that don't opt in keep the previous PBR-instanced fallback. Skinned + instanced isn't supported (no per-instance bone palette). See the "Instancing (opt-in)" section of `docs/shader-uniforms.md`.
 
+- **MonoGame 2D:** `Draw.setSamplerState` sets the sprite-batch sampler state for subsequent sprites (e.g. `SamplerState.PointClamp`), mirroring `setBlend` — use it to stop tiles sampled from a gutterless spritesheet from bleeding at the edges. It flushes the batch on change and defaults to the previous behavior (`SamplerState.LinearClamp`). On raylib, use the new `Texture.filter` helper instead.
+- **Raylib:** a `Texture` helper module lets you configure a loaded texture's sampler in a pipe — `filter`, `wrap`, and `mipmaps` (e.g. `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point`, or `|> Texture.wrap TextureWrap.Repeat`). These override the load-time trilinear+mipmaps default (needed for point-filtered tile atlases and repeating backgrounds). MonoGame controls sampling per draw via `Draw.setSamplerState` instead.
+
+### Changed
+
+- **Templates:** the MonoGame 2D and 3D templates now keep the shared library under `src/`, ship the MonoGame content pipeline (`Content/Content.mgcb`, built by each thin client via `MonoGame.Content.Builder.Task`), and expose `create()` as a ready-to-run `MonoGameProgram` with the content root already configured — the thin clients just construct `MiboGame` and run, instead of each wiring up `MonoGameProgram.ofProgram`.
+
 ### Fixed
 
 - **3D:** a custom `beginEffect`/`endEffect` shader/effect that opts into shadows now receives them correctly. The scene-upload path bound the shadow atlas under the wrong sampler name on MonoGame (`texture5` instead of `shadowAtlas` — the name `mgfxc` exposes samplers under), never uploaded the per-caster `shadowBiases`, and omitted the bias from the `ShadowResult` bundle entirely. Declare `sampler2D shadowAtlas : register(s5)` (MonoGame) / the `shadowAtlas`/`shadowBiases` uniforms (raylib) to opt in.
+
+- **Docs:** asset access in the program/assets/animation guides pointed at a non-existent `ctx.Assets` member — fixed to `GameContext.getService<IAssets> ctx`. The Core layout APIs (`CellGrid2D`/`LayeredGrid2D`) always take `System.Numerics.Vector2`, which collides with `Microsoft.Xna.Framework.Vector2` in MonoGame projects; the layout and camera guides now flag this and qualify the calls. The `SpriteState` reference now lists every field (`Rotation`/`Origin`/`NormalMap`), not just `Color`/`Layer`.
 
 ## [2.0.0-rc-001] - 2026-07-01
 

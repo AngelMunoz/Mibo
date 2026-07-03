@@ -14,6 +14,7 @@
     <Compile Include="Animation.fs" />
     <Compile Include="Animation3D.fs" />
     <Compile Include="Assets.fs" />
+    <Compile Include="Texture.fs" />
     <Compile Include="Elmish.Program.fs" />
     <Compile Include="Elmish.Runtime.fs" />
     <Compile Include="DefaultShaders.fs" />

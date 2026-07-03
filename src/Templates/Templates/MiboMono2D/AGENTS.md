@@ -4,15 +4,20 @@ This is a **Mibo** game project. Mibo is an Elmish-based F# game framework.
 This template targets the **MonoGame** backend (`Mibo.MonoGame`, host `MiboGame`)
 and ships **two interchangeable thin clients** sharing one library:
 
-- `MiboMono2D/` — shared library (net10.0). All game logic, the view, and a
-  `create()` composition root that builds the `Program`. References
-  `Mibo.MonoGame` + `MonoGame.Framework.Native` (the compile-time,
-  backend-neutral types).
+- `src/` — shared library (net10.0): `Library.fs` (module `MiboMono2D`, all game
+  logic, the view, and a `create()` composition root that builds the
+  `MonoGameProgram`) + `MiboMono2D.fsproj`. References `Mibo.MonoGame` +
+  `MonoGame.Framework.Native` (the compile-time, backend-neutral types) and the
+  shared content pipeline.
+- `Content/` — shared MonoGame content pipeline (`Content.mgcb`). Each thin
+  client builds it via `MonoGame.Content.Builder.Task`, so the same assets are
+  available in both backends.
 - `DesktopGL/` — thin client. Adds `MonoGame.Framework.DesktopGL` (**OpenGL**),
-  calls `MiboMono2D.create()` and runs `MiboGame`.
+  references `../src/MiboMono2D.fsproj` and the shared content, calls
+  `MiboMono2D.create()` and runs `MiboGame`.
 - `WindowsDX/` — thin client (net10.0-windows). Adds
   `MonoGame.Framework.WindowsDX` (**DirectX**), `[<STAThread>]`,
-  `app.manifest`. Same three lines as DesktopGL.
+  `app.manifest`. Same wiring as DesktopGL.
 
 The starter draws a bouncing red rectangle — pure Model-View-Update with a
 `Tick`-driven view. Treat it as Level 0 on the
@@ -34,16 +39,26 @@ MonoGame's platform host packages (`...DesktopGL` and `...WindowsDX`) **cannot
 coexist in one project**. That is why there are three projects. Keep the split:
 
 - **Game logic, model, messages, `update`, the `view`, and `create()` live in
-  the shared library only.** They must stay backend-neutral (compile against
+  `src/` only.** They must stay backend-neutral (compile against
   `MonoGame.Framework.Native`). Never reference `DesktopGL` or `WindowsDX` from
   the shared lib.
-- **Thin clients stay thin.** They only call `MiboMono2D.create()`, convert with
-  `MonoGameProgram.ofProgram` (+ optional `withConfig`), and `new MiboGame<_,_>().Run()`.
-  Put no game logic in a client.
+- **Thin clients stay thin.** They just call `MiboMono2D.create()` (which already
+  returns a `MonoGameProgram` with the content root configured) and
+  `new MiboGame<_,_>().Run()` — they no longer call `MonoGameProgram.ofProgram`
+  themselves. Asset / `Content.RootDirectory` configuration is centralized in
+  `create()`. Put no game logic in a client.
 - Both clients build from the same shared source — **do not fork logic per
   backend.** If you need a backend-specific service (audio, animation),
   define an interface in the shared lib (or `Mibo.Core`) and implement it once,
   injecting it through an `Env`/composition-root record like `create()` does.
+
+## Content pipeline
+
+Add assets under `Content/` and reference them in `Content/Content.mgcb` (asset
+names have no extension). They build into each client's output directory and
+load at runtime via `GameContext.getService<IAssets> ctx`. You can edit the
+pipeline with `dotnet mgcb-editor` (run `dotnet tool restore` first to install
+it from `dotnet-tools.json`).
 
 ## Architecture you must follow: routed sub-systems
 

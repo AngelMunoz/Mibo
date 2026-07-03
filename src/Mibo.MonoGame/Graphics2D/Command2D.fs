@@ -281,6 +281,7 @@ type Command2D =
   | EndTarget of layer: int<RenderLayer>
   // Render State
   | SetBlend of blend: BlendMode * layer: int<RenderLayer>
+  | SetSamplerState of sampler: SamplerState * layer: int<RenderLayer>
   | SetScissor of
     scissorX: int *
     scissorY: int *
@@ -644,6 +645,10 @@ module Command2D =
   /// <summary>Sets the active blend mode. (layer) can be partially applied.</summary>
   let inline setBlend (layer: int<RenderLayer>) (mode: BlendMode) =
     Command2D.SetBlend(mode, layer)
+
+  /// <summary>Sets the sampler state for subsequent sprites. (layer) can be partially applied.</summary>
+  let inline setSamplerState (layer: int<RenderLayer>) (sampler: SamplerState) =
+    Command2D.SetSamplerState(sampler, layer)
 
   /// <summary>Enables a scissor rectangle. (layer) can be partially applied.</summary>
   let inline setScissor

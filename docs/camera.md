@@ -43,6 +43,8 @@ let camera = Camera2D.create (Vector2(400f, 300f)) 1.0f viewportSize
 - `zoom` — zoom factor (`1.0f` = no zoom)
 - `viewportSize` — screen size in pixels (used to compute the offset)
 
+> _**NOTE — vector types.**_ Each backend's `Camera2D.create`/`Camera3D` takes that backend's native vector type — raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework` — so make sure the matching namespace is `open`. (The `Vector3(...)` used by `Camera3D` follows the same rule.) Note that the Core layout APIs (`CellGrid2D`, `LayeredGrid2D`) always take `System.Numerics.Vector2` and must be explicitly qualified in MonoGame projects; see the note on the [2D Layout Engine](level-design/2d/core.html) page.
+
 ### Using in a view
 
 Wrap your world-space draw commands between `beginCamera` and `endCamera`. The `layer` parameter controls draw order — camera and content must share the same layer range.

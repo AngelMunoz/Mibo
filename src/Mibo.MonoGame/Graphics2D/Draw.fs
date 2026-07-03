@@ -443,6 +443,17 @@ module Draw =
     buffer.Add(Command2D.setBlend layer mode)
     buffer
 
+  /// <summary>Sets the sampler state (e.g. <c>SamplerState.PointClamp</c>) for subsequent
+  /// sprites — useful to stop tile-atlas bleeding. (layer) can be partially applied.
+  /// MonoGame only.</summary>
+  let inline setSamplerState
+    (layer: int<RenderLayer>)
+    (sampler: SamplerState)
+    (buffer: RenderBuffer2D)
+    =
+    buffer.Add(Command2D.setSamplerState layer sampler)
+    buffer
+
   /// <summary>Enables a scissor rectangle. (layer) can be partially applied.</summary>
   let inline setScissor
     (layer: int<RenderLayer>)
