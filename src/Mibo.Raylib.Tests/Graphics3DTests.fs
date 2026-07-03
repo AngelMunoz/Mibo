@@ -895,6 +895,23 @@ let draw3DDSLTests =
       | Command3D.DisableShadows -> ()
       | _ -> Tests.failtest "Sixth should be DisableShadows"
     }
+
+    test "Draw3D.postProcess adds a PostProcess command and invokes the action" {
+      use buf = new RenderBuffer3D()
+      let called = ref false
+
+      let action(_: PostProcessContext3D) = called := true
+
+      buf |> Draw3D.postProcess action |> Draw3D.drop |> ignore
+
+      Expect.equal buf.Count 1 "Should have 1 command"
+
+      match buf.Item 0 with
+      | Command3D.PostProcess a ->
+        a Unchecked.defaultof<_>
+        Expect.isTrue !called "action should be invokable"
+      | _ -> Tests.failtest "Should be PostProcess"
+    }
   ]
 
 // ──────────────────────────────────────────────

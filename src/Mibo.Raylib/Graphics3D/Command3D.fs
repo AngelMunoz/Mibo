@@ -65,6 +65,7 @@ type Command3D =
   | BeginEffect of shader: Shader
   | EndEffect
   | DrawImmediate of action: (Pipelines.SceneContext -> unit)
+  | PostProcess of ppAction: (PostProcessContext3D -> unit)
 
 /// <summary>
 /// Factory functions that create <see cref="T:Mibo.Elmish.Graphics3D.Command3D"/> values
@@ -156,3 +157,11 @@ module Command3D =
 
   let inline drawImmediate(action: Pipelines.SceneContext -> unit) =
     Command3D.DrawImmediate(action)
+
+  /// <summary>
+  /// Creates a model-aware post-process pass. The action runs once per frame, after the
+  /// whole scene renders to an offscreen target; it receives a <see cref="T:Mibo.Elmish.Graphics3D.PostProcessContext3D"/>
+  /// with the scene texture (+ optional depth) and must draw a fullscreen quad of it.
+  /// </summary>
+  let inline postProcess(action: PostProcessContext3D -> unit) =
+    Command3D.PostProcess(action)
