@@ -42,6 +42,7 @@
     <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
     <Compile Include="Graphics2D/Lighting/LightContext.fs" />
     <Compile Include="Graphics2D/Lighting/ParticleTypes.fs" />
+    <Compile Include="Graphics2D/PostProcessContext2D.fs" />
     <Compile Include="Graphics2D/Command2D.fs" />
     <Compile Include="Graphics2D/RenderBuffer2D.fs" />
     <Compile Include="Graphics2D/PrimitiveBatch.fs" />

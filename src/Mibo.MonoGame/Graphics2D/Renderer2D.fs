@@ -6,118 +6,9 @@ open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D.Lighting
 
-/// <summary>A single post-processing pass applied to the rendered scene.</summary>
-[<Struct>]
-type PostProcessPass = {
-
-  /// <summary>Effect used for this pass. Receives the scene/render-target as the active texture.</summary>
-  Effect: Effect
-
-  /// <summary>
-  /// Optional callback to set effect parameters before rendering the fullscreen quad.
-  /// Called once per frame when this pass executes. The <see cref="T:Microsoft.Xna.Framework.Graphics.Effect"/>
-  /// technique pass is already applied when this callback runs.
-  /// </summary>
-  OnSetup: (Effect -> GameContext -> unit) voption
-}
-
-/// <summary>Post-processing chain for 2D rendering.</summary>
-module PostProcess2D =
-
-  /// <summary>
-  /// Applies a chain of post-processing passes via ping-pong render targets.
-  /// The scene is already rendered to <paramref name="sceneTarget"/>. Each pass
-  /// renders to a pooled RT (except the last, which renders to the backbuffer).
-  /// </summary>
-  let apply
-    (
-      ctx: GameContext,
-      sceneTarget: RenderTarget2D,
-      passes: PostProcessPass[],
-      rtPool: IRenderTargetPool,
-      spriteBatch: SpriteBatch
-    ) =
-    let mutable src: Texture2D = sceneTarget
-    let w = ctx.WindowWidth
-    let h = ctx.WindowHeight
-
-    for i = 0 to passes.Length - 1 do
-      let pass = passes[i]
-      let isLast = i = passes.Length - 1
-
-      let dst: RenderTarget2D voption =
-        if isLast then
-          ValueNone
-        else
-          ValueSome(rtPool.Acquire(w, h))
-
-      let gd = sceneTarget.GraphicsDevice
-
-      match dst with
-      | ValueSome target ->
-        gd.SetRenderTarget(target)
-        gd.Clear(Color.Black)
-      | ValueNone -> gd.SetRenderTarget(null)
-
-      match pass.OnSetup with
-      | ValueSome f -> f pass.Effect ctx
-      | ValueNone -> ()
-
-      // Apply every pass in the technique (multi-pass effects are supported).
-      // Use SpriteSortMode.Immediate so each Draw is flushed with the effect's
-      // current technique/pass applied; SpriteBatch re-applies the active effect
-      // on each Draw in Immediate mode, so iterating the passes here drives the
-      // effect's multi-pass logic correctly. Guard against empty techniques.
-      let techniquePasses = pass.Effect.CurrentTechnique.Passes
-
-      if techniquePasses.Count > 0 then
-        let srcRect = Rectangle(0, 0, w, h)
-        let destRect = Rectangle(0, 0, w, h)
-
-        // MonoGame stores RenderTarget2D data upside-down relative to normal
-        // textures and the back buffer, so copying RT -> RT/back buffer via
-        // SpriteBatch requires FlipVertically. This is consistent across the
-        // DirectX and OpenGL backends (SpriteBatch normalizes orientation),
-        // so the flip is unconditional here on purpose.
-        spriteBatch.Begin(
-          SpriteSortMode.Immediate,
-          BlendState.Opaque,
-          SamplerState.LinearClamp,
-          DepthStencilState.None,
-          RasterizerState.CullNone,
-          pass.Effect
-        )
-
-        for pIdx = 0 to techniquePasses.Count - 1 do
-          techniquePasses.[pIdx].Apply()
-
-          spriteBatch.Draw(
-            src,
-            destRect,
-            srcRect,
-            Color.White,
-            0.0f,
-            Vector2.Zero,
-            SpriteEffects.FlipVertically,
-            0.0f
-          )
-
-        spriteBatch.End()
-
-      match dst with
-      | ValueSome target -> src <- target
-      | ValueNone -> ()
-
 /// <summary>Configuration for the <see cref="T:Mibo.Elmish.Graphics2D.Renderer2D`1"/></summary>
 [<Struct>]
 type Renderer2DConfig = {
-
-  /// <summary>
-  /// Optional post-processing passes. Applied in order after the scene is rendered
-  /// to a render target, chaining via pooled render targets between passes.
-  /// The last pass renders directly to the backbuffer.
-  /// </summary>
-  PostProcess: PostProcessPass[] voption
 
   /// <summary>
   /// Background clear color applied before rendering commands.
@@ -132,22 +23,65 @@ type Renderer2DConfig = {
 module Renderer2DConfig =
 
   /// <summary>
-  /// Default configuration: no post-processing, black clear color.
-  /// Suitable for most 2D games that don't need screen-space effects.
+  /// Default configuration: black clear color. Post-processing is driven by
+  /// <c>Command2D.PostProcess</c> emitted from the view, not configured here.
   /// </summary>
-  let defaults: Renderer2DConfig = {
-    PostProcess = ValueNone
-    ClearColor = ValueSome Color.Black
-  }
+  let defaults: Renderer2DConfig = { ClearColor = ValueSome Color.Black }
 
   /// <summary>
   /// Configuration that skips clearing the background.
   /// Use when this renderer composites on top of another renderer's output.
   /// </summary>
-  let noClear: Renderer2DConfig = {
-    PostProcess = ValueNone
-    ClearColor = ValueNone
-  }
+  let noClear: Renderer2DConfig = { ClearColor = ValueNone }
+
+// ═══════════════════════════════════════════════════════════════════
+// Post-process drain — ping-pongs the scene through each emitted action
+// ═══════════════════════════════════════════════════════════════════
+
+module private PostProcessDrain =
+
+  /// <summary>
+  /// Runs each post-process action in order, ping-ponging the scene texture through
+  /// pooled render targets. Each action receives the current source as a
+  /// <see cref="T:Mibo.Elmish.Graphics2D.PostProcessContext2D"/> and owns its effect +
+  /// fullscreen-quad draw. The last action draws to the back-buffer.
+  /// </summary>
+  let apply
+    (ctx: GameContext)
+    (gd: GraphicsDevice)
+    (sceneTarget: RenderTarget2D)
+    (rtPool: IRenderTargetPool)
+    (quad: Mibo.Elmish.Graphics3D.FullScreenQuad)
+    (actions: ResizeArray<PostProcessContext2D -> unit>)
+    (frameTime: float32)
+    =
+    let mutable src: RenderTarget2D = sceneTarget
+    let w = ctx.WindowWidth
+    let h = ctx.WindowHeight
+
+    for i = 0 to actions.Count - 1 do
+      let isLast = i = actions.Count - 1
+
+      if isLast then
+        gd.SetRenderTarget(null)
+      else
+        let dst = rtPool.Acquire(w, h)
+        gd.SetRenderTarget(dst)
+        src <- dst
+
+      gd.Clear(ClearOptions.Target, Color.Black, 0.0f, 0)
+
+      let ppCtx: PostProcessContext2D = {
+        Source = src
+        Width = w
+        Height = h
+        Time = frameTime
+        Device = gd
+        Quad = quad
+        Context = ctx
+      }
+
+      actions[i]ppCtx
 
 // ═══════════════════════════════════════════════════════════════════
 // Private command handlers — extracted from Renderer2D for readability
@@ -1566,6 +1500,9 @@ module private CommandHandlers =
             0.0f
           )
 
+      // Post-process actions are drained after the scene renders; nothing to do here.
+      | Command2D.PostProcess _ -> ()
+
 /// <summary>
 /// A deferred 2D renderer that sorts commands by layer and executes them
 /// via pattern matching on <see cref="T:Mibo.Elmish.Graphics2D.Command2D"/>.
@@ -1604,6 +1541,9 @@ type Renderer2D<'Model>
   let mutable _primitiveBatch: PrimitiveBatch voption = ValueNone
   let mutable _whitePixel: Texture2D voption = ValueNone
   let mutable _rtPool: IRenderTargetPool voption = ValueNone
+  // Created against the device on the first post-process frame.
+  let mutable _fullScreenQuad: Mibo.Elmish.Graphics3D.FullScreenQuad voption =
+    ValueNone
 
   // Per-instance lit-sprite quad scratch buffer (two triangles = 6 verts).
   // Instance-scoped so stacked Renderer2D instances don't clobber each other.
@@ -1628,7 +1568,7 @@ type Renderer2D<'Model>
     | ValueSome _ -> ()
 
   interface IRenderer<'Model> with
-    member _.Draw(ctx, model, _gameTime) =
+    member _.Draw(ctx, model, gameTime) =
       _windowWidth <- ctx.WindowWidth
       _windowHeight <- ctx.WindowHeight
       buffer.Clear()
@@ -1679,8 +1619,18 @@ type Renderer2D<'Model>
         QuadVerts = _quadVerts
       }
 
-      match config.PostProcess with
-      | ValueNone ->
+      // Peek the buffer for post-process actions emitted by the view. When none are
+      // present, take the hot path (no scene RT). When present, render the scene to a
+      // pooled RT and ping-pong each action through pooled RTs (the last draws to the
+      // back-buffer).
+      let ppActions = ResizeArray<PostProcessContext2D -> unit>()
+
+      for i = 0 to buffer.Count - 1 do
+        match buffer[i] with
+        | Command2D.PostProcess a -> ppActions.Add a
+        | _ -> ()
+
+      if ppActions.Count = 0 then
         match config.ClearColor with
         | ValueSome c -> gd.Clear(c)
         | ValueNone -> ()
@@ -1694,7 +1644,7 @@ type Renderer2D<'Model>
         finally
           sb.End()
           pb.End()
-      | ValueSome passes ->
+      else
         let pool = _rtPool.Value
         let sceneRT = pool.Acquire(ctx.WindowWidth, ctx.WindowHeight)
         gd.SetRenderTarget(sceneRT)
@@ -1705,11 +1655,11 @@ type Renderer2D<'Model>
         | ValueSome c -> gd.Clear(c)
         | ValueNone -> ()
 
-        // Render the scene to the render target, then run post-processing.
-        // Wrapped in try/finally so pooled render targets are always released
-        // (and the back-buffer restored) even if execute or a post-process pass
-        // throws — otherwise an exception leaks the sceneRT and any RTs acquired
-        // by PostProcess2D.apply forever, growing GPU memory each frame.
+        // Render the scene to the render target, then drain the post-process
+        // actions. Wrapped in try/finally so pooled render targets are always
+        // released (and the back-buffer restored) even if execute or a post-process
+        // action throws — otherwise an exception leaks the sceneRT and any RTs
+        // acquired by the drain forever, growing GPU memory each frame.
         let mutable sceneDone = false
 
         try
@@ -1718,7 +1668,23 @@ type Renderer2D<'Model>
           pb.End()
           sceneDone <- true
           gd.SetRenderTarget(null)
-          PostProcess2D.apply(ctx, sceneRT, passes, pool, sb)
+
+          let quad =
+            match _fullScreenQuad with
+            | ValueSome q -> q
+            | ValueNone ->
+              let q = new Mibo.Elmish.Graphics3D.FullScreenQuad(gd)
+              _fullScreenQuad <- ValueSome q
+              q
+
+          PostProcessDrain.apply
+            ctx
+            gd
+            sceneRT
+            pool
+            quad
+            ppActions
+            (float32 gameTime.TotalTime.TotalSeconds)
         finally
           // If execute threw before the batches were ended, close them so the
           // renderer stays usable next frame (Begin guards against re-entrancy).
@@ -1751,6 +1717,10 @@ type Renderer2D<'Model>
         match pool with
         | :? IDisposable as d -> d.Dispose()
         | _ -> ()
+      | ValueNone -> ()
+
+      match _fullScreenQuad with
+      | ValueSome q -> (q :> IDisposable).Dispose()
       | ValueNone -> ()
 
       (buffer :> IDisposable).Dispose()
