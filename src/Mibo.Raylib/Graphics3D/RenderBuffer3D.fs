@@ -27,6 +27,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
 
   let mutable count = 0
   let mutable clearCounter = 0
+  let mutable postProcessCount = 0
 
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
@@ -41,6 +42,12 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   /// <summary>The number of commands currently in the buffer.</summary>
   member _.Count = count
 
+  /// <summary>
+  /// Number of <c>PostProcess</c> commands added since the last <c>Clear</c>. Lets a pipeline
+  /// skip the post-process drain (and its per-frame allocation) when the view emits none.
+  /// </summary>
+  member _.PostProcessCount = postProcessCount
+
   /// <summary>Gets the command at the specified index.</summary>
   member _.Item(i: int) = items[i]
 
@@ -48,6 +55,11 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   member _.Add(cmd: Command3D) =
     ensureCapacity 1
     items[count] <- cmd
+
+    match cmd with
+    | Command3D.PostProcess _ -> postProcessCount <- postProcessCount + 1
+    | _ -> ()
+
     count <- count + 1
 
   /// <summary>
@@ -56,6 +68,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   /// </summary>
   member _.Clear() =
     count <- 0
+    postProcessCount <- 0
     clearCounter <- clearCounter + 1
 
     if clearCounter >= 300 then

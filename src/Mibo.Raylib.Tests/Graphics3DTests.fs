@@ -670,6 +670,35 @@ let renderBuffer3DTests =
       Expect.equal buf.Count 0 "Count should be 0 after clear"
     }
 
+    test "PostProcessCount tracks PostProcess commands and resets on Clear" {
+      use buf = new RenderBuffer3D()
+
+      Expect.equal
+        buf.PostProcessCount
+        0
+        "Fresh buffer has no post-process commands"
+
+      buf
+      |> Draw3D.postProcess(fun (_: PostProcessContext3D) -> ())
+      |> Draw3D.drop
+      |> ignore
+
+      buf
+      |> Draw3D.postProcess(fun (_: PostProcessContext3D) -> ())
+      |> Draw3D.drop
+      |> ignore
+
+      buf.Add(Command3D.drawLine3D v3a v3b Color.White)
+
+      Expect.equal
+        buf.PostProcessCount
+        2
+        "Should count only PostProcess commands"
+
+      buf.Clear()
+      Expect.equal buf.PostProcessCount 0 "Clear should reset PostProcessCount"
+    }
+
     test "Sort with custom comparer reorders commands" {
       use buf = new RenderBuffer3D()
       buf.Add(Command3D.drawLine3D v3a v3b (Color(50uy, 0uy, 255uy, 255uy))) // R=50
@@ -1414,7 +1443,8 @@ let preScanTests =
           &sk,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>
+          Unchecked.defaultof<_>,
+          ValueNone
         )
 
       match fs.Camera with
@@ -1443,7 +1473,8 @@ let preScanTests =
           &sk,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>
+          Unchecked.defaultof<_>,
+          ValueNone
         )
 
       match fs.Camera with
@@ -1468,7 +1499,8 @@ let preScanTests =
           &sk,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>
+          Unchecked.defaultof<_>,
+          ValueNone
         )
 
       match fs.ShadowOrigin with
@@ -1500,7 +1532,8 @@ let preScanTests =
           &sk,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>
+          Unchecked.defaultof<_>,
+          ValueNone
         )
 
       Expect.isTrue lights.Ambient.IsSome "Should have 1 ambient"
@@ -1525,7 +1558,8 @@ let preScanTests =
           &sk,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>
+          Unchecked.defaultof<_>,
+          ValueNone
         )
 
       Expect.equal fs.Camera ValueNone "No camera"

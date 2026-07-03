@@ -14,8 +14,7 @@ open Mibo.Elmish.Graphics3D
 [<AutoOpen>]
 module private ForwardHelpers =
 
-  // LightBuffers + clearLights moved to SceneData.fs (public) in Phase 1 of the v2
-  // pipeline-staging work. ForwardPipeline references them as Pipelines.LightBuffers.
+  // LightBuffers + clearLights live in SceneData.fs; referenced here as Pipelines.LightBuffers.
 
   /// <summary>Builds the view + projection matrices for a MonoGame <see cref="T:Mibo.Elmish.Camera3D"/>.</summary>
   /// <remarks>
@@ -78,7 +77,7 @@ module private ForwardHelpers =
     | CameraProjection.Orthographic ->
       Matrix.CreateOrthographic(cam.FovY, cam.FovY, cam.NearPlane, cam.FarPlane)
 
-  // applyLighting moved to PbrShading.fs (private helper there) in the v2 refactor.
+  // applyLighting lives in PbrShading.fs (private helper there).
 
   /// <summary>
   /// Sets <c>World</c>/<c>View</c>/<c>Projection</c> on an effect via <see cref="T:Microsoft.Xna.Framework.Graphics.IEffectMatrices"/>
@@ -125,23 +124,13 @@ module private ForwardHelpers =
           part.PrimitiveCount
         )
 
-// MaterialKey + materialKey moved to PbrShading.fs (the PBR handlers own the short-circuit).
-
-// PbrEffectParams (and its semantic sub-records Matrix/Material/Ambient/DirLight/
-// PointLights/SpotLights/Shadow) moved to PbrUniforms.fs in the v2 pipeline-staging
-// refactor. The upload helpers (uploadLights/uploadMaterial/bindTextures) + pooled
-// light scratch arrays moved there too. ForwardPipeline references them as
-// PbrUniforms.build / PbrUniforms.uploadLights / etc.
-
-// ShadowEffectParams + buildShadowParams, ShadowMeshDraw, ShadowSkinnedDraw all moved
-// to ShadowPass.fs in the v2 refactor (along with the pass body + the 3 ViewProj builders).
-
-// buildPbrParams moved to PbrUniforms.fs (PbrUniforms.build).
-
-// The null-safe setters (setVec2/.../setVec4Array/colorToVec4), the pooled light
-// scratch arrays, and the PBR upload helpers (uploadLights/uploadMaterial/bindTextures)
-// all moved to PbrUniforms.fs in the v2 refactor. Call sites reference them directly
-// as PbrUniforms.* — no aliases.
+// ── Where things live ──
+// MaterialKey / materialKey          → PbrShading.fs (PBR handlers own the short-circuit)
+// PbrEffectParams + upload helpers (uploadLights/uploadMaterial/bindTextures)
+//   + pooled light scratch + null-safe setters (setVec2../setVec4Array/colorToVec4)
+//   + buildPbrParams (PbrUniforms.build) → PbrUniforms.fs (referenced as PbrUniforms.*)
+// ShadowEffectParams / buildShadowParams, ShadowMeshDraw / ShadowSkinnedDraw
+//   + the shadow pass body + the 3 ViewProj builders → ShadowPass.fs
 
 // ------------------------------------------------------------------
 // ForwardPipeline
@@ -162,7 +151,7 @@ module private ForwardHelpers =
 /// <remarks>
 /// <para>
 /// Ports the dispatch skeleton of <c>Mibo.Raylib/Graphics3D/Pipelines/ForwardPbrPipeline.fs</c>,
-/// adapted to MonoGame per the monogame3d plan §6 conventions (plain <c>float4x4</c>,
+/// adapted to MonoGame conventions (plain <c>float4x4</c>,
 /// <c>mul(position, matrix)</c>, right-handed math, OpenGL SM3.0 cap).
 /// <c>Material3D.fromModelMeshPart</c> reads each model part's baked native effect
 /// (<c>BasicEffect</c>/<c>SkinnedEffect</c>) into a <c>Material3D</c> so the authored look
@@ -220,7 +209,7 @@ type ForwardPipelineBase
     Array.zeroCreate<VertexPositionColorTexture> 2
 
   // ----------------------------------------------------------------
-  // Per-draw shading hook — overridable (v2 pipeline-staging).
+  // Per-draw shading hook — overridable.
   //
   // The default implementation delegates to PbrShading.*: the cached PBR fast path for the
   // shaded draw kinds (model / animated model / primitive / instanced), or — when a user-effect
@@ -311,7 +300,7 @@ type ForwardPipelineBase
       | _ -> ()
     | ValueSome userEffect ->
       // Per-group scope: shade with the user effect via name-resolved SceneUpload. The effect
-      // inherits scene data (camera/lights/material/bones), NOT the PBR shader itself (v2 §3).
+      // inherits scene data (camera/lights/material/bones), NOT the PBR shader itself.
       PbrShading.shadeWithEffect(gd, &state, &frame, pbrRes, userEffect, draw)
 
 
@@ -708,7 +697,7 @@ type ForwardPipelineBase
       // s5 is set per-shadow-pass to PointClamp; set a safe default here.
       gd.SamplerStates[5] <- SamplerState.PointClamp
 
-      // ── Step 1: Pre-scan — capture camera + lights + shadow state ──
+      // Pre-scan — capture camera, lights, shadow state, and post-process actions in one pass
       Pipelines.LightBuffers.clear lights
       shadowRes.Origin <- ValueNone
 
@@ -721,9 +710,15 @@ type ForwardPipelineBase
         SavedViewport = gd.Viewport
       }
 
-      // Post-process actions collected here, drained after the forward pass renders the scene
-      // to an offscreen target. Hoisted before the pre-scan so both passes can see them.
-      let ppActions = ResizeArray<PostProcessContext3D -> unit>()
+      // Post-process actions collected during the pre-scan and drained after the forward pass
+      // renders the scene to an offscreen target. Allocated only when the view emits at least one
+      // (buffer.PostProcessCount), so frames with no post-processing skip both the allocation and
+      // the per-command scan.
+      let ppActions: ResizeArray<PostProcessContext3D -> unit> voption =
+        if buffer.PostProcessCount > 0 then
+          ValueSome(ResizeArray(buffer.PostProcessCount))
+        else
+          ValueNone
 
       // Pre-scan: lights, camera, and shadow commands (shadow origin / toggle) need to be
       // known before the shadow pass runs. Draw commands are handled in the forward pass.
@@ -751,16 +746,19 @@ type ForwardPipelineBase
         | Command3D.AddSpotLight s -> lights.SpotLights.Add s
         | Command3D.SetShadowOrigin origin ->
           shadowRes.Origin <- ValueSome origin
-        | Command3D.PostProcess action -> ppActions.Add action
+        | Command3D.PostProcess action ->
+          match ppActions with
+          | ValueSome list -> list.Add action
+          | ValueNone -> ()
         | _ -> ()
 
-      // ── Step 2: Shadow pass (directional shadows only; B10) ──
+      // Shadow pass (directional shadows only)
       if state.HasCamera then
         this.runShadowPass(gd, &state, buffer)
 
-      // ── Step 3: Forward pass ──
+      // Forward pass
       // Lights + shadow state are already gathered; the camera is re-established per block
-      // below. activeEffect tracks the per-group shading scope (beginEffect/endEffect, §7.2):
+      // below. activeEffect tracks the per-group shading scope (beginEffect/endEffect):
       // ValueNone → default PBR path; ValueSome e → shade with the user effect. Scopes do NOT
       // persist across cameras — a new camera block (BeginCamera/BeginCameraConfig) and EndCamera
       // both reset it, so a forgotten endEffect can't leak a user effect into the next view.
@@ -786,7 +784,7 @@ type ForwardPipelineBase
 
       // When post-process commands are present, render the forward pass to an offscreen target
       // so each action can sample the scene texture. Otherwise render direct to the back-buffer.
-      let usePostProcess = ppActions.Count > 0
+      let usePostProcess = buffer.PostProcessCount > 0
 
       let sceneRT: RenderTarget2D voption =
         if usePostProcess then
@@ -819,7 +817,7 @@ type ForwardPipelineBase
           state.Projection <-
             perspectiveProjection cam (float32 vp.Width) (float32 vp.Height)
 
-          // New camera block: scopes don't persist across cameras (§7.2).
+          // New camera block: scopes don't persist across cameras.
           activeEffect <- ValueNone
 
         | Command3D.BeginCameraConfig cfg ->
@@ -849,7 +847,7 @@ type ForwardPipelineBase
           | ValueSome c -> gd.Clear(ClearOptions.Target, c.ToVector4(), 1.0f, 0)
           | ValueNone -> ()
 
-          // New camera block: scopes don't persist across cameras (§7.2).
+          // New camera block: scopes don't persist across cameras.
           activeEffect <- ValueNone
 
         | Command3D.EndCamera ->
@@ -860,7 +858,7 @@ type ForwardPipelineBase
             gd.Viewport <- state.SavedViewport
             state.HasCamera <- false
 
-          // EndCamera closes any open effect scope (§7.2).
+          // EndCamera closes any open effect scope.
           activeEffect <- ValueNone
 
         // ── Per-group shading scope ──
@@ -945,9 +943,10 @@ type ForwardPipelineBase
             state.HasCamera <- savedHasCamera
 
       // ── Post-process: ping-pong the scene through each action ──
-      match sceneRT with
-      | ValueNone -> ()
-      | ValueSome sceneTarget ->
+      match sceneRT, ppActions with
+      | ValueNone, _ -> ()
+      | ValueSome _, ValueNone -> ()
+      | ValueSome sceneTarget, ValueSome actions ->
         // Return to the back-buffer before draining (the forward pass drew into sceneTarget).
         gd.SetRenderTarget(null)
 
@@ -960,24 +959,27 @@ type ForwardPipelineBase
         let quad =
           fullScreenQuad |> ValueOption.defaultValue Unchecked.defaultof<_>
 
-        for i = 0 to ppActions.Count - 1 do
-          let isLast = i = ppActions.Count - 1
+        for i = 0 to actions.Count - 1 do
+          let isLast = i = actions.Count - 1
 
+          // Last action draws to the back-buffer (null); earlier actions ping-pong through
+          // pooled targets. The destination is set (and, for intermediate targets, cleared)
+          // before the action runs — the action samples `src`, not the destination.
           let dst =
             if isLast then
               null
             else
               rtPool.Acquire(src.Width, src.Height)
 
-          if not isLast then
-            gd.SetRenderTarget(dst)
+          gd.SetRenderTarget(dst)
 
-          gd.Clear(
-            ClearOptions.Target,
-            Microsoft.Xna.Framework.Color.Black,
-            0.0f,
-            0
-          )
+          if not isLast then
+            gd.Clear(
+              ClearOptions.Target,
+              Microsoft.Xna.Framework.Color.Black,
+              0.0f,
+              0
+            )
 
           let ppCtx: PostProcessContext3D = {
             Source = src
@@ -990,13 +992,13 @@ type ForwardPipelineBase
             Context = gameCtx
           }
 
-          ppActions[i]ppCtx
+          actions[i]ppCtx
 
           if not isLast then
             src <- dst
 
 // ------------------------------------------------------------------
-// ForwardPipeline — the default PBR subclass (v2 pipeline-staging)
+// ForwardPipeline — the default PBR subclass
 // ------------------------------------------------------------------
 
 /// <summary>

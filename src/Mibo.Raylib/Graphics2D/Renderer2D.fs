@@ -508,20 +508,21 @@ type Renderer2D<'Model>
         WindowHeight = _windowHeight
       }
 
-      let ppActions = ResizeArray<PostProcessContext2D -> unit>()
-
-      for i = 0 to buffer.Count - 1 do
-        match buffer[i] with
-        | Command2D.PostProcess a -> ppActions.Add a
-        | _ -> ()
-
-      if ppActions.Count = 0 then
+      if buffer.PostProcessCount = 0 then
         match config.ClearColor with
         | ValueSome c -> Raylib.ClearBackground(c)
         | ValueNone -> ()
 
         CommandHandlers.execute(&state, buffer)
       else
+        let ppActions =
+          ResizeArray<PostProcessContext2D -> unit>(buffer.PostProcessCount)
+
+        for i = 0 to buffer.Count - 1 do
+          match buffer[i] with
+          | Command2D.PostProcess a -> ppActions.Add a
+          | _ -> ()
+
         let sceneRT = rtPool.Acquire(ctx.WindowWidth, ctx.WindowHeight)
         Raylib.BeginTextureMode(sceneRT)
 

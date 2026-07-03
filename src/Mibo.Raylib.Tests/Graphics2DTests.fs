@@ -969,6 +969,27 @@ let drawDSLTests =
       | Command2D.PostProcess _ -> ()
       | _ -> Tests.failtest "Expected PostProcess"
     }
+
+    test "PostProcessCount tracks PostProcess commands and resets on Clear" {
+      let buf = RenderBuffer2D()
+
+      Expect.equal
+        buf.PostProcessCount
+        0
+        "Fresh buffer has no post-process commands"
+
+      buf |> Draw.postProcess(fun _ -> ()) |> ignore
+      buf |> Draw.postProcess(fun _ -> ()) |> ignore
+      buf.Add(Command2D.clear 0<RenderLayer> Color.Black)
+
+      Expect.equal
+        buf.PostProcessCount
+        2
+        "Should count only PostProcess commands"
+
+      buf.Clear()
+      Expect.equal buf.PostProcessCount 0 "Clear should reset PostProcessCount"
+    }
   ]
 
 // ──────────────────────────────────────────────

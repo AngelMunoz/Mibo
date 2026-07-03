@@ -62,14 +62,23 @@ module private PostProcessDrain =
     for i = 0 to actions.Count - 1 do
       let isLast = i = actions.Count - 1
 
-      if isLast then
-        gd.SetRenderTarget(null)
-      else
-        let dst = rtPool.Acquire(w, h)
-        gd.SetRenderTarget(dst)
-        src <- dst
+      // The last action draws to the back-buffer (null target); earlier actions ping-pong
+      // through pooled targets. The destination is set and (for intermediate targets) cleared
+      // BEFORE the action runs — the action samples `src`, not the destination.
+      let dst: RenderTarget2D voption =
+        if isLast then
+          ValueNone
+        else
+          ValueSome(rtPool.Acquire(w, h))
 
-      gd.Clear(ClearOptions.Target, Color.Black, 0.0f, 0)
+      match dst with
+      | ValueSome target ->
+        gd.SetRenderTarget(target)
+        gd.Clear(ClearOptions.Target, Color.Black, 0.0f, 0)
+      | ValueNone ->
+        // Back-buffer on the last pass — don't clear it (matches the raylib 2D drain),
+        // so a noClear composite isn't wiped by the final post-process pass.
+        gd.SetRenderTarget(null)
 
       let ppCtx: PostProcessContext2D = {
         Source = src
@@ -82,6 +91,11 @@ module private PostProcessDrain =
       }
 
       actions[i]ppCtx
+
+      // Advance the source to what we just rendered into, ready for the next pass.
+      match dst with
+      | ValueSome target -> src <- target
+      | ValueNone -> ()
 
 // ═══════════════════════════════════════════════════════════════════
 // Private command handlers — extracted from Renderer2D for readability
@@ -1619,18 +1633,11 @@ type Renderer2D<'Model>
         QuadVerts = _quadVerts
       }
 
-      // Peek the buffer for post-process actions emitted by the view. When none are
-      // present, take the hot path (no scene RT). When present, render the scene to a
-      // pooled RT and ping-pong each action through pooled RTs (the last draws to the
-      // back-buffer).
-      let ppActions = ResizeArray<PostProcessContext2D -> unit>()
-
-      for i = 0 to buffer.Count - 1 do
-        match buffer[i] with
-        | Command2D.PostProcess a -> ppActions.Add a
-        | _ -> ()
-
-      if ppActions.Count = 0 then
+      // When the view emits no PostProcess commands, take the hot path (no scene RT,
+      // no collection scan, no per-frame allocation). When present, collect them, render
+      // the scene to a pooled RT, and ping-pong each action through pooled RTs (the last
+      // draws to the back-buffer).
+      if buffer.PostProcessCount = 0 then
         match config.ClearColor with
         | ValueSome c -> gd.Clear(c)
         | ValueNone -> ()
@@ -1645,6 +1652,14 @@ type Renderer2D<'Model>
           sb.End()
           pb.End()
       else
+        let ppActions =
+          ResizeArray<PostProcessContext2D -> unit>(buffer.PostProcessCount)
+
+        for i = 0 to buffer.Count - 1 do
+          match buffer[i] with
+          | Command2D.PostProcess a -> ppActions.Add a
+          | _ -> ()
+
         let pool = _rtPool.Value
         let sceneRT = pool.Acquire(ctx.WindowWidth, ctx.WindowHeight)
         gd.SetRenderTarget(sceneRT)

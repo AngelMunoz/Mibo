@@ -1321,7 +1321,8 @@ module internal PipelineFunctions =
       skinned: byref<ShaderVariant>,
       forwardShader: Shader,
       instancedShader: Shader,
-      skinnedShader: Shader
+      skinnedShader: Shader,
+      ppActions: ResizeArray<PostProcessContext3D -> unit> voption
     ) : FrameState =
     let mutable frameState = {
       Camera = ValueNone
@@ -1431,6 +1432,10 @@ module internal PipelineFunctions =
           &mat,
           2
         )
+      | Command3D.PostProcess action ->
+        match ppActions with
+        | ValueSome list -> list.Add action
+        | ValueNone -> ()
       | _ -> ()
 
     frameState
@@ -2202,8 +2207,17 @@ type ForwardPipelineBase
     member this.Execute(gameCtx, gameTime, buffer, rtPool) =
       let frameTime = float32 gameTime.TotalTime.TotalSeconds
 
-      // ── Step 1: Pre-scan buffer (camera, lights, shadow origin, warm caches) ──
+      // Pre-scan: gather camera, lights, shadow origin, warm material caches, and — when present —
+      // post-process actions in a single pass over the buffer.
       clearLights lights
+
+      // Allocated only when the view emits at least one post-process command, so frames with none
+      // skip the allocation and the per-command scan entirely.
+      let ppActions: ResizeArray<PostProcessContext3D -> unit> voption =
+        if buffer.PostProcessCount > 0 then
+          ValueSome(ResizeArray(buffer.PostProcessCount))
+        else
+          ValueNone
 
       let frameState =
         preScan(
@@ -2214,14 +2228,15 @@ type ForwardPipelineBase
           &skinned,
           forwardShader,
           instancedShader,
-          skinnedShader
+          skinnedShader,
+          ppActions
         )
 
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
 
-      // ── Step 2: Shadow pass (render all casters to atlas) ──
+      // Shadow pass — render all casters into the atlas
       let struct (meshDraws, meshDrawCount, skinnedStart) =
         collectMeshDraws buffer
 
@@ -2257,7 +2272,7 @@ type ForwardPipelineBase
       finally
         ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
 
-      // ── Step 3: Upload shadow atlas uniforms to all shaders ──
+      // Upload shadow atlas uniforms to all shaders
       match frameState.Camera with
       | ValueSome cam ->
         uploadShadowUniforms(
@@ -2271,7 +2286,7 @@ type ForwardPipelineBase
         )
       | ValueNone -> ()
 
-      // ── Step 4: Build the per-frame scene bundle (ForwardFrame + ShadowResult) ──
+      // Build the per-frame scene bundle (lights + shadow result)
       let shadowResult: ShadowResult voption =
         if hasShadowCasters && shadowAtlas.ActiveCasterCount > 0 then
           ValueSome {
@@ -2297,18 +2312,18 @@ type ForwardPipelineBase
         Time = frameTime
       }
 
-      // ── Step 5: Clear lights for forward pass (dispatch will re-add them) ──
+      // Clear lights; the forward pass re-adds them per camera block
       clearLights lights
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
 
-      // ── Step 6: Forward pass (dispatch all commands) ──
+      // Forward pass — dispatch all commands
       let mutable cameraActive = false
       let mutable currentCamera = Unchecked.defaultof<Camera3D>
       let mutable shaderActive = false
       // Per-group shading scope (beginEffect/endEffect). ValueNone → default PBR path;
-      // ValueSome shader → shade with the user shader. Reset on camera boundaries (§7.2).
+      // ValueSome shader → shade with the user shader. Reset on camera boundaries.
       let mutable activeEffect: Shader voption = ValueNone
 
       let dispatchForwardPass() =
@@ -2326,7 +2341,7 @@ type ForwardPipelineBase
             Raylib.BeginMode3D cam
             cameraActive <- true
             currentCamera <- cam
-            // New camera block: scopes don't persist across cameras (§7.2).
+            // New camera block: scopes don't persist across cameras.
             activeEffect <- ValueNone
 
           | Command3D.BeginCameraConfig cfg ->
@@ -2341,7 +2356,7 @@ type ForwardPipelineBase
             Raylib.BeginMode3D cfg.Camera
             cameraActive <- true
             currentCamera <- cfg.Camera
-            // New camera block: scopes don't persist across cameras (§7.2).
+            // New camera block: scopes don't persist across cameras.
             activeEffect <- ValueNone
 
           | Command3D.EndCamera ->
@@ -2354,7 +2369,7 @@ type ForwardPipelineBase
               cameraActive <- false
 
             Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
-            // EndCamera closes any open effect scope (§7.2).
+            // EndCamera closes any open effect scope.
             activeEffect <- ValueNone
 
           // ── Per-group shading scope ──
@@ -2530,25 +2545,18 @@ type ForwardPipelineBase
         if cameraActive then
           Raylib.EndMode3D()
 
-      // ── Render the forward pass direct, or via a scene RT when post-process commands are present ──
-      let ppActions = ResizeArray<PostProcessContext3D -> unit>()
-
-      for i = 0 to buffer.Count - 1 do
-        match buffer[i] with
-        | Command3D.PostProcess a -> ppActions.Add a
-        | _ -> ()
-
-      if ppActions.Count = 0 then
-        dispatchForwardPass()
-      else
+      // Render the forward pass direct, or via a scene RT when post-process commands are present.
+      match ppActions with
+      | ValueNone -> dispatchForwardPass()
+      | ValueSome actions ->
         let sceneRT = rtPool.Acquire(gameCtx.WindowWidth, gameCtx.WindowHeight)
         Raylib.BeginTextureMode sceneRT
         Raylib.ClearBackground Color.Black
         dispatchForwardPass()
         Raylib.EndTextureMode()
-        applyPostProcess gameCtx sceneRT rtPool ppActions frameTime
+        applyPostProcess gameCtx sceneRT rtPool actions frameTime
 
-      // ── Step 6: Debug overlay (optional) ──
+      // Debug overlay (optional)
       if atlasCfg.ShowDebugOverlay then
         shadowAtlas.RenderDebugOverlay(
           gameCtx.WindowWidth,
