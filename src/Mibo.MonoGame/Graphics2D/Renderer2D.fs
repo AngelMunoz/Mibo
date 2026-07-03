@@ -1503,8 +1503,9 @@ module private CommandHandlers =
 
       // Render State
       | Command2D.SetBlend(mode, _) ->
-        state.Blend <- mode
-        endAndRestart res &state
+        if state.Blend <> mode then
+          state.Blend <- mode
+          endAndRestart res &state
 
       | Command2D.SetSamplerState(sampler, _) ->
         if state.Sampler <> sampler then
