@@ -676,6 +676,12 @@ type ForwardPipelineBase
         shadowRes.InstanceVertexBuffer <- ValueNone
       | ValueNone -> ()
 
+      match fullScreenQuad with
+      | ValueSome q ->
+        (q :> IDisposable).Dispose()
+        fullScreenQuad <- ValueNone
+      | ValueNone -> ()
+
     member this.Execute(gameCtx, gameTime, buffer, rtPool) =
       let gd = MonoGameGameContext.getGraphicsDevice gameCtx
       // Total elapsed game time, in seconds — captured once per frame for the scene bundle so an
