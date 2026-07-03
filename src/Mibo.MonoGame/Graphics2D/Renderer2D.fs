@@ -1507,8 +1507,9 @@ module private CommandHandlers =
         endAndRestart res &state
 
       | Command2D.SetSamplerState(sampler, _) ->
-        state.Sampler <- sampler
-        endAndRestart res &state
+        if state.Sampler <> sampler then
+          state.Sampler <- sampler
+          endAndRestart res &state
 
       | Command2D.SetScissor(x, y, w, h, _) ->
         flushBatches res
