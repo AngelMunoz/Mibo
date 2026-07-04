@@ -170,6 +170,14 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   /// shadow-casting light exists or DepthShadow.fx is unavailable.</summary>
   member val ShadowResult: ShadowResult voption = ValueNone with get, set
 
+  /// <summary>Opaque-geometry counts from the last collection. Populated whenever the shadow pass
+  /// or a depth pre-pass collected geometry. The camera-POV depth pre-pass reuses the same
+  /// collected draws (see <c>ShadowPass.renderDepth</c>), so shadow + depth share one collection.</summary>
+  member val CollectedDrawCount = 0 with get, set
+  member val CollectedSkinnedCount = 0 with get, set
+  member val CollectedModelPartCount = 0 with get, set
+  member val CollectedInstancedCount = 0 with get, set
+
 /// <summary>The extracted shadow pass: caster geometry types, per-light ViewProj builders, and the pass body.</summary>
 module internal ShadowPass =
 
@@ -317,7 +325,7 @@ module internal ShadowPass =
     view * proj
 
   // ── drawPart: draw a single ModelMeshPart manually (part has no Draw() of its own). ──
-  let private drawPart(gd: GraphicsDevice, part: ModelMeshPart) =
+  let drawPart(gd: GraphicsDevice, part: ModelMeshPart) =
     if part.PrimitiveCount > 0 then
       gd.SetVertexBuffer(part.VertexBuffer)
       gd.Indices <- part.IndexBuffer
@@ -333,6 +341,166 @@ module internal ShadowPass =
         )
 
   /// <summary>
+  /// Scans the command buffer once and collects every opaque caster draw (PrimitiveMesh, static
+  /// ModelMeshPart, skinned part, instanced mesh) into the pooled arrays on <paramref name="res"/>,
+  /// respecting <c>EnableShadows</c>/<c>DisableShadows</c>. Returns the four collected counts.
+  /// Shared by the shadow pass and the camera-POV depth pre-pass so neither re-scans the buffer.
+  /// </summary>
+  let collectCasters
+    (buffer: RenderBuffer3D)
+    (res: ShadowResources)
+    : struct (int * int * int * int) =
+    let mutable castEnabled = true
+    let mutable drawCount = 0
+    let mutable skinnedCount = 0
+    let mutable instancedCount = 0
+    let mutable modelPartCount = 0
+    let mutable shadowDraws = res.Draws
+    let mutable shadowSkinnedDraws = res.SkinnedDraws
+    let mutable shadowInstancedDraws = res.InstancedDraws
+    let mutable shadowModelPartDraws = res.ModelPartDraws
+
+    for i = 0 to buffer.Count - 1 do
+      match buffer[i] with
+      | Command3D.EnableShadows -> castEnabled <- true
+      | Command3D.DisableShadows -> castEnabled <- false
+      | Command3D.DrawPrimitive(mesh, transform, _) when castEnabled ->
+        if drawCount >= shadowDraws.Length then
+          Array.Resize(&shadowDraws, shadowDraws.Length * 2)
+          res.Draws <- shadowDraws
+
+        let worldBounds = mesh.Bounds.Transform transform
+
+        shadowDraws[drawCount] <- {
+          Mesh = mesh
+          Transform = transform
+          WorldBounds = worldBounds
+        }
+
+        drawCount <- drawCount + 1
+      | Command3D.DrawAnimatedModel(model, transform, bones) when castEnabled ->
+        for mesh in model.Meshes do
+          for part in mesh.MeshParts do
+            match part.Effect with
+            | :? SkinnedEffect ->
+              if skinnedCount >= shadowSkinnedDraws.Length then
+                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+                res.SkinnedDraws <- shadowSkinnedDraws
+
+              shadowSkinnedDraws[skinnedCount] <- {
+                Part = part
+                Transform = transform
+                Bones = bones
+              }
+
+              skinnedCount <- skinnedCount + 1
+            | _ -> ()
+      | Command3D.DrawModel(model, transform) when castEnabled ->
+        for mesh in model.Meshes do
+          for part in mesh.MeshParts do
+            match part.Effect with
+            | :? SkinnedEffect ->
+              if skinnedCount >= shadowSkinnedDraws.Length then
+                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+                res.SkinnedDraws <- shadowSkinnedDraws
+
+              shadowSkinnedDraws[skinnedCount] <- {
+                Part = part
+                Transform = transform
+                Bones = Array.empty
+              }
+
+              skinnedCount <- skinnedCount + 1
+            | _ ->
+              if modelPartCount >= shadowModelPartDraws.Length then
+                Array.Resize(
+                  &shadowModelPartDraws,
+                  shadowModelPartDraws.Length * 2
+                )
+
+                res.ModelPartDraws <- shadowModelPartDraws
+
+              shadowModelPartDraws[modelPartCount] <- {
+                Part = part
+                Transform = transform
+              }
+
+              modelPartCount <- modelPartCount + 1
+      | Command3D.DrawModelWith(model, transform, _) when castEnabled ->
+        // Override material is irrelevant to depth; gather identically to DrawModel.
+        for mesh in model.Meshes do
+          for part in mesh.MeshParts do
+            match part.Effect with
+            | :? SkinnedEffect ->
+              if skinnedCount >= shadowSkinnedDraws.Length then
+                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+                res.SkinnedDraws <- shadowSkinnedDraws
+
+              shadowSkinnedDraws[skinnedCount] <- {
+                Part = part
+                Transform = transform
+                Bones = Array.empty
+              }
+
+              skinnedCount <- skinnedCount + 1
+            | _ ->
+              if modelPartCount >= shadowModelPartDraws.Length then
+                Array.Resize(
+                  &shadowModelPartDraws,
+                  shadowModelPartDraws.Length * 2
+                )
+
+                res.ModelPartDraws <- shadowModelPartDraws
+
+              shadowModelPartDraws[modelPartCount] <- {
+                Part = part
+                Transform = transform
+              }
+
+              modelPartCount <- modelPartCount + 1
+      | Command3D.DrawAnimatedModelWith(model, transform, bones, _) when
+        castEnabled
+        ->
+        // Mirror DrawAnimatedModel: SkinnedEffect parts only.
+        for mesh in model.Meshes do
+          for part in mesh.MeshParts do
+            match part.Effect with
+            | :? SkinnedEffect ->
+              if skinnedCount >= shadowSkinnedDraws.Length then
+                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+                res.SkinnedDraws <- shadowSkinnedDraws
+
+              shadowSkinnedDraws[skinnedCount] <- {
+                Part = part
+                Transform = transform
+                Bones = bones
+              }
+
+              skinnedCount <- skinnedCount + 1
+            | _ -> ()
+      | Command3D.DrawInstanced(mesh, transforms, _material, instanceCount) when
+        castEnabled && instanceCount > 0
+        ->
+        // The world's instanced geometry (block grid, platforms, etc.) casts shadows too.
+        // Collected whole (one entry per emitted DrawInstanced); rendered via the
+        // DepthInstanced technique. No per-instance cull — the sample chunk-culls the
+        // source commands, so the emitted count is already bounded.
+        if instancedCount >= shadowInstancedDraws.Length then
+          Array.Resize(&shadowInstancedDraws, shadowInstancedDraws.Length * 2)
+          res.InstancedDraws <- shadowInstancedDraws
+
+        shadowInstancedDraws[instancedCount] <- {
+          Mesh = mesh
+          Transforms = transforms
+          InstanceCount = instanceCount
+        }
+
+        instancedCount <- instancedCount + 1
+      | _ -> ()
+
+    struct (drawCount, skinnedCount, modelPartCount, instancedCount)
+
+  /// <summary>
   /// Runs the shadow pass: collects dir + point + spot casters (B11 extends B10's dir-only), renders
   /// depth to the atlas using <c>DepthShadow.fx</c> with <c>RasterizerState.SlopeScaleDepthBias</c>,
   /// then uploads shadow uniforms to the PBR effect for forward-pass sampling. Per-light frustum
@@ -345,6 +513,9 @@ module internal ShadowPass =
   /// <param name="pbrParams">The PBR effect params (shadow uniforms upload to its Shadow group).</param>
   /// <param name="buffer">The command buffer (casters collected from it).</param>
   /// <param name="activeCamera">The active camera (directional shadow origin).</param>
+  /// <param name="forceCollect">When true, collect opaque geometry even if there is no
+  /// shadow-casting light — so a camera-POV depth pre-pass can reuse it via
+  /// <c>renderDepth</c>. No-op otherwise.</param>
   let run
     (gd: GraphicsDevice)
     (atlasCfg: ShadowAtlasConfig)
@@ -354,6 +525,7 @@ module internal ShadowPass =
     (pbrParams: PbrEffectParams voption)
     (buffer: RenderBuffer3D)
     (activeCamera: Camera3D)
+    (forceCollect: bool)
     : ShadowResult voption =
     let mutable hasDirCaster = false
 
@@ -386,13 +558,36 @@ module internal ShadowPass =
     else
       Array.Fill(res.SpotShadowSlots, -1)
 
+    let hasAnyCaster = hasDirCaster || hasPointCaster || hasSpotCaster
+
     let mutable result: ShadowResult voption = ValueNone
 
-    if not(hasDirCaster || hasPointCaster || hasSpotCaster) then
+    // Collect opaque geometry ONCE — the shadow pass (when a shadow-casting light exists) and the
+    // camera-POV depth pre-pass (forceCollect) share the same collected draws instead of each
+    // scanning the buffer. Stash the counts on res so renderDepth can iterate them.
+    let struct (drawCount, skinnedCount, modelPartCount, instancedCount) =
+      if hasAnyCaster || forceCollect then
+        collectCasters buffer res
+      else
+        struct (0, 0, 0, 0)
+
+    res.CollectedDrawCount <- drawCount
+    res.CollectedSkinnedCount <- skinnedCount
+    res.CollectedModelPartCount <- modelPartCount
+    res.CollectedInstancedCount <- instancedCount
+
+    // Read-only aliases over the (possibly grown) pooled arrays — the render loop below reads them.
+    let shadowDraws = res.Draws
+    let shadowSkinnedDraws = res.SkinnedDraws
+    let shadowInstancedDraws = res.InstancedDraws
+    let shadowModelPartDraws = res.ModelPartDraws
+
+    if not hasAnyCaster then
       match pbrParams with
       | ValueSome p -> PbrUniforms.setInt p.Shadow.DirLightCastsShadows 0
       | ValueNone -> ()
-    // No shadow-casting light → no result; scene renders unshadowed.
+    // No shadow-casting light → no result; scene renders unshadowed. (Geometry may still have
+    // been collected above when a depth pre-pass was requested.)
     else
       res.Atlas.EnsureResources gd
 
@@ -497,455 +692,473 @@ module internal ShadowPass =
           match pbrParams with
           | ValueSome p -> PbrUniforms.setInt p.Shadow.DirLightCastsShadows 0
           | ValueNone -> ()
+        else if
+          drawCount = 0
+          && skinnedCount = 0
+          && instancedCount = 0
+          && modelPartCount = 0
+        then
+          ()
         else
-          // ── Collect caster meshes (PrimitiveMesh + skinned draws, gated by EnableShadows/DisableShadows) ──
-          let mutable castEnabled = true
-          let mutable drawCount = 0
-          let mutable skinnedCount = 0
-          let mutable instancedCount = 0
-          let mutable modelPartCount = 0
-          let mutable shadowDraws = res.Draws
-          let mutable shadowSkinnedDraws = res.SkinnedDraws
-          let mutable shadowInstancedDraws = res.InstancedDraws
-          let mutable shadowModelPartDraws = res.ModelPartDraws
+          res.Atlas.PrepareUniforms()
 
-          for i = 0 to buffer.Count - 1 do
-            match buffer[i] with
-            | Command3D.EnableShadows -> castEnabled <- true
-            | Command3D.DisableShadows -> castEnabled <- false
-            | Command3D.DrawPrimitive(mesh, transform, _) when castEnabled ->
-              if drawCount >= shadowDraws.Length then
-                Array.Resize(&shadowDraws, shadowDraws.Length * 2)
-                res.Draws <- shadowDraws
+          // ── Render depth into the atlas ──
+          let prevViewport = gd.Viewport
+          let prevRaster = gd.RasterizerState
+          let prevBlend = gd.BlendState
+          let prevDepth = gd.DepthStencilState
 
-              let worldBounds = mesh.Bounds.Transform transform
+          gd.SetRenderTarget(res.Atlas.Fbo)
+          // Clear color (white = far = lit) AND depth (depth test enabled for hidden-surface removal).
+          gd.Clear(
+            ClearOptions.Target ||| ClearOptions.DepthBuffer,
+            Color.White.ToVector4(),
+            1.0f,
+            0
+          )
 
-              shadowDraws[drawCount] <- {
-                Mesh = mesh
-                Transform = transform
-                WorldBounds = worldBounds
-              }
+          // Native polygon-offset bias. Cached (config-driven). For B11 the bias uses
+          // DirectionalBias as the base — per-type bias swap is deferred.
+          if obj.ReferenceEquals(res.Raster, null) then
+            let sr = new RasterizerState()
+            // Render front faces into the shadow map. The imported geometry (Kenney
+            // assets and typical MonoGame content) is clockwise-wound; keeping the
+            // front-facing sides writes the caster surfaces that are actually visible
+            // to the light. Back-face rendering was tried but produced identical
+            // self-shadowing results once receiver-side bias was added, so the
+            // simpler front-face path is kept.
+            sr.CullMode <- CullMode.CullCounterClockwiseFace
+            sr.DepthBias <- biasCfg.DirectionalBias
+            sr.SlopeScaleDepthBias <- biasCfg.SlopeScaleBias
+            res.Raster <- sr
 
-              drawCount <- drawCount + 1
-            | Command3D.DrawAnimatedModel(model, transform, bones) when
-              castEnabled
-              ->
-              for mesh in model.Meshes do
-                for part in mesh.MeshParts do
-                  match part.Effect with
-                  | :? SkinnedEffect ->
-                    if skinnedCount >= shadowSkinnedDraws.Length then
-                      Array.Resize(
-                        &shadowSkinnedDraws,
-                        shadowSkinnedDraws.Length * 2
-                      )
+          gd.RasterizerState <- res.Raster
+          gd.BlendState <- BlendState.Opaque
+          gd.DepthStencilState <- DepthStencilState.Default
+          depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
+          let shadowFrustum = res.Frustum
+          let bonePaletteScratch = res.BonePaletteScratch
 
-                      res.SkinnedDraws <- shadowSkinnedDraws
+          for caster in res.Atlas.Casters do
+            if caster.Enabled then
+              let casterVP = res.Atlas.GetRegionViewProj caster.AtlasRegion
+              gd.Viewport <- res.Atlas.GetRegionViewport(caster.AtlasRegion)
+              // Per-light frustum cull: skip meshes the caster's frustum can't see. Update in-place.
+              shadowFrustum.Matrix <- casterVP
 
-                    shadowSkinnedDraws[skinnedCount] <- {
-                      Part = part
-                      Transform = transform
-                      Bones = bones
-                    }
+              // ── Non-skinned casters (PrimitiveMesh, plain Depth technique) ──
+              for d = 0 to drawCount - 1 do
+                let draw = shadowDraws[d]
 
-                    skinnedCount <- skinnedCount + 1
-                  | _ -> ()
-            | Command3D.DrawModel(model, transform) when castEnabled ->
-              for mesh in model.Meshes do
-                for part in mesh.MeshParts do
-                  match part.Effect with
-                  | :? SkinnedEffect ->
-                    if skinnedCount >= shadowSkinnedDraws.Length then
-                      Array.Resize(
-                        &shadowSkinnedDraws,
-                        shadowSkinnedDraws.Length * 2
-                      )
+                if Culling.isVisible shadowFrustum draw.WorldBounds then
+                  PbrUniforms.setMatrix depthParams.MatModel draw.Transform
+                  PbrUniforms.setMatrix depthParams.ViewProj casterVP
 
-                      res.SkinnedDraws <- shadowSkinnedDraws
+                  for pass in depthEffect.CurrentTechnique.Passes do
+                    pass.Apply()
+                    draw.Mesh.Draw(gd, depthEffect)
 
-                    shadowSkinnedDraws[skinnedCount] <- {
-                      Part = part
-                      Transform = transform
-                      Bones = Array.empty
-                    }
+              // ── Static ModelMeshPart casters (DrawModel/DrawModelWith, plain Depth technique) ──
+              if modelPartCount > 0 then
+                for d = 0 to modelPartCount - 1 do
+                  let draw = shadowModelPartDraws[d]
+                  PbrUniforms.setMatrix depthParams.MatModel draw.Transform
+                  PbrUniforms.setMatrix depthParams.ViewProj casterVP
 
-                    skinnedCount <- skinnedCount + 1
-                  | _ ->
-                    if modelPartCount >= shadowModelPartDraws.Length then
-                      Array.Resize(
-                        &shadowModelPartDraws,
-                        shadowModelPartDraws.Length * 2
-                      )
+                  let saved = draw.Part.Effect
+                  draw.Part.Effect <- depthEffect
 
-                      res.ModelPartDraws <- shadowModelPartDraws
+                  try
+                    drawPart(gd, draw.Part)
+                  finally
+                    draw.Part.Effect <- saved
 
-                    shadowModelPartDraws[modelPartCount] <- {
-                      Part = part
-                      Transform = transform
-                    }
+              // ── Skinned casters (B12: DepthSkinned technique, bone palette upload) ──
+              if skinnedCount > 0 then
+                depthEffect.CurrentTechnique <-
+                  depthEffect.Techniques["DepthSkinned"]
 
-                    modelPartCount <- modelPartCount + 1
-            | Command3D.DrawModelWith(model, transform, _) when castEnabled ->
-              // Override material is irrelevant to depth; gather identically to DrawModel.
-              for mesh in model.Meshes do
-                for part in mesh.MeshParts do
-                  match part.Effect with
-                  | :? SkinnedEffect ->
-                    if skinnedCount >= shadowSkinnedDraws.Length then
-                      Array.Resize(
-                        &shadowSkinnedDraws,
-                        shadowSkinnedDraws.Length * 2
-                      )
+                for d = 0 to skinnedCount - 1 do
+                  let draw = shadowSkinnedDraws[d]
+                  PbrUniforms.setMatrix depthParams.MatModel draw.Transform
+                  PbrUniforms.setMatrix depthParams.ViewProj casterVP
 
-                      res.SkinnedDraws <- shadowSkinnedDraws
+                  let boneCount =
+                    min draw.Bones.Length bonePaletteScratch.Length
 
-                    shadowSkinnedDraws[skinnedCount] <- {
-                      Part = part
-                      Transform = transform
-                      Bones = Array.empty
-                    }
+                  for i = 0 to boneCount - 1 do
+                    bonePaletteScratch[i] <- draw.Bones[i]
 
-                    skinnedCount <- skinnedCount + 1
-                  | _ ->
-                    if modelPartCount >= shadowModelPartDraws.Length then
-                      Array.Resize(
-                        &shadowModelPartDraws,
-                        shadowModelPartDraws.Length * 2
-                      )
+                  for i = boneCount to bonePaletteScratch.Length - 1 do
+                    bonePaletteScratch[i] <- Matrix.Identity
 
-                      res.ModelPartDraws <- shadowModelPartDraws
+                  PbrUniforms.setMatrixArray
+                    depthParams.Bones
+                    bonePaletteScratch
 
-                    shadowModelPartDraws[modelPartCount] <- {
-                      Part = part
-                      Transform = transform
-                    }
+                  // drawPart applies part.Effect.CurrentTechnique.Passes, so DepthSkinned must be
+                  // bound on the part's own Effect slot — swap it for the depth effect around the draw.
+                  let saved = draw.Part.Effect
+                  draw.Part.Effect <- depthEffect
 
-                    modelPartCount <- modelPartCount + 1
-            | Command3D.DrawAnimatedModelWith(model, transform, bones, _) when
-              castEnabled
-              ->
-              // Mirror DrawAnimatedModel: SkinnedEffect parts only.
-              for mesh in model.Meshes do
-                for part in mesh.MeshParts do
-                  match part.Effect with
-                  | :? SkinnedEffect ->
-                    if skinnedCount >= shadowSkinnedDraws.Length then
-                      Array.Resize(
-                        &shadowSkinnedDraws,
-                        shadowSkinnedDraws.Length * 2
-                      )
+                  try
+                    drawPart(gd, draw.Part)
+                  finally
+                    draw.Part.Effect <- saved
 
-                      res.SkinnedDraws <- shadowSkinnedDraws
+                depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
 
-                    shadowSkinnedDraws[skinnedCount] <- {
-                      Part = part
-                      Transform = transform
-                      Bones = bones
-                    }
+              // ── Instanced casters: hardware instancing via two-stream vertex bind. ──
+              if instancedCount > 0 then
+                depthEffect.CurrentTechnique <-
+                  depthEffect.Techniques["DepthInstanced"]
 
-                    skinnedCount <- skinnedCount + 1
-                  | _ -> ()
-            | Command3D.DrawInstanced(mesh, transforms, _material, instanceCount) when
-              castEnabled && instanceCount > 0
-              ->
-              // The world's instanced geometry (block grid, platforms, etc.) casts shadows too.
-              // Collected whole (one entry per emitted DrawInstanced); rendered via the
-              // DepthInstanced technique. No per-instance cull — the sample chunk-culls the
-              // source commands, so the emitted count is already bounded.
-              if instancedCount >= shadowInstancedDraws.Length then
-                Array.Resize(
-                  &shadowInstancedDraws,
-                  shadowInstancedDraws.Length * 2
-                )
+                // matModel is identity for instanced draws: the per-instance world transform
+                // is supplied as VertexInstanceWorld rows on stream 1.
+                PbrUniforms.setMatrix depthParams.MatModel Matrix.Identity
 
-                res.InstancedDraws <- shadowInstancedDraws
+                for d = 0 to instancedCount - 1 do
+                  let draw = shadowInstancedDraws[d]
 
-              shadowInstancedDraws[instancedCount] <- {
-                Mesh = mesh
-                Transforms = transforms
-                InstanceCount = instanceCount
-              }
+                  // Defensive: the source DrawInstanced command should always have a
+                  // transforms array matching instanceCount, but clamp to the available
+                  // data so a malformed command cannot read past the array.
+                  let instanceCount =
+                    min draw.InstanceCount draw.Transforms.Length
 
-              instancedCount <- instancedCount + 1
-            | _ -> ()
+                  if instanceCount > 0 then
+                    if res.InstanceStaging.Length < instanceCount then
+                      res.InstanceStaging <-
+                        Array.zeroCreate<VertexInstanceWorld> instanceCount
 
-          if
-            drawCount = 0
-            && skinnedCount = 0
-            && instancedCount = 0
-            && modelPartCount = 0
-          then
-            ()
-          else
-            res.Atlas.PrepareUniforms()
+                    for i = 0 to instanceCount - 1 do
+                      res.InstanceStaging[i] <-
+                        VertexInstanceWorld.Create draw.Transforms[i]
 
-            // ── Render depth into the atlas ──
-            let prevViewport = gd.Viewport
-            let prevRaster = gd.RasterizerState
-            let prevBlend = gd.BlendState
-            let prevDepth = gd.DepthStencilState
+                    match res.InstanceVertexBuffer with
+                    | ValueNone ->
+                      let vb =
+                        new VertexBuffer(
+                          gd,
+                          typeof<VertexInstanceWorld>,
+                          instanceCount,
+                          BufferUsage.WriteOnly
+                        )
 
-            gd.SetRenderTarget(res.Atlas.Fbo)
-            // Clear color (white = far = lit) AND depth (depth test enabled for hidden-surface removal).
-            gd.Clear(
-              ClearOptions.Target ||| ClearOptions.DepthBuffer,
-              Color.White.ToVector4(),
-              1.0f,
-              0
-            )
+                      res.InstanceVertexBuffer <- ValueSome vb
+                    | ValueSome vb when vb.VertexCount < instanceCount ->
+                      vb.Dispose()
 
-            // Native polygon-offset bias. Cached (config-driven). For B11 the bias uses
-            // DirectionalBias as the base — per-type bias swap is deferred.
-            if obj.ReferenceEquals(res.Raster, null) then
-              let sr = new RasterizerState()
-              // Render front faces into the shadow map. The imported geometry (Kenney
-              // assets and typical MonoGame content) is clockwise-wound; keeping the
-              // front-facing sides writes the caster surfaces that are actually visible
-              // to the light. Back-face rendering was tried but produced identical
-              // self-shadowing results once receiver-side bias was added, so the
-              // simpler front-face path is kept.
-              sr.CullMode <- CullMode.CullCounterClockwiseFace
-              sr.DepthBias <- biasCfg.DirectionalBias
-              sr.SlopeScaleDepthBias <- biasCfg.SlopeScaleBias
-              res.Raster <- sr
+                      let vb' =
+                        new VertexBuffer(
+                          gd,
+                          typeof<VertexInstanceWorld>,
+                          instanceCount,
+                          BufferUsage.WriteOnly
+                        )
 
-            gd.RasterizerState <- res.Raster
-            gd.BlendState <- BlendState.Opaque
-            gd.DepthStencilState <- DepthStencilState.Default
-            depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
-            let shadowFrustum = res.Frustum
-            let bonePaletteScratch = res.BonePaletteScratch
+                      res.InstanceVertexBuffer <- ValueSome vb'
+                    | _ -> ()
 
-            for caster in res.Atlas.Casters do
-              if caster.Enabled then
-                let casterVP = res.Atlas.GetRegionViewProj caster.AtlasRegion
-                gd.Viewport <- res.Atlas.GetRegionViewport(caster.AtlasRegion)
-                // Per-light frustum cull: skip meshes the caster's frustum can't see. Update in-place.
-                shadowFrustum.Matrix <- casterVP
+                    let instVB =
+                      match res.InstanceVertexBuffer with
+                      | ValueSome vb -> vb
+                      | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
 
-                // ── Non-skinned casters (PrimitiveMesh, plain Depth technique) ──
-                for d = 0 to drawCount - 1 do
-                  let draw = shadowDraws[d]
+                    instVB.SetData(res.InstanceStaging, 0, instanceCount)
 
-                  if Culling.isVisible shadowFrustum draw.WorldBounds then
-                    PbrUniforms.setMatrix depthParams.MatModel draw.Transform
+                    gd.SetVertexBuffers(
+                      VertexBufferBinding(draw.Mesh.Vertices, 0, 0),
+                      VertexBufferBinding(instVB, 0, 1)
+                    )
+
+                    gd.Indices <- draw.Mesh.Indices
+
                     PbrUniforms.setMatrix depthParams.ViewProj casterVP
 
                     for pass in depthEffect.CurrentTechnique.Passes do
                       pass.Apply()
-                      draw.Mesh.Draw(gd, depthEffect)
 
-                // ── Static ModelMeshPart casters (DrawModel/DrawModelWith, plain Depth technique) ──
-                if modelPartCount > 0 then
-                  for d = 0 to modelPartCount - 1 do
-                    let draw = shadowModelPartDraws[d]
-                    PbrUniforms.setMatrix depthParams.MatModel draw.Transform
-                    PbrUniforms.setMatrix depthParams.ViewProj casterVP
-
-                    let saved = draw.Part.Effect
-                    draw.Part.Effect <- depthEffect
-
-                    try
-                      drawPart(gd, draw.Part)
-                    finally
-                      draw.Part.Effect <- saved
-
-                // ── Skinned casters (B12: DepthSkinned technique, bone palette upload) ──
-                if skinnedCount > 0 then
-                  depthEffect.CurrentTechnique <-
-                    depthEffect.Techniques["DepthSkinned"]
-
-                  for d = 0 to skinnedCount - 1 do
-                    let draw = shadowSkinnedDraws[d]
-                    PbrUniforms.setMatrix depthParams.MatModel draw.Transform
-                    PbrUniforms.setMatrix depthParams.ViewProj casterVP
-
-                    let boneCount =
-                      min draw.Bones.Length bonePaletteScratch.Length
-
-                    for i = 0 to boneCount - 1 do
-                      bonePaletteScratch[i] <- draw.Bones[i]
-
-                    for i = boneCount to bonePaletteScratch.Length - 1 do
-                      bonePaletteScratch[i] <- Matrix.Identity
-
-                    PbrUniforms.setMatrixArray
-                      depthParams.Bones
-                      bonePaletteScratch
-
-                    // drawPart applies part.Effect.CurrentTechnique.Passes, so DepthSkinned must be
-                    // bound on the part's own Effect slot — swap it for the depth effect around the draw.
-                    let saved = draw.Part.Effect
-                    draw.Part.Effect <- depthEffect
-
-                    try
-                      drawPart(gd, draw.Part)
-                    finally
-                      draw.Part.Effect <- saved
-
-                  depthEffect.CurrentTechnique <-
-                    depthEffect.Techniques["Depth"]
-
-                // ── Instanced casters: hardware instancing via two-stream vertex bind. ──
-                if instancedCount > 0 then
-                  depthEffect.CurrentTechnique <-
-                    depthEffect.Techniques["DepthInstanced"]
-
-                  // matModel is identity for instanced draws: the per-instance world transform
-                  // is supplied as VertexInstanceWorld rows on stream 1.
-                  PbrUniforms.setMatrix depthParams.MatModel Matrix.Identity
-
-                  for d = 0 to instancedCount - 1 do
-                    let draw = shadowInstancedDraws[d]
-
-                    // Defensive: the source DrawInstanced command should always have a
-                    // transforms array matching instanceCount, but clamp to the available
-                    // data so a malformed command cannot read past the array.
-                    let instanceCount =
-                      min draw.InstanceCount draw.Transforms.Length
-
-                    if instanceCount > 0 then
-                      if res.InstanceStaging.Length < instanceCount then
-                        res.InstanceStaging <-
-                          Array.zeroCreate<VertexInstanceWorld> instanceCount
-
-                      for i = 0 to instanceCount - 1 do
-                        res.InstanceStaging[i] <-
-                          VertexInstanceWorld.Create draw.Transforms[i]
-
-                      match res.InstanceVertexBuffer with
-                      | ValueNone ->
-                        let vb =
-                          new VertexBuffer(
-                            gd,
-                            typeof<VertexInstanceWorld>,
-                            instanceCount,
-                            BufferUsage.WriteOnly
-                          )
-
-                        res.InstanceVertexBuffer <- ValueSome vb
-                      | ValueSome vb when vb.VertexCount < instanceCount ->
-                        vb.Dispose()
-
-                        let vb' =
-                          new VertexBuffer(
-                            gd,
-                            typeof<VertexInstanceWorld>,
-                            instanceCount,
-                            BufferUsage.WriteOnly
-                          )
-
-                        res.InstanceVertexBuffer <- ValueSome vb'
-                      | _ -> ()
-
-                      let instVB =
-                        match res.InstanceVertexBuffer with
-                        | ValueSome vb -> vb
-                        | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
-
-                      instVB.SetData(res.InstanceStaging, 0, instanceCount)
-
-                      gd.SetVertexBuffers(
-                        VertexBufferBinding(draw.Mesh.Vertices, 0, 0),
-                        VertexBufferBinding(instVB, 0, 1)
+                      gd.DrawInstancedPrimitives(
+                        PrimitiveType.TriangleList,
+                        0,
+                        0,
+                        draw.Mesh.PrimitiveCount,
+                        instanceCount
                       )
 
-                      gd.Indices <- draw.Mesh.Indices
+                depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
 
-                      PbrUniforms.setMatrix depthParams.ViewProj casterVP
+          // ── Restore device state ──
+          (gd.SetRenderTarget null)
+          gd.Viewport <- prevViewport
+          gd.RasterizerState <- prevRaster
+          gd.BlendState <- prevBlend
+          gd.DepthStencilState <- prevDepth
 
-                      for pass in depthEffect.CurrentTechnique.Passes do
-                        pass.Apply()
+          // ── Upload shadow uniforms to the PBR effect ──
+          let active = res.Atlas.ActiveCasterCount
+          let maxC = atlasCfg.MaxCasters
 
-                        gd.DrawInstancedPrimitives(
-                          PrimitiveType.TriangleList,
-                          0,
-                          0,
-                          draw.Mesh.PrimitiveCount,
-                          instanceCount
-                        )
+          if res.ViewProjsScratch.Length <> maxC then
+            res.ViewProjsScratch <- Array.zeroCreate<Matrix> maxC
 
-                  depthEffect.CurrentTechnique <-
-                    depthEffect.Techniques["Depth"]
+          if res.UVOffsetsScratch.Length <> maxC then
+            res.UVOffsetsScratch <- Array.zeroCreate<Vector4> maxC
 
-            // ── Restore device state ──
-            (gd.SetRenderTarget null)
-            gd.Viewport <- prevViewport
-            gd.RasterizerState <- prevRaster
-            gd.BlendState <- prevBlend
-            gd.DepthStencilState <- prevDepth
+          if res.BiasesScratch.Length <> maxC then
+            res.BiasesScratch <- Array.zeroCreate<float32> maxC
 
-            // ── Upload shadow uniforms to the PBR effect ──
-            let active = res.Atlas.ActiveCasterCount
-            let maxC = atlasCfg.MaxCasters
+          Array.Clear(res.ViewProjsScratch, 0, maxC)
+          Array.Clear(res.UVOffsetsScratch, 0, maxC)
+          Array.Clear(res.BiasesScratch, 0, maxC)
 
-            if res.ViewProjsScratch.Length <> maxC then
-              res.ViewProjsScratch <- Array.zeroCreate<Matrix> maxC
+          if active > 0 then
+            let vpArr = res.Atlas.ViewProjs
+            let uvArr = res.Atlas.UVOffsets
+            let biasArr = res.Atlas.Biases
 
-            if res.UVOffsetsScratch.Length <> maxC then
-              res.UVOffsetsScratch <- Array.zeroCreate<Vector4> maxC
+            for i = 0 to active - 1 do
+              res.ViewProjsScratch[i] <- vpArr[i]
+              res.UVOffsetsScratch[i] <- uvArr[i]
+              res.BiasesScratch[i] <- biasArr[i]
 
-            if res.BiasesScratch.Length <> maxC then
-              res.BiasesScratch <- Array.zeroCreate<float32> maxC
+          let texel = 1.0f / float32 atlasCfg.Resolution
 
-            Array.Clear(res.ViewProjsScratch, 0, maxC)
-            Array.Clear(res.UVOffsetsScratch, 0, maxC)
-            Array.Clear(res.BiasesScratch, 0, maxC)
+          match pbrParams with
+          | ValueSome p ->
+            PbrUniforms.setInt
+              p.Shadow.DirLightCastsShadows
+              (if hasDirCaster then 1 else 0)
 
             if active > 0 then
-              let vpArr = res.Atlas.ViewProjs
-              let uvArr = res.Atlas.UVOffsets
-              let biasArr = res.Atlas.Biases
+              PbrUniforms.setMatrixArray
+                p.Shadow.ShadowViewProjs
+                res.ViewProjsScratch
 
-              for i = 0 to active - 1 do
-                res.ViewProjsScratch[i] <- vpArr[i]
-                res.UVOffsetsScratch[i] <- uvArr[i]
-                res.BiasesScratch[i] <- biasArr[i]
+              PbrUniforms.setVec4Array
+                p.Shadow.ShadowUVOffsets
+                res.UVOffsetsScratch
 
-            let texel = 1.0f / float32 atlasCfg.Resolution
+              PbrUniforms.setFloatArray p.Shadow.ShadowBiases res.BiasesScratch
 
-            match pbrParams with
-            | ValueSome p ->
-              PbrUniforms.setInt
-                p.Shadow.DirLightCastsShadows
-                (if hasDirCaster then 1 else 0)
+            PbrUniforms.setVec2 p.Shadow.ShadowTexelSize (Vector2(texel, texel))
 
-              if active > 0 then
-                PbrUniforms.setMatrixArray
-                  p.Shadow.ShadowViewProjs
-                  res.ViewProjsScratch
+            if not(obj.ReferenceEquals(p.Shadow.ShadowAtlasTex, null)) then
+              p.Shadow.ShadowAtlasTex.SetValue(res.Atlas.Fbo)
 
-                PbrUniforms.setVec4Array
-                  p.Shadow.ShadowUVOffsets
-                  res.UVOffsetsScratch
+            gd.Textures[5] <- res.Atlas.Fbo
+            gd.SamplerStates[5] <- SamplerState.PointClamp
+          | ValueNone -> ()
 
-                PbrUniforms.setFloatArray
-                  p.Shadow.ShadowBiases
-                  res.BiasesScratch
-
-              PbrUniforms.setVec2
-                p.Shadow.ShadowTexelSize
-                (Vector2(texel, texel))
-
-              if not(obj.ReferenceEquals(p.Shadow.ShadowAtlasTex, null)) then
-                p.Shadow.ShadowAtlasTex.SetValue(res.Atlas.Fbo)
-
-              gd.Textures[5] <- res.Atlas.Fbo
-              gd.SamplerStates[5] <- SamplerState.PointClamp
-            | ValueNone -> ()
-
-            result <-
-              ValueSome {
-                Atlas = res.Atlas.Fbo
-                ViewProjs = res.ViewProjsScratch
-                UVOffsets = res.UVOffsetsScratch
-                ActiveCasterCount = active
-                TexelSize = texel
-                Biases = res.BiasesScratch
-                DirLightCastsShadows = hasDirCaster
-                PointLightShadowIdx = res.PointShadowSlots
-                SpotLightShadowIdx = res.SpotShadowSlots
-              }
+          result <-
+            ValueSome {
+              Atlas = res.Atlas.Fbo
+              ViewProjs = res.ViewProjsScratch
+              UVOffsets = res.UVOffsetsScratch
+              ActiveCasterCount = active
+              TexelSize = texel
+              Biases = res.BiasesScratch
+              DirLightCastsShadows = hasDirCaster
+              PointLightShadowIdx = res.PointShadowSlots
+              SpotLightShadowIdx = res.SpotShadowSlots
+            }
       | _ -> () // DepthShadow.fx missing — render unshadowed (result stays ValueNone).
 
     result
+
+  /// <summary>
+  /// Renders the opaque geometry already collected by <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.run"/>
+  /// (or <c>collectCasters</c>) from a camera view-projection into <paramref name="depthTarget"/> as
+  /// NDC depth (clip.z/clip.w in [0,1], 1.0 = far). Drives camera-POV distance effects (fog, DOF,
+  /// SSAO): linearize with the camera's near/far planes in the consuming shader. No per-light
+  /// frustum cull — the camera frustum already bounds the visible scene. Requires the DepthShadow
+  /// effect to be loadable; otherwise the target is left uncleared and <c>ValueNone</c> is returned.
+  /// </summary>
+  /// <returns><c>ValueSome depthTarget</c> if the pass ran, <c>ValueNone</c> if the DepthShadow
+  /// effect is unavailable or nothing was collected.</returns>
+  let renderDepth
+    (gd: GraphicsDevice)
+    (res: ShadowResources)
+    (atlasCfg: ShadowAtlasConfig)
+    (viewProj: Matrix)
+    (depthTarget: RenderTarget2D)
+    : RenderTarget2D voption =
+    let drawCount = res.CollectedDrawCount
+    let skinnedCount = res.CollectedSkinnedCount
+    let modelPartCount = res.CollectedModelPartCount
+    let instancedCount = res.CollectedInstancedCount
+
+    if
+      drawCount = 0
+      && skinnedCount = 0
+      && modelPartCount = 0
+      && instancedCount = 0
+    then
+      ValueNone
+    else
+      // Ensure the DepthShadow effect is loaded (shared with the shadow pass).
+      match res.Effect, res.Params with
+      | ValueSome _, ValueSome _ -> ()
+      | _ ->
+        match ShaderLoader.loadEffect gd "DepthShadow" with
+        | ValueSome e ->
+          res.Params <- ValueSome(buildShadowParams e)
+          res.Effect <- ValueSome e
+        | ValueNone -> ()
+
+      match res.Effect, res.Params with
+      | ValueNone, _
+      | _, ValueNone -> ValueNone
+      | ValueSome depthEffect, ValueSome depthParams ->
+        let prevViewport = gd.Viewport
+        let prevRaster = gd.RasterizerState
+        let prevBlend = gd.BlendState
+        let prevDepth = gd.DepthStencilState
+
+        gd.SetRenderTarget depthTarget
+        // 1.0 = far (matches DepthShadow.fx's clip.z/clip.w). Clear as an explicit Vector4 so the
+        // R32F (SurfaceFormat.Single) target gets .r=1.0 reliably on both backends.
+        gd.Clear(ClearOptions.Target, Color.White.ToVector4(), 1.0f, 0)
+        gd.RasterizerState <- RasterizerState.CullCounterClockwise
+        gd.BlendState <- BlendState.Opaque
+        gd.DepthStencilState <- DepthStencilState.Default
+
+        depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
+
+        // ── Non-skinned PrimitiveMesh ──
+        for d = 0 to drawCount - 1 do
+          let draw = res.Draws[d]
+          PbrUniforms.setMatrix depthParams.MatModel draw.Transform
+          PbrUniforms.setMatrix depthParams.ViewProj viewProj
+
+          for pass in depthEffect.CurrentTechnique.Passes do
+            pass.Apply()
+            draw.Mesh.Draw(gd, depthEffect)
+
+        // ── Static ModelMeshPart (DrawModel/DrawModelWith) ──
+        if modelPartCount > 0 then
+          for d = 0 to modelPartCount - 1 do
+            let draw = res.ModelPartDraws[d]
+            PbrUniforms.setMatrix depthParams.MatModel draw.Transform
+            PbrUniforms.setMatrix depthParams.ViewProj viewProj
+
+            let saved = draw.Part.Effect
+            draw.Part.Effect <- depthEffect
+
+            try
+              drawPart(gd, draw.Part)
+            finally
+              draw.Part.Effect <- saved
+
+        // ── Skinned (DepthSkinned technique, bone palette) ──
+        if skinnedCount > 0 then
+          depthEffect.CurrentTechnique <- depthEffect.Techniques["DepthSkinned"]
+          let bonePaletteScratch = res.BonePaletteScratch
+
+          for d = 0 to skinnedCount - 1 do
+            let draw = res.SkinnedDraws[d]
+            PbrUniforms.setMatrix depthParams.MatModel draw.Transform
+            PbrUniforms.setMatrix depthParams.ViewProj viewProj
+
+            let boneCount = min draw.Bones.Length bonePaletteScratch.Length
+
+            for i = 0 to boneCount - 1 do
+              bonePaletteScratch[i] <- draw.Bones[i]
+
+            for i = boneCount to bonePaletteScratch.Length - 1 do
+              bonePaletteScratch[i] <- Matrix.Identity
+
+            PbrUniforms.setMatrixArray depthParams.Bones bonePaletteScratch
+
+            let saved = draw.Part.Effect
+            draw.Part.Effect <- depthEffect
+
+            try
+              drawPart(gd, draw.Part)
+            finally
+              draw.Part.Effect <- saved
+
+          depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
+
+        // ── Instanced (DepthInstanced, two-stream vertex bind) ──
+        if instancedCount > 0 then
+          depthEffect.CurrentTechnique <-
+            depthEffect.Techniques["DepthInstanced"]
+
+          PbrUniforms.setMatrix depthParams.MatModel Matrix.Identity
+
+          for d = 0 to instancedCount - 1 do
+            let draw = res.InstancedDraws[d]
+            let instanceCount = min draw.InstanceCount draw.Transforms.Length
+
+            if instanceCount > 0 then
+              if res.InstanceStaging.Length < instanceCount then
+                res.InstanceStaging <-
+                  Array.zeroCreate<VertexInstanceWorld> instanceCount
+
+              for i = 0 to instanceCount - 1 do
+                res.InstanceStaging[i] <-
+                  VertexInstanceWorld.Create draw.Transforms[i]
+
+              match res.InstanceVertexBuffer with
+              | ValueNone ->
+                let vb =
+                  new VertexBuffer(
+                    gd,
+                    typeof<VertexInstanceWorld>,
+                    instanceCount,
+                    BufferUsage.WriteOnly
+                  )
+
+                res.InstanceVertexBuffer <- ValueSome vb
+              | ValueSome vb when vb.VertexCount < instanceCount ->
+                vb.Dispose()
+
+                let vb' =
+                  new VertexBuffer(
+                    gd,
+                    typeof<VertexInstanceWorld>,
+                    instanceCount,
+                    BufferUsage.WriteOnly
+                  )
+
+                res.InstanceVertexBuffer <- ValueSome vb'
+              | _ -> ()
+
+              let instVB =
+                match res.InstanceVertexBuffer with
+                | ValueSome vb -> vb
+                | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
+
+              instVB.SetData(res.InstanceStaging, 0, instanceCount)
+
+              gd.SetVertexBuffers(
+                VertexBufferBinding(draw.Mesh.Vertices, 0, 0),
+                VertexBufferBinding(instVB, 0, 1)
+              )
+
+              gd.Indices <- draw.Mesh.Indices
+
+              PbrUniforms.setMatrix depthParams.ViewProj viewProj
+
+              for pass in depthEffect.CurrentTechnique.Passes do
+                pass.Apply()
+
+                gd.DrawInstancedPrimitives(
+                  PrimitiveType.TriangleList,
+                  0,
+                  0,
+                  draw.Mesh.PrimitiveCount,
+                  instanceCount
+                )
+
+          depthEffect.CurrentTechnique <- depthEffect.Techniques["Depth"]
+
+        gd.SetRenderTarget null
+        gd.Viewport <- prevViewport
+        gd.RasterizerState <- prevRaster
+        gd.BlendState <- prevBlend
+        gd.DepthStencilState <- prevDepth
+
+        ValueSome depthTarget

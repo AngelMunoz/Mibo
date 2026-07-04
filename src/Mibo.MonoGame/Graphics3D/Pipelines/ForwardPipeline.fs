@@ -200,6 +200,11 @@ type ForwardPipelineBase
   // Post-process: a fullscreen quad created against the device on the first post-process frame.
   let mutable fullScreenQuad: FullScreenQuad voption = ValueNone
 
+  // Camera-POV linear depth target (R32F) for post-process distance effects (fog/DOF/SSAO).
+  // Lazily created/resized against the back-buffer; recreated when the window resizes; disposed
+  // at shutdown. Only rendered when the view emits Command3D.EnableDepthPrePass this frame.
+  let mutable depthRT: RenderTarget2D voption = ValueNone
+
   let mutable billboardStaging: VertexPositionColorTexture[] =
     Array.zeroCreate<VertexPositionColorTexture> 256
   // Shared index pattern for N quads: [0,1,2, 0,2,3] offset by quad*4. Grown on demand.
@@ -585,8 +590,12 @@ type ForwardPipelineBase
   /// first (shadow uniforms upload to it).
   /// </summary>
   member private this.runShadowPass
-    (gd: GraphicsDevice, state: byref<ForwardState>, buffer: RenderBuffer3D)
-    =
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      buffer: RenderBuffer3D,
+      forceCollect: bool
+    ) =
     // Ensure the PBR effect is loaded BEFORE the pass uploads shadow uniforms to it.
     PbrShading.ensureEffect(gd, pbrRes) |> ignore
 
@@ -599,7 +608,42 @@ type ForwardPipelineBase
       pbrRes.Params
       buffer
       state.CurrentCamera
+      forceCollect
     |> fun r -> shadowRes.ShadowResult <- r // stash for the forward pass (Shade / user-effect scopes)
+
+  /// Renders the camera-POV linear depth (R32F) reusing the geometry the shadow pass already
+  /// collected. Creates/resizes the depth target against the back-buffer. Returns the target
+  /// (ValueNone if no camera set this frame, nothing was collected, or DepthShadow.fx unavailable).
+  member private this.runDepthPrePass
+    (gd: GraphicsDevice, w: int, h: int, viewProj: Matrix voption)
+    : RenderTarget2D voption =
+    match viewProj with
+    | ValueNone -> ValueNone
+    | ValueSome vp ->
+      match depthRT with
+      | ValueSome rt when rt.Width = w && rt.Height = h -> ()
+      | _ ->
+        (match depthRT with
+         | ValueSome rt -> rt.Dispose()
+         | ValueNone -> ())
+
+        depthRT <-
+          ValueSome(
+            new RenderTarget2D(
+              gd,
+              w,
+              h,
+              false,
+              SurfaceFormat.Single, // R32F — linear depth in .r
+              DepthFormat.None,
+              0,
+              RenderTargetUsage.DiscardContents
+            )
+          )
+
+      match depthRT with
+      | ValueSome rt -> ShadowPass.renderDepth gd shadowRes atlasCfg vp rt
+      | ValueNone -> ValueNone
 
   // ----------------------------------------------------------------
   // IRenderPipeline3D
@@ -682,6 +726,12 @@ type ForwardPipelineBase
         fullScreenQuad <- ValueNone
       | ValueNone -> ()
 
+      match depthRT with
+      | ValueSome rt ->
+        rt.Dispose()
+        depthRT <- ValueNone
+      | ValueNone -> ()
+
     member this.Execute(gameCtx, gameTime, buffer, rtPool) =
       let gd = MonoGameGameContext.getGraphicsDevice gameCtx
       // Total elapsed game time, in seconds — captured once per frame for the scene bundle so an
@@ -728,6 +778,8 @@ type ForwardPipelineBase
 
       // Pre-scan: lights, camera, and shadow commands (shadow origin / toggle) need to be
       // known before the shadow pass runs. Draw commands are handled in the forward pass.
+      let mutable depthRequested = false
+
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
         | Command3D.BeginCamera cam ->
@@ -752,15 +804,17 @@ type ForwardPipelineBase
         | Command3D.AddSpotLight s -> lights.SpotLights.Add s
         | Command3D.SetShadowOrigin origin ->
           shadowRes.Origin <- ValueSome origin
+        | Command3D.EnableDepthPrePass -> depthRequested <- true
         | Command3D.PostProcess action ->
           match ppActions with
           | ValueSome list -> list.Add action
           | ValueNone -> ()
         | _ -> ()
 
-      // Shadow pass (directional shadows only)
+      // Shadow pass. forceCollect lets the shadow pass gather opaque geometry even with no
+      // shadow-casting light, so the depth pre-pass below can reuse that single collection.
       if state.HasCamera then
-        this.runShadowPass(gd, &state, buffer)
+        this.runShadowPass(gd, &state, buffer, depthRequested)
 
       // Forward pass
       // Lights + shadow state are already gathered; the camera is re-established per block
@@ -801,6 +855,10 @@ type ForwardPipelineBase
         else
           ValueNone
 
+      // Stashes the last camera's correct-aspect view-projection during the forward pass, for the
+      // depth pre-pass (which runs after the loop, once HasCamera is reset). ValueNone if no camera.
+      let mutable depthViewProj: Matrix voption = ValueNone
+
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
         // ── Camera ──
@@ -822,6 +880,10 @@ type ForwardPipelineBase
 
           state.Projection <-
             perspectiveProjection cam (float32 vp.Width) (float32 vp.Height)
+
+          // Capture the correct-aspect view-projection for the depth pre-pass (post-process runs
+          // after this loop, once HasCamera has been reset by EndCamera — so stash the matrices now).
+          depthViewProj <- ValueSome(state.View * state.Projection)
 
           // New camera block: scopes don't persist across cameras.
           activeEffect <- ValueNone
@@ -848,6 +910,8 @@ type ForwardPipelineBase
               cfg.Camera
               (float32 vp.Width)
               (float32 vp.Height)
+
+          depthViewProj <- ValueSome(state.View * state.Projection)
 
           match cfg.ClearColor with
           | ValueSome c -> gd.Clear(ClearOptions.Target, c.ToVector4(), 1.0f, 0)
@@ -922,6 +986,10 @@ type ForwardPipelineBase
         | Command3D.EnableShadows
         | Command3D.DisableShadows -> ()
 
+        // Depth pre-pass is requested in the pre-scan and rendered before the post-process
+        // drain; nothing to do during the forward pass.
+        | Command3D.EnableDepthPrePass -> ()
+
         // Post-process actions were collected in the pre-scan and run after the scene
         // renders to an offscreen target; nothing to do during the forward pass.
         | Command3D.PostProcess _ -> ()
@@ -947,6 +1015,20 @@ type ForwardPipelineBase
             // Restore viewport; camera state is logical (matrices), nothing to restore on gd.
             gd.Viewport <- savedViewport
             state.HasCamera <- savedHasCamera
+
+      // Camera-POV depth for post-process distance effects (fog/DOF/SSAO), reusing the geometry the
+      // shadow pass already collected. Rendered only when the view requested depth AND post-process
+      // actions exist this frame — otherwise skipped entirely (no extra geometry pass).
+      let depthTarget: RenderTarget2D voption =
+        if depthRequested && usePostProcess then
+          this.runDepthPrePass(
+            gd,
+            gameCtx.WindowWidth,
+            gameCtx.WindowHeight,
+            depthViewProj
+          )
+        else
+          ValueNone
 
       // ── Post-process: ping-pong the scene through each action ──
       match sceneRT, ppActions with
@@ -989,7 +1071,7 @@ type ForwardPipelineBase
 
           let ppCtx: PostProcessContext3D = {
             Source = src
-            Depth = ValueNone
+            Depth = depthTarget
             Width = src.Width
             Height = src.Height
             Time = frameTime

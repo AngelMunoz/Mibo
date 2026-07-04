@@ -274,6 +274,16 @@ module Draw3D =
     buffer.Add Command3D.DisableShadows
     buffer
 
+  /// <summary>
+  /// Requests a camera-POV linear-depth pre-pass this frame so post-process actions can sample
+  /// <c>PostProcessContext3D.Depth</c> for distance effects (fog, depth-of-field, SSAO). Only emit
+  /// it on frames where a post-process needs depth — the depth pass re-renders the opaque scene,
+  /// so it is skipped entirely when no <c>enableDepthPrePass</c> is present.
+  /// </summary>
+  let inline enableDepthPrePass(buffer: RenderBuffer3D) =
+    buffer.Add Command3D.EnableDepthPrePass
+    buffer
+
   // ──────────────────────────────────────────────
   // Per-group shading scopes
   // ──────────────────────────────────────────────
@@ -282,7 +292,7 @@ module Draw3D =
   /// Opens a per-group shading scope: draws between this and <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.endEffect"/>
   /// are shaded by <paramref name="effect"/> instead of the default PBR effect. The effect inherits
   /// the gathered scene data (camera matrices, lights, material, bones) — <b>not</b> the PBR shader
-  /// itself (v2 spec §3): it need only declare the uniform subset it consumes, and absent uniforms
+  /// itself: it need only declare the uniform subset it consumes, and absent uniforms
   /// are skipped. This lets a toon/cel/wireframe effect reuse the scene's camera + lighting without
   /// re-implementing the gather. The scope closes at <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.endEffect"/>
   /// or automatically at the next <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.endCamera"/> (scopes do not

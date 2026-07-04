@@ -17,8 +17,10 @@ type PostProcessContext3D = {
   Source: RenderTarget2D
 
   /// <summary>
-  /// Camera-POV linear depth (R32F). <c>ValueNone</c> unless depth was opted in at pipeline
-  /// construction. Sample it for distance effects (fog, SSAO).
+  /// Camera-POV depth (NDC z in [0,1], written to an R32F target). Populated only when the view
+  /// emitted at least one <c>Command3D.EnableDepthPrePass</c> this frame; otherwise
+  /// <see cref="F:Microsoft.FSharp.Core.ValueOption`1.ValueNone"/>. Linearize with the camera's
+  /// near/far planes to get view-space distance (fog, depth-of-field, SSAO).
   /// </summary>
   Depth: RenderTarget2D voption
 
