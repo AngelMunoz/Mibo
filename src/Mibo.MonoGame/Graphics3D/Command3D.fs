@@ -78,14 +78,16 @@ type Command3D =
   | EndEffect
   | DrawImmediate of action: (Pipelines.SceneContext -> unit)
   /// <summary>
-  /// Requests a camera-POV linear-depth pre-pass this frame. When present (anywhere in the
-  /// buffer), the pipeline renders the opaque scene to an R32F target and exposes it as
-  /// <see cref="F:Mibo.Elmish.Graphics3D.PostProcessContext3D.Depth"/> to every
-  /// <see cref="F:Mibo.Elmish.Graphics3D.Command3D.PostProcess"/> action that frame. Emit it when a
-  /// post-process effect needs distance (fog, depth-of-field, SSAO); omit it for effects that
-  /// don't (e.g. a desaturation hit-flash) so the extra geometry pass is skipped. Depth is only
-  /// populated when at least one <c>EnableDepthPrePass</c> command is present; otherwise
-  /// <c>PostProcessContext3D.Depth</c> is <see cref="F:Microsoft.FSharp.Core.ValueOption`1.ValueNone"/>.
+  /// A post-process action that reads only color (<c>PostProcessContext3D.Source</c>). Emits no
+  /// scene-depth production — use for color-only effects (desaturation, vignette, blur). Cheap:
+  /// costs only the scene render target + ping-pong, never a depth pass.
   /// </summary>
-  | EnableDepthPrePass
   | PostProcess of ppAction: (PostProcessContext3D -> unit)
+  /// <summary>
+  /// A post-process action that needs camera-POV scene depth (<c>PostProcessContext3D.Depth</c>) in
+  /// addition to color — fog, depth-of-field, SSAO. When at least one is present this frame, the
+  /// pipeline renders scene depth to an R32F target and exposes it via
+  /// <c>PostProcessContext3D.Depth</c>; use plain <see cref="F:Mibo.Elmish.Graphics3D.Command3D.PostProcess"/>
+  /// instead when an effect doesn't sample depth, so the depth pass is skipped entirely.
+  /// </summary>
+  | PostProcessWithDepth of ppAction: (PostProcessContext3D -> unit)

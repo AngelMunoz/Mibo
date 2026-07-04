@@ -274,16 +274,6 @@ module Draw3D =
     buffer.Add Command3D.DisableShadows
     buffer
 
-  /// <summary>
-  /// Requests a camera-POV linear-depth pre-pass this frame so post-process actions can sample
-  /// <c>PostProcessContext3D.Depth</c> for distance effects (fog, depth-of-field, SSAO). Only emit
-  /// it on frames where a post-process needs depth — the depth pass re-renders the opaque scene,
-  /// so it is skipped entirely when no <c>enableDepthPrePass</c> is present.
-  /// </summary>
-  let inline enableDepthPrePass(buffer: RenderBuffer3D) =
-    buffer.Add Command3D.EnableDepthPrePass
-    buffer
-
   // ──────────────────────────────────────────────
   // Per-group shading scopes
   // ──────────────────────────────────────────────
@@ -373,19 +363,40 @@ module Draw3D =
     buffer
 
   /// <summary>
-  /// Enqueues a model-aware post-process pass. The action runs once, after the whole scene
-  /// renders to an offscreen target; it receives a <see cref="T:Mibo.Elmish.Graphics3D.PostProcessContext3D"/>
-  /// carrying the scene texture (+ optional depth), a fullscreen quad, and the device. The action
-  /// binds its effect, sets model-derived parameters, binds <c>Source</c> to the sampler, and calls
-  /// <c>Quad.Draw(effect)</c>. Emit it conditionally from the view based on game state. Chain
-  /// multiple passes — they ping-pong in buffer order, the last drawing to the back-buffer.
+  /// Enqueues a color-only post-process pass. The action runs once, after the whole scene renders
+  /// to an offscreen target; it receives a <see cref="T:Mibo.Elmish.Graphics3D.PostProcessContext3D"/>
+  /// carrying the scene texture, a fullscreen quad, and the device. <c>Context.Depth</c> is
+  /// <c>ValueNone</c> — no scene-depth pass runs. The action binds its effect, sets model-derived
+  /// parameters, binds <c>Source</c> to the sampler, and calls <c>Quad.Draw(effect)</c>. Emit it
+  /// conditionally from the view based on game state. Chain multiple passes — they ping-pong in
+  /// buffer order, the last drawing to the back-buffer.
+  ///
+  /// Use this for effects that don't sample depth (desaturation, vignette, blur) so the framework
+  /// skips depth production entirely. For distance effects (fog, depth-of-field, SSAO) use
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.postProcessWithDepth"/>.
   /// </summary>
-  /// <param name="action">Invoked once per frame with the post-process context.</param>
+  /// <param name="action">Invoked once per frame with the post-process context (Depth = ValueNone).</param>
   let inline postProcess
     ([<InlineIfLambda>] action: PostProcessContext3D -> unit)
     (buffer: RenderBuffer3D)
     =
     buffer.Add(Command3D.PostProcess action)
+    buffer
+
+  /// <summary>
+  /// Enqueues a post-process pass that needs camera-POV scene depth. Same lifecycle as
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.postProcess"/> (runs once after the scene renders,
+  /// chains in buffer order), but when at least one such action is present the pipeline also renders
+  /// scene depth to an R32F target and exposes it via <c>Context.Depth</c>. Sample it (linearize with
+  /// the camera's near/far) for distance effects. Prefer plain <c>postProcess</c> for effects that
+  /// don't read depth, so the depth pass is skipped.
+  /// </summary>
+  /// <param name="action">Invoked once per frame with the post-process context (Depth populated).</param>
+  let inline postProcessWithDepth
+    ([<InlineIfLambda>] action: PostProcessContext3D -> unit)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(Command3D.PostProcessWithDepth action)
     buffer
 
   /// <summary>Terminal function that discards the buffer, silencing the unused-value warning. Does nothing.</summary>
