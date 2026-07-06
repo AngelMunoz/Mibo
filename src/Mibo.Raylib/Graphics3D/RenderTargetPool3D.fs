@@ -50,6 +50,8 @@ type IRenderTargetPool3D =
 /// </remarks>
 type RenderTargetPool3D() =
 
+  let maxIdle = 2
+
   // ── Standard RTs (color texture + depth renderbuffer via raylib's LoadRenderTexture) ──
   let pool = Dictionary<struct (int * int), Queue<RenderTexture2D>>()
   let inUse = ResizeArray<RenderTexture2D>()
@@ -157,11 +159,16 @@ type RenderTargetPool3D() =
         let key = struct (rt.Texture.Width, rt.Texture.Height)
 
         match pool.TryGetValue(key) with
-        | true, queue -> queue.Enqueue(rt)
-        | false, _ ->
-          let queue = Queue<RenderTexture2D>()
-          queue.Enqueue(rt)
-          pool[key] <- queue
+        | true, queue when queue.Count < maxIdle -> queue.Enqueue(rt)
+        | _ ->
+          // Pool full for this dimension — unload instead of retaining.
+          match pool.TryGetValue(key) with
+          | true, queue when queue.Count >= maxIdle ->
+            Raylib.UnloadRenderTexture(rt)
+          | false, _ ->
+            let queue = Queue<RenderTexture2D>()
+            queue.Enqueue(rt)
+            pool[key] <- queue
 
       inUse.Clear()
 
@@ -169,11 +176,11 @@ type RenderTargetPool3D() =
         let key = struct (rt.Texture.Width, rt.Texture.Height)
 
         match depthPool.TryGetValue(key) with
-        | true, queue -> queue.Enqueue(rt)
-        | false, _ ->
-          let queue = Queue<RenderTexture2D>()
-          queue.Enqueue(rt)
-          depthPool[key] <- queue
+        | true, queue when queue.Count < maxIdle -> queue.Enqueue(rt)
+        | _ ->
+          Rlgl.UnloadTexture(rt.Texture.Id)
+          Rlgl.UnloadTexture(rt.Depth.Id)
+          Rlgl.UnloadFramebuffer(rt.Id)
 
       depthInUse.Clear()
 
