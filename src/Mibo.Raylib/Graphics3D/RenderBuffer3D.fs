@@ -28,6 +28,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   let mutable count = 0
   let mutable clearCounter = 0
   let mutable postProcessCount = 0
+  let mutable depthPostProcessCount = 0
 
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
@@ -43,10 +44,19 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   member _.Count = count
 
   /// <summary>
-  /// Number of <c>PostProcess</c> commands added since the last <c>Clear</c>. Lets a pipeline
-  /// skip the post-process drain (and its per-frame allocation) when the view emits none.
+  /// Number of <c>PostProcess</c>/<c>PostProcessWithDepth</c> commands added since the last
+  /// <c>Clear</c>. Lets a pipeline skip the post-process drain (and its per-frame allocation) when
+  /// the view emits none.
   /// </summary>
   member _.PostProcessCount = postProcessCount
+
+  /// <summary>
+  /// Number of <c>PostProcessWithDepth</c> commands added since the last <c>Clear</c>. When &gt; 0,
+  /// the pipeline exposes the scene depth attachment to post-process actions via
+  /// <c>PostProcessContext3D.Depth</c>. Zero on frames with only color-only <c>PostProcess</c>
+  /// actions.
+  /// </summary>
+  member _.DepthPostProcessCount = depthPostProcessCount
 
   /// <summary>Gets the command at the specified index.</summary>
   member _.Item(i: int) = items[i]
@@ -58,6 +68,9 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
 
     match cmd with
     | Command3D.PostProcess _ -> postProcessCount <- postProcessCount + 1
+    | Command3D.PostProcessWithDepth _ ->
+      postProcessCount <- postProcessCount + 1
+      depthPostProcessCount <- depthPostProcessCount + 1
     | _ -> ()
 
     count <- count + 1
@@ -69,6 +82,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   member _.Clear() =
     count <- 0
     postProcessCount <- 0
+    depthPostProcessCount <- 0
     clearCounter <- clearCounter + 1
 
     if clearCounter >= 300 then

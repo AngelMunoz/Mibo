@@ -202,6 +202,84 @@ let setShaderVec4 (shader: Shader) (loc: int) (value: Vector4) =
 - `SetShaderValueMatrix` takes `Matrix4x4` directly (not `void*`) — this works correctly without `fixed`.
 - `Rlgl.SetUniform` (raw rlgl) also requires `fixed + NativePtr.toVoidPtr`.
 
+## Post-process shaders
+
+Post-process passes (`Draw3D.postProcess` / `Draw3D.postProcessWithDepth`) run after
+the scene renders to an offscreen target. Your action receives a
+`PostProcessContext3D` and must draw a fullscreen quad of `ctx.Source`. See
+[3D Rendering → Post-processing](graphics3d/overview.html#post-processing) for the
+pipeline behavior and the depth-texture contract.
+
+### Scene color texture
+
+The scene color (`ctx.Source`) is always available:
+
+| Backend | Type | Binding |
+|---------|------|---------|
+| raylib | `RenderTexture2D` (use `.Texture` for the color) | Draw via `Raylib.DrawTexturePro` inside `BeginShaderMode` |
+| MonoGame | `RenderTarget2D` | Set as a texture parameter on your `Effect`, draw via the context's `Quad.Draw(effect)` |
+
+### Depth texture (depth-aware passes only)
+
+When you use `postProcessWithDepth`, `ctx.Depth` is `ValueSome texture` containing
+camera-POV NDC z (`[0,1]`, non-linear). Always handle the `ValueNone` case — it
+means depth wasn't produced this frame (bind a valid texture and pass through
+unchanged).
+
+**raylib — binding the depth sampler:**
+
+Raylib's 2D batch flush (triggered by `DrawTexturePro`) only re-binds textures
+registered through `SetShaderValueTexture`. Raw rlgl calls (`ActiveTextureSlot` +
+`EnableTexture`) set GL state but bypass that registry, so the sampler ends up
+unbound and reads `0`. **Always use `SetShaderValueTexture`:**
+
+```fsharp
+let depthLoc = Raylib.GetShaderLocation(shader, "texture1")  // your depth sampler
+
+Raylib.BeginShaderMode shader
+// ... set scalar uniforms ...
+Raylib.SetShaderValueTexture(shader, depthLoc, depthTexture)  // batch-safe binding
+Raylib.DrawTexturePro(ctx.Source.Texture, srcRect, dstRect, origin, 0f, Color.White)
+Raylib.EndShaderMode()
+```
+
+> _**NOTE — raylib auto-binds `texture1`.**_ Raylib maps the GLSL uniform name
+> `"texture1"` to its internal `SHADER_LOC_MAP_SPECULAR` slot during
+> `LoadShaderFromMemory`. Using `texture0` / `texture1` as your sampler names means
+> `GetShaderLocation` resolves them automatically — no manual location attribute
+> setup needed.
+
+**MonoGame — binding the depth sampler:**
+
+MonoGame has no equivalent batch-clobbering issue. Set the depth render target as a
+texture parameter on your `Effect`, just like the scene color:
+
+```fsharp
+effect.Parameters.["DepthTexture"].SetValue(ctx.Depth.Value)
+effect.Parameters.["SceneTexture"].SetValue(ctx.Source)
+ctx.Quad.Draw(effect)
+```
+
+### DisableRuntimeMarshalling caveat (raylib)
+
+The [`fixed + NativePtr.toVoidPtr`](#disableruntimemarshalling-and-setshadervalue-raylib-only)
+requirement applies to all scalar/vector uniforms in your post-process shader
+(`fogColor`, `fogNear`, etc.). One subtle trap: `Rlgl.GetCullDistanceNear` /
+`GetCullDistanceFar` return `double` (8 bytes), but `SetShaderValue` with
+`ShaderUniformDataType.Float` reads 4 bytes — convert to `float32` before passing:
+
+```fsharp
+// WRONG — uploads the first 4 bytes of a double as float32 (garbage)
+let mutable camN = Rlgl.GetCullDistanceNear()
+use p = fixed &camN
+Raylib.SetShaderValue(shader, loc, NativePtr.toVoidPtr p, ShaderUniformDataType.Float)
+
+// CORRECT — convert double → float32 first
+let mutable camN = float32 (Rlgl.GetCullDistanceNear())
+use p = fixed &camN
+Raylib.SetShaderValue(shader, loc, NativePtr.toVoidPtr p, ShaderUniformDataType.Float)
+```
+
 ## Where to Learn More
 
 - **2D lighting shaders**: See [2D Lighting & Shadows](graphics2d/lighting.html)

@@ -65,7 +65,20 @@ type Command3D =
   | BeginEffect of shader: Shader
   | EndEffect
   | DrawImmediate of action: (Pipelines.SceneContext -> unit)
+  /// <summary>
+  /// A post-process action that reads only color (<c>PostProcessContext3D.Source</c>). Emits no
+  /// scene-depth production — use for color-only effects (desaturation, vignette, blur). Cheap:
+  /// costs only the scene render target + ping-pong.
+  /// </summary>
   | PostProcess of ppAction: (PostProcessContext3D -> unit)
+  /// <summary>
+  /// A post-process action that needs camera-POV scene depth (<c>PostProcessContext3D.Depth</c>) in
+  /// addition to color — fog, depth-of-field, SSAO. The pipeline exposes the scene render target's
+  /// depth attachment (OpenGL's depth buffer is directly sampleable, so no extra geometry pass is
+  /// needed). Use plain <see cref="F:Mibo.Elmish.Graphics3D.Command3D.PostProcess"/> when an effect
+  /// doesn't sample depth.
+  /// </summary>
+  | PostProcessWithDepth of ppAction: (PostProcessContext3D -> unit)
 
 /// <summary>
 /// Factory functions that create <see cref="T:Mibo.Elmish.Graphics3D.Command3D"/> values

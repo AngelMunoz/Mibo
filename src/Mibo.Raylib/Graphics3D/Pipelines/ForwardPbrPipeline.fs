@@ -1432,7 +1432,8 @@ module internal PipelineFunctions =
           &mat,
           2
         )
-      | Command3D.PostProcess action ->
+      | Command3D.PostProcess action
+      | Command3D.PostProcessWithDepth action ->
         match ppActions with
         | ValueSome list -> list.Add action
         | ValueNone -> ()
@@ -1762,6 +1763,7 @@ type ForwardPipelineBase
     (sceneTarget: RenderTexture2D)
     (rtPool: IRenderTargetPool3D)
     (actions: ResizeArray<PostProcessContext3D -> unit>)
+    (depth: Texture2D voption)
     (frameTime: float32)
     =
     if actions.Count = 0 then
@@ -1788,7 +1790,7 @@ type ForwardPipelineBase
 
         let ppCtx: PostProcessContext3D = {
           Source = src
-          Depth = ValueNone
+          Depth = depth
           Width = w
           Height = h
           Time = frameTime
@@ -2536,7 +2538,8 @@ type ForwardPipelineBase
           | Command3D.DisableShadows -> ()
           // Post-process actions are collected above and run after the scene renders to
           // an offscreen target; nothing to do during the forward pass.
-          | Command3D.PostProcess _ -> ()
+          | Command3D.PostProcess _
+          | Command3D.PostProcessWithDepth _ -> ()
 
         // End remaining shader/camera state after dispatch
         if shaderActive then
@@ -2546,15 +2549,32 @@ type ForwardPipelineBase
           Raylib.EndMode3D()
 
       // Render the forward pass direct, or via a scene RT when post-process commands are present.
+      // When depth-needing actions exist (DepthPostProcessCount > 0), expose the scene RT's depth
+      // attachment to the post-process context — OpenGL's depth buffer is directly sampleable, so
+      // no separate geometry pre-pass is needed (unlike the MonoGame backend).
       match ppActions with
       | ValueNone -> dispatchForwardPass()
       | ValueSome actions ->
-        let sceneRT = rtPool.Acquire(gameCtx.WindowWidth, gameCtx.WindowHeight)
+        // Use a depth-sampleable RT (custom FBO with a depth texture) when post-process effects
+        // need to sample depth; otherwise a standard raylib RT (depth renderbuffer, cheaper).
+        let sceneRT =
+          if buffer.DepthPostProcessCount > 0 then
+            rtPool.AcquireWithDepth(gameCtx.WindowWidth, gameCtx.WindowHeight)
+          else
+            rtPool.Acquire(gameCtx.WindowWidth, gameCtx.WindowHeight)
+
         Raylib.BeginTextureMode sceneRT
         Raylib.ClearBackground Color.Black
         dispatchForwardPass()
         Raylib.EndTextureMode()
-        applyPostProcess gameCtx sceneRT rtPool actions frameTime
+
+        let depth: Texture2D voption =
+          if buffer.DepthPostProcessCount > 0 then
+            ValueSome sceneRT.Depth
+          else
+            ValueNone
+
+        applyPostProcess gameCtx sceneRT rtPool actions depth frameTime
 
       // Debug overlay (optional)
       if atlasCfg.ShowDebugOverlay then

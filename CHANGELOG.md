@@ -4,6 +4,8 @@
 
 ### Added
 
+- **3D:** model-aware post-processing — `Draw3D.postProcessWithDepth` exposes camera-POV scene depth to post-process passes (fog, depth-of-field, SSAO). The depth texture stores non-linear NDC z (`[0,1]`, 0=near, 1=far); linearize with the camera's near/far. raylib renders the scene into a custom framebuffer with a sampleable depth-texture attachment (no extra geometry pass); MonoGame re-renders opaque geometry into a dedicated R32F target. Use plain `Draw3D.postProcess` for color-only effects so the depth-production cost is skipped. See `docs/graphics3d/overview.md` → "Post-processing" and `docs/shaders.md` → "Post-process shaders" for the depth-texture contract and shader binding requirements.
+
 - **3D:** instanced draws inside a `beginEffect`/`endEffect` scope are now shaded by your own shader/effect when it opts into instancing — raylib declares `in mat4 instanceTransform;`, MonoGame exposes an `Instanced` technique. Effects that don't opt in keep the previous PBR-instanced fallback. Skinned + instanced isn't supported (no per-instance bone palette). See the "Instancing (opt-in)" section of `docs/shader-uniforms.md`.
 
 - **MonoGame 2D:** `Draw.setSamplerState` sets the sprite-batch sampler state for subsequent sprites (e.g. `SamplerState.PointClamp`), mirroring `setBlend` — use it to stop tiles sampled from a gutterless spritesheet from bleeding at the edges. It flushes the batch on change and defaults to the previous behavior (`SamplerState.LinearClamp`). On raylib, use the new `Texture.filter` helper instead.
