@@ -1093,19 +1093,6 @@ module internal ShadowPass =
       | ValueSome p -> PbrUniforms.setInt p.Shadow.DirLightCastsShadows 0
       | ValueNone -> ()
 
-      // Even without shadow casters, load the DepthShadow effect so renderSceneDepth can run
-      // when needsDepth is true (fog/DoF/SSAO in a shadowless scene). Without this, the effect
-      // is never loaded and every postProcessWithDepth action silently receives Depth=None.
-      if needsDepth then
-        match res.Effect, res.Params with
-        | ValueSome _, ValueSome _ -> ()
-        | _ ->
-          match ShaderLoader.loadEffect gd "DepthShadow" with
-          | ValueSome e ->
-            res.Params <- ValueSome(buildShadowParams e)
-            res.Effect <- ValueSome e
-          | ValueNone -> ()
-
       ValueNone
     else
       res.Atlas.EnsureResources gd
