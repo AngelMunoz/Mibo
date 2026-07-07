@@ -466,11 +466,16 @@ module internal ShadowPassHelpers =
       let pt = lights.PointLights[i]
 
       if pt.CastsShadows then
+        let shadowDir =
+          match pt.ShadowDirection with
+          | ValueSome d -> d
+          | ValueNone -> -Vector3.UnitY
+
         match
           tryAdd
             ShadowCasterType.Point
             pt.Position
-            Vector3.Zero
+            shadowDir
             Vector3.Zero
             pt.ShadowBias
         with
@@ -815,12 +820,8 @@ module internal PipelineFunctions =
 
   /// Single parameterized material uniform setter replacing 3x duplication.
   let setMaterialUniforms
-    (
-      shader: Shader,
-      matLocs: inref<MaterialUniforms>,
-      mat3d: inref<Material3D>,
-      nm: Matrix4x4
-    ) =
+    (shader: Shader, matLocs: inref<MaterialUniforms>, mat3d: inref<Material3D>)
+    =
     setShaderVec4
       shader
       matLocs.AlbedoColor
@@ -843,7 +844,6 @@ module internal PipelineFunctions =
       | ValueNone -> 0
 
     setShaderInt shader matLocs.UseNormalMap useNormal
-    Raylib.SetShaderValueMatrix(shader, matLocs.NormalMatrix, nm)
 
   /// Single parameterized material cache lookup/creation replacing 3x duplication.
   let getOrCreate
@@ -1067,10 +1067,11 @@ module internal PipelineFunctions =
     setShaderInt shader variant.Locs.Shadow.Pass 0
 
     let nm = computeNormalMatrix transform
+    Raylib.SetShaderValueMatrix(shader, variant.Locs.Material.NormalMatrix, nm)
     let key = MaterialKey.fromMaterial3D &material
 
     if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
-      setMaterialUniforms(shader, &variant.Locs.Material, &material, nm)
+      setMaterialUniforms(shader, &variant.Locs.Material, &material)
       variant.LastMaterialKey <- key
       variant.HasLastMaterial <- true
 
@@ -1112,6 +1113,7 @@ module internal PipelineFunctions =
     setShaderInt shader variant.Locs.Shadow.Pass 0
 
     let nm = computeNormalMatrix transform
+    Raylib.SetShaderValueMatrix(shader, variant.Locs.Material.NormalMatrix, nm)
 
     for mi = 0 to model.MeshCount - 1 do
       let mesh = NativePtr.get model.Meshes mi
@@ -1127,7 +1129,7 @@ module internal PipelineFunctions =
       let key = MaterialKey.fromMaterial3D &mat3d
 
       if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
-        setMaterialUniforms(shader, &variant.Locs.Material, &mat3d, nm)
+        setMaterialUniforms(shader, &variant.Locs.Material, &mat3d)
         variant.LastMaterialKey <- key
         variant.HasLastMaterial <- true
 
@@ -1170,10 +1172,11 @@ module internal PipelineFunctions =
     setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
     setShaderInt shader variant.Locs.Shadow.Pass 0
     let nm = computeNormalMatrix transform
+    Raylib.SetShaderValueMatrix(shader, variant.Locs.Material.NormalMatrix, nm)
     let key = MaterialKey.fromMaterial3D &material
 
     if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
-      setMaterialUniforms(shader, &variant.Locs.Material, &material, nm)
+      setMaterialUniforms(shader, &variant.Locs.Material, &material)
       variant.LastMaterialKey <- key
       variant.HasLastMaterial <- true
 
@@ -1219,12 +1222,7 @@ module internal PipelineFunctions =
     let key = MaterialKey.fromMaterial3D &material
 
     if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
-      setMaterialUniforms(
-        shader,
-        &variant.Locs.Material,
-        &material,
-        Matrix4x4.Identity
-      )
+      setMaterialUniforms(shader, &variant.Locs.Material, &material)
 
       variant.LastMaterialKey <- key
       variant.HasLastMaterial <- true
@@ -1586,12 +1584,12 @@ module internal PipelineFunctions =
               if distToCamera <= maxShadowDist then
                 match caster.Type with
                 | ShadowCasterType.Point ->
-                  let downTarget = caster.LightPosition - Vector3.UnitY
+                  let ptTarget = caster.LightPosition + caster.LightDirection
 
                   let ptCamera =
                     Camera3D(
                       Position = caster.LightPosition,
-                      Target = downTarget,
+                      Target = ptTarget,
                       Up = Vector3.UnitZ,
                       FovY = 90.0f,
                       Projection = CameraProjection.Perspective

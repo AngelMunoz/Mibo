@@ -51,9 +51,14 @@ type DirectionalLight3D = {
   /// Whether this directional light casts shadows.
   /// </summary>
   /// <remarks>
+  /// <b>Only the first shadow-casting directional light produces a shadow map.</b>
+  /// The forward PBR pipeline uses scalar (non-array) directional-light uniforms, so
+  /// only one directional light is lit and shadowed. Additional directional lights
+  /// are silently ignored by the shader. Set <c>CastsShadows = false</c> on extras.
+  /// <para>
   /// <b>Pipeline-dependent:</b> Not all rendering pipelines support shadow casting.
   /// Pipelines that don't support shadows will ignore this field.
-  /// Check your pipeline's documentation for shadow support details.
+  /// </para>
   /// </remarks>
   CastsShadows: bool
 }
@@ -104,6 +109,16 @@ type PointLight3D = {
   /// </remarks>
   CastsShadows: bool
   /// <summary>
+  /// Direction the single-face shadow map looks (should be normalized). When None, defaults to
+  /// straight down (−Y) — the common case for ceiling-mounted lights.
+  /// </summary>
+  /// <remarks>
+  /// <b>Pipeline-dependent:</b> Point-light shadows render a single face (not a 6-face cubemap).
+  /// Set this to face toward the geometry that should receive shadows. For a wall sconce pointing
+  /// along +X, use <c>Vector3.UnitX</c>. Ignored by pipelines that don't support point-light shadows.
+  /// </remarks>
+  ShadowDirection: Vector3 voption
+  /// <summary>
   /// Per-light shadow bias override. When None, uses the pipeline's global bias setting.
   /// </summary>
   /// <remarks>
@@ -125,6 +140,7 @@ module PointLight3D =
     Radius = radius
     Falloff = 2.0f
     CastsShadows = false
+    ShadowDirection = ValueNone
     ShadowBias = ValueNone
   }
 
@@ -140,6 +156,11 @@ module PointLight3D =
   let inline withCastsShadows (v: bool) (l: PointLight3D) = {
     l with
         CastsShadows = v
+  }
+
+  let inline withShadowDirection (v: Vector3) (l: PointLight3D) = {
+    l with
+        ShadowDirection = ValueSome v
   }
 
   let inline withShadowBias (v: float32) (l: PointLight3D) = {

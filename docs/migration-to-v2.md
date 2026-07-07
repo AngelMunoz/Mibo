@@ -561,6 +561,48 @@ picking on raylib, you'll need a replacement. Use raylib's native
 (`Matrix4x4` unproject). For orbit-style cameras, build the
 `Raylib_cs.Camera3D` from spherical coordinates directly.
 
+---
+
+## Pre-release fixes (unreleased)
+
+These are fixes landing on the `fix/pipeline-review-v2` branch against the
+v2-rc codebase, before the stable v2 tag. They are **breaking only if you
+construct `PointLight3D` struct literals directly** (see below).
+
+### Point-light shadow direction
+
+Point-light shadows previously rendered a single face looking straight down
+(−Y), no matter where the light was or what geometry surrounded it. A wall
+sconce or a light placed at floor level cast shadows that missed everything.
+
+`PointLight3D` gains a `ShadowDirection: Vector3 voption` field:
+
+```fsharp
+// Ceiling light — default, looks down (no change needed)
+let ceiling = PointLight3D.create(pos, 10.0f) |> PointLight3D.withCastsShadows true
+
+// Wall sconce — aim the shadow map along +X
+let sconce =
+  PointLight3D.create(pos, 8.0f)
+  |> PointLight3D.withCastsShadows true
+  |> PointLight3D.withShadowDirection Vector3.UnitX
+```
+
+**Breaking:** if you construct `PointLight3D` via a struct literal
+(`{ Position = ...; ... }`), add `ShadowDirection = ValueNone`. If you use
+`PointLight3D.create` + builder functions, no change is needed.
+
+### Single directional-light shadow
+
+The forward PBR pipeline lights and shadows **only the first directional
+light**. The shader uses scalar (non-array) directional-light uniforms, so a
+second `AddDirectionalLight` with `CastsShadows = true` is silently ignored by
+the shader. This is now documented on `DirectionalLight3D.CastsShadows`.
+
+**No migration action** — the behavior is unchanged, just documented. If you
+need two directional lights, set `CastsShadows = false` on the secondary one
+and rely on it for fill lighting only.
+
 
 
 

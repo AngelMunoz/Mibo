@@ -2,15 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **3D:** point-light shadows are no longer fixed to look straight down. Set `PointLight3D.ShadowDirection` (or use the `withShadowDirection` builder) to aim the single-face shadow map toward your geometry — e.g. `Vector3.UnitX` for a wall sconce. Defaults to down (−Y) when unset.
+
 ### Fixed
 
-- **Raylib 3D:** `cameraPos` was never uploaded to the forward/instanced PBR shaders when no shadow-casting light was active, silently breaking specular highlights and Fresnel on non-skinned draws. Camera position is now set per-draw on all shader variants, matching the MonoGame backend.
-- **MonoGame 3D:** light uniforms were re-uploaded on every draw call instead of once per frame. A `LightsDirty` flag (mirroring the raylib backend) now gates the upload, and the animated-model handler hoists the upload above the per-mesh loop.
-- **Raylib 3D:** instanced meshes used an identity normal matrix, producing incorrect normal-map lighting on rotated or non-uniformly scaled instances. The instanced vertex shader now computes the normal matrix per-vertex from `instanceTransform`.
+- **Raylib 3D:** specular highlights and Fresnel effects rendered incorrectly on non-skinned meshes when no shadow-casting light was present.
+- **MonoGame 3D:** per-frame rendering overhead reduced — lighting data is now uploaded once per frame instead of once per draw call.
+- **Raylib 3D:** normal-mapped meshes now light correctly when consecutive draws share a material but differ in world transform (the normal matrix was previously cached per material instead of per draw).
+- **Raylib 3D:** normal-mapped instanced meshes now light correctly when individual instances are rotated or non-uniformly scaled.
 
 ### Changed
 
-- **Raylib 3D:** the shadow-culling distance for point/spot lights (previously hardcoded at 50 units) is now configurable via `ShadowAtlasConfig.MaxShadowLightDistance` (default 50.0). Increase it for large-world games (RTS, open-world); decrease for tighter scenes.
+- **Raylib 3D:** the maximum distance at which point/spot lights cast shadows is now configurable via `ShadowAtlasConfig.MaxShadowLightDistance` (default 50 world units). Increase it for large-world games (RTS, open-world); decrease for tighter scenes.
 
 ## [2.0.0-rc-002] - 2026-07-07
 
