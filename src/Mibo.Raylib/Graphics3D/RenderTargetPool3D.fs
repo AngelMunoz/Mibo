@@ -1,5 +1,7 @@
 namespace Mibo.Elmish.Graphics3D
 
+#nowarn "9"
+
 open System.Collections.Generic
 open Microsoft.FSharp.NativeInterop
 open Raylib_cs
