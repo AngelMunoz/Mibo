@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- **2D:** post-process effects can now read the scene's lighting data and camera transform. The post-process context exposes the active `LightContext2D` (point lights, directional lights, ambient, occluders) and the last `Camera2D` — so a post-process shader can bloom lit areas, apply light-tinted color grading, or anchor effects in world space.
+
+- **3D:** point-light shadows are no longer fixed to look straight down. Set `PointLight3D.ShadowDirection` (or use the `withShadowDirection` builder) to aim the single-face shadow map toward your geometry — e.g. `Vector3.UnitX` for a wall sconce. Defaults to down (−Y) when unset.
+
+### Fixed
+
+- **Raylib 3D:** specular highlights and Fresnel effects rendered incorrectly on non-skinned meshes when no shadow-casting light was present.
+- **MonoGame 3D:** per-frame rendering overhead reduced — lighting data is now uploaded once per frame instead of once per draw call.
+- **Raylib 3D:** normal-mapped meshes now light correctly when consecutive draws share a material but differ in world transform (the normal matrix was previously cached per material instead of per draw).
+- **Raylib 3D:** normal-mapped instanced meshes now light correctly when individual instances are rotated or non-uniformly scaled.
+
+### Changed
+
+- **Raylib 3D:** the maximum distance at which point/spot lights cast shadows is now configurable via `ShadowAtlasConfig.MaxShadowLightDistance` (default 50 world units). Increase it for large-world games (RTS, open-world); decrease for tighter scenes.
+
 ## [2.0.0-rc-002] - 2026-07-07
 
 ### Added

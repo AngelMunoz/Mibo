@@ -283,13 +283,22 @@ module internal ShadowPass =
     view * proj
 
   /// <summary>
-  /// Builds a point light's shadow ViewProj — a downward-facing 90° perspective frustum
-  /// covering +Z. Used by the forward shader for point-light shadows. (B13 point-light
-  /// shadows are rendered as a single face into one atlas slot.)
+  /// Builds a point light's shadow ViewProj — a single-face 90° perspective frustum
+  /// covering the given shadow direction. Used by the forward shader for point-light shadows.
   /// </summary>
-  let buildPointViewProj(lightPos: Vector3, lightRadius: float32) : Matrix =
-    let view =
-      Matrix.CreateLookAt(lightPos, lightPos - Vector3.UnitY, Vector3.UnitZ)
+  let buildPointViewProj
+    (lightPos: Vector3, shadowDir: Vector3, lightRadius: float32)
+    : Matrix =
+    // Normalize so the parallel-up threshold check is accurate for non-unit
+    // inputs; fall back to the default on zero-length (avoids NaN from a
+    // degenerate forward in CreateLookAt).
+    let dir =
+      let len = shadowDir.Length()
+      if len > 0.0001f then shadowDir / len else -Vector3.UnitY
+
+    let safeUp = if abs dir.Y > 0.99f then Vector3.UnitZ else Vector3.UnitY
+
+    let view = Matrix.CreateLookAt(lightPos, lightPos + dir, safeUp)
     // Dynamic near plane: CreatePerspectiveFieldOfView throws if near <= 0.
     let nearPlane = max 0.0001f (min 0.1f (lightRadius * 0.5f))
 
@@ -934,7 +943,15 @@ module internal ShadowPass =
 
       if pt.CastsShadows then
         let ptPos = Conversions.fromNumericsVector3 pt.Position
-        let vp = buildPointViewProj(ptPos, pt.Radius)
+
+        let shadowDir =
+          Conversions.fromNumericsVector3(
+            match pt.ShadowDirection with
+            | ValueSome d -> d
+            | ValueNone -> -System.Numerics.Vector3.UnitY
+          )
+
+        let vp = buildPointViewProj(ptPos, shadowDir, pt.Radius)
 
         match
           res.Atlas.AddCaster(

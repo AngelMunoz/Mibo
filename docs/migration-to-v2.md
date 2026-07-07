@@ -7,13 +7,11 @@ index: 1
 
 # Migrating to Mibo v2
 
-> **Status: In progress.** This document tracks the work happening on the `v2`
-> branch to make Mibo backend-agnostic, and collects **every breaking change** a
-> user will face when moving from the current `1.3.0` (raylib-only) release to the
-> upcoming major version. It is updated as each phase lands — if a phase is not
-> listed here, it has not shipped yet.
->
-> If you are tracking `v2`, read this document first whenever you pull.
+This document collects **every breaking change** you will face when moving from
+the `1.3.0` (raylib-only) release to Mibo v2 — a backend-agnostic core with
+pluggable raylib and MonoGame backends. Work through the sections that match
+your code; each entry lists what changed, why, and exactly how to update your
+code.
 
 ## What v2 is
 
@@ -58,8 +56,7 @@ that leaks a backend enum/handle stay in the backend.**
 
 ## Breaking changes
 
-> Sections are added as the phase that introduces them lands. Each entry lists
-> what changed, why, and exactly how to update your code.
+Each entry below lists what changed, why, and exactly how to update your code.
 
 ### Phase 1a — `Mibo.Core` extraction
 
@@ -560,6 +557,167 @@ picking on raylib, you'll need a replacement. Use raylib's native
 `Raylib.GetMouseRay` or compute the ray from the `Camera3D` + viewport manually
 (`Matrix4x4` unproject). For orbit-style cameras, build the
 `Raylib_cs.Camera3D` from spherical coordinates directly.
+
+---
+
+## Post-processing and shadow refinements
+
+### Post-processing is now command-driven (breaking)
+
+**Breaking (2D and 3D).** In 1.x, post-processing was configured once at
+renderer/pipeline construction and ran **every frame for the life of the
+renderer** — whether or not the effect was needed that frame:
+
+- **2D:** `Renderer2DConfig.PostProcess: PostProcessPass[] voption`, where
+  `PostProcessPass = { Shader; OnSetup }`.
+- **3D:** `PostProcessConfig3D` / `PostProcessPass3D` (`{ Shader; OnSetup }`),
+  passed to the pipeline constructor.
+
+These config types have been removed. Post-processing is now **on-demand and
+model-aware**: the view emits a post-process command into the render buffer, and
+the action runs only when (and only on the frames) it is emitted — so a
+hit-flash, a pause vignette, or a cutscene grade costs nothing on the frames it
+isn't drawn.
+
+```fsharp
+// 2D — v1, declared once, ran every frame whether needed or not
+let renderer =
+  Renderer2D.createWithConfig
+    { PostProcess =
+        ValueSome
+          [|
+            {
+              Shader = vignetteShader
+              OnSetup = ValueSome(fun shader ctx -> ...)
+            }
+          |]
+      ClearColor = ValueNone }
+    view
+
+// 2D — v2, emitted from the view, only on frames that need it
+let view ctx model (buffer: RenderBuffer2D) =
+  buffer
+  |> Draw.postProcess (fun ppCtx ->
+      // ppCtx.Source — the scene texture (or previous pass's output)
+      // ppCtx.Width, ppCtx.Height, ppCtx.Time — dimensions + frame time
+      drawFullscreenQuad ppCtx.Source vignetteShader)
+```
+
+```fsharp
+// 3D — v1, declared once, ran every frame whether needed or not
+let pipeline =
+  ClusteredForwardPipeline(
+    postProcess = {
+      Passes =
+        ValueSome
+          [|
+            {
+              Shader = vignetteShader
+              OnSetup = ValueSome(fun shader ctx -> ...)
+            }
+          |]
+    }
+  )
+
+// 3D — v2, emitted from the view, only on frames that need it
+let view ctx model (buffer: RenderBuffer3D) =
+  buffer
+  |> Draw3D.postProcess (fun ppCtx ->
+      // ppCtx.Source — the scene texture (or previous pass's output)
+      // ppCtx.Width, ppCtx.Height, ppCtx.Time — dimensions + frame time
+      // ppCtx.Context — GameContext (resolve a shader via IAssets)
+      drawFullscreenQuad ppCtx.Source vignetteShader)
+  |> Draw3D.drop
+```
+
+Multiple passes chain in buffer order, ping-ponging through pooled render
+targets with the last pass drawing to the back-buffer. Resolve the shader inside
+the action (e.g. via `IAssets`) rather than capturing a renderer/pipeline-wide
+one — the action owns the draw.
+
+### Depth-aware post-processing (3D)
+
+A second command, `Draw3D.postProcessWithDepth`, gives the action a
+`PostProcessContext3D` whose `Depth` field is a camera-POV depth texture (NDC z
+in `[0,1]`) for distance effects like fog, depth-of-field, and SSAO. Use plain
+`Draw3D.postProcess` when you don't sample depth — the pipeline skips the
+depth-production cost entirely:
+
+```fsharp
+buffer
+|> Draw3D.postProcessWithDepth (fun ppCtx ->
+    match ppCtx.Depth with
+    | ValueSome depthTex -> // bind depthTex, apply the distance effect
+    | ValueNone ->          // no depth produced this frame — pass through
+    ())
+|> Draw3D.drop
+```
+
+The depth texture is produced differently per backend (raylib samples the
+forward pass's depth attachment directly; MonoGame re-renders opaque geometry
+into a dedicated R32F target), but the contract — single-channel NDC z, `0` =
+near, `1` = far, skybox/uncovered = `1.0` — is identical on both. See the
+[3D Rendering Overview](graphics3d/overview.html) for the linearization formula.
+
+### 2D post-process context enrichment
+
+The 2D `PostProcessContext2D` now exposes two fields a post-process shader can
+read: the active `LightContext2D` (point lights, directional lights, ambient,
+occluders) and the last active `Camera2D`. No new command variants — the
+existing `Draw.postProcess` action closure just receives a richer context:
+
+```fsharp
+Draw.postProcess (fun ctx ->
+  // ctx.Lights — the active LightContext2D (ValueNone when no lit sprites were drawn).
+  //   Read ctx.Lights.Value.PointLights, .DirLights, .Ambient, .Occluders
+  //   to drive bloom thresholds, light-tinted grading, etc.
+
+  // ctx.Camera — the last active Camera2D (ValueNone when no BeginCamera block was used).
+  //   Use it to convert between screen UVs and world coordinates for world-anchored effects.
+
+  // ctx.Source, ctx.Width, ctx.Height, ctx.Time — unchanged
+  ()) buffer
+```
+
+**Multi-camera caveat:** `Camera` is the **last** `Camera2D` active during the
+scene render. When multiple camera blocks exist in the same frame (e.g. main
+view + minimap), the scene render target contains all of them composited — a
+single camera reference can't reconstruct per-camera regions. Use
+`DrawImmediate` for per-camera post-processing.
+
+**No depth in 2D:** 2D rendering does not write a depth buffer on either
+backend, so there is no `PostProcessWithDepth` for 2D. If you need depth-like
+data for a 2D effect (e.g. fake DOF from layer ordering), render a custom R32F
+target via `DrawImmediate` and pass it through your action's closure.
+
+### Point-light shadow direction
+
+Point-light shadows previously rendered a single face looking straight down
+(−Y), no matter where the light was or what geometry surrounded it.
+`PointLight3D` now has a `ShadowDirection: Vector3 voption` field so you can aim
+the shadow map toward your geometry:
+
+```fsharp
+// Ceiling light — default, looks down (no change needed)
+let ceiling = PointLight3D.create(pos, 10.0f) |> PointLight3D.withCastsShadows true
+
+// Wall sconce — aim the shadow map along +X
+let sconce =
+  PointLight3D.create(pos, 8.0f)
+  |> PointLight3D.withCastsShadows true
+  |> PointLight3D.withShadowDirection Vector3.UnitX
+```
+
+**Breaking (minor):** if you construct `PointLight3D` via a struct literal
+(`{ Position = ...; ... }`), add `ShadowDirection = ValueNone`. If you use
+`PointLight3D.create` + builder functions, no change is needed.
+
+### Single directional-light shadow
+
+The forward PBR pipeline lights and shadows **only the first directional
+light**. The shader uses scalar (non-array) directional-light uniforms, so a
+second `AddDirectionalLight` with `CastsShadows = true` is silently ignored by
+the shader. This is now documented on `DirectionalLight3D.CastsShadows`.
 
 
 

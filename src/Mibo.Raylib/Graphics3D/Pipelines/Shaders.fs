@@ -62,13 +62,13 @@ out vec3 fragNormal;
 out vec3 fragWorldPos;
 
 uniform mat4 mvp;
-uniform mat4 normalMatrix;
 
 void main()
 {
     fragTexCoord = vertexTexCoord;
     fragColor = vertexColor;
-    fragNormal = mat3(normalMatrix) * vertexNormal;
+    mat3 nMat = transpose(inverse(mat3(instanceTransform)));
+    fragNormal = normalize(nMat * vertexNormal);
     fragWorldPos = (instanceTransform * vec4(vertexPosition, 1.0)).xyz;
     gl_Position = mvp * instanceTransform * vec4(vertexPosition, 1.0);
 }

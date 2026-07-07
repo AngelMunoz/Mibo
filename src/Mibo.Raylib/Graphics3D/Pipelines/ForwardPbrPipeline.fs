@@ -466,11 +466,16 @@ module internal ShadowPassHelpers =
       let pt = lights.PointLights[i]
 
       if pt.CastsShadows then
+        let shadowDir =
+          match pt.ShadowDirection with
+          | ValueSome d -> d
+          | ValueNone -> -Vector3.UnitY
+
         match
           tryAdd
             ShadowCasterType.Point
             pt.Position
-            Vector3.Zero
+            shadowDir
             Vector3.Zero
             pt.ShadowBias
         with
@@ -815,12 +820,8 @@ module internal PipelineFunctions =
 
   /// Single parameterized material uniform setter replacing 3x duplication.
   let setMaterialUniforms
-    (
-      shader: Shader,
-      matLocs: inref<MaterialUniforms>,
-      mat3d: inref<Material3D>,
-      nm: Matrix4x4
-    ) =
+    (shader: Shader, matLocs: inref<MaterialUniforms>, mat3d: inref<Material3D>)
+    =
     setShaderVec4
       shader
       matLocs.AlbedoColor
@@ -843,7 +844,6 @@ module internal PipelineFunctions =
       | ValueNone -> 0
 
     setShaderInt shader matLocs.UseNormalMap useNormal
-    Raylib.SetShaderValueMatrix(shader, matLocs.NormalMatrix, nm)
 
   /// Single parameterized material cache lookup/creation replacing 3x duplication.
   let getOrCreate
@@ -1043,6 +1043,7 @@ module internal PipelineFunctions =
       maxSp: int,
       pointShadowSlots: int[],
       spotShadowSlots: int[],
+      currentCamera: Camera3D,
       mesh: Mesh,
       transform: Matrix4x4,
       material: Material3D
@@ -1062,11 +1063,15 @@ module internal PipelineFunctions =
 
       variant.LightsDirty <- false
 
+    setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
+    setShaderInt shader variant.Locs.Shadow.Pass 0
+
     let nm = computeNormalMatrix transform
+    Raylib.SetShaderValueMatrix(shader, variant.Locs.Material.NormalMatrix, nm)
     let key = MaterialKey.fromMaterial3D &material
 
     if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
-      setMaterialUniforms(shader, &variant.Locs.Material, &material, nm)
+      setMaterialUniforms(shader, &variant.Locs.Material, &material)
       variant.LastMaterialKey <- key
       variant.HasLastMaterial <- true
 
@@ -1084,6 +1089,7 @@ module internal PipelineFunctions =
       maxSp: int,
       pointShadowSlots: int[],
       spotShadowSlots: int[],
+      currentCamera: Camera3D,
       model: Model,
       transform: Matrix4x4,
       matOverride: MaterialOverride voption
@@ -1103,7 +1109,11 @@ module internal PipelineFunctions =
 
       variant.LightsDirty <- false
 
+    setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
+    setShaderInt shader variant.Locs.Shadow.Pass 0
+
     let nm = computeNormalMatrix transform
+    Raylib.SetShaderValueMatrix(shader, variant.Locs.Material.NormalMatrix, nm)
 
     for mi = 0 to model.MeshCount - 1 do
       let mesh = NativePtr.get model.Meshes mi
@@ -1119,7 +1129,7 @@ module internal PipelineFunctions =
       let key = MaterialKey.fromMaterial3D &mat3d
 
       if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
-        setMaterialUniforms(shader, &variant.Locs.Material, &mat3d, nm)
+        setMaterialUniforms(shader, &variant.Locs.Material, &mat3d)
         variant.LastMaterialKey <- key
         variant.HasLastMaterial <- true
 
@@ -1162,10 +1172,11 @@ module internal PipelineFunctions =
     setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
     setShaderInt shader variant.Locs.Shadow.Pass 0
     let nm = computeNormalMatrix transform
+    Raylib.SetShaderValueMatrix(shader, variant.Locs.Material.NormalMatrix, nm)
     let key = MaterialKey.fromMaterial3D &material
 
     if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
-      setMaterialUniforms(shader, &variant.Locs.Material, &material, nm)
+      setMaterialUniforms(shader, &variant.Locs.Material, &material)
       variant.LastMaterialKey <- key
       variant.HasLastMaterial <- true
 
@@ -1211,12 +1222,7 @@ module internal PipelineFunctions =
     let key = MaterialKey.fromMaterial3D &material
 
     if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
-      setMaterialUniforms(
-        shader,
-        &variant.Locs.Material,
-        &material,
-        Matrix4x4.Identity
-      )
+      setMaterialUniforms(shader, &variant.Locs.Material, &material)
 
       variant.LastMaterialKey <- key
       variant.HasLastMaterial <- true
@@ -1571,18 +1577,30 @@ module internal PipelineFunctions =
               let distToCamera =
                 (lightPos - activeCamera.Position).LengthSquared()
 
-              let maxShadowDist = 2500.0f // 50^2
+              let maxShadowDist =
+                atlasCfg.MaxShadowLightDistance
+                * atlasCfg.MaxShadowLightDistance
 
               if distToCamera <= maxShadowDist then
                 match caster.Type with
                 | ShadowCasterType.Point ->
-                  let downTarget = caster.LightPosition - Vector3.UnitY
+                  let rawDir = caster.LightDirection
+                  let len = rawDir.Length()
+
+                  let shadowDir =
+                    if len > 0.0001f then rawDir / len else -Vector3.UnitY
+
+                  let safeUp =
+                    if abs shadowDir.Y > 0.99f then
+                      Vector3.UnitZ
+                    else
+                      Vector3.UnitY
 
                   let ptCamera =
                     Camera3D(
                       Position = caster.LightPosition,
-                      Target = downTarget,
-                      Up = Vector3.UnitZ,
+                      Target = caster.LightPosition + shadowDir,
+                      Up = safeUp,
                       FovY = 90.0f,
                       Projection = CameraProjection.Perspective
                     )
@@ -1598,11 +1616,16 @@ module internal PipelineFunctions =
                   )
 
                 | ShadowCasterType.Spot ->
+                  let spotDir = caster.LightDirection
+                  let len = spotDir.Length()
+                  let dir = if len > 0.0001f then spotDir / len else -Vector3.UnitY
+                  let safeUp = if abs dir.Y > 0.99f then Vector3.UnitZ else Vector3.UnitY
+
                   let spotCamera =
                     Camera3D(
                       Position = caster.LightPosition,
-                      Target = caster.LightPosition + caster.LightDirection,
-                      Up = Vector3.UnitY,
+                      Target = caster.LightPosition + dir,
+                      Up = safeUp,
                       FovY = 90.0f,
                       Projection = CameraProjection.Perspective
                     )
@@ -1866,6 +1889,7 @@ type ForwardPipelineBase
           maxSp,
           frame.PointShadowSlots,
           frame.SpotShadowSlots,
+          currentCamera,
           mesh,
           transform,
           material
@@ -1879,6 +1903,7 @@ type ForwardPipelineBase
           maxSp,
           frame.PointShadowSlots,
           frame.SpotShadowSlots,
+          currentCamera,
           model,
           transform,
           ValueNone
@@ -1892,6 +1917,7 @@ type ForwardPipelineBase
           maxSp,
           frame.PointShadowSlots,
           frame.SpotShadowSlots,
+          currentCamera,
           model,
           transform,
           ValueSome matOverride
@@ -2401,6 +2427,7 @@ type ForwardPipelineBase
                     maxSp,
                     pointShadowSlots,
                     spotShadowSlots,
+                    currentCamera,
                     mesh,
                     transform,
                     material
@@ -2414,6 +2441,7 @@ type ForwardPipelineBase
                     maxSp,
                     pointShadowSlots,
                     spotShadowSlots,
+                    currentCamera,
                     model,
                     transform,
                     ValueNone
@@ -2427,6 +2455,7 @@ type ForwardPipelineBase
                     maxSp,
                     pointShadowSlots,
                     spotShadowSlots,
+                    currentCamera,
                     model,
                     transform,
                     ValueSome matOverride

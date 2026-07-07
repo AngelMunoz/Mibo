@@ -50,6 +50,8 @@ module private PostProcessDrain =
     (ctx: GameContext)
     (gd: GraphicsDevice)
     (sceneTarget: RenderTarget2D)
+    (lights: Lighting.LightContext2D voption)
+    (camera: Camera2D voption)
     (rtPool: IRenderTargetPool)
     (quad: Mibo.Elmish.Graphics3D.FullScreenQuad)
     (actions: ResizeArray<PostProcessContext2D -> unit>)
@@ -62,9 +64,6 @@ module private PostProcessDrain =
     for i = 0 to actions.Count - 1 do
       let isLast = i = actions.Count - 1
 
-      // The last action draws to the back-buffer (null target); earlier actions ping-pong
-      // through pooled targets. The destination is set and (for intermediate targets) cleared
-      // BEFORE the action runs — the action samples `src`, not the destination.
       let dst: RenderTarget2D voption =
         if isLast then
           ValueNone
@@ -75,10 +74,7 @@ module private PostProcessDrain =
       | ValueSome target ->
         gd.SetRenderTarget(target)
         gd.Clear(ClearOptions.Target, Color.Black, 0.0f, 0)
-      | ValueNone ->
-        // Back-buffer on the last pass — don't clear it (matches the raylib 2D drain),
-        // so a noClear composite isn't wiped by the final post-process pass.
-        gd.SetRenderTarget(null)
+      | ValueNone -> gd.SetRenderTarget(null)
 
       let ppCtx: PostProcessContext2D = {
         Source = src
@@ -87,12 +83,13 @@ module private PostProcessDrain =
         Time = frameTime
         Device = gd
         Quad = quad
+        Lights = lights
+        Camera = camera
         Context = ctx
       }
 
       actions[i]ppCtx
 
-      // Advance the source to what we just rendered into, ready for the next pass.
       match dst with
       | ValueSome target -> src <- target
       | ValueNone -> ()
@@ -1677,9 +1674,17 @@ type Renderer2D<'Model>
         let ppActions =
           ResizeArray<PostProcessContext2D -> unit>(buffer.PostProcessCount)
 
+        let mutable lightCtx: Lighting.LightContext2D voption = ValueNone
+
         for i = 0 to buffer.Count - 1 do
           match buffer[i] with
           | Command2D.PostProcess a -> ppActions.Add a
+          | Command2D.LitSprite(ctx, _)
+          | Command2D.EndLighting(ctx, _)
+          | Command2D.EnableShadows(ctx, _)
+          | Command2D.DisableShadows(ctx, _) ->
+            if lightCtx.IsNone then
+              lightCtx <- ValueSome ctx
           | _ -> ()
 
         let pool = _rtPool.Value
@@ -1718,6 +1723,8 @@ type Renderer2D<'Model>
             ctx
             gd
             sceneRT
+            lightCtx
+            state.Camera
             pool
             quad
             ppActions

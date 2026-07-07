@@ -790,6 +790,7 @@ type ForwardPipelineBase
       // ValueNone → default PBR path; ValueSome e → shade with the user effect. Scopes do NOT
       // persist across cameras — a new camera block (BeginCamera/BeginCameraConfig) and EndCamera
       // both reset it, so a forgotten endEffect can't leak a user effect into the next view.
+      pbrRes.LightsDirty <- true
       let mutable activeEffect: Effect voption = ValueNone
 
       // Build the per-frame scene bundle once (lights, shared bone palette, per-light shadow slots,
