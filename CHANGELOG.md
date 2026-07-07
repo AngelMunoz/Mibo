@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.0.0-rc-002] - 2026-07-07
+
 ### Added
 
 - **3D:** model-aware post-processing — `Draw3D.postProcessWithDepth` exposes camera-POV scene depth to post-process passes (fog, depth-of-field, SSAO). The depth texture stores non-linear NDC z (`[0,1]`, 0=near, 1=far); linearize with the camera's near/far. raylib renders the scene into a custom framebuffer with a sampleable depth-texture attachment (no extra geometry pass); MonoGame re-renders opaque geometry into a dedicated R32F target. Use plain `Draw3D.postProcess` for color-only effects so the depth-production cost is skipped. See `docs/graphics3d/overview.md` → "Post-processing" and `docs/shaders.md` → "Post-process shaders" for the depth-texture contract and shader binding requirements.
