@@ -13,6 +13,7 @@
     <ContentTargetFolders>content</ContentTargetFolders>
     <NoWarn>$(NoWarn);NU5128</NoWarn>
     <NoDefaultExcludes>true</NoDefaultExcludes>
+    <Version>2.0.0-rc-002</Version>
   </PropertyGroup>
 
   <ItemGroup>
