@@ -52,13 +52,12 @@ type FullScreenQuad(gd: GraphicsDevice) =
     for pass in effect.CurrentTechnique.Passes do
       pass.Apply()
 
+      // Use the non-deprecated 4-arg overload: (primitiveType, baseVertex, startIndex, primitiveCount).
       gd.DrawIndexedPrimitives(
         PrimitiveType.TriangleList,
-        0,
-        0,
-        6, // index count -> 2 triangles
-        0,
-        2
+        0, // baseVertex
+        0, // startIndex
+        2 // primitiveCount -> 2 triangles (6 indices)
       )
 
   interface System.IDisposable with

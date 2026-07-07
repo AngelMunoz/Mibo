@@ -279,19 +279,39 @@ module Draw3D =
     buffer
 
   /// <summary>
-  /// Enqueues a model-aware post-process pass. The action runs once, after the whole scene
-  /// renders to an offscreen target; it receives a <see cref="T:Mibo.Elmish.Graphics3D.PostProcessContext3D"/>
-  /// with the scene texture (+ optional depth) and must draw a fullscreen quad of it.
-  /// Emit it conditionally from the view based on game state (e.g. only while a hit-flash is
-  /// active). Chain multiple passes — they ping-pong in buffer order, the last drawing to the
-  /// back-buffer.
+  /// Enqueues a color-only post-process pass. The action runs once, after the whole scene renders
+  /// to an offscreen target; it receives a <see cref="T:Mibo.Elmish.Graphics3D.PostProcessContext3D"/>
+  /// with the scene texture. <c>Context.Depth</c> is <c>ValueNone</c> — no scene depth is exposed.
+  /// The action must draw a fullscreen quad of <c>Source</c>. Emit it conditionally from the view
+  /// based on game state (e.g. only while a hit-flash is active). Chain multiple passes — they
+  /// ping-pong in buffer order, the last drawing to the back-buffer.
+  ///
+  /// Use this for effects that don't sample depth (desaturation, vignette, blur). For distance
+  /// effects (fog, depth-of-field, SSAO) use
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.postProcessWithDepth"/>.
   /// </summary>
-  /// <param name="action">Invoked once per frame with the post-process context.</param>
+  /// <param name="action">Invoked once per frame with the post-process context (Depth = ValueNone).</param>
   let inline postProcess
     ([<InlineIfLambda>] action: PostProcessContext3D -> unit)
     (buffer: RenderBuffer3D)
     =
     buffer.Add(Command3D.postProcess action)
+    buffer
+
+  /// <summary>
+  /// Enqueues a post-process pass that needs camera-POV scene depth. Same lifecycle as
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.postProcess"/> (runs once after the scene renders,
+  /// chains in buffer order), but when at least one such action is present the pipeline exposes the
+  /// scene render target's depth attachment via <c>Context.Depth</c>. Sample it (linearize with the
+  /// camera's near/far) for distance effects. Prefer plain <c>postProcess</c> for effects that
+  /// don't read depth.
+  /// </summary>
+  /// <param name="action">Invoked once per frame with the post-process context (Depth populated).</param>
+  let inline postProcessWithDepth
+    ([<InlineIfLambda>] action: PostProcessContext3D -> unit)
+    (buffer: RenderBuffer3D)
+    =
+    buffer.Add(Command3D.PostProcessWithDepth action)
     buffer
 
   /// <summary>Terminal function that discards the buffer, silencing the unused-value warning. Does nothing.</summary>

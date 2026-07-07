@@ -123,6 +123,107 @@ buffer
 |> Draw3D.drawModel skyboxModel skyboxTransform   // no shadows
 ```
 
+## Post-processing
+
+After the scene renders to an offscreen target, screen-space shader passes run in
+buffer order — each receives the previous pass's output as its source texture and
+draws a fullscreen quad. The last pass writes to the back-buffer; intermediate
+passes ping-pong through pooled render targets.
+
+Two entry points:
+
+| Function | Depth available? | When to use |
+|----------|-----------------|-------------|
+| `Draw3D.postProcess action` | No (`Context.Depth = ValueNone`) | Color-only effects: desaturation, vignette, tone mapping, blur |
+| `Draw3D.postProcessWithDepth action` | Yes (`Context.Depth = ValueSome`) | Distance effects: fog, depth-of-field, SSAO |
+
+Use plain `postProcess` when you don't sample depth — the pipeline skips the
+depth-production cost entirely. Emit passes conditionally from the view (e.g. only
+while a hit-flash is active).
+
+```fsharp
+// Color-only: desaturate the scene while a hit-flash is active
+if isHitFlash model then
+    buffer
+    |> Draw3D.postProcess (fun ctx ->
+        // ctx.Source is the scene render target (or the previous pass's output)
+        // Draw a fullscreen quad of it with your shader...
+        drawFullscreenQuad ctx.Source myShader)
+    |> Draw3D.drop
+```
+
+### Depth-aware post-processing
+
+`postProcessWithDepth` gives the action a `PostProcessContext3D` whose `Depth`
+field is a camera-POV depth texture. Sample it and linearize with the camera's
+near/far planes to get view-space distance:
+
+```fsharp
+buffer
+|> Draw3D.postProcessWithDepth (fun ctx ->
+    // ctx.Source — the scene color (Texture2D / RenderTarget2D)
+    // ctx.Depth — camera-POV depth (ValueSome Texture2D, NDC z in [0,1])
+    // ctx.Width, ctx.Height — dimensions
+    // Always handle the ValueNone case: it means depth wasn't produced this frame.
+    match ctx.Depth with
+    | ValueSome depthTex -> // bind depthTex, apply distance effect
+    | ValueNone ->          // no depth — draw the scene through unchanged
+    ())
+|> Draw3D.drop
+```
+
+### Depth texture contract
+
+The depth texture follows the same convention on both backends:
+
+| Property | Value |
+|----------|-------|
+| **Format** | Single-channel depth (NDC z) |
+| **Range** | `[0.0, 1.0]` — `0.0` = near plane, `1.0` = far plane |
+| **Distribution** | Non-linear (hyperbolic) — perspective-projected NDC z |
+| **Skybox / uncovered pixels** | `1.0` (far) — cleared before geometry renders |
+| **Linearization** | The effect's responsibility (see formula below) |
+
+To convert NDC z back to view-space distance, invert the perspective projection:
+
+```glsl
+// GLSL — linearize depth to positive view-space distance
+float z = depth * 2.0 - 1.0;   // remap [0,1] → NDC [-1,1]
+float dist = (2.0 * near * far) / (far + near - z * (far - near));
+```
+
+```hlsl
+// HLSL — equivalent for MonoGame
+float ndcZ = tex2D(DepthSampler, texCoord).r;
+float dist = (far * near) / (far - ndcZ * (far - near));
+```
+
+> _**NOTE — near/far source differs by backend.**_ raylib renders 3D with global
+> clip planes (`Rlgl.GetCullDistanceNear()` / `GetCullDistanceFar()`, defaults
+> `0.05`/`4000`), not per-camera near/far — query them at runtime and pass to your
+> shader. MonoGame uses the camera's `NearPlane`/`FarPlane`. The linearization
+> formula is the same; only the near/far *source* differs.
+
+### How the backends produce depth
+
+The depth texture is produced differently under the hood, but the contract above is
+identical:
+
+- **raylib:** the scene renders into a custom framebuffer whose depth attachment is
+  a sampleable texture (not a renderbuffer). OpenGL's depth buffer is directly
+  sampleable, so no extra geometry pass is needed — the depth you get is the same
+  depth buffer the forward pass wrote.
+- **MonoGame:** DirectX/OpenGL depth-stencil buffers are not directly sampleable as
+  textures in MonoGame's API, so the pipeline re-renders all opaque geometry into a
+  dedicated R32F color render target (cleared to white = far) via a depth-only
+  shader. This is an extra geometry pass, but produces the same NDC z values.
+
+### Post-process shader requirements
+
+For the contract your shader must satisfy (sampler names, texture binding, the
+`SetShaderValueTexture` caveat on raylib), see
+[Shaders → Post-process shaders](../shaders.html#post-process-shaders).
+
 ## Multi-camera rendering
 
 Use `Camera3DConfig` for split-screen, minimaps, or layered rendering:
