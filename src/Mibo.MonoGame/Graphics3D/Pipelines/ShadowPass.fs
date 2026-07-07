@@ -819,7 +819,13 @@ module internal ShadowPass =
     gd.SetRenderTarget depthTarget
     // 1.0 = far: uncovered pixels (skybox, gaps) read as far so post-process fog treats them as
     // fully fogged rather than near. Clear as an explicit Vector4 so the R32F target gets .r=1.0.
-    gd.Clear(ClearOptions.Target, Color.White.ToVector4(), 1.0f, 0)
+    // Clear depth too — the RT has a Depth24 buffer for hardware depth testing during the pre-pass.
+    gd.Clear(
+      ClearOptions.Target ||| ClearOptions.DepthBuffer,
+      Color.White.ToVector4(),
+      1.0f,
+      0
+    )
 
     gd.RasterizerState <- RasterizerState.CullCounterClockwise
     gd.BlendState <- BlendState.Opaque
@@ -1092,6 +1098,19 @@ module internal ShadowPass =
       match pbrParams with
       | ValueSome p -> PbrUniforms.setInt p.Shadow.DirLightCastsShadows 0
       | ValueNone -> ()
+
+      // Even without shadow casters, load the DepthShadow effect when needsDepth is true so
+      // renderSceneDepth can run (fog/DoF/SSOA in a shadowless scene). Without this the effect
+      // is never loaded and every postProcessWithDepth action silently receives Depth = None.
+      if needsDepth then
+        match res.Effect, res.Params with
+        | ValueSome _, ValueSome _ -> ()
+        | _ ->
+          match ShaderLoader.loadEffect gd "DepthShadow" with
+          | ValueSome e ->
+            res.Params <- ValueSome(buildShadowParams e)
+            res.Effect <- ValueSome e
+          | ValueNone -> ()
 
       ValueNone
     else

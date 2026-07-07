@@ -995,7 +995,7 @@ type ForwardPipelineBase
                   h,
                   false,
                   SurfaceFormat.Single,
-                  DepthFormat.None,
+                  DepthFormat.Depth24,
                   0,
                   RenderTargetUsage.DiscardContents
                 )

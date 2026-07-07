@@ -50,6 +50,8 @@ type IRenderTargetPool3D =
 /// </remarks>
 type RenderTargetPool3D() =
 
+  let maxIdle = 2
+
   // ── Standard RTs (color texture + depth renderbuffer via raylib's LoadRenderTexture) ──
   let pool = Dictionary<struct (int * int), Queue<RenderTexture2D>>()
   let inUse = ResizeArray<RenderTexture2D>()
@@ -157,7 +159,8 @@ type RenderTargetPool3D() =
         let key = struct (rt.Texture.Width, rt.Texture.Height)
 
         match pool.TryGetValue(key) with
-        | true, queue -> queue.Enqueue(rt)
+        | true, queue when queue.Count < maxIdle -> queue.Enqueue(rt)
+        | true, _ -> Raylib.UnloadRenderTexture(rt)
         | false, _ ->
           let queue = Queue<RenderTexture2D>()
           queue.Enqueue(rt)
@@ -169,7 +172,11 @@ type RenderTargetPool3D() =
         let key = struct (rt.Texture.Width, rt.Texture.Height)
 
         match depthPool.TryGetValue(key) with
-        | true, queue -> queue.Enqueue(rt)
+        | true, queue when queue.Count < maxIdle -> queue.Enqueue(rt)
+        | true, _ ->
+          Rlgl.UnloadTexture(rt.Texture.Id)
+          Rlgl.UnloadTexture(rt.Depth.Id)
+          Rlgl.UnloadFramebuffer(rt.Id)
         | false, _ ->
           let queue = Queue<RenderTexture2D>()
           queue.Enqueue(rt)
