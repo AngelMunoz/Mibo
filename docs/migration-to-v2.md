@@ -599,9 +599,38 @@ light**. The shader uses scalar (non-array) directional-light uniforms, so a
 second `AddDirectionalLight` with `CastsShadows = true` is silently ignored by
 the shader. This is now documented on `DirectionalLight3D.CastsShadows`.
 
-**No migration action** — the behavior is unchanged, just documented. If you
-need two directional lights, set `CastsShadows = false` on the secondary one
-and rely on it for fill lighting only.
+### 2D post-process context enrichment
+
+The `PostProcessContext2D` now exposes two additional fields that a post-process
+shader can read — lighting data and camera transform. No new command variants;
+the existing `Draw.postProcess` action closure just receives a richer context.
+
+```fsharp
+Draw.postProcess (fun ctx ->
+  // ctx.Lights — the active LightContext2D (ValueNone when no lit sprites were drawn).
+  //   Read ctx.Lights.Value.PointLights, .DirLights, .Ambient, .Occluders
+  //   to drive bloom thresholds, light-tinted grading, etc.
+
+  // ctx.Camera — the last active Camera2D (ValueNone when no BeginCamera block was used).
+  //   Use it to convert between screen UVs and world coordinates for world-anchored effects.
+
+  // ctx.Source, ctx.Width, ctx.Height, ctx.Time — unchanged
+  ()) buffer
+```
+
+**Multi-camera caveat:** `Camera` is the **last** `Camera2D` that was active
+during the scene render. Commands sort by layer (ascending) with deterministic
+insertion-order tie-breaking (the sort key encodes the insertion index), so
+"last" is well-defined. However, when multiple camera blocks exist in the same
+frame (e.g. main view + minimap), the scene RT contains all of them composited
+— a single camera reference can't reconstruct per-camera regions. Use
+`DrawImmediate` for per-camera post-processing if needed.
+
+**No depth in 2D:** Unlike the 3D pipeline's `postProcessWithDepth`, 2D
+rendering does not write to a depth buffer on either backend. There is no
+`PostProcessWithDepth` for 2D. If you need depth-like data for a 2D effect
+(fake DOF from layer ordering), render a custom R32F target via `DrawImmediate`
+and pass it through your post-process action's closure.
 
 
 

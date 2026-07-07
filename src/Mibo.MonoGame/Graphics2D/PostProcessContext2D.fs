@@ -29,6 +29,23 @@ type PostProcessContext2D = {
   Quad: Mibo.Elmish.Graphics3D.FullScreenQuad
 
   /// <summary>
+  /// The active 2D light context (<c>ValueNone</c> when no lit sprites were drawn this frame).
+  /// Read <c>Lights.Value.PointLights</c>, <c>Lights.Value.DirLights</c>, <c>Lights.Value.Ambient</c>
+  /// to drive light-aware effects (bloom on lit areas, light-tinted color grading).
+  /// </summary>
+  Lights: Lighting.LightContext2D voption
+
+  /// <summary>
+  /// The last active camera during the scene render (<c>ValueNone</c> when no
+  /// <c>BeginCamera</c> block was used). Useful for anchoring post-process effects in world space
+  /// (world-aligned fog, distortion). When multiple camera blocks exist in the same frame this is
+  /// the <b>last</b> one — the scene RT contains all of them composited, so a single camera
+  /// reference can't reconstruct per-camera regions. Commands within a layer are executed in
+  /// insertion order (deterministic stable sort), so "last" is well-defined.
+  /// </summary>
+  Camera: Camera2D voption
+
+  /// <summary>
   /// Game services — e.g. <c>tryGetService&lt;IAssets&gt;</c> to resolve a compiled effect lazily
   /// (defers resolution to first frame, where the device/assets exist).
   /// </summary>

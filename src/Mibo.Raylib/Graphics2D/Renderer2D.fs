@@ -23,6 +23,8 @@ module private PostProcessDrain =
   let apply
     (ctx: GameContext)
     (sceneTarget: RenderTexture2D)
+    (lights: LightContext2D voption)
+    (camera: Camera2D voption)
     (rtPool: IRenderTargetPool)
     (actions: ResizeArray<PostProcessContext2D -> unit>)
     (frameTime: float32)
@@ -51,6 +53,8 @@ module private PostProcessDrain =
         Width = w
         Height = h
         Time = frameTime
+        Lights = lights
+        Camera = camera
         Context = ctx
       }
 
@@ -518,9 +522,17 @@ type Renderer2D<'Model>
         let ppActions =
           ResizeArray<PostProcessContext2D -> unit>(buffer.PostProcessCount)
 
+        let mutable lightCtx: LightContext2D voption = ValueNone
+
         for i = 0 to buffer.Count - 1 do
           match buffer[i] with
           | Command2D.PostProcess a -> ppActions.Add a
+          | Command2D.LitSprite(ctx, _)
+          | Command2D.EndLighting(ctx, _)
+          | Command2D.EnableShadows(ctx, _)
+          | Command2D.DisableShadows(ctx, _) ->
+            if lightCtx.IsNone then
+              lightCtx <- ValueSome ctx
           | _ -> ()
 
         let sceneRT = rtPool.Acquire(ctx.WindowWidth, ctx.WindowHeight)
@@ -536,6 +548,8 @@ type Renderer2D<'Model>
         PostProcessDrain.apply
           ctx
           sceneRT
+          lightCtx
+          state.Camera
           rtPool
           ppActions
           (float32 gameTime.TotalTime.TotalSeconds)

@@ -4,6 +4,8 @@
 
 ### Added
 
+- **2D:** post-process effects can now read the scene's lighting data and camera transform. The post-process context exposes the active `LightContext2D` (point lights, directional lights, ambient, occluders) and the last `Camera2D` — so a post-process shader can bloom lit areas, apply light-tinted color grading, or anchor effects in world space.
+
 - **3D:** point-light shadows are no longer fixed to look straight down. Set `PointLight3D.ShadowDirection` (or use the `withShadowDirection` builder) to aim the single-face shadow map toward your geometry — e.g. `Vector3.UnitX` for a wall sconce. Defaults to down (−Y) when unset.
 
 ### Fixed
