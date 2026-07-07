@@ -1616,11 +1616,16 @@ module internal PipelineFunctions =
                   )
 
                 | ShadowCasterType.Spot ->
+                  let spotDir = caster.LightDirection
+                  let len = spotDir.Length()
+                  let dir = if len > 0.0001f then spotDir / len else -Vector3.UnitY
+                  let safeUp = if abs dir.Y > 0.99f then Vector3.UnitZ else Vector3.UnitY
+
                   let spotCamera =
                     Camera3D(
                       Position = caster.LightPosition,
-                      Target = caster.LightPosition + caster.LightDirection,
-                      Up = Vector3.UnitY,
+                      Target = caster.LightPosition + dir,
+                      Up = safeUp,
                       FovY = 90.0f,
                       Projection = CameraProjection.Perspective
                     )
