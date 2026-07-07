@@ -58,27 +58,32 @@ dotnet fsdocs watch
 
 ## Samples
 
-The samples developed for the initial Raylib version and the new MonoGame Samples are being stored in its own repository
-[Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) is the place to visit.
+The samples are stored in a separate repository: [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples).
 
-You'll find examples of
+You'll find examples of:
 
-**2D:**:
+**2D:**
 
-- Platformer - A simple platformer featuring lights, normal maps, occluders and particles
-  - Sample Mibo.Raylib targeting Desktop OpenGL
-  - Sample Mibo.MonoGame targeting Windows Desktop DirectX11
-- Space Battle - A minimalistic hex grid strategy game a'la Wargroove or Advanced Wars
-  - Sample Mibo.Raylib targeting Desktop OpenGL
-- Ping Pong - A Small client-server example
+- **PlatformerSample** - A 2D side-scrolling platformer with procedural world generation, sprite animation, lighting, particles, and sound. Uses Mibo's Elmish architecture with `InputMap`, `AnimatedSprite`, `CellGrid2D`, and `LightContext2D`.
+  - Mibo.Raylib targeting Desktop OpenGL
+  - Mibo.MonoGame targeting DesktopGL (cross-platform)
+- **SpaceBattle** - A turn-based tactical strategy game on a hex grid with fog of war, laser combat, particle effects, faction-based turns (Human + AI), and animated unit movement. Demonstrates complex game state management, hex grid spatial queries, and multi-phase turn resolution.
+  - Mibo.Raylib targeting Desktop OpenGL
+- **PingPong** - A networked multiplayer Pong game with a client-server architecture over WebSockets. The server runs game logic and broadcasts state; the client renders locally and sends input.
   - Mibo.Raylib Client
   - Mibo.MonoGame Client
   - dotnet app acting as a server running Mibo.Core's headless support
 
 **3D:**
 
-- Platformer - A simple platformer with 3D models, lights, shadows, particles, and skeletal animation
+- **ThreeDSample** - A 3D platformer with procedurally generated voxel terrain, PBR lighting, shadow atlas, 3D character animation, minimap overlay, and physics. Showcases Mibo's `Renderer3D`, `ForwardPbrPipeline`, and `Animation3DState`.
   - Mibo.Raylib targeting Desktop OpenGL
+  - Mibo.MonoGame targeting DesktopGL (cross-platform)
+
+- **FPSSample** - A first-person shooter featuring enemy AI, weapon systems, health management, and atmospheric lighting. Demonstrates Mibo's composable systems architecture with per-system sub-models, event-driven cross-system communication, and a `System` pipeline with snapshot barriers.
+  - Mibo.Raylib targeting Desktop OpenGL
+  - Mibo.MonoGame targeting DesktopGL (cross-platform)
+  - Mibo.MonoGame targeting WindowsDX (Windows only, DirectX)
 
 ## License
 
