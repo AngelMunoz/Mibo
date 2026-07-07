@@ -38,7 +38,8 @@ type ShadowCasterData = {
   LightTarget: Vector3
   /// <summary>Index of first atlas region (0-based).</summary>
   AtlasRegion: int
-  /// <summary>Number of atlas regions used (1 for directional/spot, 6 for point).</summary>
+  /// <summary>Number of atlas regions used. Always 1 in the current implementation —
+  /// point lights render a single downward-facing shadow map, not a 6-face cubemap.</summary>
   RegionCount: int
   /// <summary>Whether this caster is currently casting shadows.</summary>
   Enabled: bool
@@ -121,6 +122,16 @@ type ShadowAtlasConfig = {
   /// Set to 0 to disable snapping. Typical range: 1.0-5.0 units.
   /// </remarks>
   GridSnapSize: float32
+
+  /// <summary>
+  /// Maximum distance from the camera at which point/spot lights cast shadows. Default: 50.
+  /// </summary>
+  /// <remarks>
+  /// <b>ForwardPbr-specific:</b> Lights beyond this distance are excluded from the shadow pass
+  /// for performance. Increase for open-world or RTS games with large scenes; decrease for
+  /// tighter, more shadow-dense scenes. Measured in world units (distance, not squared).
+  /// </remarks>
+  MaxShadowLightDistance: float32
 }
 
 /// <summary>Global shadow bias configuration.</summary>
@@ -145,6 +156,7 @@ module ShadowAtlasConfig =
     DirectionalLightDistance = ValueNone
     DirectionalLightSize = ValueNone
     GridSnapSize = 2.0f
+    MaxShadowLightDistance = 50.0f
   }
 
 module ShadowBiasConfig =

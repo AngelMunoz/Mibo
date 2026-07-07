@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Raylib 3D:** `cameraPos` was never uploaded to the forward/instanced PBR shaders when no shadow-casting light was active, silently breaking specular highlights and Fresnel on non-skinned draws. Camera position is now set per-draw on all shader variants, matching the MonoGame backend.
+- **MonoGame 3D:** light uniforms were re-uploaded on every draw call instead of once per frame. A `LightsDirty` flag (mirroring the raylib backend) now gates the upload, and the animated-model handler hoists the upload above the per-mesh loop.
+- **Raylib 3D:** instanced meshes used an identity normal matrix, producing incorrect normal-map lighting on rotated or non-uniformly scaled instances. The instanced vertex shader now computes the normal matrix per-vertex from `instanceTransform`.
+
+### Changed
+
+- **Raylib 3D:** the shadow-culling distance for point/spot lights (previously hardcoded at 50 units) is now configurable via `ShadowAtlasConfig.MaxShadowLightDistance` (default 50.0). Increase it for large-world games (RTS, open-world); decrease for tighter scenes.
+
 ## [2.0.0-rc-002] - 2026-07-07
 
 ### Added

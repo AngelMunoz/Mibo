@@ -98,6 +98,11 @@ type internal PbrResources() =
   /// <summary>MaterialKey short-circuit: whether the last draw's material is still current.</summary>
   member val HasLastMaterial = false with get, set
 
+  /// <summary>Whether light uniforms need re-uploading to the PBR effect. Set at frame start;
+  /// cleared after the first upload so subsequent draws in the same frame skip the cost
+  /// (lights are stable within a frame — gathered once in the pre-scan).</summary>
+  member val LightsDirty = true with get, set
+
   /// <summary>The last draw's MaterialKey (valid when HasLastMaterial).</summary>
   member val LastKey: MaterialKey =
     Unchecked.defaultof<MaterialKey> with get, set
@@ -292,12 +297,15 @@ module internal PbrShading =
         PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
         PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
 
-        PbrUniforms.uploadLights(
-          &p,
-          frame.Lights,
-          frame.PointShadowSlots,
-          frame.SpotShadowSlots
-        )
+        if res.LightsDirty then
+          PbrUniforms.uploadLights(
+            &p,
+            frame.Lights,
+            frame.PointShadowSlots,
+            frame.SpotShadowSlots
+          )
+
+          res.LightsDirty <- false
 
         let mutable partIndex = 0
 
@@ -367,6 +375,22 @@ module internal PbrShading =
         for i = palCount to bonePaletteScratch.Length - 1 do
           bonePaletteScratch[i] <- Matrix.Identity
 
+        // Frame-global uniforms don't depend on the mesh — set once per draw, not per mesh.
+        let viewProj = state.View * state.Projection
+
+        PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
+        PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
+
+        if res.LightsDirty then
+          PbrUniforms.uploadLights(
+            &p,
+            frame.Lights,
+            frame.PointShadowSlots,
+            frame.SpotShadowSlots
+          )
+
+          res.LightsDirty <- false
+
         let mutable partIndex = 0
 
         for mesh in model.Meshes do
@@ -376,20 +400,7 @@ module internal PbrShading =
           Matrix.Invert(&t, &inv) |> ignore
 
           PbrUniforms.setMatrix p.Matrix.MatModel world
-
-          PbrUniforms.setMatrix
-            p.Matrix.ViewProj
-            (state.View * state.Projection)
-
           PbrUniforms.setMatrix p.Matrix.NormalMatrix (Matrix.Transpose inv)
-          PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
-
-          PbrUniforms.uploadLights(
-            &p,
-            frame.Lights,
-            frame.PointShadowSlots,
-            frame.SpotShadowSlots
-          )
 
           for part in mesh.MeshParts do
             let isSkinned =
@@ -463,12 +474,15 @@ module internal PbrShading =
           res.LastKey <- key
           res.HasLastMaterial <- true
 
-        PbrUniforms.uploadLights(
-          &p,
-          frame.Lights,
-          frame.PointShadowSlots,
-          frame.SpotShadowSlots
-        )
+        if res.LightsDirty then
+          PbrUniforms.uploadLights(
+            &p,
+            frame.Lights,
+            frame.PointShadowSlots,
+            frame.SpotShadowSlots
+          )
+
+          res.LightsDirty <- false
 
         mesh.Draw(gd, e)
       | _ -> ()
@@ -605,12 +619,15 @@ module internal PbrShading =
           PbrUniforms.uploadMaterial(&p, &material)
           PbrUniforms.bindTextures(&p, &material, whiteTex res)
 
-          PbrUniforms.uploadLights(
-            &p,
-            frame.Lights,
-            frame.PointShadowSlots,
-            frame.SpotShadowSlots
-          )
+          if res.LightsDirty then
+            PbrUniforms.uploadLights(
+              &p,
+              frame.Lights,
+              frame.PointShadowSlots,
+              frame.SpotShadowSlots
+            )
+
+            res.LightsDirty <- false
 
           for pass in e.CurrentTechnique.Passes do
             pass.Apply()

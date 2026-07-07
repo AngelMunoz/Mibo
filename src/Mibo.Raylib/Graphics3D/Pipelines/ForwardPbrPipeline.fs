@@ -1043,6 +1043,7 @@ module internal PipelineFunctions =
       maxSp: int,
       pointShadowSlots: int[],
       spotShadowSlots: int[],
+      currentCamera: Camera3D,
       mesh: Mesh,
       transform: Matrix4x4,
       material: Material3D
@@ -1061,6 +1062,9 @@ module internal PipelineFunctions =
       )
 
       variant.LightsDirty <- false
+
+    setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
+    setShaderInt shader variant.Locs.Shadow.Pass 0
 
     let nm = computeNormalMatrix transform
     let key = MaterialKey.fromMaterial3D &material
@@ -1084,6 +1088,7 @@ module internal PipelineFunctions =
       maxSp: int,
       pointShadowSlots: int[],
       spotShadowSlots: int[],
+      currentCamera: Camera3D,
       model: Model,
       transform: Matrix4x4,
       matOverride: MaterialOverride voption
@@ -1102,6 +1107,9 @@ module internal PipelineFunctions =
       )
 
       variant.LightsDirty <- false
+
+    setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
+    setShaderInt shader variant.Locs.Shadow.Pass 0
 
     let nm = computeNormalMatrix transform
 
@@ -1571,7 +1579,9 @@ module internal PipelineFunctions =
               let distToCamera =
                 (lightPos - activeCamera.Position).LengthSquared()
 
-              let maxShadowDist = 2500.0f // 50^2
+              let maxShadowDist =
+                atlasCfg.MaxShadowLightDistance
+                * atlasCfg.MaxShadowLightDistance
 
               if distToCamera <= maxShadowDist then
                 match caster.Type with
@@ -1866,6 +1876,7 @@ type ForwardPipelineBase
           maxSp,
           frame.PointShadowSlots,
           frame.SpotShadowSlots,
+          currentCamera,
           mesh,
           transform,
           material
@@ -1879,6 +1890,7 @@ type ForwardPipelineBase
           maxSp,
           frame.PointShadowSlots,
           frame.SpotShadowSlots,
+          currentCamera,
           model,
           transform,
           ValueNone
@@ -1892,6 +1904,7 @@ type ForwardPipelineBase
           maxSp,
           frame.PointShadowSlots,
           frame.SpotShadowSlots,
+          currentCamera,
           model,
           transform,
           ValueSome matOverride
@@ -2401,6 +2414,7 @@ type ForwardPipelineBase
                     maxSp,
                     pointShadowSlots,
                     spotShadowSlots,
+                    currentCamera,
                     mesh,
                     transform,
                     material
@@ -2414,6 +2428,7 @@ type ForwardPipelineBase
                     maxSp,
                     pointShadowSlots,
                     spotShadowSlots,
+                    currentCamera,
                     model,
                     transform,
                     ValueNone
@@ -2427,6 +2442,7 @@ type ForwardPipelineBase
                     maxSp,
                     pointShadowSlots,
                     spotShadowSlots,
+                    currentCamera,
                     model,
                     transform,
                     ValueSome matOverride
