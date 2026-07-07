@@ -289,8 +289,16 @@ module internal ShadowPass =
   let buildPointViewProj
     (lightPos: Vector3, shadowDir: Vector3, lightRadius: float32)
     : Matrix =
-    let view =
-      Matrix.CreateLookAt(lightPos, lightPos + shadowDir, Vector3.UnitZ)
+    // Normalize so the parallel-up threshold check is accurate for non-unit
+    // inputs; fall back to the default on zero-length (avoids NaN from a
+    // degenerate forward in CreateLookAt).
+    let dir =
+      let len = shadowDir.Length()
+      if len > 0.0001f then shadowDir / len else -Vector3.UnitY
+
+    let safeUp = if abs dir.Y > 0.99f then Vector3.UnitZ else Vector3.UnitY
+
+    let view = Matrix.CreateLookAt(lightPos, lightPos + dir, safeUp)
     // Dynamic near plane: CreatePerspectiveFieldOfView throws if near <= 0.
     let nearPlane = max 0.0001f (min 0.1f (lightRadius * 0.5f))
 

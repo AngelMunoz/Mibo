@@ -109,13 +109,15 @@ type PointLight3D = {
   /// </remarks>
   CastsShadows: bool
   /// <summary>
-  /// Direction the single-face shadow map looks (should be normalized). When None, defaults to
+  /// Direction the single-face shadow map looks. When None, defaults to
   /// straight down (−Y) — the common case for ceiling-mounted lights.
   /// </summary>
   /// <remarks>
   /// <b>Pipeline-dependent:</b> Point-light shadows render a single face (not a 6-face cubemap).
   /// Set this to face toward the geometry that should receive shadows. For a wall sconce pointing
-  /// along +X, use <c>Vector3.UnitX</c>. Ignored by pipelines that don't support point-light shadows.
+  /// along +X, use <c>Vector3.UnitX</c>. Any non-zero direction is safe — the pipeline normalizes
+  /// internally and selects an up vector that isn't parallel to it. Ignored by pipelines that don't
+  /// support point-light shadows.
   /// </remarks>
   ShadowDirection: Vector3 voption
   /// <summary>

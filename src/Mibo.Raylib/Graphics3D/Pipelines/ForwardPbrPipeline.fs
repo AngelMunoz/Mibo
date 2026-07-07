@@ -1584,13 +1584,23 @@ module internal PipelineFunctions =
               if distToCamera <= maxShadowDist then
                 match caster.Type with
                 | ShadowCasterType.Point ->
-                  let ptTarget = caster.LightPosition + caster.LightDirection
+                  let rawDir = caster.LightDirection
+                  let len = rawDir.Length()
+
+                  let shadowDir =
+                    if len > 0.0001f then rawDir / len else -Vector3.UnitY
+
+                  let safeUp =
+                    if abs shadowDir.Y > 0.99f then
+                      Vector3.UnitZ
+                    else
+                      Vector3.UnitY
 
                   let ptCamera =
                     Camera3D(
                       Position = caster.LightPosition,
-                      Target = ptTarget,
-                      Up = Vector3.UnitZ,
+                      Target = caster.LightPosition + shadowDir,
+                      Up = safeUp,
                       FovY = 90.0f,
                       Projection = CameraProjection.Perspective
                     )
