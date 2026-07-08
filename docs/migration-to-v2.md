@@ -581,12 +581,28 @@ let bounds = Camera2D.viewportBounds &camera w h
 > place, and none of its helpers use `&`. The two backends otherwise expose the
 > same camera operations.
 
+**3. `overlay` camera helpers removed.** The 1.x picture-in-picture helper
+(`Camera2D.overlay`) is gone — it only set a viewport and a black clear (no
+compositing), and on-top layering was draw order anyway. Build the same with
+`Camera2D.render camera |> Camera2D.withViewport rect |> Camera2D.withClear Color.Black`,
+emitting that camera after the main one. The v2-only `Camera3D.overlay`,
+`Camera3DConfig.PostProcessPasses`, and `Camera3D.withPostProcess`/
+`withoutPostProcess` are removed too — v2 post-processing is command-driven via
+`Draw3D.postProcess`.
+
 **Migration (raylib):** if you held a `Mibo.Camera` or `Mibo.Ray` value, switch
 to the native `Raylib_cs.Camera3D` / `Raylib_cs.Ray` (produced by
 `Camera3D.lookAt` / `orbit` / `screenPointToRay`). Add `&` at your
 `viewportBounds` / `screenToWorld` / `worldToScreen` / `screenPointToRay` call
 sites. Code that already used `Raylib_cs.Camera3D` directly is otherwise
 unaffected.
+
+### Culling helper renamed
+
+`Culling.isGenericVisible` is renamed `isVisibleBox` — it tests a bounding box
+against the frustum, and the new name says so. Same arguments; just rename the
+call site. (`isVisible` for spheres and `isVisible2D` for rectangles are
+unchanged.)
 
 ---
 

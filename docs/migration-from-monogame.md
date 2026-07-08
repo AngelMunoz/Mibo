@@ -86,6 +86,7 @@ Most `open` declarations stay the same — the `Mibo.Elmish`, `Mibo.Input`, and
 | 2D animation | No | None — `SpriteSheet`/`AnimatedSprite` API unchanged |
 | 3D animation | N/A (new) | Low — the old package had no 3D animation; new backend ships `AnimatedModel` |
 | Camera | Yes | Low — `Camera`/`Camera2D`/`Camera3D` exist but `Camera3D` is now a struct record |
+| Culling | Yes | Low — `isGenericVisible` renamed `isVisibleBox` (box-vs-frustum test) |
 | Layout / Spatial | No | None — moved to Core, same API |
 | System pipeline | No | None — moved to Core, same API |
 
