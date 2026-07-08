@@ -181,7 +181,6 @@ let command3DFactoryTests =
         Camera = cam
         Viewport = ValueNone
         ClearColor = ValueNone
-        PostProcessPasses = ValueNone
       }
 
       let cmd = Command3D.beginCameraConfig cfg

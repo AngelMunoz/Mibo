@@ -15,7 +15,7 @@
     <Compile Include="Program.fs" />
     <Compile Include="Runtime.fs" />
     <Compile Include="Animation.fs" />
-    <Compile Include="Camera3D.fs" />
+    <Compile Include="Camera.fs" />
     <Compile Include="Culling.fs" />
     <Compile Include="Graphics2D/ShaderLoader.fs" />
     <Compile Include="Graphics3D/Conversions.fs" />
@@ -38,7 +38,6 @@
     <Compile Include="Graphics3D/Pipelines/ForwardPipeline.fs" />
     <Compile Include="Graphics3D/Draw3D.fs" />
     <Compile Include="Layout3D/Renderer3D.fs" />
-    <Compile Include="Graphics2D/Camera2D.fs" />
     <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
     <Compile Include="Graphics2D/Lighting/LightContext.fs" />
     <Compile Include="Graphics2D/Lighting/ParticleTypes.fs" />

@@ -533,30 +533,60 @@ input.SetMouseCapture(MouseCapture.Captured)
   WinForms message-pump jitter). The external `GameComponent` hacks
   (`CursorClampComponent` / `MouseCenterComponent`) are no longer needed.
 
-#### 4e — Dead raylib `Camera`/`Ray` types and math functions removed
+#### 4e — raylib camera changes
 
-**Breaking (raylib only).** The raylib backend carried a `Camera` struct
-(view + projection `Matrix4x4`) plus `Camera3D.lookAt` / `orbit` /
-`screenPointToRay` / `fromRaylib` built on top of it. **Raylib never used these**
-— it uses the native `Raylib_cs.Camera3D` for rendering. They were dead code
-inherited from the early single-backend era.
+**Breaking (raylib only).** The raylib camera surface has two breaking changes
+in v2.
 
-Removed:
-- `Mibo.Camera` struct (view/projection matrices)
-- `Mibo.Ray` struct
-- `Camera3D.lookAt`, `Camera3D.orbit`, `Camera3D.screenPointToRay`,
-  `Camera3D.fromRaylib`
+**1. Dead `Camera`/`Ray` struct types removed; helpers return native types.**
+The raylib backend used to carry a `Mibo.Camera` struct (view + projection
+`Matrix4x4`) and a `Mibo.Ray` struct, with `Camera3D.lookAt` / `orbit` /
+`screenPointToRay` / `fromRaylib` built on top of them. Raylib never used these
+for rendering — it renders through the native `Raylib_cs.Camera3D` — so the
+structs and the `fromRaylib` converter are removed. The constructor helpers
+stay, but now return **native raylib types** so they compose directly with
+raylib's own APIs:
 
-> _**MonoGame note**_: the MonoGame backend's `Camera3D.lookAt` / `orbit` /
-> `screenPointToRay` are **not** removed — on MonoGame, `Camera3D` is a struct
-> built around view/projection matrices (it's the only camera option), and
-> those functions are live. Only the raylib-side dead copies were removed.
+- `Camera3D.lookAt` / `orthographic` / `orbit` → `Raylib_cs.Camera3D`
+  (FOV in **degrees**, raylib's convention).
+- `Camera3D.screenPointToRay` → `Raylib_cs.Ray` (wraps
+  `Raylib.GetScreenToWorldRay`).
+- Removed: `Mibo.Camera`, `Mibo.Ray`, `Camera3D.fromRaylib`.
 
-**Migration (raylib):** if you used `Camera3D.screenPointToRay` for mouse
-picking on raylib, you'll need a replacement. Use raylib's native
-`Raylib.GetMouseRay` or compute the ray from the `Camera3D` + viewport manually
-(`Matrix4x4` unproject). For orbit-style cameras, build the
-`Raylib_cs.Camera3D` from spherical coordinates directly.
+Both backends now expose the same `Camera3D` constructor surface. On MonoGame
+these return the `Camera` view/projection struct (FOV in radians, with explicit
+near/far/aspect); on raylib they return the native structs above.
+
+**2. 2D camera readers take the camera by reference.** `Camera2D.viewportBounds`,
+`screenToWorld`, and `worldToScreen` now take the camera by read-only reference
+(`inref`) to avoid copying the native struct on every call. Pass it with `&`:
+
+```fsharp
+// Before
+let world = Camera2D.screenToWorld camera mousePos
+let bounds = Camera2D.viewportBounds camera w h
+
+// After
+let world = Camera2D.screenToWorld &camera mousePos
+let bounds = Camera2D.viewportBounds &camera w h
+```
+
+`Camera3D.screenPointToRay` takes the camera the same way
+(`Camera3D.screenPointToRay &camera mousePos`). The movement helpers
+`Camera2D.smoothFollow` / `clampTarget` already took the camera by `byref`
+(they mutate it), so they're unchanged.
+
+> _**MonoGame note**_: MonoGame's camera fields are immutable, so its
+> `smoothFollow` / `clampTarget` return a new camera rather than mutating in
+> place, and none of its helpers use `&`. The two backends otherwise expose the
+> same camera operations.
+
+**Migration (raylib):** if you held a `Mibo.Camera` or `Mibo.Ray` value, switch
+to the native `Raylib_cs.Camera3D` / `Raylib_cs.Ray` (produced by
+`Camera3D.lookAt` / `orbit` / `screenPointToRay`). Add `&` at your
+`viewportBounds` / `screenToWorld` / `worldToScreen` / `screenPointToRay` call
+sites. Code that already used `Raylib_cs.Camera3D` directly is otherwise
+unaffected.
 
 ---
 

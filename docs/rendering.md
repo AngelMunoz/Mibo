@@ -41,7 +41,7 @@ The 2D pipeline is built on `Renderer2D<'Model>` in the `Mibo.Elmish.Graphics2D`
 The 3D pipeline is built on `Renderer3D<'Model>` in the `Mibo.Elmish.Graphics3D` namespace. It uses a pluggable `IRenderPipeline3D` that interprets `Command3D` values — draw meshes, billboards, lights, shadows, and post-processing passes.
 
 - [3D Rendering Overview](graphics3d/overview.html) — What, Why, When
-- [Camera](camera.html) — `Camera3DConfig`, split-screen, overlay cameras
+- [Camera](camera.html) — `Camera3DConfig`, split-screen, picture-in-picture cameras
 
 ## Multi-Renderer Compositing
 

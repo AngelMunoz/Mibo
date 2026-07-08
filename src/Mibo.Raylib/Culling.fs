@@ -165,7 +165,7 @@ module Culling =
   /// <remarks>Use with <see cref="M:Mibo.Elmish.Camera2D.viewportBounds"/> to get the view bounds.</remarks>
   /// <example>
   /// <code>
-  /// let viewBounds = Camera2D.viewportBounds camera width height
+  /// let viewBounds = Camera2D.viewportBounds &camera width height
   /// if Culling.isVisible2D viewBounds sprite.Bounds then
   ///     // Render sprite
   /// </code>
