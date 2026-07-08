@@ -155,9 +155,9 @@ module Culling =
     let containment = frustum.Contains(sphere)
     containment <> ContainmentType.Disjoint
 
-  /// <summary>Checks if a bounding box is within the view frustum.</summary>
+  /// <summary>Checks if an axis-aligned bounding box is within the view frustum.</summary>
   /// <remarks>Returns true if fully inside or intersecting (partially visible). Useful for culling axis-aligned geometry or spatial partition nodes.</remarks>
-  let inline isGenericVisible (frustum: Frustum) (box: BoundingBox) =
+  let inline isVisibleBox (frustum: Frustum) (box: BoundingBox) =
     let containment = frustum.Contains(box)
     containment <> ContainmentType.Disjoint
 

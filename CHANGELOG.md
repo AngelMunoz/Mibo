@@ -12,10 +12,15 @@
 
 - **MonoGame — Breaking:** the camera modules are consolidated into a single `Camera2D`/`Camera3D` surface that mirrors the raylib layout. The standalone `Camera2DConfig` module is removed — its builders (`render`/`withViewport`/`splitScreen*`) now live in the `Camera2D` module, and `withClearColor` is renamed `withClear`. `Camera2D.smoothFollow`/`clampTarget` now return a new camera instead of mutating in place (the camera's fields are immutable).
 - **Raylib — Breaking:** the 2D camera readers (`viewportBounds`/`screenToWorld`/`worldToScreen`) and `Camera3D.screenPointToRay` now take the camera by read-only reference (`inref`), so call sites must pass `&camera` (the `smoothFollow`/`clampTarget` mutators already used `byref`). This skips copying the native `Camera2D`/`Camera3D` structs on per-frame reads. All raylib camera helpers are now `inline`.
+- **Culling — Breaking:** `Culling.isGenericVisible` is renamed `isVisibleBox` (it tests a bounding box against the frustum — the new name says what it does).
 
 ### Removed
 
 - **Cameras — Breaking:** removed `Camera3DConfig.PostProcessPasses` and the `Camera3D.withPostProcess`/`withoutPostProcess` builders — the pipelines never read them (v2 post-processing is command-driven via `Draw3D.postProcess`), so they were no-ops. Also removed `Camera2D.overlay`/`Camera3D.overlay` — they only set a viewport and a black clear (no compositing); the equivalent is `render |> withViewport |> withClear`, and on-top layering is draw order.
+
+### Fixed
+
+- **Docs:** the Culling guide now covers both backends (raylib's `Frustum` vs MonoGame's native `BoundingFrustum`, and the raylib `Camera2D.viewportBounds &camera` form), instead of describing only the raylib types.
 
 ## [2.0.0-rc-003] - 2026-07-07
 

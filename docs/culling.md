@@ -9,20 +9,25 @@ index: 14
 
 `Mibo.Elmish.Culling` is a helper module that keeps _visibility math_ separate from your renderer and your spatial partitioning.
 
-It operates on geometric primitives such as:
+It operates on geometric primitives:
 
-- Bounding frustums (computed from camera matrices)
-- `BoundingSphere` / `BoundingBox` (defined in `Mibo.Elmish` / `System.Numerics`)
-- 2D `Rectangle` overlap
+- A view frustum (built from a camera or light View×Projection matrix)
+- A bounding sphere / bounding box to test against it
+- 2D rectangle overlap
 
 ## 3D: frustum culling
 
-Create a `Frustum` from the camera's `View * Projection` matrix and test geometry:
+Build a frustum from a View×Projection matrix and test geometry against it. The frustum type is backend-specific — raylib ships its own `Frustum` (it has no native one), while MonoGame uses its native `BoundingFrustum`:
 
 ```fsharp
-// Extract frustum from camera matrices
-let frustum = Frustum(Matrix4x4.Multiply(cam.View, cam.Projection))
+// raylib: Mibo.Elmish.Frustum over System.Numerics.Matrix4x4
+let frustum = Frustum(viewProjection)
 
+// MonoGame: Microsoft.Xna.Framework.BoundingFrustum
+let frustum = BoundingFrustum(viewProjection)
+```
+
+```fsharp
 if Culling.isVisible frustum entitySphere then
     // submit draw commands
     ()
@@ -31,15 +36,27 @@ if Culling.isVisible frustum entitySphere then
 Or for axis-aligned bounding boxes:
 
 ```fsharp
-if Culling.isGenericVisible frustum nodeBounds then
+if Culling.isVisibleBox frustum nodeBounds then
     ()
 ```
 
+> _**Where does the View×Projection matrix come from?**_ On MonoGame, the camera
+> struct carries it directly — `BoundingFrustum(cam.View * cam.Projection)`. On
+> raylib, capture it inside `BeginMode3D`
+> (`Rlgl.GetMatrixModelview() * Rlgl.GetMatrixProjection()`), or build it from
+> `Raylib.GetCameraMatrix3D(camera)` and a perspective matrix.
+
 ## 2D: rectangle overlap
 
-Use `Camera2D.viewportBounds` with `Culling.isVisible2D`:
+Use `Camera2D.viewportBounds` with `Culling.isVisible2D` (the rectangle type is
+the backend's native one — float `Rectangle` on raylib, int `Rectangle` on
+MonoGame):
 
 ```fsharp
+// raylib — viewportBounds takes the camera by reference (&)
+let viewBounds = Camera2D.viewportBounds &camera viewportWidth viewportHeight
+
+// MonoGame — immutable camera, passed by value
 let viewBounds = Camera2D.viewportBounds camera viewportWidth viewportHeight
 
 if Culling.isVisible2D viewBounds spriteBounds then

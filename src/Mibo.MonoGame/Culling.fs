@@ -17,9 +17,9 @@ module Culling =
   let inline isVisible (frustum: BoundingFrustum) (sphere: BoundingSphere) =
     frustum.Contains(sphere) <> ContainmentType.Disjoint
 
-  /// <summary>Checks if a bounding box is within the view frustum.</summary>
+  /// <summary>Checks if an axis-aligned bounding box is within the view frustum.</summary>
   /// <remarks>Returns true if fully inside or intersecting (partially visible). Useful for culling axis-aligned geometry or spatial partition nodes.</remarks>
-  let inline isGenericVisible (frustum: BoundingFrustum) (box: BoundingBox) =
+  let inline isVisibleBox (frustum: BoundingFrustum) (box: BoundingBox) =
     frustum.Contains(box) <> ContainmentType.Disjoint
 
   /// <summary>Checks if a 2D rectangle intersects with visible camera bounds.</summary>
