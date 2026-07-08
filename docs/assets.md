@@ -9,6 +9,8 @@ index: 21
 
 Mibo provides an `IAssets` interface for loading and caching game assets. Each backend implements it against its native resource system with automatic caching, so you never load the same asset twice. The shape is the same across backends; the concrete asset *types* differ (raylib types vs XNA/MonoGame types).
 
+> _**NOTE**_: Both backend `IAssets` implementations live in the **`Mibo.Elmish`** namespace — resolve them the same way via `GameContext.getService<IAssets> ctx`. Only their **return types** and **path conventions** differ (raylib: raw file paths with extension; MonoGame: content-pipeline names without extension). See [MonoGame type quirks](monogame-types.html).
+
 ## Two layers
 
 - **`IAssetCache`** (`Mibo.Core`, backend-agnostic) — the generic cache surface: `Get`/`Create`/`GetOrCreate`/`Clear`/`Dispose` for *any* user asset by string key. Portable code (and the Headless runner) can use this without referencing a backend.

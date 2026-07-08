@@ -19,10 +19,6 @@ and ships **two interchangeable thin clients** sharing one library:
   `MonoGame.Framework.WindowsDX` (**DirectX**), `[<STAThread>]`,
   `app.manifest`. Same wiring as DesktopGL.
 
-The starter draws a bouncing red rectangle — pure Model-View-Update with a
-`Tick`-driven view. Treat it as Level 0 on the
-[scaling ladder](https://angelmunoz.github.io/Mibo/scaling.html).
-
 Mibo is an Elmish-based F# game framework that ships **composable building blocks**
 for games — grids and level layout, input mapping, lighting, particles, the
 `System` pipeline, a deferred command-buffer renderer, and more. **Before creating
@@ -38,6 +34,17 @@ likely already exists. Compose existing pieces; do not reinvent them.
 > See [2D Rendering](https://angelmunoz.github.io/Mibo/graphics2d/overview.html),
 > [2D Buffer & Commands](https://angelmunoz.github.io/Mibo/graphics2d/buffer-and-commands.html),
 > and [2D Lighting](https://angelmunoz.github.io/Mibo/graphics2d/lighting.html).
+
+## MonoGame type quirks — read this first
+
+MonoGame type quirks. You **MUST** read the
+[MonoGame type quirks](https://angelmunoz.github.io/Mibo/monogame-types.html)
+document before writing or extending any code in this project. MonoGame's native
+types (`Microsoft.Xna.Framework.Vector2`/`Matrix`/`Color`/`Rectangle`) differ
+from the raylib types most snippets use, and `Mibo.Core` layout/spatial/light
+APIs take `System.Numerics` on **both** backends — so a bare `Vector2(...)`
+resolves to the wrong type and fails to compile. Read that doc, then qualify your
+Core-facing vectors explicitly and use MonoGame's native types at the draw edge.
 
 ## Project structure you must keep (cross-backend split)
 
@@ -138,6 +145,14 @@ for when each rung pays off — you can ship a lot of games at Level 2–3.
 - Run the MVU loop in virtual time, headless, for unit tests → [Headless Mode](https://angelmunoz.github.io/Mibo/headless.html)
 
 ## Reference
+
+> **API shape vs usage.** If you need an exact signature, parameter list, return
+> type, or member set of a type/function, you **MUST** consult the
+> [API reference](https://angelmunoz.github.io/Mibo/reference/index.html) — not
+> the guides. The guides show patterns and general usage; they are not a complete
+> signature listing and you must not guess API shapes from prose. If you want
+> general usage or examples of a feature/module, use the documentation sections
+> linked above.
 
 - Full docs index → https://angelmunoz.github.io/Mibo/
 - API reference → https://angelmunoz.github.io/Mibo/reference/index.html

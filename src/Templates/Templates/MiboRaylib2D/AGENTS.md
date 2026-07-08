@@ -8,8 +8,6 @@ building block you are about to write likely already exists. Compose existing
 pieces; do not reinvent them.
 
 This template targets the **raylib-cs** backend (`Mibo.Raylib`, host `RaylibGame`).
-The starter draws a bouncing red rectangle — pure Model-View-Update with a
-`Tick`-driven view. Treat it as Level 0 on the [scaling ladder](https://angelmunoz.github.io/Mibo/scaling.html).
 
 > **Default renderer.** The template wires a `Renderer2D` over a **deferred
 > command buffer** — the view fills a `RenderBuffer2D` with `Command2D` values
@@ -92,6 +90,14 @@ for when each rung pays off — you can ship a lot of games at Level 2–3.
 - Run the MVU loop in virtual time, headless, for unit tests → [Headless Mode](https://angelmunoz.github.io/Mibo/headless.html)
 
 ## Reference
+
+> **API shape vs usage.** If you need an exact signature, parameter list, return
+> type, or member set of a type/function, you **MUST** consult the
+> [API reference](https://angelmunoz.github.io/Mibo/reference/index.html) — not
+> the guides. The guides show patterns and general usage; they are not a complete
+> signature listing and you must not guess API shapes from prose. If you want
+> general usage or examples of a feature/module, use the documentation sections
+> linked above.
 
 - Full docs index → https://angelmunoz.github.io/Mibo/
 - API reference → https://angelmunoz.github.io/Mibo/reference/index.html

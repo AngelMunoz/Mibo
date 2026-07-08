@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Docs:** new "MonoGame type quirks" reference collects the raylib-vs-MonoGame type differences that first-time MonoGame users hit — `System.Numerics` vs `Microsoft.Xna.Framework` math (Core layout/spatial/light APIs take `System.Numerics` on both backends, so a bare `Vector2` resolves to the wrong type on MonoGame), float vs int `Rectangle`, `Color` constructors, the `IAssets` namespace and asset-path conventions, and the live window size via `ctx.WindowWidth`/`ctx.WindowHeight`. The affected guide pages now cross-link to it.
+- **Templates:** the starters now steer AI assistants (and readers) to the API reference for exact signatures and to the guides only for general usage; the MonoGame starters additionally require reading the type-quirks reference before writing code.
+
 ## [2.0.0-rc-003] - 2026-07-07
 
 ### Added

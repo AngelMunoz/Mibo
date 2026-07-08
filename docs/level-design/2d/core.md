@@ -14,7 +14,7 @@ The Layout engine provides a tile-based level design system for 2D games. It liv
 > let grid =
 >     CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
 > ```
-> Backend-specific APIs (each backend's `Camera2D.create`/`Camera3D`, `SpriteState`, `TextState`) use that backend's native vector type — raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework` — so bare `Vector2(...)` is fine there as long as the matching namespace is open.
+> Backend-specific APIs (each backend's `Camera2D.create`/`Camera3D`, `SpriteState`, `TextState`) use that backend's native vector type — raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework` — so bare `Vector2(...)` is fine there as long as the matching namespace is open. See [MonoGame type quirks](../../monogame-types.html) for the full backend-type reference.
 
 ## Core Concepts
 
