@@ -3,6 +3,263 @@ namespace Mibo.Elmish
 open System
 open Microsoft.Xna.Framework
 
+// ─────────────────────────────────────────────────────────────
+// 2D Camera
+// ─────────────────────────────────────────────────────────────
+
+/// <summary>
+/// A 2D camera definition for the MonoGame backend.
+/// Produces a transform matrix for <c>SpriteBatch.Begin</c>.
+/// </summary>
+/// <remarks>
+/// Mirrors the raylib <c>Camera2D</c> concept: position, zoom, rotation, and origin.
+/// Use <see cref="M:Mibo.Elmish.Camera2D.create"/> to construct one and
+/// <see cref="M:Mibo.Elmish.Camera2D.toMatrix"/> to get the <c>SpriteBatch</c> transform.
+/// </remarks>
+[<Struct>]
+type Camera2D = {
+  /// <summary>World position the camera is centered on.</summary>
+  Position: Vector2
+
+  /// <summary>Zoom factor (1.0 = no zoom, &gt;1 = zoom in, &lt;1 = zoom out).</summary>
+  Zoom: float32
+
+  /// <summary>Rotation in radians around the origin.</summary>
+  Rotation: float32
+
+  /// <summary>
+  /// The point on screen where the camera is anchored (typically viewport center).
+  /// </summary>
+  Origin: Vector2
+}
+
+/// <summary>
+/// Camera rendering configuration for 2D multi-camera support.
+/// MonoGame analogue of the raylib-side <c>Camera2DConfig</c>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Unlike the raylib version, <c>Viewport</c> is expressed in **pixels**
+/// as a <see cref="T:Microsoft.Xna.Framework.Rectangle"/>, since MonoGame's
+/// <c>GraphicsDevice.Viewport</c> and scissor rectangles are pixel-based.
+/// <c>ValueNone</c> means fullscreen (no custom viewport).
+/// </para>
+/// <para>
+/// <c>ClearColor</c> doubles as the clear signal:
+/// <c>ValueNone</c> = don't clear (overlay on existing content),
+/// <c>ValueSome color</c> = clear with this color before rendering.
+/// </para>
+/// </remarks>
+[<Struct>]
+type Camera2DConfig = {
+  /// <summary>The MonoGame 2D camera for rendering.</summary>
+  Camera: Camera2D
+  /// <summary>Viewport in pixel coordinates. ValueNone = fullscreen.</summary>
+  Viewport: Rectangle voption
+  /// <summary>Clear color before rendering. ValueNone = don't clear.</summary>
+  ClearColor: Color voption
+}
+
+/// <summary>
+/// Helper functions for 2D Cameras (Orthographic projection).
+/// </summary>
+/// <remarks>
+/// Use these for top-down, side-scrolling, or any 2D game rendering.
+/// The camera struct's fields are immutable, so the movement helpers
+/// (<c>smoothFollow</c> / <c>clampTarget</c>) return a new camera rather than
+/// mutating in place.
+/// </remarks>
+module Camera2D =
+
+  /// <summary>
+  /// Creates a <see cref="T:Mibo.Elmish.Camera2D"/> centered on the given position.
+  /// </summary>
+  /// <param name="position">World position the camera follows.</param>
+  /// <param name="zoom">Zoom factor (1.0 = default).</param>
+  /// <param name="viewportSize">Size of the viewport in pixels (used to compute origin).</param>
+  let inline create
+    (position: Vector2)
+    (zoom: float32)
+    (viewportSize: Vector2)
+    : Camera2D =
+    {
+      Position = position
+      Zoom = zoom
+      Rotation = 0.0f
+      Origin = Vector2(viewportSize.X * 0.5f, viewportSize.Y * 0.5f)
+    }
+
+  /// <summary>
+  /// Computes the <c>SpriteBatch</c> transform matrix for this camera.
+  /// </summary>
+  /// <remarks>
+  /// The matrix applies: translate by -position, rotate, scale by zoom,
+  /// then translate by origin. Pass this to <c>SpriteBatch.Begin(transformMatrix=...)</c>.
+  /// </remarks>
+  let inline toMatrix(c: Camera2D) : Matrix =
+    Matrix.CreateTranslation(-c.Position.X, -c.Position.Y, 0.0f)
+    * Matrix.CreateRotationZ(c.Rotation)
+    * Matrix.CreateScale(c.Zoom)
+    * Matrix.CreateTranslation(c.Origin.X, c.Origin.Y, 0.0f)
+
+  /// <summary>Calculates the visible world bounds for a MonoGame <see cref="T:Mibo.Elmish.Camera2D"/>.</summary>
+  /// <remarks>The result is a pixel <c>Rectangle</c> (MonoGame's <c>Rectangle</c> is int-based).</remarks>
+  let inline viewportBounds
+    (camera: Camera2D)
+    (width: float32)
+    (height: float32)
+    : Rectangle =
+    let visibleW = width / camera.Zoom
+    let visibleH = height / camera.Zoom
+    let halfW = visibleW * 0.5f
+    let halfH = visibleH * 0.5f
+
+    Rectangle(
+      int(camera.Position.X - halfW),
+      int(camera.Position.Y - halfH),
+      int visibleW,
+      int visibleH
+    )
+
+  /// <summary>Converts a screen position (pixels) to world position.</summary>
+  let inline screenToWorld (camera: Camera2D) (screenPos: Vector2) : Vector2 =
+    let mutable m = toMatrix camera
+    let mutable inv = Matrix()
+    Matrix.Invert(&m, &inv) |> ignore
+    Vector2.Transform(screenPos, inv)
+
+  /// <summary>Converts a world position to screen position (pixels).</summary>
+  let inline worldToScreen (camera: Camera2D) (worldPos: Vector2) : Vector2 =
+    Vector2.Transform(worldPos, toMatrix camera)
+
+  /// <summary>
+  /// Smoothly interpolate the camera position toward a world position, returning a new camera.
+  /// </summary>
+  let inline smoothFollow
+    (camera: Camera2D)
+    (target: Vector2)
+    (speed: float32)
+    : Camera2D =
+    {
+      camera with
+          Position =
+            Vector2(
+              camera.Position.X + (target.X - camera.Position.X) * speed,
+              camera.Position.Y + (target.Y - camera.Position.Y) * speed
+            )
+    }
+
+  /// <summary>
+  /// Clamp the camera position to a world bounds rectangle, returning a new camera.
+  /// </summary>
+  let inline clampTarget
+    (camera: Camera2D)
+    (minX: float32)
+    (minY: float32)
+    (maxX: float32)
+    (maxY: float32)
+    : Camera2D =
+    {
+      camera with
+          Position =
+            Vector2(
+              MathF.Max(minX, MathF.Min(camera.Position.X, maxX)),
+              MathF.Max(minY, MathF.Min(camera.Position.Y, maxY))
+            )
+    }
+
+  // ── Rendering Config Builders ──
+
+  /// <summary>
+  /// Create a rendering config from a 2D camera.
+  /// Defaults: fullscreen, no clear.
+  /// </summary>
+  let inline render(camera: Camera2D) : Camera2DConfig = {
+    Camera = camera
+    Viewport = ValueNone
+    ClearColor = ValueNone
+  }
+
+  /// <summary>Set viewport in pixel coordinates.</summary>
+  let inline withViewport
+    (viewport: Rectangle)
+    (config: Camera2DConfig)
+    : Camera2DConfig =
+    {
+      config with
+          Viewport = ValueSome viewport
+    }
+
+  /// <summary>Clear with this color before rendering.</summary>
+  let inline withClear
+    (color: Color)
+    (config: Camera2DConfig)
+    : Camera2DConfig =
+    {
+      config with
+          ClearColor = ValueSome color
+    }
+
+  /// <summary>Split-screen left half. Clears with given color.</summary>
+  /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
+  let inline splitScreenLeft
+    (camera: Camera2D)
+    (clearColor: Color)
+    (bounds: Rectangle)
+    : Camera2DConfig =
+    let halfWidth = bounds.Width / 2
+
+    render camera
+    |> withViewport(Rectangle(bounds.X, bounds.Y, halfWidth, bounds.Height))
+    |> withClear clearColor
+
+  /// <summary>Split-screen right half. Clears with given color.</summary>
+  /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
+  let inline splitScreenRight
+    (camera: Camera2D)
+    (clearColor: Color)
+    (bounds: Rectangle)
+    : Camera2DConfig =
+    let halfWidth = bounds.Width / 2
+
+    render camera
+    |> withViewport(
+      Rectangle(bounds.X + halfWidth, bounds.Y, halfWidth, bounds.Height)
+    )
+    |> withClear clearColor
+
+  /// <summary>Split-screen top half. Clears with given color.</summary>
+  /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
+  let inline splitScreenTop
+    (camera: Camera2D)
+    (clearColor: Color)
+    (bounds: Rectangle)
+    : Camera2DConfig =
+    let halfHeight = bounds.Height / 2
+
+    render camera
+    |> withViewport(Rectangle(bounds.X, bounds.Y, bounds.Width, halfHeight))
+    |> withClear clearColor
+
+  /// <summary>Split-screen bottom half. Clears with given color.</summary>
+  /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
+  let inline splitScreenBottom
+    (camera: Camera2D)
+    (clearColor: Color)
+    (bounds: Rectangle)
+    : Camera2DConfig =
+    let halfHeight = bounds.Height / 2
+
+    render camera
+    |> withViewport(
+      Rectangle(bounds.X, bounds.Y + halfHeight, bounds.Width, halfHeight)
+    )
+    |> withClear clearColor
+
+// ─────────────────────────────────────────────────────────────
+// 3D Camera
+// ─────────────────────────────────────────────────────────────
+
 /// <summary>
 /// A universal Camera definition containing View and Projection matrices.
 /// </summary>
@@ -96,8 +353,6 @@ type Camera3DConfig = {
   Viewport: Rectangle voption
   /// <summary>Clear color before rendering. ValueNone = don't clear.</summary>
   ClearColor: Color voption
-  /// <summary>Post-process pass indices. ValueNone = all passes. ValueSome [||] = no passes.</summary>
-  PostProcessPasses: int[] voption
 }
 
 /// <summary>
@@ -130,7 +385,7 @@ module Camera3D =
   ///     1000f                     // far plane
   /// </code>
   /// </example>
-  let lookAt
+  let inline lookAt
     (position: Vector3)
     (target: Vector3)
     (up: Vector3)
@@ -160,7 +415,7 @@ module Camera3D =
   /// <param name="height">Height of the orthographic view volume in world units</param>
   /// <param name="nearPlane">Near clipping distance</param>
   /// <param name="farPlane">Far clipping distance</param>
-  let orthographic
+  let inline orthographic
     (position: Vector3)
     (target: Vector3)
     (up: Vector3)
@@ -188,7 +443,7 @@ module Camera3D =
   /// <param name="aspect">Aspect ratio</param>
   /// <param name="near">Near plane</param>
   /// <param name="far">Far plane</param>
-  let orbit
+  let inline orbit
     (target: Vector3)
     (yaw: float32)
     (pitch: float32)
@@ -254,38 +509,33 @@ module Camera3D =
 
   /// <summary>
   /// Create a rendering config from a MonoGame 3D camera.
-  /// Defaults: fullscreen, no clear, all post-process passes.
+  /// Defaults: fullscreen, no clear.
   /// </summary>
-  let render(camera: Camera3D) : Camera3DConfig = {
+  let inline render(camera: Camera3D) : Camera3DConfig = {
     Camera = camera
     Viewport = ValueNone
     ClearColor = ValueNone
-    PostProcessPasses = ValueNone
   }
 
   /// <summary>Set viewport in pixel coordinates.</summary>
-  let withViewport (viewport: Rectangle) (config: Camera3DConfig) = {
-    config with
-        Viewport = ValueSome viewport
-  }
+  let inline withViewport
+    (viewport: Rectangle)
+    (config: Camera3DConfig)
+    : Camera3DConfig =
+    {
+      config with
+          Viewport = ValueSome viewport
+    }
 
   /// <summary>Clear with this color before rendering.</summary>
-  let withClear (color: Color) (config: Camera3DConfig) = {
-    config with
-        ClearColor = ValueSome color
-  }
-
-  /// <summary>Use only specific post-process pass indices.</summary>
-  let withPostProcess (passes: int[]) (config: Camera3DConfig) = {
-    config with
-        PostProcessPasses = ValueSome passes
-  }
-
-  /// <summary>Disable post-processing for this camera.</summary>
-  let withoutPostProcess(config: Camera3DConfig) = {
-    config with
-        PostProcessPasses = ValueSome [||]
-  }
+  let inline withClear
+    (color: Color)
+    (config: Camera3DConfig)
+    : Camera3DConfig =
+    {
+      config with
+          ClearColor = ValueSome color
+    }
 
   // ── Convenience Constructors ──
 
@@ -293,11 +543,11 @@ module Camera3D =
   /// Split-screen left half. Clears with given color.
   /// </summary>
   /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
-  let splitScreenLeft
+  let inline splitScreenLeft
     (camera: Camera3D)
     (clearColor: Color)
     (bounds: Rectangle)
-    =
+    : Camera3DConfig =
     let halfWidth = bounds.Width / 2
 
     render camera
@@ -308,11 +558,11 @@ module Camera3D =
   /// Split-screen right half. Clears with given color.
   /// </summary>
   /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
-  let splitScreenRight
+  let inline splitScreenRight
     (camera: Camera3D)
     (clearColor: Color)
     (bounds: Rectangle)
-    =
+    : Camera3DConfig =
     let halfWidth = bounds.Width / 2
 
     render camera
@@ -325,11 +575,11 @@ module Camera3D =
   /// Split-screen top half. Clears with given color.
   /// </summary>
   /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
-  let splitScreenTop
+  let inline splitScreenTop
     (camera: Camera3D)
     (clearColor: Color)
     (bounds: Rectangle)
-    =
+    : Camera3DConfig =
     let halfHeight = bounds.Height / 2
 
     render camera
@@ -340,11 +590,11 @@ module Camera3D =
   /// Split-screen bottom half. Clears with given color.
   /// </summary>
   /// <param name="bounds">Parent viewport bounds in pixels (typically the window size).</param>
-  let splitScreenBottom
+  let inline splitScreenBottom
     (camera: Camera3D)
     (clearColor: Color)
     (bounds: Rectangle)
-    =
+    : Camera3DConfig =
     let halfHeight = bounds.Height / 2
 
     render camera
@@ -352,10 +602,3 @@ module Camera3D =
       Rectangle(bounds.X, bounds.Y + halfHeight, bounds.Width, halfHeight)
     )
     |> withClear clearColor
-
-  /// <summary>Picture-in-picture overlay. No post-process by default.</summary>
-  let overlay (camera: Camera3D) (bounds: Rectangle) =
-    render camera
-    |> withViewport bounds
-    |> withClear Color.Black
-    |> withoutPostProcess

@@ -124,7 +124,6 @@ buffer
 | `Camera` | `Camera3D` | The 3D camera (backend struct; same field shape on both) |
 | `Viewport` | `Rectangle voption` | raylib: normalized screen coords (0-1); MonoGame: pixel coords. `ValueNone` = fullscreen |
 | `ClearColor` | `Color voption` | `ValueSome color` to clear, `ValueNone` to skip |
-| `PostProcessPasses` | `int[] voption` | Which post-process passes to apply |
 
 ## Lighting setup
 

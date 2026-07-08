@@ -4,8 +4,18 @@
 
 ### Added
 
+- **Cameras (parity):** the MonoGame and raylib `Camera2D`/`Camera3D` modules now offer the same set of operations. MonoGame `Camera2D` gains `viewportBounds`, `screenToWorld`/`worldToScreen`, `smoothFollow`/`clampTarget`, and the full `render`/`withViewport`/`withClear`/`splitScreen*` config-builder surface it lacked; raylib `Camera3D` gains `lookAt`/`orthographic`/`orbit`/`screenPointToRay` (wrapping `Raylib.GetScreenToWorldRay`). Closes the camera API-surface gap between the backends.
 - **Docs:** new "MonoGame type quirks" reference collects the raylib-vs-MonoGame type differences that first-time MonoGame users hit — `System.Numerics` vs `Microsoft.Xna.Framework` math (Core layout/spatial/light APIs take `System.Numerics` on both backends, so a bare `Vector2` resolves to the wrong type on MonoGame), float vs int `Rectangle`, `Color` constructors, the `IAssets` namespace and asset-path conventions, and the live window size via `ctx.WindowWidth`/`ctx.WindowHeight`. The affected guide pages now cross-link to it.
 - **Templates:** the starters now steer AI assistants (and readers) to the API reference for exact signatures and to the guides only for general usage; the MonoGame starters additionally require reading the type-quirks reference before writing code.
+
+### Changed
+
+- **MonoGame — Breaking:** the camera modules are consolidated into a single `Camera2D`/`Camera3D` surface that mirrors the raylib layout. The standalone `Camera2DConfig` module is removed — its builders (`render`/`withViewport`/`splitScreen*`) now live in the `Camera2D` module, and `withClearColor` is renamed `withClear`. `Camera2D.smoothFollow`/`clampTarget` now return a new camera instead of mutating in place (the camera's fields are immutable).
+- **Raylib — Breaking:** the 2D camera readers (`viewportBounds`/`screenToWorld`/`worldToScreen`) and `Camera3D.screenPointToRay` now take the camera by read-only reference (`inref`), so call sites must pass `&camera` (the `smoothFollow`/`clampTarget` mutators already used `byref`). This skips copying the native `Camera2D`/`Camera3D` structs on per-frame reads. All raylib camera helpers are now `inline`.
+
+### Removed
+
+- **Cameras — Breaking:** removed `Camera3DConfig.PostProcessPasses` and the `Camera3D.withPostProcess`/`withoutPostProcess` builders — the pipelines never read them (v2 post-processing is command-driven via `Draw3D.postProcess`), so they were no-ops. Also removed `Camera2D.overlay`/`Camera3D.overlay` — they only set a viewport and a black clear (no compositing); the equivalent is `render |> withViewport |> withClear`, and on-top layering is draw order.
 
 ## [2.0.0-rc-003] - 2026-07-07
 

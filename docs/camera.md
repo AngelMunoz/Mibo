@@ -7,7 +7,7 @@ index: 13
 
 # Camera
 
-Cameras control what part of the world you see and how it maps to the screen. Mibo provides `Camera2D` for 2D games and `Camera3D` for 3D games. Both support single-camera, split-screen, and overlay patterns. The `Draw.beginCamera`/`Draw3D.beginCamera` DSL and the `Camera2DConfig`/`Camera3DConfig` modifiers share the same shape across backends; only the underlying camera struct's field layout is backend-specific.
+Cameras control what part of the world you see and how it maps to the screen. Mibo provides `Camera2D` for 2D games and `Camera3D` for 3D games. Both support single-camera and split-screen patterns. The `Draw.beginCamera`/`Draw3D.beginCamera` DSL and the `Camera2DConfig`/`Camera3DConfig` modifiers share the same shape across backends; only the underlying camera struct's field layout is backend-specific.
 
 ## What and Why
 
@@ -23,7 +23,7 @@ Cameras control what part of the world you see and how it maps to the screen. Mi
 | 2D game with scrolling world | `Camera2D.create` + `Draw.beginCamera` |
 | 2D game with split-screen or HUD | `Camera2DConfig` + `Draw.beginCameraWith` |
 | 3D game | `Camera3D` struct + `Draw3D.beginCamera` |
-| 3D split-screen or overlay | `Camera3DConfig` + `Draw3D.beginCameraWith` |
+| 3D split-screen or picture-in-picture | `Camera3DConfig` + `Draw3D.beginCameraWith` |
 | Mouse picking in 3D | `Camera3D.screenPointToRay` |
 | Culling off-screen objects | `Camera2D.viewportBounds` |
 
@@ -62,33 +62,38 @@ buffer
 
 ### Camera movement
 
-Use `smoothFollow` to lerp the camera toward a target. Use `clampTarget` to keep the camera within world bounds. Both take the camera by reference.
+Use `smoothFollow` to lerp the camera toward a target, and `clampTarget` to keep it within world bounds. The call shape differs per backend: the raylib camera is a native mutable struct (mutated by reference), while the MonoGame camera has immutable fields (the helpers return a new camera).
 
 ```fsharp
+// raylib — mutates the camera in place (note the &)
 let mutable cam = Camera2D.create startPos 1.0f viewportSize
 
 // In your update function, each frame:
 Camera2D.smoothFollow &cam playerPos 0.1f
 Camera2D.clampTarget &cam 0f 0f worldWidth worldHeight
+
+// MonoGame — returns a new camera (no &)
+let cam = Camera2D.create startPos 1.0f viewportSize
+let cam = Camera2D.smoothFollow cam playerPos 0.1f
+let cam = Camera2D.clampTarget cam 0f 0f worldWidth worldHeight
 ```
 
 ### Coordinate conversion
 
-Convert between screen pixels and world positions:
+Convert between screen pixels and world positions. `screenToWorld` / `worldToScreen` / `viewportBounds` are available on both backends — on raylib you pass the camera by reference (`&`) to avoid copying the native struct, on MonoGame the camera is an immutable value (no `&`):
 
 ```fsharp
-// Mouse click in world space
+// raylib
+let worldPos = Camera2D.screenToWorld &camera mousePos
+let screenPos = Camera2D.worldToScreen &camera enemyPos
+let visible = Camera2D.viewportBounds &camera screenWidth screenHeight
+
+// MonoGame
 let worldPos = Camera2D.screenToWorld camera mousePos
-
-// Where does a world object appear on screen?
-let screenPos = Camera2D.worldToScreen camera enemyPos
-```
-
-Use `viewportBounds` to get the visible world rectangle — useful for culling off-screen objects:
-
-```fsharp
 let visible = Camera2D.viewportBounds camera screenWidth screenHeight
 ```
+
+Use `viewportBounds` to get the visible world rectangle — useful for culling off-screen objects (it pairs with `Culling.isVisible2D`).
 
 ---
 
@@ -100,7 +105,7 @@ let visible = Camera2D.viewportBounds camera screenWidth screenHeight
 
 | Modifier | Description |
 |----------|-------------|
-| `Camera2D.withViewport rect` | Viewport in normalized screen coordinates (0–1) |
+| `Camera2D.withViewport rect` | raylib: normalized screen coordinates (0–1); MonoGame: pixel `Rectangle` |
 | `Camera2D.withClear color` | Clear with this color before rendering |
 
 ### Using a config in a view
@@ -118,7 +123,7 @@ buffer
 
 ### Split-screen
 
-Pre-built helpers for two-player split-screen. Each clears with the given color.
+Pre-built helpers for two-player split-screen. Each clears with the given color. On raylib the split-screen halves the full screen (normalized 0–1); on MonoGame you pass the parent viewport bounds in pixels (typically the window size) as the last argument.
 
 ```fsharp
 let left = Camera2D.splitScreenLeft player1Camera Color.CornflowerBlue
@@ -143,22 +148,10 @@ Available split-screen helpers:
 | `Camera2D.splitScreenTop` | Top half (0, 0, 1, 0.5) |
 | `Camera2D.splitScreenBottom` | Bottom half (0, 0.5, 1, 0.5) |
 
-### Overlay
-
-Picture-in-picture overlay. Clears with black by default.
-
-```fsharp
-let minimapRect = Rectangle(0.75f, 0.0f, 0.25f, 0.25f)
-let minimap = Camera2D.overlay topDownCamera minimapRect
-
-buffer
-|> Draw.beginCameraWith 0<RenderLayer> worldConfig
-|> // ... main game ...
-|> Draw.endCamera 99<RenderLayer>
-|> Draw.beginCameraWith 100<RenderLayer> minimap
-|> // ... minimap content ...
-|> Draw.endCamera 199<RenderLayer>
-```
+For a picture-in-picture view (e.g. a minimap), compose one yourself with
+`Camera2D.render` + `withViewport` + `withClear`, and emit that camera after the
+main one so it draws on top — there is no built-in `overlay` helper, and
+layering is purely draw order.
 
 ---
 
@@ -178,17 +171,24 @@ let camera = Camera3D(
 )
 ```
 
-For third-person or inspection cameras, build the `Camera3D` from spherical
-coordinates directly. (The MonoGame backend provides a `Camera3D.orbit` helper
-that returns a `Camera3D`; raylib users construct the `Raylib_cs.Camera3D` from
-yaw/pitch/radius manually.)
+For third-person or inspection cameras, use the `Camera3D.orbit` helper (both backends):
 
-> _**NOTE — backend difference.**_ On MonoGame, `Camera3D` is a view/projection
-> struct and carries `Camera3D.lookAt` / `orbit` / `screenPointToRay` helpers
-> (ray casting, orbit cameras). The raylib backend uses the native
-> `Raylib_cs.Camera3D` for rendering and does **not** carry those helpers — they
-> were dead code and have been removed. For mouse picking on raylib, use raylib's
-> native `Raylib.GetMouseRay`.
+```fsharp
+// raylib (FOV in degrees, returns the native Camera3D)
+let camera = Camera3D.orbit Vector3.Zero yaw pitch radius 55.0f
+
+// MonoGame (FOV in radians, plus near/far/aspect, returns the Camera struct)
+let camera = Camera3D.orbit Vector3.Zero yaw pitch radius fov aspect near far
+```
+
+> _**NOTE — backend difference.**_ Both backends carry the same constructor
+> surface (`lookAt` / `orthographic` / `orbit` / `screenPointToRay`), but the
+> return type and FOV unit differ: raylib returns the native
+> `Raylib_cs.Camera3D` (FOV in **degrees**; near/far/aspect are handled
+> internally by `BeginMode3D`), while MonoGame returns its `Camera`
+> view/projection struct (FOV in **radians**; near/far/aspect are explicit
+> parameters). You can still construct the native raylib `Camera3D` struct
+> literal directly if you prefer.
 
 ### Using in a view
 
@@ -203,20 +203,17 @@ buffer
 
 ### 3D config modifiers
 
-`Camera3DConfig` controls viewport, clear color, and post-processing. Build with `Camera3D.render` and chain modifiers:
+`Camera3DConfig` controls viewport and clear color. Build with `Camera3D.render` and chain modifiers:
 
 | Modifier | Description |
 |----------|-------------|
 | `Camera3D.withViewport rect` | Viewport in normalized screen coordinates (0–1) |
 | `Camera3D.withClear color` | Clear with this color before rendering |
-| `Camera3D.withPostProcess passes` | Use only specific post-process pass indices |
-| `Camera3D.withoutPostProcess` | Disable post-processing for this camera |
 
 ```fsharp
 let config =
     Camera3D.render mainCamera
     |> Camera3D.withClear Color.SkyBlue
-    |> Camera3D.withoutPostProcess
 
 buffer
 |> Draw3D.beginCameraWith config
@@ -241,35 +238,17 @@ buffer
 |> Draw3D.drop
 ```
 
-### Overlay (3D)
-
-```fsharp
-let minimapRect = Rectangle(0.75f, 0.0f, 0.25f, 0.25f)
-let minimap = Camera3D.overlay topDownCamera minimapRect
-
-buffer
-|> Draw3D.beginCameraWith mainConfig
-|> // ... main scene ...
-|> Draw3D.endCamera
-|> Draw3D.beginCameraWith minimap
-|> // ... minimap scene ...
-|> Draw3D.endCamera
-|> Draw3D.drop
-```
-
-> _**TIP**_: `Camera3D.overlay` disables post-processing by default. Re-enable it with `Camera3D.withPostProcess` if needed.
-
 ### Mouse picking
 
-Cast a ray from a screen position into the 3D scene. The API differs per backend:
+Cast a ray from a screen position into the 3D scene with `Camera3D.screenPointToRay` (both backends):
 
 ```fsharp
-// raylib: use the native helper
-let ray = Raylib.GetMouseRay(mousePos, camera)
+// raylib — returns the native Raylib_cs.Ray (note the & on the camera)
+let ray = Camera3D.screenPointToRay &camera mousePos
 // ray.Position  — origin point
 // ray.Direction — normalized direction into the scene
 
-// MonoGame: use the Camera3D helper
+// MonoGame — takes the Camera view/projection struct and viewport size, returns Mibo's Ray
 let ray = Camera3D.screenPointToRay camera mousePos viewportWidth viewportHeight
 ```
 

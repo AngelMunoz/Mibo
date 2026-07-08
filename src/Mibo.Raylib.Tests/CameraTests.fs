@@ -19,8 +19,8 @@ let tests =
       let cam = Camera2D.create pos zoom vpSize
 
       let worldPos = Vector2(200.0f, 300.0f)
-      let screenPos = Camera2D.worldToScreen cam worldPos
-      let roundTrip = Camera2D.screenToWorld cam screenPos
+      let screenPos = Camera2D.worldToScreen &cam worldPos
+      let roundTrip = Camera2D.screenToWorld &cam screenPos
 
       Expect.floatClose
         Accuracy.medium
@@ -41,7 +41,7 @@ let tests =
       let vpSize = Vector2(viewportWidth, viewportHeight)
       let cam = Camera2D.create pos zoom vpSize
 
-      let bounds = Camera2D.viewportBounds cam viewportWidth viewportHeight
+      let bounds = Camera2D.viewportBounds &cam viewportWidth viewportHeight
 
       Expect.equal bounds.X -400.0f "Viewport bounds X should be centered"
       Expect.equal bounds.Y -300.0f "Viewport bounds Y should be centered"
@@ -63,7 +63,7 @@ let tests =
       let vpSize = Vector2(viewportWidth, viewportHeight)
       let cam = Camera2D.create pos zoom vpSize
 
-      let bounds = Camera2D.viewportBounds cam viewportWidth viewportHeight
+      let bounds = Camera2D.viewportBounds &cam viewportWidth viewportHeight
 
       Expect.equal
         bounds.Width

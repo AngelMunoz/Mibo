@@ -230,7 +230,10 @@ Use `Camera3DConfig` for split-screen, minimaps, or layered rendering:
 
 ```fsharp
 let mainConfig = Camera3D.render mainCamera |> Camera3D.withClear Color.SkyBlue
-let minimapConfig = Camera3D.overlay topDownCamera (Rectangle(0.75f, 0f, 0.25f, 0.25f))
+let minimapConfig =
+    Camera3D.render topDownCamera
+    |> Camera3D.withViewport(Rectangle(0.75f, 0f, 0.25f, 0.25f))
+    |> Camera3D.withClear Color.Black
 
 buffer
 |> Draw3D.beginCameraWith mainConfig
@@ -243,8 +246,9 @@ buffer
 
 > _**NOTE — viewport coordinates differ by backend.**_ On raylib, `Camera3DConfig.Viewport`
 > is in **normalized** screen coordinates (0–1, as above). On MonoGame it is a **pixel**
-> `Rectangle` (matching `GraphicsDevice.Viewport`). The `Camera3D.overlay`/`splitScreen*`
-> helpers produce backend-appropriate rectangles.
+> `Rectangle` (matching `GraphicsDevice.Viewport`). The `Camera3D.splitScreen*` helpers
+> produce backend-appropriate rectangles; for a picture-in-picture view, compose
+> `render` + `withViewport` + `withClear` yourself and emit that camera after the main one.
 
 See [Camera](../camera.html) for the full `Camera3DConfig` API.
 

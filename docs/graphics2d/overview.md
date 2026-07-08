@@ -74,7 +74,7 @@ See [Lighting & Shadows](lighting.html) for details.
 
 ## Multi-camera rendering
 
-Use `Camera2DConfig` for viewport-based rendering, split-screen, or overlay cameras:
+Use `Camera2DConfig` for viewport-based rendering, split-screen, or picture-in-picture cameras:
 
 ```fsharp
 // Split-screen left/right

@@ -781,9 +781,14 @@ buffer
 |> ...
 ```
 
-The `Camera3D` module still provides `lookAt`, `orthographic`, `orbit`, and
-`screenPointToRay` builders (they return a `Camera`). `Camera2D` provides
-`create`, `screenToWorld`, `worldToScreen` for the 2D stack.
+The `Camera3D` module provides `lookAt`, `orthographic`, `orbit`, and
+`screenPointToRay` builders (they return a `Camera`). `Camera2D` provides the
+full 2D surface — `create`, `toMatrix`, `viewportBounds`, `screenToWorld`/
+`worldToScreen`, and `smoothFollow`/`clampTarget` (which return a new camera,
+since the camera's fields are immutable). The rendering config builders
+(`render`, `withViewport`, `withClear`, `splitScreen*`) live in the
+`Camera2D` and `Camera3D` modules themselves — there is no separate config
+module to open.
 
 ---
 
