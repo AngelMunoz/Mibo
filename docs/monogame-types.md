@@ -95,7 +95,7 @@ a color from components differs:
   or float `0.0–1.0` (`Color(1.0f, 0.0f, 0.0f)`).
 
 Prefer named colors when you can; verify the overload you need in the
-[API reference](../reference/index.html).
+[API reference](reference/index.html).
 
 ## `IAssets`: same namespace, different types and paths
 
@@ -118,7 +118,7 @@ What differs is what the loaders **return** and the **path convention**:
 | `Effect` | — | `Effect` (compiled `.mgfx`) |
 | Path | **raw file on disk, with extension** (`"sprites/player.png"`) | **content-pipeline name, no extension** (`"sprites/player"`) |
 
-See [Assets](../assets.html) for the full loader table and the animation
+See [Assets](assets.html) for the full loader table and the animation
 double-load caveat (MonoGame needs the raw `.glb` via Assimp because the content
 pipeline drops animation data).
 
