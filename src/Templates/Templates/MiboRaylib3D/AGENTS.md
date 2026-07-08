@@ -1,6 +1,12 @@
 # AGENTS.md — Mibo Raylib 3D Game
 
-This is a **Mibo** game project. Mibo is an Elmish-based F# game framework.
+This is a **Mibo** game project. Mibo is an Elmish-based F# game framework that
+ships **composable building blocks** for games — grids and level layout, input
+mapping, lighting and shadows, GPU instancing, skeletal animation, the `System`
+pipeline, a deferred command-buffer renderer, and more. **Before creating a new
+sub-module, check the docs** — the building block you are about to write likely
+already exists. Compose existing pieces; do not reinvent them.
+
 This template targets the **raylib-cs** backend (`Mibo.Raylib`, host `RaylibGame`).
 The starter draws a bouncing lit cube — pure Model-View-Update with a `Tick`-driven
 view. Treat it as Level 0 on the [scaling ladder](https://angelmunoz.github.io/Mibo/scaling.html).
@@ -47,6 +53,11 @@ query phases after it. See [Scaling Mibo](https://angelmunoz.github.io/Mibo/scal
 for when each rung pays off — you can ship a lot of games at Level 2–3.
 
 ## Pointers by topic
+
+> **Read before you build.** These links are not suggestions. Before writing or
+> extending code in any area below, open the linked doc(s) for that area and
+> verify whether Mibo already ships a building block for what you need. Do not
+> re-implement existing functionality — compose what is already there.
 
 **Core loop / the code you're looking at**
 - How the MVU loop, `Tick`, and dispatch modes work → [Elmish](https://angelmunoz.github.io/Mibo/elmish.html)
