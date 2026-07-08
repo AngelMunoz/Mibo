@@ -31,6 +31,8 @@ let myView (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
 
 The `|> Draw.drop` at the end silences the unused-value warning. It does nothing.
 
+> _**NOTE (backend types)**_: The snippets on this page use the **raylib** `Rectangle` (four `float32` fields). On the **MonoGame** backend, `Rectangle` is `Microsoft.Xna.Framework.Rectangle` with **int** fields — drop the `f` suffixes (`Rectangle(100, 100, 32, 32)`). `Vector2`/`Color` differ too. See [MonoGame type quirks](../monogame-types.html).
+
 ## Two ways to build commands
 
 ### Draw DSL (pipe-friendly)
