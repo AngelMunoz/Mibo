@@ -2206,13 +2206,22 @@ type ForwardPipelineBase
       skinned <- ShaderVariant(skLocs, MaterialCache 16)
 
     member _.Shutdown() =
+      // raylib 6.0 changed UnloadMaterial to destroy the material's shader AND
+      // every map texture (not just the maps array). The cached/depth/user
+      // materials here share the pipeline shaders (unloaded explicitly below)
+      // and their map textures are owned by AssetsService — so UnloadMaterial
+      // would double-free the shader and free textures it doesn't own. Free
+      // only the maps array (allocated by LoadMaterialDefault) via MemFree.
+      let freeMaps(mat: Material) =
+        Raylib.MemFree(NativePtr.toVoidPtr mat.Maps)
+
       for KeyValue(_, mat) in instanced.MaterialCache.cache do
-        Raylib.UnloadMaterial mat
+        freeMaps mat
 
       instanced.MaterialCache.cache.Clear()
 
       for KeyValue(_, mat) in skinned.MaterialCache.cache do
-        Raylib.UnloadMaterial mat
+        freeMaps mat
 
       skinned.MaterialCache.cache.Clear()
 
@@ -2222,14 +2231,14 @@ type ForwardPipelineBase
       Raylib.UnloadShader depthShadowShader
       Raylib.UnloadShader depthShadowSkinnedShader
 
-      Raylib.UnloadMaterial depthShadowMaterial
-      Raylib.UnloadMaterial depthShadowSkinnedMaterial
+      freeMaps depthShadowMaterial
+      freeMaps depthShadowSkinnedMaterial
 
       if userEffectMaterialCreated then
-        Raylib.UnloadMaterial userEffectMaterial
+        freeMaps userEffectMaterial
 
       for KeyValue(_, mat) in forward.MaterialCache.cache do
-        Raylib.UnloadMaterial mat
+        freeMaps mat
 
       forward.MaterialCache.cache.Clear()
 
