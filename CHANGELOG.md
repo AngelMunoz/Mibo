@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-08
+
 ### Added
 
 - **Cameras (parity):** the MonoGame and raylib `Camera2D`/`Camera3D` modules now offer the same set of operations. MonoGame `Camera2D` gains `viewportBounds`, `screenToWorld`/`worldToScreen`, `smoothFollow`/`clampTarget`, and the full `render`/`withViewport`/`withClear`/`splitScreen*` config-builder surface it lacked; raylib `Camera3D` gains `lookAt`/`orthographic`/`orbit`/`screenPointToRay` (wrapping `Raylib.GetScreenToWorldRay`). Closes the camera API-surface gap between the backends.
@@ -16,6 +18,7 @@
 
 ### Removed
 
+- **3D — Breaking:** removed `ShadowAtlasConfig.ShowDebugOverlay` and the raylib `ShadowAtlas.RenderDebugOverlay` overlay — a dev-time diagnostic that leaked into the preview builds. No config flag overlays the shadow atlas on screen anymore.
 - **Cameras — Breaking:** removed `Camera3DConfig.PostProcessPasses` and the `Camera3D.withPostProcess`/`withoutPostProcess` builders — the pipelines never read them (v2 post-processing is command-driven via `Draw3D.postProcess`), so they were no-ops. Also removed `Camera2D.overlay`/`Camera3D.overlay` — they only set a viewport and a black clear (no compositing); the equivalent is `render |> withViewport |> withClear`, and on-top layering is draw order.
 
 ### Fixed
