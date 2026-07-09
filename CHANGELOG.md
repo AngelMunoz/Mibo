@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Raylib:** games no longer abort on exit with `malloc: pointer being freed was not allocated`. Two native-lifetime fixes: model animations loaded via `IAssets.ModelAnimations` were freed through a pinned managed array (they're now released through raylib's native pointer), and the 3D forward pipeline double-freed its shaders on shutdown — raylib 6.0's `UnloadMaterial` now destroys the material's shader and map textures (not just its maps), so the pipeline frees only the maps it allocated and unloads each shader once.
+
 ## [2.0.0] - 2026-07-08
 
 ### Added

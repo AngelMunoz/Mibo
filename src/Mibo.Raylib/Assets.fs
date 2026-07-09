@@ -78,6 +78,13 @@ type AssetsService(baseAssetPath: string voption) =
   let models = Dictionary<string, Model>()
   let modelAnimations = Dictionary<string, ModelAnimation[]>()
 
+  // raylib allocates the ModelAnimation array (and each keyframePoses) via
+  // RL_MALLOC; UnloadModelAnimations frees the array contents AND the array
+  // pointer itself. We copy structs into the managed array above for indexing
+  // but must free through the original native pointer — freeing a pinned
+  // managed array crashes ("pointer being freed was not allocated").
+  let modelAnimationBuffers = Dictionary<string, struct (nativeint * int)>()
+
   member _.BasePath = baseAssetPath
 
   interface IAssets with
@@ -142,13 +149,20 @@ type AssetsService(baseAssetPath: string voption) =
       match modelAnimations.TryGetValue(resolved) with
       | true, anims -> anims
       | _ ->
-        let animsSpan = Raylib.LoadModelAnimations(resolved)
-        let anims = Array.zeroCreate<ModelAnimation> animsSpan.Length
+        let mutable count = 0
+        let nativeAnims = Raylib.LoadModelAnimations(resolved, &count)
+        let anims = Array.zeroCreate<ModelAnimation> count
 
-        for i = 0 to animsSpan.Length - 1 do
-          anims[i] <- animsSpan[i]
+        for i = 0 to count - 1 do
+          anims[i] <- NativePtr.get nativeAnims i
 
         modelAnimations.Add(resolved, anims)
+
+        modelAnimationBuffers.Add(
+          resolved,
+          struct (NativePtr.toNativeInt nativeAnims, count)
+        )
+
         anims
 
     member _.Get<'T>(key: string) : 'T voption =
@@ -176,6 +190,7 @@ type AssetsService(baseAssetPath: string voption) =
       sounds.Clear()
       models.Clear()
       modelAnimations.Clear()
+      modelAnimationBuffers.Clear()
 
     member _.Dispose() =
       for kv in textures do
@@ -198,9 +213,11 @@ type AssetsService(baseAssetPath: string voption) =
 
       models.Clear()
 
-      for kv in modelAnimations do
-        Raylib.UnloadModelAnimations(kv.Value.AsSpan())
+      for KeyValue(_, struct (ptr, count)) in modelAnimationBuffers do
+        let nativeAnims: nativeptr<ModelAnimation> = NativePtr.ofNativeInt ptr
+        Raylib.UnloadModelAnimations(nativeAnims, count)
 
+      modelAnimationBuffers.Clear()
       modelAnimations.Clear()
 
       typedCache.Clear()
