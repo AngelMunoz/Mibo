@@ -238,7 +238,6 @@ let pipeline = ForwardPipeline(
 | `DirectionalLightSize` | auto | ✓ | ✓ | Ortho projection half-size for directional shadows |
 | `DirectionalOriginY` | 0.0 | — | ✓ | Lock the shadow frustum's vertical origin (prevents vertical sliding) |
 | `GridSnapSize` | 2.0 | ✓ | ✓ | Snap shadow origin to a grid to reduce shimmer |
-| `ShowDebugOverlay` | false | ✓ | ✓ | Overlay the atlas for debugging |
 
 > _**NOTE — shadow technique differs.**_ MonoGame cannot create a sampleable depth-only
 > render target, so it writes shadow depth into an R32F color attachment (`DepthShadow.fx`)

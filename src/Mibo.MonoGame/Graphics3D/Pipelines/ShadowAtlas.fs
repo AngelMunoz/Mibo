@@ -77,8 +77,6 @@ type ShadowAtlasConfig = {
   Resolution: int
   /// <summary>Maximum number of shadow casters. Must be perfect square (4, 9, 16, 25, 36).</summary>
   MaxCasters: int
-  /// <summary>Whether to show debug overlay. Default false. (Reserved for B13.)</summary>
-  ShowDebugOverlay: bool
 
   /// <summary>
   /// Strategy for determining shadow map origin. Default: CameraTarget.
@@ -155,7 +153,6 @@ module ShadowAtlasConfig =
   let defaults: ShadowAtlasConfig = {
     Resolution = 2048
     MaxCasters = 16
-    ShowDebugOverlay = false
     OriginStrategy = CameraTarget
     DirectionalLightDistance = ValueNone
     DirectionalLightSize = ValueNone

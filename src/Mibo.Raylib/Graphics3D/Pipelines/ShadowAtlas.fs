@@ -81,8 +81,6 @@ type ShadowAtlasConfig = {
   Resolution: int
   /// <summary>Maximum number of shadow casters. Must be perfect square (4, 9, 16, 25, 36).</summary>
   MaxCasters: int
-  /// <summary>Whether to show debug overlay. Default false.</summary>
-  ShowDebugOverlay: bool
 
   /// <summary>
   /// Strategy for determining shadow map origin. Default: CameraTarget.
@@ -151,7 +149,6 @@ module ShadowAtlasConfig =
   let defaults: ShadowAtlasConfig = {
     Resolution = 2048
     MaxCasters = 16
-    ShowDebugOverlay = false
     OriginStrategy = CameraTarget
     DirectionalLightDistance = ValueNone
     DirectionalLightSize = ValueNone
@@ -493,95 +490,6 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
 
   /// <summary>Get the number of active caster regions (computed by PrepareUniforms).</summary>
   member _.ActiveCasterCount = activeCasterCount
-
-  /// <summary>
-  /// Render the debug overlay showing atlas regions.
-  /// </summary>
-  member _.RenderDebugOverlay(screenWidth: int, screenHeight: int) =
-    if config.ShowDebugOverlay && fbo.Id <> 0u then
-      let previewSize = min 256.0f (float32 screenWidth * 0.3f)
-      let previewX = float32 screenWidth - previewSize - 10.0f
-      let previewY = float32 screenHeight - previewSize - 10.0f
-
-      // Draw atlas preview
-      let srcRect =
-        Raylib_cs.Rectangle(
-          0.0f,
-          0.0f,
-          float32 config.Resolution,
-          float32 -config.Resolution
-        )
-
-      let dstRect =
-        Raylib_cs.Rectangle(previewX, previewY, previewSize, previewSize)
-
-      Raylib.DrawTexturePro(
-        fbo.Depth,
-        srcRect,
-        dstRect,
-        Vector2.Zero,
-        0.0f,
-        Color.White
-      )
-
-      // Draw grid lines
-      let gridLines = gridSize
-
-      for i = 0 to gridLines do
-        let x = previewX + (previewSize * float32 i / float32 gridLines)
-        let y = previewY + (previewSize * float32 i / float32 gridLines)
-
-        Raylib.DrawLine(
-          int x,
-          int previewY,
-          int x,
-          int(previewY + previewSize),
-          Color.Red
-        )
-
-        Raylib.DrawLine(
-          int previewX,
-          int y,
-          int(previewX + previewSize),
-          int y,
-          Color.Red
-        )
-
-      // Highlight used regions
-      for kvp in casters do
-        let caster = kvp.Value
-
-        if caster.Enabled then
-          for r = 0 to caster.RegionCount - 1 do
-            let regionIndex = caster.AtlasRegion + r
-            let row = regionIndex / regionsPerRow
-            let col = regionIndex % regionsPerRow
-
-            let regionX =
-              previewX + (previewSize * float32 col / float32 gridSize)
-
-            let regionY =
-              previewY + (previewSize * float32 row / float32 gridSize)
-
-            let regionW = previewSize / float32 gridSize
-            let regionH = previewSize / float32 gridSize
-
-            Raylib.DrawRectangleLines(
-              int regionX,
-              int regionY,
-              int regionW,
-              int regionH,
-              Color.Yellow
-            )
-
-      // Draw border
-      Raylib.DrawRectangleLines(
-        int previewX - 1,
-        int previewY - 1,
-        int previewSize + 2,
-        int previewSize + 2,
-        Color.White
-      )
 
 // ------------------------------------------------------------------
 // Helper Functions for Shadow Rendering

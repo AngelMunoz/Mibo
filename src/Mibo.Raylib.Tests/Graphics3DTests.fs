@@ -977,10 +977,6 @@ let shadowConfigTests =
       Expect.equal cfg.Resolution 2048 "Default resolution should be 2048"
       Expect.equal cfg.MaxCasters 16 "Default MaxCasters should be 16"
 
-      Expect.isFalse
-        cfg.ShowDebugOverlay
-        "Default ShowDebugOverlay should be false"
-
       Expect.floatClose
         Accuracy.medium
         (float cfg.GridSnapSize)

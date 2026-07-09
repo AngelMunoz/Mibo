@@ -2609,13 +2609,6 @@ type ForwardPipelineBase
 
         applyPostProcess gameCtx sceneRT rtPool actions depth frameTime
 
-      // Debug overlay (optional)
-      if atlasCfg.ShowDebugOverlay then
-        shadowAtlas.RenderDebugOverlay(
-          gameCtx.WindowWidth,
-          gameCtx.WindowHeight
-        )
-
 // ------------------------------------------------------------------
 // ForwardPbrPipeline — the default PBR subclass (thin).
 //

@@ -18,10 +18,13 @@ General setup and usage instructions can be found in the [README.md](README.md) 
 
 All of the projects live in the `src` folder:
 
-- `Mibo.Core`: Backend-agnostic core (Cmd/Sub/System/GameTime/RenderBuffer/Program/IRenderer/GameContext). No raylib dependency.
-- `Mibo.Raylib`: Main library project (raylib backend; depends on `Mibo.Core`)
-- `PlatformerSample`: Sample project showcasing 2D platformer capabilities
-- `ThreeDSample`: Sample project showcasing 3D rendering capabilities
+- `Mibo.Core`: Backend-agnostic core (Cmd/Sub/System/GameTime/RenderBuffer/Program/IRenderer/GameContext). No backend dependency.
+- `Mibo.Raylib`: raylib backend (depends on `Mibo.Core`)
+- `Mibo.MonoGame`: MonoGame backend, DesktopGL/OpenGL and WindowsDX/DirectX (depends on `Mibo.Core`)
+- `Mibo.Core.Tests` / `Mibo.Raylib.Tests` / `Mibo.MonoGame.Tests`: the per-package test suites
+- `Templates`: the `Mibo.Templates` NuGet package — `mibo-2d`/`mibo-3d` (raylib) and `mibo-mg-2d`/`mibo-mg-3d` (MonoGame) `dotnet new` starters
+
+Sample games live in a separate repository: [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) — including the 2D platformer, the 3D platformer, SpaceBattle, PingPong, and the FPS sample.
 
 The documentation site is built using [FsDocs](https://fsprojects.github.io/FSharp.Formatting/) and lives in the `docs` folder.
 
