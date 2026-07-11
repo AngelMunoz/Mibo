@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-07-10
+
 ### Changed
 
 - **Cameras 3D — Breaking:** the 3D camera API is simplified and unified across backends. `Camera3D.create position target fov` replaces `lookAt`/`orthographic` (defaults: up = `Vector3.Up`, near = `0.1f`, far = `1000f`); `orbit` drops near/far/aspect params; `screenPointToRay` (MonoGame) now takes `Camera3D`. New `withUp`/`asOrthographic` (both backends) and `withNearFar` (MonoGame) modifiers override the defaults. The bare `Camera` type (`{ View; Projection }`) is removed — it was returned by the old constructors but never consumed by the renderer. Aspect ratio is computed from the active viewport at render time.
