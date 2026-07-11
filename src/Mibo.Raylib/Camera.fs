@@ -223,7 +223,8 @@ type Camera3DConfig = {
 /// <para>
 /// The raylib <c>Camera3D</c> is a native mutable struct. <c>screenPointToRay</c> takes it
 /// by <c>inref</c> (use <c>&amp;camera</c>); the config builders take it by value; the
-/// constructors (<c>lookAt</c>/<c>orthographic</c>/<c>orbit</c>) return a new <c>Camera3D</c>.
+/// constructors (<c>create</c>/<c>orbit</c>) and modifiers (<c>withUp</c>/<c>asOrthographic</c>)
+/// return a new <c>Camera3D</c>.
 /// </para>
 /// </remarks>
 module Camera3D =
@@ -234,48 +235,26 @@ module Camera3D =
   /// Creates a perspective <c>Camera3D</c> that looks at a target from a position.
   /// </summary>
   /// <remarks>
-  /// Mirrors the MonoGame <c>Camera3D.lookAt</c> capability, but returns the native
+  /// Mirrors the MonoGame <c>Camera3D.create</c> capability, but returns the native
   /// raylib <c>Camera3D</c> struct. The field-of-view is in **degrees** (raylib convention),
   /// unlike MonoGame's radians. Near/far planes and aspect ratio are managed internally
   /// by raylib's <c>BeginMode3D</c>, so they are not parameters here.
+  /// Up defaults to <c>Vector3.UnitY</c>; override with <see cref="M:Mibo.Elmish.Camera3D.withUp"/>.
   /// </remarks>
   /// <param name="position">Camera position in world space.</param>
   /// <param name="target">Point the camera is looking at.</param>
-  /// <param name="up">Up vector (typically <c>Vector3.UnitY</c>).</param>
   /// <param name="fovy">Vertical field of view in **degrees**.</param>
-  let inline lookAt
+  let inline create
     (position: Vector3)
     (target: Vector3)
-    (up: Vector3)
     (fovy: float32)
     : Raylib_cs.Camera3D =
     Raylib_cs.Camera3D(
       position,
       target,
-      up,
+      Vector3.UnitY,
       fovy,
       Raylib_cs.CameraProjection.Perspective
-    )
-
-  /// <summary>
-  /// Creates an orthographic <c>Camera3D</c> that looks at a target from a position.
-  /// </summary>
-  /// <param name="position">Camera position in world space.</param>
-  /// <param name="target">Point the camera is looking at.</param>
-  /// <param name="up">Up vector (typically <c>Vector3.UnitY</c>).</param>
-  /// <param name="size">Vertical size of the orthographic view volume in world units (raylib's <c>fovy</c> in ortho mode).</param>
-  let inline orthographic
-    (position: Vector3)
-    (target: Vector3)
-    (up: Vector3)
-    (size: float32)
-    : Raylib_cs.Camera3D =
-    Raylib_cs.Camera3D(
-      position,
-      target,
-      up,
-      size,
-      Raylib_cs.CameraProjection.Orthographic
     )
 
   /// <summary>
@@ -305,7 +284,29 @@ module Camera3D =
       )
       + target
 
-    lookAt position target Vector3.UnitY fovy
+    create position target fovy
+
+  // ── Modifiers ──
+
+  /// <summary>Set the up vector (default is <c>Vector3.UnitY</c>).</summary>
+  let inline withUp
+    (up: Vector3)
+    (camera: Raylib_cs.Camera3D)
+    : Raylib_cs.Camera3D =
+    let mutable c = camera
+    c.Up <- up
+    c
+
+  /// <summary>
+  /// Switch the camera to orthographic projection.
+  /// </summary>
+  /// <remarks>
+  /// <c>FovY</c> is reinterpreted as the vertical view size in world units.
+  /// </remarks>
+  let inline asOrthographic(camera: Raylib_cs.Camera3D) : Raylib_cs.Camera3D =
+    let mutable c = camera
+    c.Projection <- Raylib_cs.CameraProjection.Orthographic
+    c
 
   /// <summary>
   /// Creates a ray from screen coordinates for mouse/touch picking.

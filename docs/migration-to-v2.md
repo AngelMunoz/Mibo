@@ -538,24 +538,31 @@ input.SetMouseCapture(MouseCapture.Captured)
 **Breaking (raylib only).** The raylib camera surface has two breaking changes
 in v2.
 
-**1. Dead `Camera`/`Ray` struct types removed; helpers return native types.**
+**1. Dead `Camera`/`Ray` struct types removed; simplified constructor API.**
 The raylib backend used to carry a `Mibo.Camera` struct (view + projection
 `Matrix4x4`) and a `Mibo.Ray` struct, with `Camera3D.lookAt` / `orbit` /
 `screenPointToRay` / `fromRaylib` built on top of them. Raylib never used these
 for rendering — it renders through the native `Raylib_cs.Camera3D` — so the
 structs and the `fromRaylib` converter are removed. The constructor helpers
 stay, but now return **native raylib types** so they compose directly with
-raylib's own APIs:
+raylib's own APIs. The old multi-parameter constructors (`lookAt` /
+`orthographic`) are replaced by a simplified `Camera3D.create position target
+fov` with `withUp` / `asOrthographic` modifiers:
 
-- `Camera3D.lookAt` / `orthographic` / `orbit` → `Raylib_cs.Camera3D`
+- `Camera3D.create` / `orbit` → `Raylib_cs.Camera3D`
   (FOV in **degrees**, raylib's convention).
 - `Camera3D.screenPointToRay` → `Raylib_cs.Ray` (wraps
   `Raylib.GetScreenToWorldRay`).
-- Removed: `Mibo.Camera`, `Mibo.Ray`, `Camera3D.fromRaylib`.
+- `Camera3D.withUp` / `asOrthographic` → `Raylib_cs.Camera3D` (modifiers).
+- Removed: `Mibo.Camera`, `Mibo.Ray`, `Camera3D.fromRaylib`,
+  `Camera3D.lookAt`, `Camera3D.orthographic`.
 
-Both backends now expose the same `Camera3D` constructor surface. On MonoGame
-these return the `Camera` view/projection struct (FOV in radians, with explicit
-near/far/aspect); on raylib they return the native structs above.
+Both backends now expose the same `Camera3D` constructor surface
+(`create` / `orbit`) and modifiers (`withUp` / `asOrthographic`). On MonoGame
+the constructors return the `Camera3D` struct record (FOV in **radians**,
+with defaulted near/far); on raylib they return the native `Raylib_cs.Camera3D`
+(FOV in **degrees**). MonoGame additionally offers `withNearFar` (raylib manages
+near/far internally via `BeginMode3D`).
 
 **2. 2D camera readers take the camera by reference.** `Camera2D.viewportBounds`,
 `screenToWorld`, and `worldToScreen` now take the camera by read-only reference
@@ -592,7 +599,7 @@ emitting that camera after the main one. The v2-only `Camera3D.overlay`,
 
 **Migration (raylib):** if you held a `Mibo.Camera` or `Mibo.Ray` value, switch
 to the native `Raylib_cs.Camera3D` / `Raylib_cs.Ray` (produced by
-`Camera3D.lookAt` / `orbit` / `screenPointToRay`). Add `&` at your
+`Camera3D.create` / `orbit` / `screenPointToRay`). Add `&` at your
 `viewportBounds` / `screenToWorld` / `worldToScreen` / `screenPointToRay` call
 sites. Code that already used `Raylib_cs.Camera3D` directly is otherwise
 unaffected.
