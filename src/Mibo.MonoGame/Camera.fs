@@ -260,32 +260,6 @@ module Camera2D =
 // 3D Camera
 // ─────────────────────────────────────────────────────────────
 
-/// <summary>
-/// A universal Camera definition containing View and Projection matrices.
-/// </summary>
-/// <remarks>
-/// This struct is renderer-agnostic — both 2D and 3D renderers use the same concept.
-/// It is a struct (not a reference record) because it flows through the view function
-/// every frame; keeping it stack-allocated avoids per-frame Gen0 pressure on the hot path.
-/// Use the <see cref="T:Mibo.Elmish.Camera2D"/> or <see cref="T:Mibo.Elmish.Camera3D"/> modules to create cameras.
-/// </remarks>
-/// <example>
-/// <code>
-/// // 2D camera centered on player
-/// let camera = Camera2D.create playerPos 1.0f viewportSize
-///
-/// // 3D camera looking at origin
-/// let camera = Camera3D.lookAt position Vector3.Zero Vector3.Up fov aspect 0.1f 1000f
-/// </code>
-/// </example>
-[<Struct>]
-type Camera = {
-  /// <summary>The view matrix (camera position/rotation, transforms world to view space).</summary>
-  View: Matrix
-  /// <summary>The projection matrix (perspective/orthographic, transforms view to clip space).</summary>
-  Projection: Matrix
-}
-
 /// <summary>Camera projection mode.</summary>
 [<RequireQualifiedAccess>]
 type CameraProjection =
@@ -363,96 +337,59 @@ type Camera3DConfig = {
 /// </remarks>
 module Camera3D =
 
+  // ── Constructors ──
+
   /// <summary>
-  /// Creates a camera that looks at a target from a position.
+  /// Creates a perspective camera that looks at a target from a position.
   /// </summary>
-  /// <param name="position">Camera position in world space</param>
-  /// <param name="target">Point the camera is looking at</param>
-  /// <param name="up">Up vector (typically Vector3.UnitY)</param>
-  /// <param name="fov">Field of view in radians (e.g., MathF.PI / 4.0f)</param>
-  /// <param name="aspectRatio">Width / Height of the viewport</param>
-  /// <param name="nearPlane">Near clipping distance (objects closer are not rendered)</param>
-  /// <param name="farPlane">Far clipping distance (objects farther are not rendered)</param>
+  /// <remarks>
+  /// Defaults: up = <c>Vector3.Up</c>, near = <c>0.1f</c>, far = <c>1000f</c>.
+  /// Override with <see cref="M:Mibo.Elmish.Camera3D.withUp"/> /
+  /// <see cref="M:Mibo.Elmish.Camera3D.withNearFar"/>.
+  /// The aspect ratio is computed from the active viewport at render time.
+  /// </remarks>
+  /// <param name="position">Camera position in world space.</param>
+  /// <param name="target">Point the camera is looking at.</param>
+  /// <param name="fovY">Vertical field of view in radians (e.g., <c>MathF.PI / 4.0f</c>).</param>
   /// <example>
   /// <code>
-  /// let camera = Camera3D.lookAt
-  ///     (Vector3(0f, 10f, 20f))  // position
-  ///     Vector3.Zero              // target
-  ///     Vector3.Up                // up
-  ///     (MathF.PI / 4.0f)        // 45° FOV
-  ///     (16f / 9f)                // aspect ratio
-  ///     0.1f                      // near plane
-  ///     1000f                     // far plane
+  /// let camera = Camera3D.create (Vector3(0.f, 10.f, 20.f)) Vector3.Zero (MathF.PI / 4.f)
   /// </code>
   /// </example>
-  let inline lookAt
+  let inline create
     (position: Vector3)
     (target: Vector3)
-    (up: Vector3)
-    (fov: float32)
-    (aspectRatio: float32)
-    (nearPlane: float32)
-    (farPlane: float32)
-    : Camera =
+    (fovY: float32)
+    : Camera3D =
     {
-      View = Matrix.CreateLookAt(position, target, up)
-      Projection =
-        Matrix.CreatePerspectiveFieldOfView(
-          fov,
-          aspectRatio,
-          nearPlane,
-          farPlane
-        )
+      Position = position
+      Target = target
+      Up = Vector3.Up
+      FovY = fovY
+      NearPlane = 0.1f
+      FarPlane = 1000.f
+      Projection = CameraProjection.Perspective
     }
 
   /// <summary>
-  /// Creates an orthographic camera that looks at a target from a position.
-  /// </summary>
-  /// <param name="position">Camera position in world space</param>
-  /// <param name="target">Point the camera is looking at</param>
-  /// <param name="up">Up vector (typically Vector3.UnitY)</param>
-  /// <param name="width">Width of the orthographic view volume in world units</param>
-  /// <param name="height">Height of the orthographic view volume in world units</param>
-  /// <param name="nearPlane">Near clipping distance</param>
-  /// <param name="farPlane">Far clipping distance</param>
-  let inline orthographic
-    (position: Vector3)
-    (target: Vector3)
-    (up: Vector3)
-    (width: float32)
-    (height: float32)
-    (nearPlane: float32)
-    (farPlane: float32)
-    : Camera =
-    {
-      View = Matrix.CreateLookAt(position, target, up)
-      Projection = Matrix.CreateOrthographic(width, height, nearPlane, farPlane)
-    }
-
-  /// <summary>
-  /// Creates an orbiting camera using spherical coordinates.
+  /// Creates an orbiting perspective camera using spherical coordinates.
   /// </summary>
   /// <remarks>
   /// Useful for third-person cameras, inspection views, or editor cameras.
+  /// Defaults: up = <c>Vector3.Up</c>, near = <c>0.1f</c>, far = <c>1000f</c>.
   /// </remarks>
-  /// <param name="target">Point the camera orbits around</param>
-  /// <param name="yaw">Horizontal rotation angle in radians</param>
-  /// <param name="pitch">Vertical rotation angle in radians</param>
-  /// <param name="radius">Distance from target</param>
-  /// <param name="fov">Field of view in radians</param>
-  /// <param name="aspect">Aspect ratio</param>
-  /// <param name="near">Near plane</param>
-  /// <param name="far">Far plane</param>
+  /// <param name="target">Point the camera orbits around.</param>
+  /// <param name="yaw">Horizontal rotation angle in radians.</param>
+  /// <param name="pitch">Vertical rotation angle in radians.</param>
+  /// <param name="radius">Distance from target.</param>
+  /// <param name="fovY">Vertical field of view in radians.</param>
   let inline orbit
     (target: Vector3)
     (yaw: float32)
     (pitch: float32)
     (radius: float32)
-    (fov: float32)
-    (aspect: float32)
-    (near: float32)
-    (far: float32)
-    : Camera =
+    (fovY: float32)
+    : Camera3D =
     let position =
       Vector3(
         radius * MathF.Sin(yaw) * MathF.Cos(pitch),
@@ -461,7 +398,40 @@ module Camera3D =
       )
       + target
 
-    lookAt position target Vector3.UnitY fov aspect near far
+    create position target fovY
+
+  // ── Modifiers ──
+
+  /// <summary>Set the up vector (default is <c>Vector3.Up</c>).</summary>
+  let inline withUp (up: Vector3) (camera: Camera3D) : Camera3D = {
+    camera with
+        Up = up
+  }
+
+  /// <summary>Set the near and far clipping planes (defaults are <c>0.1f</c> / <c>1000f</c>).</summary>
+  let inline withNearFar
+    (nearPlane: float32)
+    (farPlane: float32)
+    (camera: Camera3D)
+    : Camera3D =
+    {
+      camera with
+          NearPlane = nearPlane
+          FarPlane = farPlane
+    }
+
+  /// <summary>
+  /// Switch the camera to orthographic projection.
+  /// </summary>
+  /// <remarks>
+  /// <c>FovY</c> is reinterpreted as the view height in world units.
+  /// </remarks>
+  let inline asOrthographic(camera: Camera3D) : Camera3D = {
+    camera with
+        Projection = CameraProjection.Orthographic
+  }
+
+  // ── Picking ──
 
   /// <summary>
   /// Creates a ray from screen coordinates for mouse/touch picking.
@@ -475,15 +445,39 @@ module Camera3D =
   /// <param name="viewportWidth">Viewport width in pixels.</param>
   /// <param name="viewportHeight">Viewport height in pixels.</param>
   let screenPointToRay
-    (camera: Camera)
+    (camera: Camera3D)
     (screenPos: Vector2)
     (viewportWidth: float32)
     (viewportHeight: float32)
     : Ray =
-    let mutable viewProj = camera.View * camera.Projection
+    let view = Matrix.CreateLookAt(camera.Position, camera.Target, camera.Up)
+
+    let projection =
+      match camera.Projection with
+      | CameraProjection.Perspective ->
+        let aspect =
+          if viewportHeight > 0.0f then
+            viewportWidth / viewportHeight
+          else
+            1.0f
+
+        Matrix.CreatePerspectiveFieldOfView(
+          camera.FovY,
+          aspect,
+          camera.NearPlane,
+          camera.FarPlane
+        )
+      | CameraProjection.Orthographic ->
+        Matrix.CreateOrthographic(
+          camera.FovY,
+          camera.FovY,
+          camera.NearPlane,
+          camera.FarPlane
+        )
+
+    let mutable viewProj = view * projection
     let mutable invertedViewProj = Matrix()
     Matrix.Invert(&viewProj, &invertedViewProj)
-
 
     let nx = 2.0f * screenPos.X / viewportWidth - 1.0f
     let ny = 1.0f - 2.0f * screenPos.Y / viewportHeight

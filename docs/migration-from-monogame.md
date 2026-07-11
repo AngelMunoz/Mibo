@@ -85,7 +85,7 @@ Most `open` declarations stay the same — the `Mibo.Elmish`, `Mibo.Input`, and
 | 3D rendering | Yes | Medium — `withPipeline` removed; use `Renderer3D.create (ForwardPipeline(...)) view` |
 | 2D animation | No | None — `SpriteSheet`/`AnimatedSprite` API unchanged |
 | 3D animation | N/A (new) | Low — the old package had no 3D animation; new backend ships `AnimatedModel` |
-| Camera | Yes | Low — `Camera`/`Camera2D`/`Camera3D` exist but `Camera3D` is now a struct record |
+| Camera | Yes | Low — `Camera2D`/`Camera3D` modules exist; `Camera3D.create` takes just position/target/FOV with defaulted up/near/far |
 | Culling | Yes | Low — `isGenericVisible` renamed `isVisibleBox` (box-vs-frustum test) |
 | Layout / Spatial | No | None — moved to Core, same API |
 | System pipeline | No | None — moved to Core, same API |
@@ -728,23 +728,8 @@ yourself.
 
 ## 10. Camera
 
-The `Camera` record and the `Camera2D`/`Camera3D` helper modules **exist** in
-`Mibo.MonoGame` (namespace `Mibo.Elmish`). The shared `Camera` is now a struct
-(avoiding per-frame allocations on the hot path):
-
-```fsharp
-[<Struct>]
-type Camera = {
-  View: Matrix
-  Projection: Matrix
-}
-```
-
-### `Camera3D` is now a struct record
-
-The old `Camera3D.lookAt` returned a `Camera`. The new flow separates the
-**camera description** (`Camera3D`, a struct record) from the **rendered config**
-(`Camera3DConfig`):
+The `Camera2D`/`Camera3D` helper modules **exist** in `Mibo.MonoGame`
+(namespace `Mibo.Elmish`). The `Camera3D` is a struct record:
 
 ```fsharp
 [<Struct>]
@@ -759,22 +744,24 @@ type Camera3D = {
 }
 ```
 
+### Simplified construction
+
+`Camera3D.create` takes just position, target, and FOV — sensible defaults
+handle the rest (up = `Vector3.Up`, near = `0.1f`, far = `1000f`). Chain
+`withUp` / `withNearFar` / `asOrthographic` to override:
+
 ```fsharp
-// Before
+// Before (old Mibo — 7 params, returned a Camera struct)
 let camera = Camera3D.lookAt cameraPos target Vector3.Up
                (MathHelper.ToRadians 45.0f) aspect 0.1f 1000.0f
-// (returned { View; Projection }, passed directly to the pipeline)
 
 // After
-let camera: Camera3D = {
-  Position = cameraPos
-  Target = target
-  Up = Vector3.UnitY
-  FovY = MathHelper.ToRadians(55.0f)
-  NearPlane = 0.1f
-  FarPlane = 1000.0f
-  Projection = CameraProjection.Perspective
-}
+let camera = Camera3D.create cameraPos target (MathHelper.ToRadians 55.0f)
+// or with overrides:
+let camera =
+    Camera3D.create cameraPos target fov
+    |> Camera3D.withUp customUp
+    |> Camera3D.withNearFar 0.01f 5000.0f
 
 // hand it to the 3D renderer via the Draw3D DSL:
 buffer
@@ -782,14 +769,14 @@ buffer
 |> ...
 ```
 
-The `Camera3D` module provides `lookAt`, `orthographic`, `orbit`, and
-`screenPointToRay` builders (they return a `Camera`). `Camera2D` provides the
-full 2D surface — `create`, `toMatrix`, `viewportBounds`, `screenToWorld`/
-`worldToScreen`, and `smoothFollow`/`clampTarget` (which return a new camera,
-since the camera's fields are immutable). The rendering config builders
-(`render`, `withViewport`, `withClear`, `splitScreen*`) live in the
-`Camera2D` and `Camera3D` modules themselves — there is no separate config
-module to open.
+The `Camera3D` module provides `create`, `orbit`, `screenPointToRay`, and
+the `withUp` / `withNearFar` / `asOrthographic` modifiers — all returning
+`Camera3D`. `Camera2D` provides the full 2D surface — `create`, `toMatrix`,
+`viewportBounds`, `screenToWorld`/`worldToScreen`, and `smoothFollow`/
+`clampTarget` (which return a new camera, since the camera's fields are
+immutable). The rendering config builders (`render`, `withViewport`,
+`withClear`, `splitScreen*`) live in the `Camera2D` and `Camera3D` modules
+themselves — there is no separate config module to open.
 
 ---
 
@@ -1087,7 +1074,7 @@ are the divergences to plan for (surfaced by comparing the `MonoThreeD` and
 | Input mapper | `MonoGameProgram.withInputMapper` | `RaylibProgram.withInputMapper` |
 | 3D pipeline | `ForwardPipeline(shadowBias=, shadowAtlas=)` | `ForwardPbrPipeline(shadowBiasConfig=, shadowAtlasConfig=)` (different field names) |
 | Shadow config | `ShadowBiasConfig.defaults`, `ShadowAtlasConfig { Resolution; GridSnapSize }` | explicit per-light biases, `shadowAtlasConfig { Resolution; DirectionalLightSize }` |
-| `Camera3D` | struct record, **radians** FOV, explicit near/far | the raylib `Camera3D` struct, **degrees** FOV, no explicit near/far |
+| `Camera3D` | struct record, **radians** FOV, defaulted near/far | the raylib `Camera3D` struct, **degrees** FOV, no explicit near/far |
 | Vector / Color / Matrix | `Microsoft.Xna.Framework.*` (`Color(int)`, `Matrix.Create*`) | `System.Numerics` + `Raylib_cs` (`Color(byte)`, `Raymath.Matrix*`) |
 | 3D animated model | `AnimatedModel` + `Draw3D.drawAnimatedModel` (bundles model+mesh+state) | `Animation3DState` + `Animation3DState.applyToModel` + `Draw3D.drawModel` |
 | Animated mesh loader | `assets.AnimatedMesh rawPath` (Assimp — XNB drops anim data) | not needed — raylib loads `.glb` once with animations |

@@ -159,36 +159,46 @@ layering is purely draw order.
 
 ### Creating a camera
 
-For 3D rendering, create a `Camera3D` directly. This is what `Draw3D.beginCamera` and `Camera3D.render` expect. The `Camera3D` struct is provided by your backend (raylib and MonoGame each carry their own), but the constructor shape mirrors across them:
+For 3D rendering, use `Camera3D.create`. It takes just three parameters — position, target, and field of view — with sensible defaults for everything else (up = `Vector3.Up`; MonoGame also defaults near = `0.1f`, far = `1000f` and computes aspect from the viewport at render time):
 
 ```fsharp
-let camera = Camera3D(
-    Vector3(0f, 10f, 20f),      // position
-    Vector3.Zero,                // target
-    Vector3.UnitY,               // up
-    45.0f,                       // FOV in degrees
-    CameraProjection.Perspective
-)
+// raylib (FOV in degrees)
+let camera = Camera3D.create (Vector3(0f, 10f, 20f)) Vector3.Zero 45.0f
+
+// MonoGame (FOV in radians)
+let camera = Camera3D.create (Vector3(0f, 10f, 20f)) Vector3.Zero (MathF.PI / 4f)
 ```
 
-For third-person or inspection cameras, use the `Camera3D.orbit` helper (both backends):
+For third-person or inspection cameras, use `Camera3D.orbit` (both backends):
 
 ```fsharp
-// raylib (FOV in degrees, returns the native Camera3D)
+// raylib (FOV in degrees)
 let camera = Camera3D.orbit Vector3.Zero yaw pitch radius 55.0f
 
-// MonoGame (FOV in radians, plus near/far/aspect, returns the Camera struct)
-let camera = Camera3D.orbit Vector3.Zero yaw pitch radius fov aspect near far
+// MonoGame (FOV in radians)
+let camera = Camera3D.orbit Vector3.Zero yaw pitch radius (MathF.PI / 4f)
 ```
 
-> _**NOTE — backend difference.**_ Both backends carry the same constructor
-> surface (`lookAt` / `orthographic` / `orbit` / `screenPointToRay`), but the
-> return type and FOV unit differ: raylib returns the native
-> `Raylib_cs.Camera3D` (FOV in **degrees**; near/far/aspect are handled
-> internally by `BeginMode3D`), while MonoGame returns its `Camera`
-> view/projection struct (FOV in **radians**; near/far/aspect are explicit
-> parameters). You can still construct the native raylib `Camera3D` struct
-> literal directly if you prefer.
+#### Camera modifiers
+
+Chain `with*` modifiers to override the defaults:
+
+```fsharp
+// Custom up vector (both backends)
+let camera = Camera3D.create pos target fov |> Camera3D.withUp customUp
+
+// Orthographic projection (both backends; FovY is reinterpreted as view height)
+let camera = Camera3D.create pos target 10f |> Camera3D.asOrthographic
+
+// Custom near/far planes (MonoGame only — raylib manages these internally)
+let camera = Camera3D.create pos target fov |> Camera3D.withNearFar 0.01f 5000f
+```
+
+> _**NOTE — backend difference.**_ Both backends share the same constructor
+> surface (`create` / `orbit`) and modifiers (`withUp` / `asOrthographic`).
+> MonoGame adds `withNearFar` (raylib manages near/far internally via
+> `BeginMode3D`). The FOV unit differs: raylib uses **degrees**, MonoGame
+> uses **radians**.
 
 ### Using in a view
 
@@ -248,7 +258,7 @@ let ray = Camera3D.screenPointToRay &camera mousePos
 // ray.Position  — origin point
 // ray.Direction — normalized direction into the scene
 
-// MonoGame — takes the Camera view/projection struct and viewport size, returns Mibo's Ray
+// MonoGame — takes the Camera3D and viewport size, returns Mibo's Ray
 let ray = Camera3D.screenPointToRay camera mousePos viewportWidth viewportHeight
 ```
 

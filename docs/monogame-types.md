@@ -146,7 +146,7 @@ read `ctx.GraphicsDevice.Viewport`; that is no longer how you get the size.)
 | Custom shaders | GLSL | HLSL (`.fx` compiled to `.mgfx`) |
 | Texture filtering | property of the texture: `Texture.filter TextureFilter.Point` | property of the draw: `Draw.setSamplerState layer SamplerState.PointClamp` |
 | Default font | `Raylib.GetFontDefault()` | none — load `assets.Font "..."` |
-| `Camera3D` FOV | **degrees**, no explicit near/far | **radians**, explicit near/far planes |
+| `Camera3D` FOV | **degrees**, no explicit near/far | **radians**, defaulted near/far planes (override via `withNearFar`) |
 | 3D animated model | load `.glb` once (animations included) | double-load: `assets.Model` (XNB mesh) + `assets.AnimatedMesh`/`ModelAnimations` (raw `.glb` via Assimp) |
 | Pipeline class | `ForwardPbrPipeline(shadowBiasConfig=, shadowAtlasConfig=)` | `ForwardPipeline(shadowBias=, shadowAtlas=)` (different field names) |
 
