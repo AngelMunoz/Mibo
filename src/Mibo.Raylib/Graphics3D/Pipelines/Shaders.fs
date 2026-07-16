@@ -101,6 +101,31 @@ void main()
 }
 """
 
+  /// <summary>
+  /// Instanced variant of the depth-only shadow pass vertex shader.
+  /// Uses <c>in mat4 instanceTransform</c> (vertex attribute) instead of
+  /// <c>uniform mat4 matModel</c>. The <c>mvp</c> uniform is view-projection
+  /// only (raylib uploads it as such for instanced draws, since no per-instance
+  /// model is pushed onto the matrix stack), so the per-instance world position
+  /// comes entirely from <c>instanceTransform</c>. Declaring the attribute is
+  /// what makes raylib resolve <c>SHADER_LOC_VERTEX_INSTANCETRANSFORM</c> and
+  /// wire up the instance transform VBO — without it, every instance collapses
+  /// to a single clip-space position.
+  /// </summary>
+  let depthShadowVertexInstanced =
+    """#version 330
+
+in vec3 vertexPosition;
+in mat4 instanceTransform;
+
+uniform mat4 mvp;
+
+void main()
+{
+    gl_Position = mvp * instanceTransform * vec4(vertexPosition, 1.0);
+}
+"""
+
   let depthShadowFragment =
     """#version 330
 
@@ -593,6 +618,14 @@ void main()
   /// <summary>Loads the depth-only shadow pass vertex + fragment shader (C example compatible).</summary>
   let loadDepthShadowShader() : Shader =
     Raylib.LoadShaderFromMemory(depthShadowVertex, depthShadowFragment)
+
+  /// <summary>
+  /// Loads the instanced depth-only shadow pass vertex + fragment shader.
+  /// Used for <c>DrawMeshInstanced</c> casters so per-instance transforms reach
+  /// the depth shader via the <c>instanceTransform</c> attribute.
+  /// </summary>
+  let loadDepthShadowInstancedShader() : Shader =
+    Raylib.LoadShaderFromMemory(depthShadowVertexInstanced, depthShadowFragment)
 
   /// <summary>Loads the skinned forward PBR vertex + fragment shader.</summary>
   /// <remarks>

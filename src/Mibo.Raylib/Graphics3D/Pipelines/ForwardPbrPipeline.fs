@@ -274,8 +274,10 @@ type internal ShaderVariant =
 type internal ShadowDepthResources = {
   Shader: Shader
   SkinnedShader: Shader
+  InstancedShader: Shader
   Material: Material
   SkinnedMaterial: Material
+  InstancedMaterial: Material
   NormalMatrixLoc: int
   SkinnedNormalMatrixLoc: int
   BoneLoc: int
@@ -1546,15 +1548,19 @@ module internal PipelineFunctions =
         Raylib.EndShaderMode()
 
     // ── Instanced batch: one DrawMeshInstanced per entry ──
+    // Uses the instanced depth-shadow shader, which declares
+    // `in mat4 instanceTransform` so raylib wires up the instance VBO.
+    // The non-instanced `resources.Shader` lacks that attribute and would
+    // collapse every instance to a single clip-space position.
     if instancedDrawCount > 0 then
-      Raylib.BeginShaderMode resources.Shader
+      Raylib.BeginShaderMode resources.InstancedShader
 
       for i = 0 to instancedDrawCount - 1 do
         let draw = instancedDraws[i]
 
         Raylib.DrawMeshInstanced(
           draw.Mesh,
-          resources.Material,
+          resources.InstancedMaterial,
           draw.Transforms,
           draw.InstanceCount
         )
@@ -1792,10 +1798,14 @@ type ForwardPipelineBase
   let mutable skinnedShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowSkinnedShader: Shader = Unchecked.defaultof<Shader>
+  let mutable depthShadowInstancedShader: Shader = Unchecked.defaultof<Shader>
 
   let mutable depthShadowMaterial: Material = Unchecked.defaultof<Material>
 
   let mutable depthShadowSkinnedMaterial: Material =
+    Unchecked.defaultof<Material>
+
+  let mutable depthShadowInstancedMaterial: Material =
     Unchecked.defaultof<Material>
 
   let mutable shadowNormalMatrixLoc: int = -1
@@ -2216,12 +2226,16 @@ type ForwardPipelineBase
 
       depthShadowShader <- Shaders.loadDepthShadowShader()
       depthShadowSkinnedShader <- Shaders.loadDepthShadowSkinnedShader()
+      depthShadowInstancedShader <- Shaders.loadDepthShadowInstancedShader()
 
       depthShadowMaterial <- Raylib.LoadMaterialDefault()
       depthShadowMaterial.Shader <- depthShadowShader
 
       depthShadowSkinnedMaterial <- Raylib.LoadMaterialDefault()
       depthShadowSkinnedMaterial.Shader <- depthShadowSkinnedShader
+
+      depthShadowInstancedMaterial <- Raylib.LoadMaterialDefault()
+      depthShadowInstancedMaterial.Shader <- depthShadowInstancedShader
 
       shadowNormalMatrixLoc <-
         Raylib.GetShaderLocation(depthShadowShader, "normalMatrix")
@@ -2273,9 +2287,11 @@ type ForwardPipelineBase
       Raylib.UnloadShader skinnedShader
       Raylib.UnloadShader depthShadowShader
       Raylib.UnloadShader depthShadowSkinnedShader
+      Raylib.UnloadShader depthShadowInstancedShader
 
       freeMaps depthShadowMaterial
       freeMaps depthShadowSkinnedMaterial
+      freeMaps depthShadowInstancedMaterial
 
       if userEffectMaterialCreated then
         freeMaps userEffectMaterial
@@ -2328,8 +2344,10 @@ type ForwardPipelineBase
       let shadowResources = {
         Shader = depthShadowShader
         SkinnedShader = depthShadowSkinnedShader
+        InstancedShader = depthShadowInstancedShader
         Material = depthShadowMaterial
         SkinnedMaterial = depthShadowSkinnedMaterial
+        InstancedMaterial = depthShadowInstancedMaterial
         NormalMatrixLoc = shadowNormalMatrixLoc
         SkinnedNormalMatrixLoc = shadowSkinnedNormalMatrixLoc
         BoneLoc = shadowBoneLoc
