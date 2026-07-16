@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-07-16
+
 ### Added
 
 - **Core:** `LayeredGrid3D` — a cubic layered grid (`create`/`getOrAddLayer` plus `LayeredLayout3D.layer`) for stacking independent `CellGrid3D` layers by integer index, mirroring `LayeredGrid2D` (2D) and `LayeredHexGrid3D` (3D hex).
