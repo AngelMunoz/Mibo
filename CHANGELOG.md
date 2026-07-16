@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Core:** `LayeredGrid3D` — a cubic layered grid (`create`/`getOrAddLayer` plus `LayeredLayout3D.layer`) for stacking independent `CellGrid3D` layers by integer index, mirroring `LayeredGrid2D` (2D) and `LayeredHexGrid3D` (3D hex).
+
+### Changed
+
+- **Raylib 3D:** instanced shadow casters (`Draw3D.drawMeshInstanced`) now render into the shadow atlas as one instanced draw per mesh instead of being unrolled into one draw per instance. Scenes with many instanced shadow casters (e.g. block-grid terrain) no longer spend most of their frame budget on thousands of individual shadow draws per frame.
+
 ## [2.1.0] - 2026-07-10
 
 ### Changed

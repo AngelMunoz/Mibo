@@ -274,8 +274,10 @@ type internal ShaderVariant =
 type internal ShadowDepthResources = {
   Shader: Shader
   SkinnedShader: Shader
+  InstancedShader: Shader
   Material: Material
   SkinnedMaterial: Material
+  InstancedMaterial: Material
   NormalMatrixLoc: int
   SkinnedNormalMatrixLoc: int
   BoneLoc: int
@@ -305,10 +307,25 @@ module internal ShadowPassHelpers =
     Bones: Matrix4x4[] voption
   }
 
+  /// A collected instanced draw for the shadow pass. Unlike individual
+  /// `MeshDraw` entries, this carries the full per-instance transform array
+  /// and renders via `DrawMeshInstanced` — one GPU draw call per entry,
+  /// not one per instance. This is critical for instanced-heavy scenes (e.g.
+  /// block-grid terrain) where unrolling would produce thousands of
+  /// individual shadow draws.
+  [<Struct>]
+  type InstancedMeshDraw = {
+    Mesh: Mesh
+    Transforms: Matrix4x4[]
+    InstanceCount: int
+  }
+
   let collectMeshDraws(buffer: RenderBuffer3D) =
     let pool = ArrayPool<MeshDraw>.Shared
+    let instPool = ArrayPool<InstancedMeshDraw>.Shared
 
     let mutable meshCount = 0
+    let mutable instancedCount = 0
     let mutable shadowsEnabled = true
     let mutable i = 0
 
@@ -323,14 +340,16 @@ module internal ShadowPassHelpers =
         meshCount <- meshCount + model.MeshCount
       | Command3D.DrawModelWith(model, _, _) when shadowsEnabled ->
         meshCount <- meshCount + model.MeshCount
-      | Command3D.DrawMeshInstanced(_, _, _, instanceCount) when shadowsEnabled ->
-        meshCount <- meshCount + instanceCount
+      | Command3D.DrawMeshInstanced _ when shadowsEnabled ->
+        instancedCount <- instancedCount + 1
       | _ -> ()
 
       i <- i + 1
 
     let arr = pool.Rent(max meshCount 1)
+    let instArr = instPool.Rent(max instancedCount 1)
     let mutable count = 0
+    let mutable icount = 0
     let mutable skinnedStart = count
     shadowsEnabled <- true
     i <- 0
@@ -380,14 +399,13 @@ module internal ShadowPassHelpers =
       | Command3D.DrawMeshInstanced(mesh, transforms, _, instanceCount) when
         shadowsEnabled
         ->
-        for ti = 0 to instanceCount - 1 do
-          arr[count] <- {
-            Mesh = mesh
-            Transform = transforms[ti]
-            Bones = ValueNone
-          }
+        instArr[icount] <- {
+          Mesh = mesh
+          Transforms = transforms
+          InstanceCount = instanceCount
+        }
 
-          count <- count + 1
+        icount <- icount + 1
       | _ -> ()
 
       i <- i + 1
@@ -415,7 +433,7 @@ module internal ShadowPassHelpers =
         writeIdx <- writeIdx + 1
       | ValueNone -> ()
 
-    struct (arr, count, skinnedStart)
+    struct (arr, count, skinnedStart, instArr, icount)
 
   /// <summary>
   /// Register shadow casters for every shadow-casting light. Returns:
@@ -1449,6 +1467,7 @@ module internal PipelineFunctions =
 
   /// Render all mesh draws into a single shadow atlas region.
   /// Draws are partitioned: [0..skinnedStart) are non-skinned, [skinnedStart..meshDrawCount) are skinned.
+  /// Instanced draws are rendered separately via `DrawMeshInstanced` (one GPU call per entry).
   let renderShadowRegion
     (
       shadowAtlas: ShadowAtlas,
@@ -1457,7 +1476,9 @@ module internal PipelineFunctions =
       resources: inref<ShadowDepthResources>,
       meshDraws: MeshDraw[],
       meshDrawCount: int,
-      skinnedStart: int
+      skinnedStart: int,
+      instancedDraws: InstancedMeshDraw[],
+      instancedDrawCount: int
     ) =
     shadowAtlas.GetRegionViewport(regionIndex)
     Raylib.BeginMode3D(camera)
@@ -1526,6 +1547,26 @@ module internal PipelineFunctions =
 
         Raylib.EndShaderMode()
 
+    // ── Instanced batch: one DrawMeshInstanced per entry ──
+    // Uses the instanced depth-shadow shader, which declares
+    // `in mat4 instanceTransform` so raylib wires up the instance VBO.
+    // The non-instanced `resources.Shader` lacks that attribute and would
+    // collapse every instance to a single clip-space position.
+    if instancedDrawCount > 0 then
+      Raylib.BeginShaderMode resources.InstancedShader
+
+      for i = 0 to instancedDrawCount - 1 do
+        let draw = instancedDraws[i]
+
+        Raylib.DrawMeshInstanced(
+          draw.Mesh,
+          resources.InstancedMaterial,
+          draw.Transforms,
+          draw.InstanceCount
+        )
+
+      Raylib.EndShaderMode()
+
     Raylib.EndMode3D()
 
   /// Render the shadow pass — collect casters, render regions to atlas.
@@ -1538,6 +1579,8 @@ module internal PipelineFunctions =
       meshDraws: MeshDraw[],
       meshDrawCount: int,
       skinnedStart: int,
+      instancedDraws: InstancedMeshDraw[],
+      instancedDrawCount: int,
       frameState: inref<FrameState>,
       gameCtx: GameContext
     ) =
@@ -1612,7 +1655,9 @@ module internal PipelineFunctions =
                     &resources,
                     meshDraws,
                     meshDrawCount,
-                    skinnedStart
+                    skinnedStart,
+                    instancedDraws,
+                    instancedDrawCount
                   )
 
                 | ShadowCasterType.Spot ->
@@ -1641,7 +1686,9 @@ module internal PipelineFunctions =
                     &resources,
                     meshDraws,
                     meshDrawCount,
-                    skinnedStart
+                    skinnedStart,
+                    instancedDraws,
+                    instancedDrawCount
                   )
 
                 | _ ->
@@ -1663,7 +1710,9 @@ module internal PipelineFunctions =
                     &resources,
                     meshDraws,
                     meshDrawCount,
-                    skinnedStart
+                    skinnedStart,
+                    instancedDraws,
+                    instancedDrawCount
                   )
 
                   Rlgl.SetClipPlanes(prevNear, prevFar)
@@ -1749,10 +1798,14 @@ type ForwardPipelineBase
   let mutable skinnedShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowSkinnedShader: Shader = Unchecked.defaultof<Shader>
+  let mutable depthShadowInstancedShader: Shader = Unchecked.defaultof<Shader>
 
   let mutable depthShadowMaterial: Material = Unchecked.defaultof<Material>
 
   let mutable depthShadowSkinnedMaterial: Material =
+    Unchecked.defaultof<Material>
+
+  let mutable depthShadowInstancedMaterial: Material =
     Unchecked.defaultof<Material>
 
   let mutable shadowNormalMatrixLoc: int = -1
@@ -2104,28 +2157,19 @@ type ForwardPipelineBase
           loc
 
       if attrLoc >= 0 then
-        // Opt-in: raylib streams the per-instance world matrix through the attribute the shader's
-        // Locs[MatrixModel] slot points at. Point that slot at `instanceTransform` for the duration
-        // of the draw (restoring it afterward so a non-instanced draw in the same scope still
-        // auto-uploads matModel). matModel is identity — the per-instance transform IS the model
-        // matrix; viewProj is view-projection only.
-        let matModelSlot = int ShaderLocationIndex.MatrixModel
-        let savedLoc = NativePtr.get userShader.Locs matModelSlot
+        // Opt-in: the shader declares `in mat4 instanceTransform`, so raylib 6.0 auto-resolves
+        // the dedicated SHADER_LOC_VERTEX_INSTANCETRANSFORM slot at load and DrawMeshInstanced
+        // binds the per-instance VBO through it — no Locs wiring needed. matModel is identity
+        // (the per-instance transform IS the model matrix); viewProj is view-projection only.
+        upload Matrix4x4.Identity material ValueNone
+        populateMaps material
 
-        NativePtr.set userShader.Locs matModelSlot attrLoc
-
-        try
-          upload Matrix4x4.Identity material ValueNone
-          populateMaps material
-
-          Raylib.DrawMeshInstanced(
-            mesh,
-            userEffectMaterial,
-            transforms,
-            instanceCount
-          )
-        finally
-          NativePtr.set userShader.Locs matModelSlot savedLoc
+        Raylib.DrawMeshInstanced(
+          mesh,
+          userEffectMaterial,
+          transforms,
+          instanceCount
+        )
       else
         // No opt-in — fall back to the PBR instanced path (see remarks).
         Raylib.EndShaderMode()
@@ -2163,22 +2207,22 @@ type ForwardPipelineBase
       skinnedShader <-
         Shaders.loadForwardSkinnedShader maxPt maxSp atlasCfg.MaxCasters
 
-      let instanceTransformLoc =
-        Raylib.GetShaderLocationAttrib(instancedShader, "instanceTransform")
-
-      NativePtr.set
-        instancedShader.Locs
-        (int ShaderLocationIndex.MatrixModel)
-        instanceTransformLoc
+      // No Locs wiring needed: forwardVertexInstanced declares `in mat4 instanceTransform`,
+      // so raylib 6.0 auto-resolves SHADER_LOC_VERTEX_INSTANCETRANSFORM at load and
+      // DrawMeshInstanced binds the per-instance VBO through it.
 
       depthShadowShader <- Shaders.loadDepthShadowShader()
       depthShadowSkinnedShader <- Shaders.loadDepthShadowSkinnedShader()
+      depthShadowInstancedShader <- Shaders.loadDepthShadowInstancedShader()
 
       depthShadowMaterial <- Raylib.LoadMaterialDefault()
       depthShadowMaterial.Shader <- depthShadowShader
 
       depthShadowSkinnedMaterial <- Raylib.LoadMaterialDefault()
       depthShadowSkinnedMaterial.Shader <- depthShadowSkinnedShader
+
+      depthShadowInstancedMaterial <- Raylib.LoadMaterialDefault()
+      depthShadowInstancedMaterial.Shader <- depthShadowInstancedShader
 
       shadowNormalMatrixLoc <-
         Raylib.GetShaderLocation(depthShadowShader, "normalMatrix")
@@ -2230,9 +2274,11 @@ type ForwardPipelineBase
       Raylib.UnloadShader skinnedShader
       Raylib.UnloadShader depthShadowShader
       Raylib.UnloadShader depthShadowSkinnedShader
+      Raylib.UnloadShader depthShadowInstancedShader
 
       freeMaps depthShadowMaterial
       freeMaps depthShadowSkinnedMaterial
+      freeMaps depthShadowInstancedMaterial
 
       if userEffectMaterialCreated then
         freeMaps userEffectMaterial
@@ -2278,14 +2324,17 @@ type ForwardPipelineBase
       skinned.LightsDirty <- true
 
       // Shadow pass — render all casters into the atlas
-      let struct (meshDraws, meshDrawCount, skinnedStart) =
+      let struct (meshDraws, meshDrawCount, skinnedStart, instancedDraws,
+                  instancedDrawCount) =
         collectMeshDraws buffer
 
       let shadowResources = {
         Shader = depthShadowShader
         SkinnedShader = depthShadowSkinnedShader
+        InstancedShader = depthShadowInstancedShader
         Material = depthShadowMaterial
         SkinnedMaterial = depthShadowSkinnedMaterial
+        InstancedMaterial = depthShadowInstancedMaterial
         NormalMatrixLoc = shadowNormalMatrixLoc
         SkinnedNormalMatrixLoc = shadowSkinnedNormalMatrixLoc
         BoneLoc = shadowBoneLoc
@@ -2303,6 +2352,8 @@ type ForwardPipelineBase
             meshDraws,
             meshDrawCount,
             skinnedStart,
+            instancedDraws,
+            instancedDrawCount,
             &frameState,
             gameCtx
           )
@@ -2312,6 +2363,7 @@ type ForwardPipelineBase
         spotShadowSlots <- spSlots
       finally
         ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
+        ArrayPool<InstancedMeshDraw>.Shared.Return(instancedDraws, false)
 
       // Upload shadow atlas uniforms to all shaders
       match frameState.Camera with
