@@ -285,6 +285,34 @@ Mibo includes pre-built stamps for common 3D game types:
 
 These serve as examples and starting points. Copy and modify them for your game's needs.
 
+## Layered Composition
+
+For levels with multiple independent data layers (terrain, structures, items), use `LayeredGrid3D`. It manages a collection of `CellGrid3D` layers sharing the same dimensions, keyed by an integer index:
+
+```fsharp
+let level =
+    LayeredGrid3D.create 50 20 50 (Vector3(2f, 2f, 2f)) Vector3.Zero
+    |> LayeredLayout3D.layer 0 (fun section ->
+        // Layer 0: Terrain
+        section
+        |> Layout3D.fill 0 0 0 50 1 50 FloorCell
+        |> Layout3D.shell 10 0 5 8 8 8 WallCell)
+    |> LayeredLayout3D.layer 1 (fun section ->
+        // Layer 1: Structures
+        section
+        |> Layout3D.section 5 1 3 (fun inner ->
+            inner |> Layout3D.fill 0 0 0 6 4 6 FloorCell)
+        |> Layout3D.section 20 1 10 (fun inner ->
+            inner |> Layout3D.fill 0 0 0 4 3 4 FloorCell))
+    |> LayeredLayout3D.layer 2 (fun section ->
+        // Layer 2: Items
+        section
+        |> Layout3D.set 7 2 5 ChestCell
+        |> Layout3D.set 22 2 12 ChestCell)
+```
+
+Each `layer` call lazily creates (or reuses) the `CellGrid3D` for that index and runs your stamp against it. Layers are independent — edit one without touching the others.
+
 ## Rendering Integration
 
 ### Basic Rendering
