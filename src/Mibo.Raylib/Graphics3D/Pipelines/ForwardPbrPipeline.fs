@@ -2157,28 +2157,19 @@ type ForwardPipelineBase
           loc
 
       if attrLoc >= 0 then
-        // Opt-in: raylib streams the per-instance world matrix through the attribute the shader's
-        // Locs[MatrixModel] slot points at. Point that slot at `instanceTransform` for the duration
-        // of the draw (restoring it afterward so a non-instanced draw in the same scope still
-        // auto-uploads matModel). matModel is identity — the per-instance transform IS the model
-        // matrix; viewProj is view-projection only.
-        let matModelSlot = int ShaderLocationIndex.MatrixModel
-        let savedLoc = NativePtr.get userShader.Locs matModelSlot
+        // Opt-in: the shader declares `in mat4 instanceTransform`, so raylib 6.0 auto-resolves
+        // the dedicated SHADER_LOC_VERTEX_INSTANCETRANSFORM slot at load and DrawMeshInstanced
+        // binds the per-instance VBO through it — no Locs wiring needed. matModel is identity
+        // (the per-instance transform IS the model matrix); viewProj is view-projection only.
+        upload Matrix4x4.Identity material ValueNone
+        populateMaps material
 
-        NativePtr.set userShader.Locs matModelSlot attrLoc
-
-        try
-          upload Matrix4x4.Identity material ValueNone
-          populateMaps material
-
-          Raylib.DrawMeshInstanced(
-            mesh,
-            userEffectMaterial,
-            transforms,
-            instanceCount
-          )
-        finally
-          NativePtr.set userShader.Locs matModelSlot savedLoc
+        Raylib.DrawMeshInstanced(
+          mesh,
+          userEffectMaterial,
+          transforms,
+          instanceCount
+        )
       else
         // No opt-in — fall back to the PBR instanced path (see remarks).
         Raylib.EndShaderMode()
@@ -2216,13 +2207,9 @@ type ForwardPipelineBase
       skinnedShader <-
         Shaders.loadForwardSkinnedShader maxPt maxSp atlasCfg.MaxCasters
 
-      let instanceTransformLoc =
-        Raylib.GetShaderLocationAttrib(instancedShader, "instanceTransform")
-
-      NativePtr.set
-        instancedShader.Locs
-        (int ShaderLocationIndex.MatrixModel)
-        instanceTransformLoc
+      // No Locs wiring needed: forwardVertexInstanced declares `in mat4 instanceTransform`,
+      // so raylib 6.0 auto-resolves SHADER_LOC_VERTEX_INSTANCETRANSFORM at load and
+      // DrawMeshInstanced binds the per-instance VBO through it.
 
       depthShadowShader <- Shaders.loadDepthShadowShader()
       depthShadowSkinnedShader <- Shaders.loadDepthShadowSkinnedShader()
