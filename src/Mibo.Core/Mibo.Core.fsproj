@@ -37,6 +37,7 @@
     <Compile Include="Layout3D/Layout3D.fs" />
     <Compile Include="Layout3D/HexLayout3D.fs" />
     <Compile Include="Layout3D/LayeredHex3D.fs" />
+    <Compile Include="Layout3D/LayeredGrid3D.fs" />
     <Compile Include="Layout3D/Interior.fs" />
     <Compile Include="Layout3D/Terrain.fs" />
   <Compile Include="Graphics3D/Light3D.fs" />

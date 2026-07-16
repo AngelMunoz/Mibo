@@ -305,10 +305,25 @@ module internal ShadowPassHelpers =
     Bones: Matrix4x4[] voption
   }
 
+  /// A collected instanced draw for the shadow pass. Unlike individual
+  /// `MeshDraw` entries, this carries the full per-instance transform array
+  /// and renders via `DrawMeshInstanced` — one GPU draw call per entry,
+  /// not one per instance. This is critical for instanced-heavy scenes (e.g.
+  /// block-grid terrain) where unrolling would produce thousands of
+  /// individual shadow draws.
+  [<Struct>]
+  type InstancedMeshDraw = {
+    Mesh: Mesh
+    Transforms: Matrix4x4[]
+    InstanceCount: int
+  }
+
   let collectMeshDraws(buffer: RenderBuffer3D) =
     let pool = ArrayPool<MeshDraw>.Shared
+    let instPool = ArrayPool<InstancedMeshDraw>.Shared
 
     let mutable meshCount = 0
+    let mutable instancedCount = 0
     let mutable shadowsEnabled = true
     let mutable i = 0
 
@@ -323,14 +338,16 @@ module internal ShadowPassHelpers =
         meshCount <- meshCount + model.MeshCount
       | Command3D.DrawModelWith(model, _, _) when shadowsEnabled ->
         meshCount <- meshCount + model.MeshCount
-      | Command3D.DrawMeshInstanced(_, _, _, instanceCount) when shadowsEnabled ->
-        meshCount <- meshCount + instanceCount
+      | Command3D.DrawMeshInstanced _ when shadowsEnabled ->
+        instancedCount <- instancedCount + 1
       | _ -> ()
 
       i <- i + 1
 
     let arr = pool.Rent(max meshCount 1)
+    let instArr = instPool.Rent(max instancedCount 1)
     let mutable count = 0
+    let mutable icount = 0
     let mutable skinnedStart = count
     shadowsEnabled <- true
     i <- 0
@@ -380,14 +397,13 @@ module internal ShadowPassHelpers =
       | Command3D.DrawMeshInstanced(mesh, transforms, _, instanceCount) when
         shadowsEnabled
         ->
-        for ti = 0 to instanceCount - 1 do
-          arr[count] <- {
-            Mesh = mesh
-            Transform = transforms[ti]
-            Bones = ValueNone
-          }
+        instArr[icount] <- {
+          Mesh = mesh
+          Transforms = transforms
+          InstanceCount = instanceCount
+        }
 
-          count <- count + 1
+        icount <- icount + 1
       | _ -> ()
 
       i <- i + 1
@@ -415,7 +431,7 @@ module internal ShadowPassHelpers =
         writeIdx <- writeIdx + 1
       | ValueNone -> ()
 
-    struct (arr, count, skinnedStart)
+    struct (arr, count, skinnedStart, instArr, icount)
 
   /// <summary>
   /// Register shadow casters for every shadow-casting light. Returns:
@@ -1449,6 +1465,7 @@ module internal PipelineFunctions =
 
   /// Render all mesh draws into a single shadow atlas region.
   /// Draws are partitioned: [0..skinnedStart) are non-skinned, [skinnedStart..meshDrawCount) are skinned.
+  /// Instanced draws are rendered separately via `DrawMeshInstanced` (one GPU call per entry).
   let renderShadowRegion
     (
       shadowAtlas: ShadowAtlas,
@@ -1457,7 +1474,9 @@ module internal PipelineFunctions =
       resources: inref<ShadowDepthResources>,
       meshDraws: MeshDraw[],
       meshDrawCount: int,
-      skinnedStart: int
+      skinnedStart: int,
+      instancedDraws: InstancedMeshDraw[],
+      instancedDrawCount: int
     ) =
     shadowAtlas.GetRegionViewport(regionIndex)
     Raylib.BeginMode3D(camera)
@@ -1526,6 +1545,22 @@ module internal PipelineFunctions =
 
         Raylib.EndShaderMode()
 
+    // ── Instanced batch: one DrawMeshInstanced per entry ──
+    if instancedDrawCount > 0 then
+      Raylib.BeginShaderMode resources.Shader
+
+      for i = 0 to instancedDrawCount - 1 do
+        let draw = instancedDraws[i]
+
+        Raylib.DrawMeshInstanced(
+          draw.Mesh,
+          resources.Material,
+          draw.Transforms,
+          draw.InstanceCount
+        )
+
+      Raylib.EndShaderMode()
+
     Raylib.EndMode3D()
 
   /// Render the shadow pass — collect casters, render regions to atlas.
@@ -1538,6 +1573,8 @@ module internal PipelineFunctions =
       meshDraws: MeshDraw[],
       meshDrawCount: int,
       skinnedStart: int,
+      instancedDraws: InstancedMeshDraw[],
+      instancedDrawCount: int,
       frameState: inref<FrameState>,
       gameCtx: GameContext
     ) =
@@ -1612,7 +1649,9 @@ module internal PipelineFunctions =
                     &resources,
                     meshDraws,
                     meshDrawCount,
-                    skinnedStart
+                    skinnedStart,
+                    instancedDraws,
+                    instancedDrawCount
                   )
 
                 | ShadowCasterType.Spot ->
@@ -1641,7 +1680,9 @@ module internal PipelineFunctions =
                     &resources,
                     meshDraws,
                     meshDrawCount,
-                    skinnedStart
+                    skinnedStart,
+                    instancedDraws,
+                    instancedDrawCount
                   )
 
                 | _ ->
@@ -1663,7 +1704,9 @@ module internal PipelineFunctions =
                     &resources,
                     meshDraws,
                     meshDrawCount,
-                    skinnedStart
+                    skinnedStart,
+                    instancedDraws,
+                    instancedDrawCount
                   )
 
                   Rlgl.SetClipPlanes(prevNear, prevFar)
@@ -2278,7 +2321,8 @@ type ForwardPipelineBase
       skinned.LightsDirty <- true
 
       // Shadow pass — render all casters into the atlas
-      let struct (meshDraws, meshDrawCount, skinnedStart) =
+      let struct (meshDraws, meshDrawCount, skinnedStart, instancedDraws,
+                  instancedDrawCount) =
         collectMeshDraws buffer
 
       let shadowResources = {
@@ -2303,6 +2347,8 @@ type ForwardPipelineBase
             meshDraws,
             meshDrawCount,
             skinnedStart,
+            instancedDraws,
+            instancedDrawCount,
             &frameState,
             gameCtx
           )
@@ -2312,6 +2358,7 @@ type ForwardPipelineBase
         spotShadowSlots <- spSlots
       finally
         ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
+        ArrayPool<InstancedMeshDraw>.Shared.Return(instancedDraws, false)
 
       // Upload shadow atlas uniforms to all shaders
       match frameState.Camera with
