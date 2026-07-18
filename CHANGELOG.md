@@ -2,9 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- **MonoGame:** pre-compiled shader variants for DirectX 12 (`.dx12.mgfx`) and Vulkan (`.vk.mgfx`) now ship alongside the existing DirectX 11 and OpenGL variants. `ShaderLoader` routes to the correct variant based on `PlatformInfo.GraphicsBackend`, so games running on the new native backends load matching shaders automatically. All five effects (`LitSprite`, `LitSpriteNormalMap`, `Instanced`, `ForwardPbr`, `DepthShadow`) compile for all four profiles.
+
 ### Changed
 
 - **MonoGame — Breaking:** `Mibo.MonoGame` now builds against MonoGame 3.8.5 (`MonoGame.Framework.Native` 3.8.5, up from 3.8.4.1). Consumers must update their MonoGame host/runtime packages to 3.8.5 to match; mixing 3.8.4.1 host packages with this version fails to load the backend types at runtime.
+
+### Fixed
+
+- **MonoGame 3D:** instanced draws no longer render garbage or flicker on the DirectX 12 backend. The per-instance world-matrix buffer is now a dynamic vertex buffer, so each instanced draw keeps its own matrices; previously, staging several instance groups per frame could make every draw read the last group's data, showing terrain chunks and repeated models in the wrong place or not at all depending on the camera angle.
 
 ## [2.2.0] - 2026-07-16
 

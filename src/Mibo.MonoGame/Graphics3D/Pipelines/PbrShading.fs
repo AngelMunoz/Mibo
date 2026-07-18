@@ -547,10 +547,17 @@ module internal PbrShading =
       for i = 0 to instanceCount - 1 do
         res.InstanceStaging[i] <- VertexInstanceWorld.Create transforms[i]
 
+      // NOTE: this buffer must stay a DynamicVertexBuffer. It is re-uploaded once
+      // per instance group within a single frame; on the native DX12 backend,
+      // SetData on a *static* buffer is recorded into a separate command list that
+      // executes immediately, while draws execute at end of frame — so every draw
+      // would read the LAST group's matrices (garbage/flickering instances).
+      // Dynamic buffers take the discard-rename path (fresh buffer per upload),
+      // which keeps each draw's instance data intact.
       match res.InstanceVertexBuffer with
       | ValueNone ->
         let vb =
-          new VertexBuffer(
+          new DynamicVertexBuffer(
             gd,
             typeof<VertexInstanceWorld>,
             instanceCount,
@@ -562,7 +569,7 @@ module internal PbrShading =
         vb.Dispose()
 
         let vb' =
-          new VertexBuffer(
+          new DynamicVertexBuffer(
             gd,
             typeof<VertexInstanceWorld>,
             instanceCount,
