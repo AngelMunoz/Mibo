@@ -35,7 +35,7 @@ Both backends ship the same rendering surface: a 2D batch renderer and a 3D **Fo
 
 ## Getting Started
 
-To get started, you need the [dotnet SDK](https://get.dot.net) installed. The `Mibo.Templates` package includes raylib templates (`mibo-2d`, `mibo-3d`) and MonoGame templates (`mibo-mg-2d`, `mibo-mg-3d`, each with a shared library targeting both DesktopGL/OpenGL and WindowsDX/DirectX):
+To get started, you need the [dotnet SDK](https://get.dot.net) installed. The `Mibo.Templates` package includes raylib templates (`mibo-2d`, `mibo-3d`) and MonoGame templates (`mibo-mg-2d`, `mibo-mg-3d`, each with a shared library and DesktopGL/OpenGL, DesktopVK/Vulkan, and WindowsDX12/DirectX 12 thin clients):
 
 ```bash
 dotnet new install Mibo.Templates

@@ -640,10 +640,14 @@ module internal ShadowPass =
             res.InstanceStaging[i] <-
               VertexInstanceWorld.Create draw.Transforms[i]
 
+          // NOTE: must stay a DynamicVertexBuffer — same DX12 upload-ordering
+          // hazard as the forward pass (see PbrShading.stageInstanceData): static
+          // buffer SetData executes out of order vs draws, so instanced shadow
+          // casters would read the last group's matrices.
           match res.InstanceVertexBuffer with
           | ValueNone ->
             let vb =
-              new VertexBuffer(
+              new DynamicVertexBuffer(
                 gd,
                 typeof<VertexInstanceWorld>,
                 instanceCount,
@@ -655,7 +659,7 @@ module internal ShadowPass =
             vb.Dispose()
 
             let vb' =
-              new VertexBuffer(
+              new DynamicVertexBuffer(
                 gd,
                 typeof<VertexInstanceWorld>,
                 instanceCount,

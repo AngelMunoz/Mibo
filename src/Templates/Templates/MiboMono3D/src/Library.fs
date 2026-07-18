@@ -183,8 +183,8 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
 // ─────────────────────────────────────────────────────────────
 
 /// Builds the full Mibo MonoGame program with the content root configured for the
-/// MonoGame content pipeline. The thin client projects (DesktopGL, WindowsDX)
-/// pass this directly to MiboGame.
+/// MonoGame content pipeline. The thin client projects (DesktopGL, DesktopVK,
+/// WindowsDX12) pass this directly to MiboGame.
 let create() : MonoGameProgram<Model, Msg> =
   Program.mkProgram init update
   |> Program.withConfig(fun cfg -> {

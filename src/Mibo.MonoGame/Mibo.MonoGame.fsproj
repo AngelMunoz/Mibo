@@ -53,14 +53,24 @@
     <Compile Include="Graphics2D/Lighting/Particle.fs" />
     <EmbeddedResource Include="Shaders\LitSprite.dx.mgfx" />
     <EmbeddedResource Include="Shaders\LitSprite.ogl.mgfx" />
+    <EmbeddedResource Include="Shaders\LitSprite.dx12.mgfx" />
+    <EmbeddedResource Include="Shaders\LitSprite.vk.mgfx" />
     <EmbeddedResource Include="Shaders\LitSpriteNormalMap.dx.mgfx" />
     <EmbeddedResource Include="Shaders\LitSpriteNormalMap.ogl.mgfx" />
+    <EmbeddedResource Include="Shaders\LitSpriteNormalMap.dx12.mgfx" />
+    <EmbeddedResource Include="Shaders\LitSpriteNormalMap.vk.mgfx" />
     <EmbeddedResource Include="Shaders\Instanced.dx.mgfx" />
     <EmbeddedResource Include="Shaders\Instanced.ogl.mgfx" />
+    <EmbeddedResource Include="Shaders\Instanced.dx12.mgfx" />
+    <EmbeddedResource Include="Shaders\Instanced.vk.mgfx" />
     <EmbeddedResource Include="Shaders\ForwardPbr.dx.mgfx" />
     <EmbeddedResource Include="Shaders\ForwardPbr.ogl.mgfx" />
+    <EmbeddedResource Include="Shaders\ForwardPbr.dx12.mgfx" />
+    <EmbeddedResource Include="Shaders\ForwardPbr.vk.mgfx" />
     <EmbeddedResource Include="Shaders\DepthShadow.dx.mgfx" />
     <EmbeddedResource Include="Shaders\DepthShadow.ogl.mgfx" />
+    <EmbeddedResource Include="Shaders\DepthShadow.dx12.mgfx" />
+    <EmbeddedResource Include="Shaders\DepthShadow.vk.mgfx" />
     <None Include="Shaders\*.fx" CopyToOutputDirectory="Never" />
   </ItemGroup>
 
@@ -69,7 +79,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="MonoGame.Framework.Native" Version="3.8.4.1" PrivateAssets="all" />
+    <PackageReference Include="MonoGame.Framework.Native" Version="3.8.5" PrivateAssets="all" />
     <PackageReference Include="FSharp.UMX" Version="1.1.0" />
     <PackageReference Include="AssimpNetter" Version="6.0.4"/>
     <PackageReference Include="Ionide.KeepAChangelog.Tasks" Version="0.3.3" PrivateAssets="all" />
