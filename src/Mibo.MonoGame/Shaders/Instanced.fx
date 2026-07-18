@@ -1,6 +1,9 @@
 #if OPENGL
   #define VS_SHADERMODEL vs_3_0
   #define PS_SHADERMODEL ps_3_0
+#elif defined(SM6)
+  #define VS_SHADERMODEL vs_6_0
+  #define PS_SHADERMODEL ps_6_0
 #else
   #define VS_SHADERMODEL vs_5_0
   #define PS_SHADERMODEL ps_5_0
@@ -39,26 +42,20 @@ struct VS_INPUT {
 };
 
 struct VS_OUTPUT {
-  float4 Position : POSITION0;
+  float4 Position : SV_POSITION;
   float3 Normal   : TEXCOORD0;
 };
 
 VS_OUTPUT VS_Main(VS_INPUT input) {
   VS_OUTPUT output;
-  // Reassemble the per-instance world matrix (row-vector convention).
-  float4x4 world = {
-    input.WorldRow0,
-    input.WorldRow1,
-    input.WorldRow2,
-    input.WorldRow3
-  };
+  float4x4 world = float4x4(input.WorldRow0, input.WorldRow1, input.WorldRow2, input.WorldRow3);
   output.Position = mul(mul(input.Position, world), ViewProj);
   // Normal: transform by world (ignore translation/skew for this flat-lit pass).
   output.Normal = mul(input.Normal, (float3x3)world);
   return output;
 }
 
-float4 PS_Main(VS_OUTPUT input) : COLOR0 {
+float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
   float3 N = normalize(input.Normal);
   float3 L = normalize(-DirLightDir);
   float diffuse = max(dot(N, L), 0.0);

@@ -2,6 +2,10 @@
   #define VS_SHADERMODEL vs_3_0
   #define PS_SHADERMODEL ps_3_0
   #define MAX_OCCLUDERS 32
+#elif defined(SM6)
+  #define VS_SHADERMODEL vs_6_0
+  #define PS_SHADERMODEL ps_6_0
+  #define MAX_OCCLUDERS 128
 #else
   #define VS_SHADERMODEL vs_5_0
   #define PS_SHADERMODEL ps_5_0
@@ -11,8 +15,17 @@
 #define MAX_DIR_LIGHTS 4
 #define MAX_POINT_LIGHTS 16
 
+// Cross-profile texture/sampler declarations (see ForwardPbr.fx for rationale).
+#if OPENGL
+  #define DECLARE_TEX(name, slot) sampler2D name : register(s##slot)
+  #define SAMPLE_TEX(name, uv) tex2D(name, uv)
+#else
+  #define DECLARE_TEX(name, slot) Texture2D name : register(t##slot); SamplerState name##Sampler : register(s##slot)
+  #define SAMPLE_TEX(name, uv) name.Sample(name##Sampler, uv)
+#endif
+
 float4x4 MatrixTransform;
-sampler2D Texture : register(s0);
+DECLARE_TEX(Texture, 0);
 
 float3 AmbientColor;
 
@@ -42,7 +55,7 @@ struct VS_INPUT {
 };
 
 struct VS_OUTPUT {
-  float4 Position : POSITION0;
+  float4 Position : SV_POSITION;
   float4 Color    : COLOR0;
   float2 TexCoord : TEXCOORD0;
   float2 WorldPos : TEXCOORD1;
@@ -96,8 +109,8 @@ float sampleShadow(float2 worldPos, float2 lightDirOrPos, bool isDirectional, fl
   return clamp(res, 0.0, 1.0);
 }
 
-float4 PS_Main(VS_OUTPUT input) : COLOR0 {
-  float4 texColor = tex2D(Texture, input.TexCoord) * input.Color;
+float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
+  float4 texColor = SAMPLE_TEX(Texture, input.TexCoord) * input.Color;
   float3 lighting = AmbientColor;
 
   [loop]

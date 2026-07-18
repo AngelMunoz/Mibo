@@ -12,13 +12,13 @@ open MonoGame.Framework.Utilities
 /// </summary>
 /// <remarks>
 /// <para>
-/// The Mibo.MonoGame.fsproj embeds four compiled shader variants:
-/// <c>LitSprite.dx.mgfx</c>, <c>LitSprite.ogl.mgfx</c>,
-/// <c>LitSpriteNormalMap.dx.mgfx</c>, <c>LitSpriteNormalMap.ogl.mgfx</c>.
+/// The Mibo.MonoGame.fsproj embeds compiled shader variants for four backends:
+/// <c>.dx.mgfx</c> (DirectX 11), <c>.dx12.mgfx</c> (DirectX 12),
+/// <c>.ogl.mgfx</c> (OpenGL), and <c>.vk.mgfx</c> (Vulkan).
 /// </para>
 /// <para>
-/// Platform detection uses <c>MonoGame.Framework.Utilities.PlatformInfo.MonoGamePlatform</c>
-/// to pick the DirectX (<c>.dx.mgfx</c>) or OpenGL (<c>.ogl.mgfx</c>) variant.
+/// Platform detection uses <c>MonoGame.Framework.Utilities.PlatformInfo.GraphicsBackend</c>
+/// to pick the appropriate variant.
 /// </para>
 /// <para>
 /// Compiled shader bytes are cached; a new <c>Effect</c> is instantiated per
@@ -32,12 +32,12 @@ module ShaderLoader =
 
   let private backendSuffix() =
     match PlatformInfo.GraphicsBackend with
-    | GraphicsBackend.DirectX
-    | GraphicsBackend.DirectX12 -> ".dx.mgfx"
+    | GraphicsBackend.DirectX -> ".dx.mgfx"
+    | GraphicsBackend.DirectX12 -> ".dx12.mgfx"
     | GraphicsBackend.OpenGL -> ".ogl.mgfx"
-    | GraphicsBackend.Vulkan
+    | GraphicsBackend.Vulkan -> ".vk.mgfx"
     | GraphicsBackend.Metal
-    | _ -> failwith "Vulkan, Metal and others are not supported at this time."
+    | _ -> failwith "Metal and others are not supported at this time."
 
   let private tryReadResource(name: string, suffix: string) : byte[] voption =
     let fullName = sprintf "Mibo.MonoGame.Shaders.%s%s" name suffix

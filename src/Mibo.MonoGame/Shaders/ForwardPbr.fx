@@ -13,6 +13,9 @@
 #if OPENGL
   #define VS_SHADERMODEL vs_3_0
   #define PS_SHADERMODEL ps_3_0
+#elif defined(SM6)
+  #define VS_SHADERMODEL vs_6_0
+  #define PS_SHADERMODEL ps_6_0
 #else
   #define VS_SHADERMODEL vs_5_0
   #define PS_SHADERMODEL ps_5_0
@@ -23,14 +26,27 @@
 #define MAX_BONES 128
 
 // ------------------------------------------------------------------
-// Samplers + scalars (mirror canonical uniform names; F# uploads by name)
+// Cross-profile texture/sampler declarations.
+// mgfxc defines: OPENGL (OGL), HLSL (DX11), HLSL+SM6 (DX12), VULKAN+SM6 (Vulkan).
+// OpenGL uses legacy sampler2D + tex2D/tex2Dlod (mojo shader pipeline).
+// DX11/DX12/Vulkan use Texture2D + SamplerState + .Sample()/.SampleLevel().
+// The texture parameter name stays constant so F# EffectParameter lookups work everywhere.
 // ------------------------------------------------------------------
+#if OPENGL
+  #define DECLARE_TEX(name, slot) sampler2D name : register(s##slot)
+  #define SAMPLE_TEX(name, uv) tex2D(name, uv)
+  #define SAMPLE_TEX_LOD(name, uv, lod) tex2Dlod(name, float4(uv, 0.0, lod))
+#else
+  #define DECLARE_TEX(name, slot) Texture2D name : register(t##slot); SamplerState name##Sampler : register(s##slot)
+  #define SAMPLE_TEX(name, uv) name.Sample(name##Sampler, uv)
+  #define SAMPLE_TEX_LOD(name, uv, lod) name.SampleLevel(name##Sampler, uv, lod)
+#endif
 
-sampler2D texture0 : register(s0); // albedo
-sampler2D texture1 : register(s1); // roughness
-sampler2D texture2 : register(s2); // normal
-sampler2D texture3 : register(s3); // metallic
-sampler2D texture4 : register(s4); // emission
+DECLARE_TEX(texture0, 0); // albedo
+DECLARE_TEX(texture1, 1); // roughness
+DECLARE_TEX(texture2, 2); // normal
+DECLARE_TEX(texture3, 3); // metallic
+DECLARE_TEX(texture4, 4); // emission
 
 float4 albedoColor;
 float roughness;
@@ -81,6 +97,7 @@ float3 cameraPos;
 
 #define MAX_SHADOW_CASTERS 16
 
+#if OPENGL
 sampler2D shadowAtlas : register(s5) = sampler_state {
   AddressU = Clamp;
   AddressV = Clamp;
@@ -88,6 +105,9 @@ sampler2D shadowAtlas : register(s5) = sampler_state {
   MagFilter = Point;
   MipFilter = Point;
 };
+#else
+DECLARE_TEX(shadowAtlas, 5);
+#endif
 float4x4 shadowViewProjs[MAX_SHADOW_CASTERS];
 float4 shadowUVOffsets[MAX_SHADOW_CASTERS]; // xy = offset, zw = scale (atlas region remap)
 float2 shadowTexelSize;                      // 1.0 / atlas resolution (replaces textureSize)
@@ -137,7 +157,7 @@ float computeShadowAt(float3 worldPos, int casterIdx) {
       // tex2D is a gradient instruction, which SM3.0 forbids inside loops with break
       // (the point/spot light loops break on count). tex2Dlod is gradient-free.
       float2 sampleUV = atlasUV + float2(float(x), float(y)) * shadowTexelSize;
-      float d = tex2Dlod(shadowAtlas, float4(sampleUV, 0.0, 0.0)).r;
+      float d = SAMPLE_TEX_LOD(shadowAtlas, sampleUV, 0.0).r;
       shadow += (recvZ > d) ? 0.0 : 1.0;
     }
   }
@@ -266,7 +286,7 @@ float3 getNormal(float3 fragNormal, float2 uv) {
   if (useNormalMap == 0)
     return normalize(fragNormal);
 
-  float3 tangentNormal = tex2D(texture2, uv).xyz * 2.0 - 1.0;
+  float3 tangentNormal = SAMPLE_TEX(texture2, uv).xyz * 2.0 - 1.0;
   float3 N = normalize(fragNormal);
   // RH derivation (§6.2): XNA/HLSL cross matches GLSL cross, so the
   // canonical tangent fallback ports without a sign flip.
@@ -323,7 +343,7 @@ float3 calcPBR(float3 V, float3 N, float3 L, float3 radiance, float3 albedo, flo
 
 float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
   float2 uv = input.TexCoord * tiling;
-  float4 texColor = tex2D(texture0, uv) * albedoColor;
+  float4 texColor = SAMPLE_TEX(texture0, uv) * albedoColor;
   float3 albedo = texColor.rgb;
   float3 normal = getNormal(input.Normal, uv);
 
@@ -376,7 +396,7 @@ float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
     }
   }
 
-  float3 emission = emissionColor.rgb * tex2D(texture4, uv).rgb;
+  float3 emission = emissionColor.rgb * SAMPLE_TEX(texture4, uv).rgb;
   float3 result = ambient + dirResult + pointResult + spotResult + emission;
   float alpha = texColor.a * opacity;
   return float4(result, alpha);
