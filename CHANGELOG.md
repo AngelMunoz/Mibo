@@ -9,6 +9,7 @@
 ### Changed
 
 - **MonoGame — Breaking:** `Mibo.MonoGame` now builds against MonoGame 3.8.5 (`MonoGame.Framework.Native` 3.8.5, up from 3.8.4.1). Consumers must update their MonoGame host/runtime packages to 3.8.5 to match; mixing 3.8.4.1 host packages with this version fails to load the backend types at runtime.
+- **Templates:** the MonoGame templates (`mibo-mg-2d`/`mibo-mg-3d`) move to MonoGame 3.8.5 and now ship three thin clients: `DesktopGL` (OpenGL, unchanged), `DesktopVK` (Vulkan, new), and `WindowsDX12` (DirectX 12, replacing the DirectX 11 `WindowsDX` client). The mgcb dotnet tools pinned in the templates move to 3.8.5 to match. Raylib templates are unchanged.
 
 ### Fixed
 

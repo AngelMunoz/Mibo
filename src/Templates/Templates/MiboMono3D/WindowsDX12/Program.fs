@@ -1,12 +1,12 @@
-module MiboMono2D.WindowsDX.Program
+module MiboMono3D.WindowsDX12.Program
 
 open System
 open Mibo.Elmish
-open MiboMono2D
+open MiboMono3D
 
 [<EntryPoint; STAThread>]
 let main _ =
-  let mgProgram = MiboMono2D.create()
+  let mgProgram = MiboMono3D.create()
 
   use game = new MiboGame<Model, Msg>(mgProgram)
   game.Run()

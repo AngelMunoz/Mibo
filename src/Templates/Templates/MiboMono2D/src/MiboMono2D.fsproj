@@ -11,7 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="Mibo.MonoGame" Version="2.*" />
-    <PackageReference Include="MonoGame.Framework.Native" Version="3.8.4.1" PrivateAssets="all" />
+    <PackageReference Include="MonoGame.Framework.Native" Version="3.8.5" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

@@ -2,7 +2,7 @@
 
 This is a **Mibo** game project. Mibo is an Elmish-based F# game framework.
 This template targets the **MonoGame** backend (`Mibo.MonoGame`, host `MiboGame`)
-and ships **two interchangeable thin clients** sharing one library:
+and ships **three interchangeable thin clients** sharing one library:
 
 - `src/` — shared library (`Library.fs` + `MiboMono3D.fsproj`, net10.0). All
   game logic, the view, and a `create()` composition root that builds the
@@ -10,13 +10,18 @@ and ships **two interchangeable thin clients** sharing one library:
   `Mibo.MonoGame` + `MonoGame.Framework.Native` (the compile-time,
   backend-neutral types).
 - `Content/` — shared MonoGame content pipeline (`Content.mgcb`). Each thin
-  client builds it via `MonoGame.Content.Builder.Task`, so assets land in both
+  client builds it via `MonoGame.Content.Builder.Task`, so assets land in all
   clients' output.
 - `DesktopGL/` — thin client. Adds `MonoGame.Framework.DesktopGL` (**OpenGL**),
   references `../src/MiboMono3D.fsproj` and the shared content, calls
   `MiboMono3D.create()` and runs `MiboGame`.
-- `WindowsDX/` — thin client (net10.0-windows). Adds
-  `MonoGame.Framework.WindowsDX` (**DirectX**), `[<STAThread>]`,
+- `DesktopVK/` — thin client (**Vulkan**, cross-platform). Adds
+  `MonoGame.Framework.Native` + the `MonoGame.Runtime.*.Vulkan` runtime packages
+  and sets `<MonoGamePlatform>DesktopVK</MonoGamePlatform>`. Same wiring as
+  DesktopGL.
+- `WindowsDX12/` — thin client (net10.0-windows, **DirectX 12**). Adds
+  `MonoGame.Framework.Native` + `MonoGame.Runtime.Windows.DX12`, sets
+  `<MonoGamePlatform>WindowsDX12</MonoGamePlatform>`, `[<STAThread>]`,
   `app.manifest`. References `../src/MiboMono3D.fsproj` and the shared content,
   same three lines as DesktopGL.
 
@@ -48,19 +53,20 @@ Core-facing vectors explicitly and use MonoGame's native types at the draw edge.
 
 ## Project structure you must keep (cross-backend split)
 
-MonoGame's platform host packages (`...DesktopGL` and `...WindowsDX`) **cannot
-coexist in one project**. That is why there are three projects. Keep the split:
+MonoGame's platform host packages (`...DesktopGL`, the `MonoGame.Runtime.*`
+packages) **cannot coexist in one project**. That is why there are four
+projects. Keep the split:
 
 - **Game logic, model, messages, `update`, the `view`, and `create()` live in
   the shared library (`src/`) only.** They must stay backend-neutral (compile
-  against `MonoGame.Framework.Native`). Never reference `DesktopGL` or
-  `WindowsDX` from the shared lib.
+  against `MonoGame.Framework.Native`). Never reference `DesktopGL`, `DesktopVK`,
+  or `WindowsDX12` from the shared lib.
 - **Thin clients stay thin.** They only call `MiboMono3D.create()` — which
   already returns a `MonoGameProgram` with the content root
   (`Content.RootDirectory`) configured — and `new MiboGame<_,_>().Run()`. They
   no longer call `MonoGameProgram.ofProgram` themselves. Put no game logic in a
   client.
-- Both clients build from the same shared source — **do not fork logic per
+- All clients build from the same shared source — **do not fork logic per
   backend.** If you need a backend-specific service (audio, animation),
   define an interface in the shared lib (or `Mibo.Core`) and implement it once,
   injecting it through an `Env`/composition-root record like `create()` does.

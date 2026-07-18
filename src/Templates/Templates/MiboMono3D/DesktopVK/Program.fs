@@ -1,10 +1,9 @@
-module MiboMono3D.WindowsDX.Program
+module MiboMono3D.DesktopVK.Program
 
-open System
 open Mibo.Elmish
 open MiboMono3D
 
-[<EntryPoint; STAThread>]
+[<EntryPoint>]
 let main _ =
   let mgProgram = MiboMono3D.create()
 
