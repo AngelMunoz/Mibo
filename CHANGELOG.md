@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-07-18
+
 ### Added
+
+- **_Notice_**: Vulkan on windows might not render as expected. It is recommended to use DirectX either 11 or 12 rather than Vulkan there. Other platforms seem to be working as expected.
 
 - **MonoGame:** pre-compiled shader variants for DirectX 12 (`.dx12.mgfx`) and Vulkan (`.vk.mgfx`) now ship alongside the existing DirectX 11 and OpenGL variants. `ShaderLoader` routes to the correct variant based on `PlatformInfo.GraphicsBackend`, so games running on the new native backends load matching shaders automatically. All five effects (`LitSprite`, `LitSpriteNormalMap`, `Instanced`, `ForwardPbr`, `DepthShadow`) compile for all four profiles.
 
