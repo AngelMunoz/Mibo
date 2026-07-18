@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **MonoGame — Breaking:** `Mibo.MonoGame` now builds against MonoGame 3.8.5 (`MonoGame.Framework.Native` 3.8.5, up from 3.8.4.1). Consumers must update their MonoGame host/runtime packages to 3.8.5 to match; mixing 3.8.4.1 host packages with this version fails to load the backend types at runtime.
+
 ## [2.2.0] - 2026-07-16
 
 ### Added
