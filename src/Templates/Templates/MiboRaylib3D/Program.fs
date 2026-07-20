@@ -3,7 +3,9 @@ module MiboRaylib3D.Program
 open System
 open System.Numerics
 open Raylib_cs
+open Mibo
 open Mibo.Elmish
+open Mibo.Elmish.Graphics
 open Mibo.Elmish.Graphics3D
 open Mibo.Elmish.Graphics3D.Pipelines
 open Mibo.Input
@@ -150,25 +152,25 @@ let view (_ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
       model.Position.Z
     )
 
-  let material = Material3D.colored Color.Red
+  let material = Material3D.colored Raylib_cs.Color.Red
 
   buffer
-  |> Draw3D.beginCameraWith(
-    Camera3D.render camera |> Camera3D.withClear Color.RayWhite
-  )
-  |> Draw3D.setAmbientLight {
-    Color = Mibo.Color.White
-    Intensity = 0.5f
-  }
-  |> Draw3D.addDirectionalLight {
-    Direction = Vector3(1.f, -1.f, 1.f)
-    Color = Mibo.Color.White
-    Intensity = 1.f
-    CastsShadows = false
-  }
-  |> Draw3D.drawMesh Primitive3D.cube transform material
-  |> Draw3D.endCamera
-  |> Draw3D.drop
+    .beginCameraWith(
+      Camera3D.render camera |> Camera3D.withClear Raylib_cs.Color.RayWhite
+    )
+    .setAmbientLight({
+      Color = Mibo.Color.White
+      Intensity = 0.5f
+    })
+    .addDirectionalLight({
+      Direction = Vector3(1.f, -1.f, 1.f)
+      Color = Mibo.Color.White
+      Intensity = 1.f
+      CastsShadows = false
+    })
+    .mesh(Primitive3D.cube, transform, material)
+    .endCamera()
+    .drop()
 
 // ─────────────────────────────────────────────────────────────
 // Program

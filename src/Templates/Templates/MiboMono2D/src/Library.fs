@@ -1,7 +1,9 @@
 module MiboMono2D
 
 open Microsoft.Xna.Framework
+open Mibo
 open Mibo.Elmish
+open Mibo.Elmish.Graphics
 open Mibo.Elmish.Graphics2D
 open Mibo.Input
 
@@ -121,9 +123,16 @@ let update (msg: Msg) (model: Model) : struct (Model * Cmd<Msg>) =
 // ─────────────────────────────────────────────────────────────
 
 let view (_ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
-  let rect = Rectangle(int model.Position.X, int model.Position.Y, 32, 32)
-
-  buffer |> Draw.fillRect (0<RenderLayer>, Color.Red) rect |> Draw.drop
+  buffer
+    .fillRect(
+      float32 model.Position.X,
+      float32 model.Position.Y,
+      32f,
+      32f,
+      Color.Red,
+      layer = 0<RenderLayer>
+    )
+    .drop()
 
 // ─────────────────────────────────────────────────────────────
 // Program

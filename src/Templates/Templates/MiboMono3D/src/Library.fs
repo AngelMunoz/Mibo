@@ -4,6 +4,7 @@ open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo
 open Mibo.Elmish
+open Mibo.Elmish.Graphics
 open Mibo.Elmish.Graphics3D
 open Mibo.Elmish.Graphics3D.Pipelines
 open Mibo.Input
@@ -160,23 +161,23 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
   let material = Material3D.colored Microsoft.Xna.Framework.Color.Red
 
   buffer
-  |> Draw3D.beginCameraWith(
-    Camera3D.render camera
-    |> Camera3D.withClear Microsoft.Xna.Framework.Color.White
-  )
-  |> Draw3D.setAmbientLight {
-    Color = Mibo.Color.White
-    Intensity = 0.5f
-  }
-  |> Draw3D.addDirectionalLight {
-    Direction = System.Numerics.Vector3(1.f, -1.f, 1.f)
-    Color = Mibo.Color.White
-    Intensity = 1.f
-    CastsShadows = false
-  }
-  |> Draw3D.drawPrimitive primSet.Cube transform material
-  |> Draw3D.endCamera
-  |> Draw3D.drop
+    .beginCameraWith(
+      Camera3D.render camera
+      |> Camera3D.withClear Microsoft.Xna.Framework.Color.White
+    )
+    .setAmbientLight({
+      Color = Mibo.Color.White
+      Intensity = 0.5f
+    })
+    .addDirectionalLight({
+      Direction = System.Numerics.Vector3(1.f, -1.f, 1.f)
+      Color = Mibo.Color.White
+      Intensity = 1.f
+      CastsShadows = false
+    })
+    .mesh(primSet.Cube, transform, material)
+    .endCamera()
+    .drop()
 
 // ─────────────────────────────────────────────────────────────
 // Program
