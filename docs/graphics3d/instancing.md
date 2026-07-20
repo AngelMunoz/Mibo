@@ -19,13 +19,13 @@ This is the key to rendering voxel worlds, forests, or any scene with high objec
 
 | Situation | Approach |
 |-----------|----------|
-| < 50 identical objects | `Draw3D.drawMesh` per object (simpler) |
-| 50–10,000+ identical objects | `Draw3D.drawMeshInstanced` (one draw call) |
+| < 50 identical objects | `.mesh(...)` per object (simpler) |
+| 50–10,000+ identical objects | `.instanced(...)` (one draw call) |
 | Cell grid (voxels, tiles) | `CellGridRenderer3D.renderInstanced` (automatic grouping) |
 
-## Draw3D.drawMeshInstanced
+## Instanced draws
 
-The low-level instanced draw command. You provide the mesh, an array of transforms, material, and count:
+The low-level instanced draw member. You provide the mesh, an array of transforms, material, and count:
 
 ```fsharp
 let transforms =
@@ -34,14 +34,15 @@ let transforms =
     |]
 
 buffer
-|> Draw3D.drawMeshInstanced Primitive3D.cube transforms material 100
+  .instanced(Primitive3D.cube, transforms, material, 100)
+  .drop()
 ```
 
-One draw call renders all 100 cubes.
+One draw call renders all 100 cubes. (On MonoGame, pass `prims.Cube` and `Matrix[]` transforms — the member takes your backend's mesh and matrix types.)
 
 ## InstancedRenderContext for cell grids
 
-For grid-based worlds (voxels, tile maps), `InstancedRenderContext<'T, 'K>` handles grouping and batching automatically. It groups cells by a key function, then emits one `DrawMeshInstanced` per group per sub-mesh.
+For grid-based worlds (voxels, tile maps), `InstancedRenderContext<'T, 'K>` handles grouping and batching automatically. It groups cells by a key function, then emits one instanced draw per group per sub-mesh.
 
 ### Create the context
 
@@ -77,9 +78,7 @@ Three lambda parameters:
 
 ```fsharp
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
-    buffer
-    |> Draw3D.beginCamera camera
-    |> Draw3D.setAmbientLight (AmbientLight3D.create (Color(40, 40, 40, 255)))
+    buffer.beginCamera(camera).setAmbientLight(AmbientLight3D.create (Color(40, 40, 40, 255))).drop()
     // ... lights ...
 
     // Reset pooled buffers before rendering
@@ -92,8 +91,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
     CellGridRenderer3D.renderVolumeInstanced instancedCtx viewBounds model.World buffer
 
     // ... other geometry ...
-    |> Draw3D.endCamera
-    |> Draw3D.drop
+    buffer.endCamera().drop()
 ```
 
 > _**IMPORTANT**_: Call `instancedCtx.ResetFrameBuffers()` once per frame **before** rendering. This returns pooled arrays to `ArrayPool` and prevents memory leaks.
@@ -116,7 +114,7 @@ CellGridRenderer3D.renderVolumeInstanced instancedCtx bounds model.World buffer
 1. `renderInstanced` iterates all cells in the grid.
 2. Each cell's key is computed via `getKey`.
 3. Transforms are accumulated into per-key `ResizeArray<Matrix4x4>`.
-4. After iteration, each group emits one `Command3D.DrawMeshInstanced` per sub-mesh.
+4. After iteration, each group emits one instanced draw command per sub-mesh.
 5. Arrays are rented from `ArrayPool<Matrix4x4>.Shared` to avoid GC pressure.
 
 The pipeline renders all instances of a mesh type in a single GPU draw call using the instanced shader.
@@ -125,7 +123,7 @@ The pipeline renders all instances of a mesh type in a single GPU draw call usin
 
 Instanced draws normally use the built-in PBR instanced shader. To shade them
 with your own effect — for a toon, water, fog, or other stylized look — wrap
-the instanced draw in a `Draw3D.beginEffect` / `endEffect` scope and have your
+the instanced draw in a `.beginEffect(...)` / `.endEffect()` scope and have your
 shader opt into instancing.
 
 The opt-in is by declaration, and the declaration differs by backend because
@@ -180,5 +178,5 @@ Air cells produce no draw calls. Stone, dirt, and grass each batch into one inst
 ## See also
 
 - [Overview](overview.html) — Architecture and pipeline setup
-- [Buffer & Commands](buffer-and-commands.html) — All `Draw3D.*` functions
+- [Draw DSL](../draw-dsl.html) — The fluent draw surface
 - [Materials](materials.html) — PBR material system

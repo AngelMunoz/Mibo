@@ -5,9 +5,10 @@ categoryindex: 5
 index: 22
 ---
 
+
 # 3D Lighting
 
-The built-in forward pipelines support four light types with Cook-Torrance PBR shading. Lights are added per-frame via `Draw3D.*` commands inside your view function. (On raylib the pipeline is `ForwardPbrPipeline`; on MonoGame it is `ForwardPipeline`.)
+The built-in forward pipelines support four light types with Cook-Torrance PBR shading. Lights are added per-frame via fluent members inside your view function. (On raylib the pipeline is `ForwardPbrPipeline`; on MonoGame it is `ForwardPipeline`.)
 
 ## What and Why
 
@@ -23,29 +24,29 @@ All lights are struct types with builder functions. The pipeline uploads them as
 ```fsharp
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
     buffer
-    |> Draw3D.beginCamera camera
-    // Ambient
-    |> Draw3D.setAmbientLight (AmbientLight3D.create (Color(30, 30, 30, 255)))
-    // Directional (sun)
-    |> Draw3D.addDirectionalLight (
+      .beginCamera(camera)
+      // Ambient
+      .setAmbientLight(AmbientLight3D.create (Color(30, 30, 30, 255)))
+      // Directional (sun)
+      .addDirectionalLight(
         DirectionalLight3D.create (Vector3(0.3f, -0.7f, -0.5f))
         |> DirectionalLight3D.withIntensity 0.8f
-    )
-    // Point light (torch)
-    |> Draw3D.addPointLight (
+      )
+      // Point light (torch)
+      .addPointLight(
         PointLight3D.create (torchPos, 10f)
         |> PointLight3D.withColor Color.Orange
         |> PointLight3D.withIntensity 1.5f
         |> PointLight3D.withCastsShadows true
-    )
-    // Spot light (flashlight)
-    |> Draw3D.addSpotLight (
+      )
+      // Spot light (flashlight)
+      .addSpotLight(
         SpotLight3D.create (camPos, camDir, 20f)
         |> SpotLight3D.withIntensity 2.0f
-    )
-    |> Draw3D.drawModel model.PlayerModel model.PlayerTransform
-    |> Draw3D.endCamera
-    |> Draw3D.drop
+      )
+      .model(model.PlayerModel, model.PlayerTransform)
+      .endCamera()
+      .drop()
 ```
 
 ## Light types
@@ -248,5 +249,5 @@ let pipeline = ForwardPipeline(
 ## See also
 
 - [Overview](overview.html) — Architecture and pipeline setup
-- [Buffer & Commands](buffer-and-commands.html) — All `Draw3D.*` functions
+- [Buffer & Commands](buffer-and-commands.html) — The buffer pipeline pattern
 - [Materials](materials.html) — PBR material system

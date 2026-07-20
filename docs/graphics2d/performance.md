@@ -7,20 +7,25 @@ index: 17
 
 # 2D Rendering Performance
 
-## 1. Prefer `Draw.*` over `DrawImmediate`
+## 1. Prefer fluent members over `.drawImmediate(...)`
 
-The `Draw.*` DSL compiles to struct commands that the backend batches into GPU draw calls automatically. Every `DrawImmediate` call forces a batch flush (costly):
+The fluent DSL compiles to struct commands that the backend batches into GPU draw calls automatically. Every `.drawImmediate(...)` call forces a batch flush (costly):
 
 ```fsharp
 // Good: batched by the backend
 for i = 0 to 999 do
-    buffer |> Draw.fillCircle (10<RenderLayer>, Color.Red) (positions[i], 5f)
+    buffer.fillCircle(positions[i], 5f, Color.Red, layer = 10<RenderLayer>).drop()
 
 // Bad: one batch flush per call
 for i = 0 to 999 do
-    buffer |> Draw.drawImmediate 10<RenderLayer> (fun () ->
-        // raw backend draw (e.g. raylib Raylib.DrawCircleV, or MonoGame device draw)
-        ())
+    buffer
+      .drawImmediate(
+        (fun () ->
+          // raw backend draw (e.g. raylib Raylib.DrawCircleV, or MonoGame device draw)
+          ()),
+        layer = 10<RenderLayer>
+      )
+      .drop()
 ```
 
 ## 2. Group commands by layer
@@ -38,31 +43,24 @@ let groundLayer2 = 11<RenderLayer>
 let groundLayer3 = 12<RenderLayer>
 ```
 
-## 3. Use partial application for repeated styling
+## 3. Bind common arguments for repeated draws
 
-Bind style parameters once rather than passing them repeatedly:
+Bind a partially-applied call once rather than passing every argument repeatedly:
 
 ```fsharp
-// Good: partial application
-let drawHealthBar = Draw.fillRect (10<RenderLayer>, Color.Red)
-for hp in healthBars do
-    buffer |> drawHealthBar hp.Rect
+// Good: bind texture once, reuse across the batch
+let tile = fun dest -> buffer.sprite(SpriteState.create(atlas, dest, src))
+for t in visibleTiles do
+    tile t.Dest |> ignore
 
-// Less good: repeated tuples
-for hp in healthBars do
-    buffer |> Draw.fillRect (10<RenderLayer>, Color.Red) hp.Rect
+// Less good: rebuild the record every iteration
+for t in visibleTiles do
+    buffer.sprite(SpriteState.create(atlas, t.Dest, src)) |> ignore
 ```
 
 ## 4. Struct commands are already zero-allocation
 
-`Command2D` is a `[<Struct>]` discriminated union — every command is stack-allocated with no heap pressure. For custom rendering logic, use `DrawImmediate` which is also zero-allocation:
-
-```fsharp
-// Good: DrawImmediate is zero-allocation
-buffer |> Draw.drawImmediate 10<RenderLayer> (fun () ->
-    // raw backend draw (e.g. raylib Raylib.DrawCircleV, or a MonoGame device draw)
-    ())
-```
+`Command2D` is a `[<Struct>]` discriminated union — every command is stack-allocated with no heap pressure. The fluent chain itself also erases at compile time: optional parameters are struct optionals, so a chain like `.fillRect(...).sprite(...).endCamera()` leaves no trace at runtime beyond the commands it writes.
 
 ## 5. Minimize state-switching commands
 
@@ -71,10 +69,11 @@ Commands like `setBlend`, `setSamplerState`, `setScissor`, `beginCamera`, and `b
 ```fsharp
 // Good: one blend switch for all additive particles
 buffer
-|> Draw.setBlend 0<RenderLayer> BlendMode.Additive
-|> Draw.fillCircle (10<RenderLayer>, Color.Yellow) (p1, 5f)
-|> Draw.fillCircle (10<RenderLayer>, Color.Yellow) (p2, 5f)
-|> Draw.setBlend 0<RenderLayer> BlendMode.Alpha
+  .setBlend(BlendMode.Additive)
+  .fillCircle(p1, 5f, Color.Yellow, layer = 10<RenderLayer>)
+  .fillCircle(p2, 5f, Color.Yellow, layer = 10<RenderLayer>)
+  .setBlend(BlendMode.AlphaBlend)
+  .drop()
 ```
 
 ## 6. Share textures and fonts
@@ -85,14 +84,14 @@ The backend's internal batching is most efficient when consecutive draw calls us
 
 Tiles sampled from a gutterless spritesheet (no padding between tiles) bleed at the edges under linear filtering, producing dark seams between abutting tiles.
 
-**MonoGame:** use `Draw.setSamplerState layer SamplerState.PointClamp` for the tile draws — point filtering reads exact texels, so there's no bleed. Note it flushes the batch, so group tile draws together. Alternatively, inset each tile's source rectangle by 1px.
+**MonoGame:** use `.setSamplerState(SamplerState.PointClamp)` for the tile draws — point filtering reads exact texels, so there's no bleed. Note it flushes the batch, so group tile draws together. Alternatively, inset each tile's source rectangle by 1px.
 
 ```fsharp
 // Point filtering stops adjacent tiles from bleeding into each other.
-buffer |> Draw.setSamplerState 0<RenderLayer> SamplerState.PointClamp
+buffer.setSamplerState(SamplerState.PointClamp).drop()
 
 for tile in visibleTiles do
-    buffer |> Draw.sprite (SpriteState.create (atlas, tile.Dest, tile.Src)) |> ignore
+    buffer.sprite(SpriteState.create(atlas, tile.Dest, tile.Src)).drop()
 ```
 
 **raylib:** there is no per-draw sampler — a texture's filter is set on the texture itself. Use the `Texture.filter` helper once at load time (e.g. `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point`), or inset source rectangles by 1px.
@@ -110,7 +109,7 @@ let viewBounds = Camera2D.viewportBounds camera viewportWidth viewportHeight
 
 for entity in entities do
     if Culling.isVisible2D viewBounds entity.Bounds then
-        buffer |> Draw.sprite { ... }
+        buffer.sprite(entity.Sprite).drop()
 ```
 
 See [Culling](../culling.html).
@@ -120,6 +119,6 @@ See [Culling](../culling.html).
 If you suspect a rendering bottleneck:
 
 - Reduce command count to isolate the issue
-- Check for unintended `DrawImmediate` calls
+- Check for unintended `.drawImmediate(...)` calls
 - Verify layer count is reasonable
 - Use your backend's built-in profiling or a GPU debugger to check draw-call count

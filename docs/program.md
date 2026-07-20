@@ -126,7 +126,7 @@ The `Program` builder is in `Mibo.Core`, but a few pieces are backend-specific:
 
 `withInputMapper` is the only builder that cannot live in Core, because it instantiates the backend's `IInputMapper` implementation. If you prefer to stay fully "Elmish" (no service access), use the backend-neutral `InputMapper.subscribe` instead and handle a single message.
 
-> _**TIP**_: The `Draw.drawImmediate` escape hatch (raylib) and custom `IRenderCommand2D` serve the same role as raw backend integration points when you need GPU work outside the deferred command buffer.
+> _**TIP**_: The `.drawImmediate(...)` escape hatch and custom render commands serve the same role as raw backend integration points when you need GPU work outside the deferred command buffer.
 
 ---
 

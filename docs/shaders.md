@@ -143,11 +143,11 @@ myEffect.Parameters.["world"].SetValue(worldMatrix)
 
 How you opt in with your own shading depends on the backend:
 
-**raylib (3D)** — `Draw3D.drawImmediate` runs raw rlgl/raylib calls (the pipeline's shader is bypassed for those draws). For a full custom pipeline, implement `IRenderPipeline3D`.
+**Shading scopes (both backends)** — `.beginEffect(shader)` / `.endEffect()` opens a scope where draws are shaded by your shader (raylib `Shader` / MonoGame `Effect`) instead of the default PBR shader, *inheriting* the scene data the pipeline gathered (camera matrices, lights, the shadow pass output, material, bones, frame time). Your shader only needs to declare the uniforms it consumes (e.g. `dirLightDir`, `boneMatrices`, `shadowViewProjs`, `shadowAtlas`, `time`); absent uniforms are skipped. Ideal for toon/cel/wireframe without re-implementing the gather.
 
-**MonoGame (3D)** — two opt-in paths (no raylib equivalent):
-- `Draw3D.beginEffect effect` / `Draw3D.endEffect` — a **shading scope**: draws inside are shaded by your `Effect`, which *inherits* the scene data the pipeline gathered (camera matrices, lights, the shadow pass output, material, bones, frame time). Your effect only needs to declare the uniforms it consumes (e.g. `dirLightDir`, `boneMatrices`, `shadowViewProjs`, `shadowAtlas`, `time`); absent uniforms are skipped. Ideal for toon/cel/wireframe without re-implementing the gather.
-- `Draw3D.drawMeshEffect meshPart transform effect` — a fully user-owned effect (the pipeline sets only World/View/Projection; you own all lighting/material params).
+**MonoGame only** — a per-mesh-part effect draw: the pipeline sets only World/View/Projection; you own all lighting/material params.
+
+**Raw access** — `.drawImmediate(...)` runs raw backend calls (rlgl/raylib, or MonoGame device access via `SceneContext`); the pipeline's shader is bypassed for those draws. For a full custom pipeline, implement `IRenderPipeline3D`.
 
 See [3D Rendering Overview](graphics3d/overview.html#escape-hatches) for examples.
 
@@ -204,7 +204,7 @@ let setShaderVec4 (shader: Shader) (loc: int) (value: Vector4) =
 
 ## Post-process shaders
 
-Post-process passes (`Draw3D.postProcess` / `Draw3D.postProcessWithDepth`) run after
+Post-process passes (`.postProcess(...)` / `.postProcessWithDepth(...)`) run after
 the scene renders to an offscreen target. Your action receives a
 `PostProcessContext3D` and must draw a fullscreen quad of `ctx.Source`. See
 [3D Rendering → Post-processing](graphics3d/overview.html#post-processing) for the

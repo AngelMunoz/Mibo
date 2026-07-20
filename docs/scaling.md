@@ -45,9 +45,10 @@ let update msg model =
     | Teleport pos -> { model with Position = pos }, Cmd.none
 
 let view ctx model (buffer: RenderBuffer2D) =
-    // Deferred sprite draw via the Draw.* DSL (same shape on every backend)
+    // Deferred sprite draw via the fluent DSL (same shape on every backend)
     buffer
-    |> Draw.sprite (SpriteState.create(texture, Rectangle(model.Position.X, model.Position.Y, 32f, 32f), Rectangle(0f, 0f, 32f, 32f)))
+      .sprite(SpriteState.create(texture, Rectangle(model.Position.X, model.Position.Y, 32f, 32f), Rectangle(0f, 0f, 32f, 32f)))
+      .drop()
 ```
 
 ## Level 1 — Add semantic input

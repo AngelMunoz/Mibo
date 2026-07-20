@@ -7,7 +7,7 @@ index: 22
 
 # Animation (2D Sprite Animation)
 
-Mibo provides a format-agnostic 2D animation system in `Mibo.Animation`. It integrates with the existing `Draw.sprite` / `LightDraw.litSprite` rendering pipeline.
+Mibo provides a format-agnostic 2D animation system in `Mibo.Animation`. It integrates with the `.sprite(...)` / `.litSprite(...)` rendering pipeline.
 
 ## Core Types
 
@@ -35,13 +35,10 @@ let sprite = AnimatedSprite.create sheet "idle"
 // 3. Update each frame (in your animation system)
 let updatedSprite = AnimatedSprite.update deltaTime sprite
 
-// 4. Draw (in your view)
-let src = AnimatedSprite.currentSource sprite
-buffer |> Draw.sprite {
-    Texture = sheet.Texture; Dest = r (int position.X) (int position.Y) 32 32
-    Source = src; Origin = Vector2.Zero; Rotation = 0f
-    Color = Color.White; Layer = 0<RenderLayer>
-}
+// 4. Draw (in your view) — lit path: pass the AnimatedSprite directly
+buffer
+  .litAnimatedSprite(lighting, Rectangle(position.X, position.Y, 32f, 32f), sprite, layer = 10<RenderLayer>)
+  .drop()
 ```
 
 ## SpriteSheet Factory Functions
@@ -152,36 +149,25 @@ sprite
 
 ### Drawing
 
-`AnimatedSprite` does not provide its own draw functions. Instead, use `AnimatedSprite.currentSource` to get the current frame's source rectangle, then draw via the general `Draw.sprite` or `LightDraw.litSprite`:
+**Lit path** — `.litAnimatedSprite(...)` consumes the `AnimatedSprite` directly: it extracts the current frame's source rect, applies `FlipX`/`FlipY`, and picks up the sheet's texture and normal map:
+
+```fsharp
+buffer
+  .litAnimatedSprite(lighting, playerDest, model.PlayerSprite, layer = 20<RenderLayer>)
+  .drop()
+```
+
+**Unlit path** — use `AnimatedSprite.currentSource` to get the current frame's source rectangle, then draw a sprite record:
 
 ```fsharp
 let src = AnimatedSprite.currentSource sprite
-buffer |> Draw.sprite {
-    Texture = sprite.Sheet.Texture
-    Dest = Rectangle(int position.X, int position.Y, int src.Width, int src.Height)
-    Source = src
-    Origin = Vector2.Zero
-    Rotation = sprite.Rotation
-    Color = sprite.Color
-    Layer = layer
-}
-```
 
-### Manual Frame Access
-
-```fsharp
-let sourceRect = AnimatedSprite.currentSource sprite
-let texture = sprite.Sheet.Texture
-
-buffer.Add(layer, DrawSprite {
-    Texture = texture
-    Dest = Rectangle(position.X, position.Y, float32 sourceRect.Width, float32 sourceRect.Height)
-    Source = sourceRect
-    Origin = Vector2.Zero
-    Rotation = 0f
-    Color = Color.White
-    Layer = layer
-})
+buffer
+  .sprite(
+    SpriteState.create(sprite.Sheet.Texture, Rectangle(position.X, position.Y, 32f, 32f), src)
+    |> SpriteState.withLayer 10<RenderLayer>
+  )
+  .drop()
 ```
 
 ## Animation Type

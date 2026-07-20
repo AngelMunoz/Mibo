@@ -61,9 +61,10 @@ The view reads pre-computed values — zero computation:
 let view (ctx: GameContext) (model: GameModel) (buffer: RenderBuffer3D) =
   let l = model.Lighting
   buffer
-  |> Draw3D.beginCameraWith (Camera3D.render camera |> Camera3D.withClear l.SkyColor)
-  |> Draw3D.setAmbientLight { Color = l.SkyColor; Intensity = l.AmbientIntensity }
-  |> Draw3D.addDirectionalLight { Direction = l.LightDirection; ... }
+    .beginCameraWith(Camera3D.render camera |> Camera3D.withClear l.SkyColor)
+    .setAmbientLight { Color = l.SkyColor; Intensity = l.AmbientIntensity }
+    .addDirectionalLight { Direction = l.LightDirection; ... }
+    .drop()
 ```
 
 Systems run in order, so derived systems run after their inputs:

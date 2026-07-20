@@ -41,9 +41,10 @@ let woodMat =
     { Material3D.defaults with Roughness = 0.8f }
     |> Material3D.withAlbedoMap woodTexture
 
-// In your view:
+// In your view (MonoGame shown; raylib passes its own Mesh):
 buffer
-|> Draw3D.drawMesh Primitive3D.cube transform metalMat
+  .mesh(prims.Cube, transform, metalMat)
+  .drop()
 ```
 
 ## Material3D fields
@@ -129,7 +130,7 @@ for mesh in model.Meshes do
         let mat = Material3D.fromModelMeshPart part
 ```
 
-In both cases the `Draw3D.drawModel` function does this conversion automatically for all
+In both cases the `.model(...)` member does this conversion automatically for all
 sub-meshes — use it when you don't need per-mesh control. On MonoGame only the albedo color,
 albedo map, and opacity are extracted from native effects (normal/roughness/metallic maps are
 not carried by MonoGame's standard effects); assign the remaining PBR maps explicitly if needed.
@@ -146,8 +147,8 @@ Use for UI elements, debug markers, or anything that should appear at full brigh
 
 ## Primitive meshes
 
-Use the backend's primitive meshes with `Draw3D` for basic shapes. The mesh type differs by
-backend (raylib `Mesh` / MonoGame `PrimitiveMesh`), so the access and draw call differ:
+The backend provides primitive meshes for basic shapes. The mesh type differs by
+backend (raylib `Mesh` / MonoGame `PrimitiveMesh`), and `.mesh(...)` takes whichever yours has:
 
 | Shape | raylib | MonoGame |
 |-------|--------|----------|
@@ -161,39 +162,39 @@ backend (raylib `Mesh` / MonoGame `PrimitiveMesh`), so the access and draw call 
 ```fsharp
 // raylib:
 let transform = Matrix4x4.CreateScale(2f, 1f, 3f) * Matrix4x4.CreateTranslation(pos)
-buffer |> Draw3D.drawMesh Primitive3D.cube transform mat
+buffer.mesh(Primitive3D.cube, transform, mat).drop()
 
 // MonoGame — build the primitive set once (needs the GraphicsDevice), then draw:
 let prims = Primitive3D.create gd
 let transform = Matrix.CreateScale(2f, 1f, 3f) * Matrix.CreateTranslation(pos)
-buffer |> Draw3D.drawPrimitive prims.Cube transform mat
+buffer.mesh(prims.Cube, transform, mat).drop()
 ```
 
-> _**IMPORTANT**_: Use the pipeline's draw functions (`drawMesh`/`drawPrimitive`) instead of
-> backend-native immediate draws (e.g. `Raylib.DrawCube`). Direct native draws bypass the
-> pipeline's shader and won't receive PBR lighting or shadows.
-
-> _**IMPORTANT**_: Use `Draw3D.drawMesh` with `Primitive3D.*` instead of `Raylib.DrawCube` etc. Direct raylib draws bypass the pipeline's shader and won't receive PBR lighting or shadows.
+> _**IMPORTANT**_: Use `.mesh(...)` with these primitives instead of backend-native immediate
+> draws (e.g. `Raylib.DrawCube`). Direct native draws bypass the pipeline's shader and won't
+> receive PBR lighting or shadows.
 
 ## Overriding a model's material
 
-`Draw3D.drawModel` always renders with the material baked into the file (auto-extracted per
+`.model(...)` always renders with the material baked into the file (auto-extracted per
 sub-mesh, as described above). When you want a different material — the authored values look
 wrong, you want to reuse one mesh for several looks (gold/silver/bronze variants of the same
-model), or you need a flat/debug material — use the override helpers instead of iterating the
+model), or you need a flat/debug material — use the override members instead of iterating the
 model's meshes by hand:
 
 ```fsharp
 // Whole-model override — every sub-mesh uses the supplied material
-buffer |> Draw3D.modelWith model transform (Material3D.colored Color.Gold)
+buffer.modelWith(model, transform, Material3D.colored Color.Gold).drop()
 
 // Per-sub-mesh override — a resolver returns the material for each sub-mesh
-buffer |> Draw3D.modelWithPerMesh model transform (fun i ->
+buffer
+  .modelWithPerMesh(model, transform, fun i ->
     if i = 0 then Material3D.colored Color.Gold else Material3D.defaults)
+  .drop()
 ```
 
 The override goes through the normal PBR and shadow path, so it is lit and shadowed just like
-an authored material. The default `Draw3D.drawModel` path is unchanged — overriding is opt-in
+an authored material. The default `.model(...)` path is unchanged — overriding is opt-in
 and costs nothing when you don't use it.
 
 **Resolver index.** The `int -> Material3D` resolver is indexed by the pipeline's sub-mesh
@@ -204,20 +205,20 @@ iteration order, which differs by backend because the native model types differ:
 
 Write the resolver against your specific model's structure; it is not portable across backends.
 
-**Animated models (MonoGame only).** MonoGame's `Draw3D.drawAnimatedModel` carries no material
-(it auto-extracts per part, like `drawModel`), so the same override pair exists for it:
+**Animated models.** MonoGame's animated draw carries no material (it auto-extracts per part,
+like `.model(...)`), so the same override pair exists for it:
 
 ```fsharp
-buffer |> Draw3D.animatedModelWith animatedModel transform material
-buffer |> Draw3D.animatedModelWithPerMesh animatedModel transform resolver
+buffer.animatedModelWith(animatedModel, transform, material).drop()
+buffer.animatedModelWithPerMesh(animatedModel, transform, resolver).drop()
 ```
 
-On raylib, animated meshes are drawn with `Draw3D.drawSkinnedMesh`, which already takes a
+On raylib, explicit-palette skinned draws go through `.skinnedMesh(...)`, which already takes a
 `Material3D` directly — supply the material you want there; no separate override helper is
 needed.
 
 ## See also
 
 - [Overview](overview.html) — Architecture and pipeline setup
-- [Buffer & Commands](buffer-and-commands.html) — All `Draw3D.*` functions
+- [Draw DSL](../draw-dsl.html) — The fluent draw surface
 - [Lighting](lighting.html) — Light types and shadow configuration

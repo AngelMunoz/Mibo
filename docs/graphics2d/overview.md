@@ -14,8 +14,8 @@ The 2D rendering pipeline is a **deferred command system**: each frame, your vie
 A deferred renderer means you describe *what to draw* without worrying about *when to draw it*. The renderer handles:
 
 - **Layer ordering** — Commands are sorted by `int<RenderLayer>` so backgrounds draw before foregrounds.
-- **Camera transforms** — `Draw.beginCamera` / `Draw.endCamera` bracket world-space content.
-- **Shader modes** — `Draw.beginShader` / `Draw.endShader` enable per-section effects.
+- **Camera transforms** — `.beginCamera()` / `.endCamera()` bracket world-space content.
+- **Shader modes** — `.beginShader()` / `.endShader()` enable per-section effects.
 - **Post-processing** — Screen-space shader passes applied after the scene renders.
 - **GPU batching** — the backend auto-batches standard draw calls; the renderer never interferes.
 
@@ -30,8 +30,8 @@ This is especially useful for:
 
 | Situation | Approach |
 |-----------|----------|
-| Sprites, text, shapes, tiles | Use `Draw.*` commands (deferred) |
-| Custom GPU work (e.g. raw rlgl meshes, instancing) | Use `Draw.drawImmediate` (escape hatch) |
+| Sprites, text, shapes, tiles | Use the fluent Draw members (deferred) |
+| Custom GPU work (e.g. raw rlgl meshes, instancing) | Use `.drawImmediate(...)` (escape hatch) |
 | One-off GPU operations | Prefer deferred; use immediate only when the backend lacks the API |
 
 ## How it works
@@ -48,14 +48,9 @@ Each frame, the runtime calls `myView ctx model buffer`. Your view adds commands
 3. `buffer.Sort()` — sort by layer (ascending)
 4. Execute in order, managing camera/shader state transitions
 
-## Command API layers
+## Adding commands
 
-Two ways to add commands to the buffer:
-
-| Layer | When to use |
-|-------|-------------|
-| `Draw.*` DSL | Everyday use — pipe-friendly, supports partial application |
-| `Command2D.*` factories | When you need to store or reuse commands without a buffer |
+Everyday view code chains members of the fluent Draw DSL on the buffer — see [Draw DSL](../draw-dsl.html) for the full surface.
 
 ## Lighting
 
@@ -63,11 +58,12 @@ The 2D lighting system (`Mibo.Elmish.Graphics2D.Lighting`) provides point lights
 
 ```fsharp
 buffer
-|> LightDraw.setAmbient lightingCtx (5<RenderLayer>, { Color = gray })
-|> LightDraw.addDirectionalLight lightingCtx 6<RenderLayer> { Direction = sunDir; ... }
-|> LightDraw.addPointLight lightingCtx 7<RenderLayer> { Position = torchPos; ... }
-|> LightDraw.litSprite lightingCtx playerSprite
-|> LightDraw.endLighting lightingCtx 999<RenderLayer>
+  .setAmbient(lightingCtx, gray, layer = 5<RenderLayer>)
+  .addDirectionalLight(lightingCtx, sunDir, sunColor, intensity = 1.5f, layer = 6<RenderLayer>)
+  .addPointLight(lightingCtx, torchLight, layer = 7<RenderLayer>)
+  .litSprite(lightingCtx, playerSprite)
+  .endLighting(lightingCtx, layer = 999<RenderLayer>)
+  .drop()
 ```
 
 See [Lighting & Shadows](lighting.html) for details.
@@ -82,18 +78,20 @@ let left = Camera2D.splitScreenLeft cam1 Color.CornflowerBlue
 let right = Camera2D.splitScreenRight cam2 Color.DarkGreen
 
 buffer
-|> Draw.beginCameraWith 0<RenderLayer> left
-|> // ... left viewport ...
-|> Draw.endCamera 100<RenderLayer>
-|> Draw.beginCameraWith 200<RenderLayer> right
-|> // ... right viewport ...
-|> Draw.endCamera 300<RenderLayer>
+  .beginCameraWith(left)
+  // ... left viewport ...
+  .endCamera(layer = 100<RenderLayer>)
+  .beginCameraWith(right, layer = 200<RenderLayer>)
+  // ... right viewport ...
+  .endCamera(layer = 300<RenderLayer>)
+  .drop()
 ```
 
 `Camera2DConfig` controls viewport (normalized 0–1 coordinates) and clear color. See [Camera](../camera.html) for the full API.
 
 ## Next steps
 
+- [Draw DSL](../draw-dsl.html) — The fluent, backend-neutral draw surface (2D and 3D)
 - [Buffer & Commands](buffer-and-commands.html) — How to build every type of draw command
 - [Lighting & Shadows](lighting.html) — Point, directional, ambient lights + SDF shadows
 - [Particles](particles.html) — Batched textured quads

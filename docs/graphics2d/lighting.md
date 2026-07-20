@@ -16,7 +16,7 @@ Mibo includes a GPU-driven 2D lighting system with soft shadows using analytic S
 - **Ambient light** — Base illumination for the entire scene.
 - **Shadows** — Per-light toggle. Soft shadows via SDF sphere tracing in the pixel shader. Penumbra softness is configurable.
 - **Occluders** — Line segments that block light, cast from grid-based levels or placed manually.
-- **Lit sprites** — Textured sprites that receive lighting. Unlit sprites (`Draw.sprite`) render at full brightness.
+- **Lit sprites** — Textured sprites that receive lighting. Unlit sprites (`.sprite(...)`) render at full brightness.
 
 Everything runs on the GPU via a custom lit-sprite shader. Light data is uploaded once per frame as shader uniforms.
 
@@ -25,8 +25,8 @@ Everything runs on the GPU via a custom lit-sprite shader. Light data is uploade
 1. Create `LightContext2D` in `init`, store in your model
 2. Each frame: `ctx.Reset()` at the start of your view
 3. Set ambient light, add lights and occluders
-4. Draw lit sprites via `LightDraw.litSprite`
-5. End the lighting pass via `LightDraw.endLighting` (sprites after this are unlit)
+4. Draw lit sprites via `.litSprite(...)`
+5. End the lighting pass via `.endLighting(...)` (sprites after this are unlit)
 
 ## Setup
 
@@ -62,45 +62,44 @@ let myView (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     model.Lighting.Reset()
 
     buffer
-    // 2. Set ambient light
-    |> LightDraw.setAmbient model.Lighting (5<RenderLayer>, { Color = Color(30, 30, 30, 255) })
+      // 2. Set ambient light
+      .setAmbient(model.Lighting, Color.rgb 30uy 30uy 30uy, layer = 5<RenderLayer>)
 
-    // 3. Add directional light (sun)
-    |> LightDraw.addDirectionalLight model.Lighting 6<RenderLayer> {
-        Direction = Vector2(0.3f, -0.7f)
-        Color = Color.White
-        Intensity = 0.8f
-        CastsShadows = true
-    }
+      // 3. Add a directional light (sun) — from parts...
+      .addDirectionalLight(
+        model.Lighting,
+        Vector2(0.3f, -0.7f),
+        Color.White,
+        intensity = 0.8f,
+        castsShadows = true,
+        layer = 6<RenderLayer>
+      )
 
-    // 4. Add point lights
-    |> LightDraw.addPointLight model.Lighting 7<RenderLayer> {
-        Position = torchPos
-        Color = Color.Orange
-        Intensity = 1.0f
-        Radius = 200f
-        Falloff = 2.0f
-        CastsShadows = false
-    }
+      // 4. Add point lights — as light records...
+      .addPointLight(
+        model.Lighting,
+        { Position = torchPos
+          Color = Color.Orange
+          Intensity = 1.0f
+          Radius = 200f
+          Falloff = 2.0f
+          CastsShadows = false },
+        layer = 7<RenderLayer>
+      )
+    |> ignore
 
     // 5. Add occluders for shadow casting
     for o in model.Occluders do
-        buffer |> LightDraw.addOccluder model.Lighting 8<RenderLayer> o
+      buffer.addOccluder(model.Lighting, o, layer = 8<RenderLayer>).drop()
 
-    // 6. Draw lit sprites
-    |> LightDraw.litSprite model.Lighting {
-        Texture = tex
-        Dest = r (int x) (int y) 32 32
-        Source = r 0 0 32 32
-        Origin = Vector2.Zero; Rotation = 0f
-        Color = Color.White; Layer = 10<RenderLayer>
-    }
-
-    // 7. End lighting pass (sprites after this are unlit)
-    |> LightDraw.endLighting model.Lighting 999<RenderLayer>
-
-    // 8. Unlit HUD
-    |> Draw.text { ... with Layer = 1000<RenderLayer> }
+    buffer
+      // 6. Draw lit sprites
+      .litSprite(model.Lighting, tileSprite)
+      // 7. End lighting pass (sprites after this are unlit)
+      .endLighting(model.Lighting, layer = 999<RenderLayer>)
+      // 8. Unlit HUD
+      .text(font, "HUD", Vector2(10f, 10f), 20f, layer = 1000<RenderLayer>)
+      .drop()
 ```
 
 ## Light types
@@ -111,7 +110,7 @@ let myView (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
 { Color = Color(30, 30, 30, 255) }  // dim base illumination
 ```
 
-Applied uniformly to all lit sprites. Use a low value so directional/point lights add visible contrast.
+Applied uniformly to all lit sprites. Use a low value so directional/point lights add visible contrast. (Or skip the record and pass the color straight to `.setAmbient(...)`, as above.)
 
 ### PointLight2D
 
@@ -147,7 +146,7 @@ Shadows use **SDF raymarching** in the pixel shader. Each shadow-casting light s
 
 ### Occluders
 
-Occluders are 2D line segments. Add them individually via `LightDraw.addOccluder` or auto-generate from a grid:
+Occluders are 2D line segments. Add them individually via `.addOccluder(...)` or auto-generate from a grid:
 
 ```fsharp
 open Mibo.Layout
@@ -161,7 +160,7 @@ let occluders =
 
 // In your view:
 for o in occluders do
-    buffer |> LightDraw.addOccluder model.Lighting 8<RenderLayer> o
+    buffer.addOccluder(model.Lighting, o, layer = 8<RenderLayer>).drop()
 ```
 
 The `GridOccluders.Edge` flags control which cell edges produce occluders:
@@ -187,7 +186,7 @@ Point light shadows are bounded by the light's radius, so they're cheaper than d
 
 ## Unlit rendering
 
-Sprites drawn with `Draw.sprite` (instead of `LightDraw.litSprite`) render at full brightness, ignoring lighting. This is useful for UI, minimaps, or any element that shouldn't be affected by scene lighting.
+Sprites drawn with `.sprite(...)` (instead of `.litSprite(...)`) render at full brightness, ignoring lighting. This is useful for UI, minimaps, or any element that shouldn't be affected by scene lighting.
 
 ## Shadow toggle
 
@@ -199,9 +198,10 @@ model.Lighting.ShadowsEnabled <- false
 
 // Or use commands in the render buffer
 buffer
-|> LightDraw.disableShadows model.Lighting 90<RenderLayer>
-|> // ... sprites drawn here won't cast/receive shadows ...
-|> LightDraw.enableShadows model.Lighting 100<RenderLayer>
+  .disableShadows(model.Lighting, layer = 90<RenderLayer>)
+  // ... sprites drawn here won't cast/receive shadows ...
+  .enableShadows(model.Lighting, layer = 100<RenderLayer>)
+  .drop()
 ```
 
 `Reset()` re-enables shadows automatically each frame.
@@ -212,7 +212,7 @@ When to disable shadows:
 - **Stylized look** — Flat lighting without shadows suits certain art styles (e.g., retro pixel art).
 - **Interior scenes** — Disable directional shadows in small rooms where they add little visual value.
 
-> _**TIP**_: Disable shadows per-section rather than globally. Use `disableShadows`/`enableShadows` to skip shadows only for specific layers (e.g., background tiles) while keeping them for foreground objects.
+> _**TIP**_: Disable shadows per-section rather than globally. Use `.disableShadows(...)`/`.enableShadows(...)` to skip shadows only for specific layers (e.g., background tiles) while keeping them for foreground objects.
 
 ## See Also
 

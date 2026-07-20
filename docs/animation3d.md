@@ -12,10 +12,10 @@ Mibo provides a three-tier 3D skeletal animation system in `Mibo.Animation`. It 
 > _**NOTE — backend differences.**_ The types (`Animation3DClips`, `Animation3DState`,
 > `AnimatedMesh`) mirror across backends, but the skinning path differs:
 > - **raylib**: CPU skinning via `Raylib.UpdateModelAnimation` / `UpdateModelAnimationEx`
->   (mutates the model's bone matrices); render with `Draw3D.drawModel` (per-entity model copy)
->   or `Draw3D.drawSkinnedMesh` (shared mesh + bone matrices).
+>   (mutates the model's bone matrices); render with `.model(...)` (per-entity model copy)
+>   or `.skinnedMesh(...)` (shared mesh + bone matrices).
 > - **MonoGame**: clips load from the raw model file via Assimp (`assets.ModelAnimations` →
-> `Animation3DClips`); render with `Draw3D.drawAnimatedModel animatedModel transform` (the bone
+> `Animation3DClips`); render with `.animatedModel(animModel, transform)` (the bone
 > palette is derived internally from an `AnimatedModel` state value — the caller never handles
 > a `Matrix[]`).
 
@@ -43,9 +43,10 @@ let anim = Animation3DState.create model clips "idle" 60.0f
 // 3. Update each frame (in your animation system)
 let anim = anim |> Animation3DState.update deltaTime
 
-// 4. Apply and render (in your view)
-Animation3DState.applyToModel anim
-buffer |> Draw3D.drawModel anim.Model transform
+// 4. Render (in your view) — the witness applies the pose and draws
+buffer
+  .animatedModel(anim, transform)
+  .drop()
 ```
 
 ## Three API Tiers
@@ -73,19 +74,23 @@ let mesh = AnimatedMesh.fromModel model  // load once, share
 // Per-entity (lightweight — just matrix math)
 let bones = AnimatedMesh.computeBoneMatrices clip frame mesh
 
-// Render — GPU does the skinning
-buffer |> Draw3D.drawSkinnedMesh mesh.Mesh transform material bones
+// Render — GPU does the skinning (raylib)
+buffer
+  .skinnedMesh(mesh.Mesh, transform, material, bones)
+  .drop()
 ```
 
 ### Tier 3 — Per-Model CPU Skinning (`Animation3DState`)
 
-Simplest API. Each entity owns its own `Model` copy. Raylib's `UpdateModelAnimation` handles skinning on the CPU.
+Simplest API. Each entity owns its own model state. `.animatedModel(...)` applies the pose for you:
 
 ```fsharp
 let anim = Animation3DState.create model clips "idle" 60.0f
 let anim = anim |> Animation3DState.update dt
-Animation3DState.applyToModel anim  // mutates model's bone matrices
-buffer |> Draw3D.drawModel anim.Model transform
+
+buffer
+  .animatedModel(anim, transform)
+  .drop()
 ```
 
 ### When to Use Which
@@ -94,7 +99,7 @@ buffer |> Draw3D.drawModel anim.Model transform
 |----------|------|-----|
 | 1–5 animated characters | Tier 3 | Simple, no shader changes |
 | 10+ animated enemies | Tier 2 | Share mesh, GPU skinning |
-| Hundreds of units (RTS) | Tier 2 + instancing | `DrawMeshInstanced` with skinning |
+| Hundreds of units (RTS) | Tier 2 + instancing | instanced skinned draws |
 
 ## Animation3DClips API
 
@@ -172,15 +177,7 @@ let blending = Animation3DState.isBlending anim  // true during blend
 let anim = anim |> Animation3DState.update deltaTime
 ```
 
-Advances the current frame (and blend target frame if blending). Respects `Loop` and `Speed` settings. Does not apply to the model — use `applyToModel` after.
-
-### Apply to Model
-
-```fsharp
-Animation3DState.applyToModel anim
-```
-
-Calls `Raylib.UpdateModelAnimation` (or `UpdateModelAnimationEx` when blending) which mutates the model's bone matrices. Must be called before rendering with `DrawModel`.
+Advances the current frame (and blend target frame if blending). Respects `Loop` and `Speed` settings.
 
 ### Query
 
@@ -225,14 +222,16 @@ The algorithm matches raylib's `UpdateModelAnimation`:
 ### Rendering
 
 ```fsharp
-buffer |> Draw3D.drawSkinnedMesh mesh.Mesh transform material bones
+buffer
+  .skinnedMesh(mesh.Mesh, transform, material, bones)
+  .drop()
 ```
 
 The shader receives bone matrices as a `boneMatrices[128]` uniform and applies skinning on the GPU via `vertexBoneIndices` / `vertexBoneWeights` vertex attributes.
 
 ## Integration with MVU
 
-Animation state lives in your Elmish model. Update in a system, apply in the view:
+Animation state lives in your Elmish model. Update in a system, draw in the view:
 
 ```fsharp
 // Types.fs
@@ -246,8 +245,9 @@ let animationSystem dt model =
     struct (model, Cmd.none)
 
 // View.fs
-Animation3DState.applyToModel model.PlayerAnim
-buffer |> Draw3D.drawModel model.PlayerAnim.Model transform
+buffer
+  .animatedModel(model.PlayerAnim, playerTransform)
+  .drop()
 ```
 
 ## Model Format
@@ -260,7 +260,7 @@ Animations are loaded from the model file via `assets.ModelAnimations`. The anim
 
 1. **Resolve clip names once at init**: Use `tryGetClipIndex` + `playByIndex` to avoid string lookups in the hot path
 2. **Share Animation3DClips**: Create clips once, reuse across all entities using the same model
-3. **Tier 2 for many entities**: Share a single mesh and avoid per-entity model copies — use `AnimatedMesh` + `computeBoneMatrices` + `Draw3D.drawSkinnedMesh` (raylib), or the shared-mesh path with `Draw3D.drawAnimatedModel` (MonoGame)
+3. **Tier 2 for many entities**: Share a single mesh and avoid per-entity model copies — use `AnimatedMesh` + `computeBoneMatrices` + `.skinnedMesh(...)` (raylib), or the shared-mesh path with `.animatedModel(...)` (MonoGame)
 4. **Blend duration**: Keep blend durations short (0.1–0.3s) to minimize double-animation overhead
 
 ## See Also

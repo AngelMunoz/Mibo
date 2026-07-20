@@ -7,7 +7,7 @@ index: 21
 
 # 3D Buffer & Commands
 
-Your view function receives a `RenderBuffer3D` each frame. You populate it with drawing commands using the `Draw3D` module. The renderer dispatches them in order.
+Your view function receives a `RenderBuffer3D` each frame and populates it with drawing commands via the fluent Draw DSL. The renderer dispatches them in order.
 
 ## What and Why
 
@@ -28,93 +28,89 @@ The buffer is **pre-cleared** each frame. Just add commands:
 ```fsharp
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
     buffer
-    |> Draw3D.beginCamera camera
-    |> Draw3D.drawModel model.PlayerModel model.PlayerTransform
-    |> Draw3D.endCamera
-    |> Draw3D.drop
+      .beginCamera(camera)
+      .model(model.PlayerModel, model.PlayerTransform)
+      .endCamera()
+      .drop()
 ```
 
-`Draw3D.drop` at the end silences the unused-value warning. It does nothing.
+`.drop()` at the end silences the unused-value warning. It does nothing.
 
 ## Pipeline pattern
 
 Every 3D view follows the same structure:
 
-```
+```fsharp
 buffer
-|> Draw3D.beginCamera camera       // start camera transform
-|> Draw3D.setAmbientLight ...      // lighting setup
-|> Draw3D.addDirectionalLight ...
-|> Draw3D.drawModel ...            // geometry
-|> Draw3D.endCamera                // end camera transform
-|> Draw3D.drop                     // terminal
+  .beginCamera(camera)       // start camera transform
+  .setAmbientLight ...       // lighting setup
+  .addDirectionalLight ...
+  .model ...                 // geometry
+  .endCamera()               // end camera transform
+  .drop()                    // terminal
 ```
 
-> _**IMPORTANT**_: Geometry drawn outside `beginCamera` / `endCamera` renders in screen space. This is rarely what you want.
+> _**IMPORTANT**_: Geometry drawn outside `.beginCamera(...)` / `.endCamera()` renders in screen space. This is rarely what you want.
 
 ## Geometry commands
 
-The lighting/camera/shadow commands are identical across backends. The **geometry** commands
-differ where the mesh type differs (raylib `Mesh` / MonoGame `PrimitiveMesh`):
+One member set covers both backends — the buffer takes your backend's own mesh (`Mesh` / `PrimitiveMesh`), model, material, and transform types:
 
-| Function | raylib | MonoGame |
-|----------|--------|----------|
-| `Draw3D.drawMesh` / `drawPrimitive` | `drawMesh mesh transform material` | `drawPrimitive mesh transform material` |
-| `Draw3D.drawModel` | `drawModel model transform` | `drawModel model transform` |
-| `Draw3D.modelWith` / `modelWithPerMesh` | `modelWith model transform material` · `modelWithPerMesh model transform resolver` | same (overrides a model's baked material, whole or per-sub-mesh) |
-| `Draw3D.drawBillboard` | `drawBillboard texture position size color` | `drawBillboard texture position size color` |
-| `Draw3D.drawBillboardBatch` | batched billboards | batched billboards |
-| `Draw3D.drawLine3D` | `drawLine3D start finish color` | `drawLine3D start finish color` |
-| Skinned/animated | `drawSkinnedMesh mesh transform material bones` (material supplied directly) | `drawAnimatedModel animatedModel transform` · `animatedModelWith` / `animatedModelWithPerMesh` to override its material |
-| Instanced | `drawMeshInstanced mesh transforms material count` | `drawInstanced mesh transforms material count` |
+| Member | What it draws |
+|--------|---------------|
+| `.mesh(mesh, transform, material)` | Single primitive mesh |
+| `.model(model, transform)` | A loaded model with authored materials |
+| `.modelWith(model, transform, material)` | Model with whole-model material override |
+| `.modelWithPerMesh(model, transform, resolver)` | Model with per-mesh-part material override |
+| `.animatedModel(animModel, transform)` | Skeletal animation — bone palette derived for you |
+| `.animatedModelWith(...)` / `.animatedModelWithPerMesh(...)` | Animated model + material override |
+| `.skinnedMesh(mesh, transform, material, bones)` | Explicit bone palette (**raylib only**) |
+| `.instanced(mesh, transforms, material, count)` | Many copies of one mesh in one draw call |
+| `.billboard(tex, position, size, color)` | Camera-facing quad |
+| `.billboardBatch(...)` | Batched billboards |
+| `.line3D(start, finish, color)` | Debug line |
 
 > _**TIP**_: Use the instanced/batched variants when drawing many copies of the same thing. One draw call is faster than many.
 
 ## Camera commands
 
-| Function | Description |
-|----------|-------------|
-| `Draw3D.beginCamera camera` | Start 3D camera transform |
-| `Draw3D.beginCameraWith config` | Start camera with explicit viewport/clear/post-process |
-| `Draw3D.endCamera` | End camera transform |
+| Member | Description |
+|--------|-------------|
+| `.beginCamera(camera)` | Start 3D camera transform |
+| `.beginCameraWith(config)` | Start camera with explicit viewport/clear/post-process |
+| `.endCamera()` | End camera transform |
 
 ## Lighting commands
 
-| Function | Description |
-|----------|-------------|
-| `Draw3D.setAmbientLight light` | Set scene ambient light |
-| `Draw3D.addDirectionalLight light` | Add a directional light |
-| `Draw3D.addPointLight light` | Add a point light |
-| `Draw3D.addSpotLight light` | Add a spot light |
+| Member | Description |
+|--------|-------------|
+| `.setAmbientLight(light)` | Set scene ambient light |
+| `.addDirectionalLight(light)` | Add a directional light |
+| `.addPointLight(light)` | Add a point light |
+| `.addSpotLight(light)` | Add a spot light |
 
 ## Shadow commands
 
-| Function | Description |
-|----------|-------------|
-| `Draw3D.setShadowOrigin origin` | Set shadow map origin for this frame |
-| `Draw3D.enableShadows` | Enable shadow casting for subsequent geometry |
-| `Draw3D.disableShadows` | Disable shadow casting for subsequent geometry |
+| Member | Description |
+|--------|-------------|
+| `.setShadowOrigin(origin)` | Set shadow map origin for this frame |
+| `.enableShadows()` | Enable shadow casting for subsequent geometry |
+| `.disableShadows()` | Disable shadow casting for subsequent geometry |
 
 ## Escape hatches
 
-| Function | Description |
-|----------|-------------|
-| `Draw3D.drawImmediate action` | Flush batch, run raw backend calls (rlgl/raylib, or MonoGame device access via `SceneContext`), restore state |
-
-On MonoGame, also see `Draw3D.beginEffect`/`endEffect` (custom shading scope that inherits scene data) and `Draw3D.drawMeshEffect` (fully user-owned effect). See [Overview](overview.html#escape-hatches).
+`.drawImmediate(...)` flushes the batch, runs raw backend calls (rlgl/raylib, or MonoGame device access via `SceneContext`), and restores state. On MonoGame, also see `.beginEffect(...)`/`.endEffect()` (custom shading scope that inherits scene data). See [Overview](overview.html#escape-hatches).
 
 ## Camera config
 
-Use `beginCameraWith` when you need viewport control, clear color, or post-process pass selection:
+Use `.beginCameraWith(...)` when you need viewport control, clear color, or post-process pass selection:
 
 ```fsharp
 buffer
-|> Draw3D.beginCameraWith(
-    Camera3D.render camera |> Camera3D.withClear Color.SkyBlue
-)
-|> Draw3D.drawModel model transform
-|> Draw3D.endCamera
-|> Draw3D.drop
+  .beginCameraWith(Camera3D.render camera |> Camera3D.withClear Color.SkyBlue)
+  .model(model, transform)
+  .endCamera()
+  .drop()
 ```
 
 `Camera3DConfig` fields:
@@ -131,49 +127,32 @@ Add lights before geometry. Lights affect all subsequent draws:
 
 ```fsharp
 buffer
-|> Draw3D.beginCamera camera
-|> Draw3D.setAmbientLight { Color = Color.White; Intensity = 0.3f }
-|> Draw3D.addDirectionalLight {
+  .beginCamera(camera)
+  .setAmbientLight { Color = Color.White; Intensity = 0.3f }
+  .addDirectionalLight {
     Direction = Vector3(-1f, -1f, -1f)
     Color = Color.White
     Intensity = 0.8f
     CastsShadows = true
-}
-|> Draw3D.addPointLight {
+  }
+  .addPointLight {
     Position = Vector3(5f, 3f, 0f)
     Color = Color.Yellow
     Intensity = 1f
     Radius = 10f
     CastsShadows = false
     ShadowBias = ValueNone
-}
-|> Draw3D.drawModel model transform
-|> Draw3D.endCamera
-|> Draw3D.drop
+  }
+  .model(model, transform)
+  .endCamera()
+  .drop()
 ```
 
-> _**TIP**_: You can call `addPointLight` in a loop for dynamic lights. The sample does this for visible lights each frame.
-
-## Two ways to build commands
-
-| Layer | When to use |
-|-------|-------------|
-| `Draw3D.*` DSL | Everyday use — pipe-friendly, buffer-last for chaining |
-| `Command3D.*` factories | When you need to store or reuse commands without a buffer |
-
-```fsharp
-// DSL — pipe-friendly
-buffer
-|> Draw3D.drawMesh mesh transform material
-|> Draw3D.drawModel model transform
-
-// Factory — store for later
-let cmd = Command3D.drawMesh mesh transform material
-buffer.Add(cmd)
-```
+> _**TIP**_: You can call `.addPointLight(...)` in a loop for dynamic lights.
 
 ## See also
 
+- [Draw DSL](../draw-dsl.html) — the full fluent draw surface (2D and 3D)
 - [Overview](overview.html) — Architecture and pipeline setup
 - [Lighting](lighting.html) — Light types and configuration
 - [Materials](materials.html) — PBR material system

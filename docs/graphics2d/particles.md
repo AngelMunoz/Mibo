@@ -7,14 +7,14 @@ index: 19
 
 # 2D Particles
 
-The particle system renders textured quads in bulk. It is independent of lighting — particles can be lit (`LightDraw.litSprite`) or unlit (`ParticleDraw.particles`).
+The particle system renders textured quads in bulk. It is independent of lighting — particles can be lit (`.litSprite(...)`) or unlit (`.particles(...)`).
 
 ## Separation of concerns
 
 Particle rendering is split into two layers:
 
 1. **Simulation** — your update function handles velocities, lifetimes, physics
-2. **Render** — writes `Particle2D` snapshots, `ParticleDraw.particles` adds them to the buffer
+2. **Render** — writes `Particle2D` snapshots, `.particles(...)` adds them to the buffer
 
 ## Particle2D
 
@@ -38,10 +38,11 @@ let mutable particleCount = 0
 
 // Each frame, write active particles into the array, then draw:
 buffer
-|> ParticleDraw.particles particleTexture particles particleCount 10<RenderLayer>
+  .particles(particleTexture, particles, particleCount, layer = 10<RenderLayer>)
+  .drop()
 ```
 
-`ParticleDraw.particles` adds a single command to the buffer that draws all particles in a loop. All particles share one texture.
+`.particles(...)` adds a single command to the buffer that draws all particles in a loop. All particles share one texture.
 
 ## Simulation helpers
 
@@ -64,9 +65,9 @@ Particles with alpha ≤ 0 are removed in a single pass. The array is compacted 
 
 - All particles share one texture and one draw call — efficient for hundreds of particles.
 - Pre-allocate your array to max expected count. `fadeAndCompact` reuses slots.
-- Particles don't interact with the lighting system by default. For lit particles, draw them individually via `LightDraw.litSprite` (see [Lighting](lighting.html)).
+- Particles don't interact with the lighting system by default. For lit particles, draw them individually via `.litSprite(...)` (see [Lighting](lighting.html)).
 
 ## See Also
 
-- [Lighting & Shadows](lighting.html) — Lit particles via `LightDraw.litSprite`
+- [Lighting & Shadows](lighting.html) — Lit particles via `.litSprite(...)`
 - [Buffer & Commands](buffer-and-commands.html) — General drawing reference
