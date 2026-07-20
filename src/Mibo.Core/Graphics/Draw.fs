@@ -219,7 +219,7 @@ type Draw =
   // 2D — Rectangles
   // ──────────────────────────────────────────────
 
-  /// <summary>Filled rectangle. Coordinates are float pixels (rounded on MonoGame).</summary>
+  /// <summary>Filled rectangle. Coordinates are float pixels (truncated toward zero on MonoGame).</summary>
   [<Extension>]
   static member inline fillRect<'B when WithRects2D<'B>>
     (
