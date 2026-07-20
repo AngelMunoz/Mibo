@@ -7,7 +7,7 @@ index: 13
 
 # Camera
 
-Cameras control what part of the world you see and how it maps to the screen. Mibo provides `Camera2D` for 2D games and `Camera3D` for 3D games. Both support single-camera and split-screen patterns. The `Draw.beginCamera`/`Draw3D.beginCamera` DSL and the `Camera2DConfig`/`Camera3DConfig` modifiers share the same shape across backends; only the underlying camera struct's field layout is backend-specific.
+Cameras control what part of the world you see and how it maps to the screen. Mibo provides `Camera2D` for 2D games and `Camera3D` for 3D games. Both support single-camera and split-screen patterns. The fluent `.beginCamera(...)`/`.beginCameraWith(...)` members and the `Camera2DConfig`/`Camera3DConfig` modifiers share the same shape across backends; only the underlying camera struct's field layout is backend-specific.
 
 ## What and Why
 
@@ -20,10 +20,10 @@ Cameras control what part of the world you see and how it maps to the screen. Mi
 
 | Situation | Use |
 |-----------|-----|
-| 2D game with scrolling world | `Camera2D.create` + `Draw.beginCamera` |
-| 2D game with split-screen or HUD | `Camera2DConfig` + `Draw.beginCameraWith` |
-| 3D game | `Camera3D` struct + `Draw3D.beginCamera` |
-| 3D split-screen or picture-in-picture | `Camera3DConfig` + `Draw3D.beginCameraWith` |
+| 2D game with scrolling world | `Camera2D.create` + `.beginCamera(...)` |
+| 2D game with split-screen or HUD | `Camera2DConfig` + `.beginCameraWith(...)` |
+| 3D game | `Camera3D` struct + `.beginCamera(...)` |
+| 3D split-screen or picture-in-picture | `Camera3DConfig` + `.beginCameraWith(...)` |
 | Mouse picking in 3D | `Camera3D.screenPointToRay` |
 | Culling off-screen objects | `Camera2D.viewportBounds` |
 
@@ -47,18 +47,19 @@ let camera = Camera2D.create (Vector2(400f, 300f)) 1.0f viewportSize
 
 ### Using in a view
 
-Wrap your world-space draw commands between `beginCamera` and `endCamera`. The `layer` parameter controls draw order — camera and content must share the same layer range.
+Wrap your world-space draw commands between `.beginCamera(...)` and `.endCamera(...)`. The `layer` parameter controls draw order — camera and content must share the same layer range.
 
 ```fsharp
 buffer
-|> Draw.beginCamera 0<RenderLayer> camera
-|> Draw.fillRect (0<RenderLayer>, Color.Green) groundRect
-|> Draw.fillCircle (0<RenderLayer>, Color.Red) (playerPos, 16f)
-|> Draw.endCamera 999<RenderLayer>
-|> Draw.text (1000<RenderLayer>, Color.White) hudTextState
+  .beginCamera(camera)
+  .fillRect(0f, 0f, 800f, 600f, Color.Green)
+  .fillCircle(playerPos, 16f, Color.Red)
+  .endCamera(layer = 999<RenderLayer>)
+  .text(font, "HUD", Vector2(10f, 10f), 20f, layer = 1000<RenderLayer>)
+  .drop()
 ```
 
-> _**TIP**_: Put UI draws *after* `endCamera` on a higher layer so they render in screen space, not world space.
+> _**TIP**_: Put UI draws *after* `.endCamera(...)` on a higher layer so they render in screen space, not world space.
 
 ### Camera movement
 
@@ -116,9 +117,10 @@ let config =
     |> Camera2D.withClear Color.CornflowerBlue
 
 buffer
-|> Draw.beginCameraWith 0<RenderLayer> config
-|> // ... world content ...
-|> Draw.endCamera 999<RenderLayer>
+  .beginCameraWith(config)
+  // ... world content ...
+  .endCamera(layer = 999<RenderLayer>)
+  .drop()
 ```
 
 ### Split-screen
@@ -130,13 +132,14 @@ let left = Camera2D.splitScreenLeft player1Camera Color.CornflowerBlue
 let right = Camera2D.splitScreenRight player2Camera Color.DarkGreen
 
 buffer
-|> Draw.beginCameraWith 0<RenderLayer> left
-|> // ... player 1 content ...
-|> Draw.endCamera 99<RenderLayer>
-|> Draw.beginCameraWith 100<RenderLayer> right
-|> // ... player 2 content ...
-|> Draw.endCamera 199<RenderLayer>
-|> Draw.text (200<RenderLayer>, Color.White) hudState
+  .beginCameraWith(left)
+  // ... player 1 content ...
+  .endCamera(layer = 99<RenderLayer>)
+  .beginCameraWith(right, layer = 100<RenderLayer>)
+  // ... player 2 content ...
+  .endCamera(layer = 199<RenderLayer>)
+  .text(font, "HUD", Vector2(10f, 10f), 20f, layer = 200<RenderLayer>)
+  .drop()
 ```
 
 Available split-screen helpers:
@@ -204,11 +207,11 @@ let camera = Camera3D.create pos target fov |> Camera3D.withNearFar 0.01f 5000f
 
 ```fsharp
 buffer
-|> Draw3D.beginCamera camera
-|> Draw3D.drawModel playerModel playerTransform
-|> Draw3D.addPointLight { Position = torchPos; Color = Color.White; Intensity = 1f; Radius = 10f; CastsShadows = false; ShadowBias = ValueNone }
-|> Draw3D.endCamera
-|> Draw3D.drop
+  .beginCamera(camera)
+  .model(playerModel, playerTransform)
+  .addPointLight { Position = torchPos; Color = Color.White; Intensity = 1f; Radius = 10f; CastsShadows = false; ShadowBias = ValueNone }
+  .endCamera()
+  .drop()
 ```
 
 ### 3D config modifiers
@@ -226,10 +229,10 @@ let config =
     |> Camera3D.withClear Color.SkyBlue
 
 buffer
-|> Draw3D.beginCameraWith config
-|> Draw3D.drawModel sceneModel sceneTransform
-|> Draw3D.endCamera
-|> Draw3D.drop
+  .beginCameraWith(config)
+  .model(sceneModel, sceneTransform)
+  .endCamera()
+  .drop()
 ```
 
 ### Split-screen (3D)
@@ -239,13 +242,13 @@ let left = Camera3D.splitScreenLeft player1Camera Color.SkyBlue
 let right = Camera3D.splitScreenRight player2Camera Color.SkyBlue
 
 buffer
-|> Draw3D.beginCameraWith left
-|> // ... player 1 scene ...
-|> Draw3D.endCamera
-|> Draw3D.beginCameraWith right
-|> // ... player 2 scene ...
-|> Draw3D.endCamera
-|> Draw3D.drop
+  .beginCameraWith(left)
+  // ... player 1 scene ...
+  .endCamera()
+  .beginCameraWith(right)
+  // ... player 2 scene ...
+  .endCamera()
+  .drop()
 ```
 
 ### Mouse picking

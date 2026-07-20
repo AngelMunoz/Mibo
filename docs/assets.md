@@ -93,7 +93,7 @@ let atlas = assets.Texture("tiles.png") |> Texture.filter TextureFilter.Point
 | `Texture.wrap TextureWrap.Repeat tex` | Set the wrap/addressing mode (Clamp/Repeat/MirrorClamp/MirrorRepeat) |
 | `Texture.mipmaps tex` | Generate mipmaps (the loader already does this on load) |
 
-Apply it once (e.g. in `init`) — not every frame — since it mutates the cached texture's sampler. (`TextureFilter` is `Raylib_cs.TextureFilter`: `Point`, `Bilinear`, `Trilinear`, `Aniso4x/8x/16x`; `TextureWrap` is `Raylib_cs.TextureWrap`: `Clamp`, `Repeat`, `MirrorClamp`, `MirrorRepeat`.) MonoGame controls sampling per draw via `Draw.setSamplerState` instead; see [2D Buffer & Commands](graphics2d/buffer-and-commands.html).
+Apply it once (e.g. in `init`) — not every frame — since it mutates the cached texture's sampler. (`TextureFilter` is `Raylib_cs.TextureFilter`: `Point`, `Bilinear`, `Trilinear`, `Aniso4x/8x/16x`; `TextureWrap` is `Raylib_cs.TextureWrap`: `Clamp`, `Repeat`, `MirrorClamp`, `MirrorRepeat`.) MonoGame controls sampling per draw via `.setSamplerState(...)` instead; see [2D Buffer & Commands](graphics2d/buffer-and-commands.html).
 
 
 

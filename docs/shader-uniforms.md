@@ -22,11 +22,11 @@ How custom shading gets into the pipeline, per backend:
 
 | Escape hatch | raylib | MonoGame | Uniforms you receive |
 |---|---|---|---|
-| `Draw3D.beginEffect` / `endEffect` | ✓ (`Shader`) | ✓ (`Effect`) | Scene data **by name** — declare only what you use; absent ones are skipped. Instanced draws are shaded by your shader when it opts in (see [Instancing](#instancing-opt-in)). |
-| `Draw3D.drawMeshEffect` | — | ✓ | `World`/`View`/`Projection` only (via `IEffectMatrices`); you own lighting/material |
-| `Draw3D.drawImmediate` | ✓ | ✓ | None — the pipeline shader is bypassed; you get a `SceneContext` with raw device + gathered scene fields |
+| `.beginEffect(...)` / `.endEffect()` | ✓ (`Shader`) | ✓ (`Effect`) | Scene data **by name** — declare only what you use; absent ones are skipped. Instanced draws are shaded by your shader when it opts in (see [Instancing](#instancing-opt-in)). |
+| Per-mesh-part effect draw | — | ✓ | `World`/`View`/`Projection` only (via `IEffectMatrices`); you own lighting/material |
+| `.drawImmediate(...)` | ✓ | ✓ | None — the pipeline shader is bypassed; you get a `SceneContext` with raw device + gathered scene fields |
 
-## `beginEffect` / `endEffect` — the inherited uniform contract
+## `.beginEffect(...)` / `.endEffect()` — the inherited uniform contract
 
 Both backends resolve the **same uniform names** (mirrored `SceneUpload`
 modules). Declare a subset in your shader; the pipeline uploads only what's
@@ -124,7 +124,7 @@ none of these renders unshadowed at no cost.
 
 ### Instancing (opt-in)
 
-A `Draw3D.drawMeshInstanced` inside a `beginEffect` scope is shaded by your
+An `.instanced(...)` draw inside a `.beginEffect(...)` scope is shaded by your
 shader when it declares the instancing input; otherwise it falls back to the
 built-in PBR instanced path. The opt-in convention differs by backend because
 each engine feeds per-instance data differently — raylib uses a single vertex
@@ -323,12 +323,12 @@ technique Toon {
 
 ```fsharp
 buffer
-|> Draw3D.beginCamera camera
-|> Draw3D.beginEffect toonEffect
-|> Draw3D.drawModel model transform
-|> Draw3D.endEffect
-|> Draw3D.endCamera
-|> Draw3D.drop
+  .beginCamera(camera)
+  .beginEffect(toonEffect)
+  .model(model, transform)
+  .endEffect()
+  .endCamera()
+  .drop()
 ```
 
 ### raylib — minimal GLSL for `beginEffect`
@@ -367,12 +367,12 @@ void main() {
 ```fsharp
 // Fragment shader declares the same uniforms it consumes; load both, then:
 buffer
-|> Draw3D.beginCamera camera
-|> Draw3D.beginEffect toonShader
-|> Draw3D.drawModel model transform
-|> Draw3D.endEffect
-|> Draw3D.endCamera
-|> Draw3D.drop
+  .beginCamera(camera)
+  .beginEffect(toonShader)
+  .model(model, transform)
+  .endEffect()
+  .endCamera()
+  .drop()
 ```
 
 ## Convention notes

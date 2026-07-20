@@ -6,10 +6,6 @@ open Raylib_cs
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D.Lighting
 
-/// <summary>Unit of measure for 2D render layer ordering.</summary>
-[<Measure>]
-type RenderLayer
-
 /// <summary>State required to render a 2D sprite via DrawTexturePro.</summary>
 [<Struct>]
 type SpriteState = {

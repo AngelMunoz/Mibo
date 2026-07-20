@@ -114,3 +114,206 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
       ArrayPool<Command3D>.Shared.Return(items, clearArray = true)
       items <- Array.empty
       count <- 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fluent Draw DSL witnesses (backing Mibo.Elmish.Graphics.Draw).
+//
+// One `member inline` per Core Draw member: forward to the existing Command3D
+// builders, converting System.Numerics vectors to XNA at the boundary via the
+// existing internal Conversions module. 3D has no layer concept — camera and
+// immediate witnesses accept and ignore the layer the shared Draw members
+// pass. Augmentations must live in the buffer's own file: the SRTP solver
+// only considers extension members in the type's declaration group.
+// ─────────────────────────────────────────────────────────────────────────────
+
+open Microsoft.Xna.Framework
+open Microsoft.Xna.Framework.Graphics
+open System.Numerics
+open Mibo.Animation
+open Mibo.Elmish
+open Mibo.Elmish.Graphics2D
+open Mibo.Elmish.Graphics3D.Pipelines
+open Mibo
+
+/// <summary>SRTP witnesses backing <see cref="T:Mibo.Elmish.Graphics.Draw"/> on the MonoGame 3D buffer.</summary>
+type RenderBuffer3D with
+
+  // ── Geometry ──
+
+  /// MonoGame's mesh-level draw is the effectless PrimitiveMesh.
+  member inline b.AddDrawMesh
+    (mesh: PrimitiveMesh, transform: Matrix, material: Material3D)
+    =
+    b.Add(Command3D.DrawPrimitive(mesh, transform, material))
+
+  member inline b.AddDrawInstanced
+    (
+      mesh: PrimitiveMesh,
+      transforms: Matrix[],
+      material: Material3D,
+      instanceCount: int
+    ) =
+    b.Add(Command3D.DrawInstanced(mesh, transforms, material, instanceCount))
+
+  member inline b.AddDrawModel(model: Model, transform: Matrix) =
+    b.Add(Command3D.DrawModel(model, transform))
+
+  member inline b.AddDrawModelWith
+    (model: Model, transform: Matrix, material: Material3D)
+    =
+    b.Add(
+      Command3D.DrawModelWith(model, transform, MaterialOverride.All material)
+    )
+
+  member inline b.AddDrawModelWithPerMesh
+    (
+      model: Model,
+      transform: Matrix,
+      [<InlineIfLambda>] resolver: int -> Material3D
+    ) =
+    b.Add(
+      Command3D.DrawModelWith(
+        model,
+        transform,
+        MaterialOverride.PerMesh resolver
+      )
+    )
+
+  /// MonoGame animated draw: derives the bone palette from the state.
+  member inline b.AddAnimatedModel(am: AnimatedModel, transform: Matrix) =
+    let bones =
+      match am.Mesh with
+      | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
+      | ValueNone -> [||]
+
+    b.Add(Command3D.DrawAnimatedModel(am.Model, transform, bones))
+
+  member inline b.AddAnimatedModelWith
+    (am: AnimatedModel, transform: Matrix, material: Material3D)
+    =
+    let bones =
+      match am.Mesh with
+      | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
+      | ValueNone -> [||]
+
+    b.Add(
+      Command3D.DrawAnimatedModelWith(
+        am.Model,
+        transform,
+        bones,
+        MaterialOverride.All material
+      )
+    )
+
+  member inline b.AddAnimatedModelWithPerMesh
+    (
+      am: AnimatedModel,
+      transform: Matrix,
+      [<InlineIfLambda>] resolver: int -> Material3D
+    ) =
+    let bones =
+      match am.Mesh with
+      | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
+      | ValueNone -> [||]
+
+    b.Add(
+      Command3D.DrawAnimatedModelWith(
+        am.Model,
+        transform,
+        bones,
+        MaterialOverride.PerMesh resolver
+      )
+    )
+
+  // ── Billboards & Lines ──
+
+  member inline b.AddBillboard
+    (texture: Texture2D, position: Vector3, size: Vector2, color: Color)
+    =
+    b.Add(
+      Command3D.DrawBillboard(
+        texture,
+        Conversions.fromNumericsVector3 position,
+        Conversions.fromNumericsVector2 size,
+        MonoGameColor.toMonoGameColor color
+      )
+    )
+
+  member inline b.AddBillboardBatch
+    (
+      textures: Texture2D[],
+      positions: Microsoft.Xna.Framework.Vector3[],
+      sizes: Microsoft.Xna.Framework.Vector2[],
+      colors: Microsoft.Xna.Framework.Color[],
+      count: int
+    ) =
+    b.Add(
+      Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count)
+    )
+
+  member inline b.AddLine3D(start: Vector3, finish: Vector3, color: Color) =
+    b.Add(
+      Command3D.DrawLine3D(
+        Conversions.fromNumericsVector3 start,
+        Conversions.fromNumericsVector3 finish,
+        MonoGameColor.toMonoGameColor color
+      )
+    )
+
+  // ── Camera (layer ignored — 3D has no layers) ──
+
+  member inline b.AddBeginCamera(camera: Camera3D, _layer: int<RenderLayer>) =
+    b.Add(Command3D.BeginCamera camera)
+
+  member inline b.AddBeginCameraConfig
+    (config: Camera3DConfig, _layer: int<RenderLayer>)
+    =
+    b.Add(Command3D.BeginCameraConfig config)
+
+  member inline b.AddEndCamera(_layer: int<RenderLayer>) =
+    b.Add Command3D.EndCamera
+
+  // ── Shadows & Effect Scopes ──
+
+  member inline b.AddSetShadowOrigin(origin: Vector3) =
+    b.Add(Command3D.SetShadowOrigin(Conversions.fromNumericsVector3 origin))
+
+  member inline b.AddEnableShadows3D() = b.Add Command3D.EnableShadows
+
+  member inline b.AddDisableShadows3D() = b.Add Command3D.DisableShadows
+
+  member inline b.AddBeginEffect(effect: Effect) =
+    b.Add(Command3D.BeginEffect effect)
+
+  member inline b.AddEndEffect() = b.Add Command3D.EndEffect
+
+  // ── Lights (Core types, pass-through) ──
+
+  member inline b.AddSetAmbientLight(light: AmbientLight3D) =
+    b.Add(Command3D.SetAmbientLight light)
+
+  member inline b.AddDirectionalLight(light: DirectionalLight3D) =
+    b.Add(Command3D.AddDirectionalLight light)
+
+  member inline b.AddPointLight(light: PointLight3D) =
+    b.Add(Command3D.AddPointLight light)
+
+  member inline b.AddSpotLight(light: SpotLight3D) =
+    b.Add(Command3D.AddSpotLight light)
+
+  // ── Escape Hatches ──
+
+  member inline b.AddDrawImmediate
+    ([<InlineIfLambda>] action: SceneContext -> unit, _layer: int<RenderLayer>)
+    =
+    b.Add(Command3D.DrawImmediate action)
+
+  member inline b.AddPostProcess
+    ([<InlineIfLambda>] action: PostProcessContext3D -> unit)
+    =
+    b.Add(Command3D.PostProcess action)
+
+  member inline b.AddPostProcessWithDepth
+    ([<InlineIfLambda>] action: PostProcessContext3D -> unit)
+    =
+    b.Add(Command3D.PostProcessWithDepth action)

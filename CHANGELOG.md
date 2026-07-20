@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Core:** a unified fluent draw DSL for 2D and 3D, identical on both backends. View code chains calls on the render buffer (`buffer.beginCamera(cam).fillCircle(...).endCamera()`) with optional parameters for anything that has a sensible default (`layer`, `tint`, `thickness`, ...). Colors use the backend-neutral `Mibo.Color`, vectors and matrices use `System.Numerics` (MonoGame converts at the boundary), and backend values — textures, fonts, cameras, shaders, models, materials, sprite/text/animation state records — pass through unchanged. Backend-only features (MonoGame's sampler-state control, raylib's explicit-palette skinned draw) are available only on the backend that supports them; calling them on the other is a compile error. The whole chain is erased at compile time and emits the same buffer commands as hand-written code — no dispatch, no allocation. See `docs/draw-dsl.md`.
+
+### Deprecated
+
+- **Raylib, MonoGame:** the function-based (piped) draw modules — `Draw`, `Draw3D`, `LightDraw`, `ParticleDraw` — are deprecated and will be removed in a future release. They remain functional in this release; new code should use the fluent draw DSL (see `docs/draw-dsl.md`).
+
 ## [3.0.0] - 2026-07-18
 
 ### Added

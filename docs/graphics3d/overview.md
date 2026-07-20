@@ -7,7 +7,7 @@ index: 12
 
 # 3D Rendering
 
-The 3D rendering pipeline is a **deferred command system** with a pluggable `IRenderPipeline3D`. Each frame, your view function populates a `RenderBuffer3D` with `Command3D` values, and the pipeline executes them. The architecture is identical on both backends; only the pipeline class name, the shader language, and some geometry-command names differ (see below).
+The 3D rendering pipeline is a **deferred command system** with a pluggable `IRenderPipeline3D`. Each frame, your view function populates a `RenderBuffer3D` with commands, and the pipeline executes them. The architecture is identical on both backends; only the pipeline class name and the shader language differ.
 
 ## What and Why
 
@@ -18,8 +18,8 @@ The 3D renderer provides:
   - **raylib:** `ForwardPbrPipeline` (GLSL shaders)
   - **MonoGame:** `ForwardPipeline` (HLSL `.fx` → `.mgfx`, compiled for DirectX 11 and OpenGL)
 - **3D lighting** — Ambient, directional, point, and spot lights with shadow mapping.
-- **Instanced rendering** — One draw call for many copies of the same geometry (`drawMeshInstanced` on raylib; `drawInstanced` on MonoGame), plus batched billboards.
-- **Custom shading opt-in** — raylib via `Draw3D.drawImmediate` (raw rlgl/raylib); MonoGame via `Draw3D.beginEffect`/`endEffect` (a user `Effect` that inherits the gathered scene data) or `Draw3D.drawMeshEffect`.
+- **Instanced rendering** — One draw call for many copies of the same geometry (`.instanced(...)`), plus batched billboards.
+- **Custom shading opt-in** — `.beginEffect(...)`/`.endEffect()` scopes (a user shader/effect that inherits the gathered scene data), `.drawImmediate(...)` for raw access, and MonoGame's per-mesh-part effect draw.
 - **Camera configs** — `Camera3DConfig` with viewport, clear color, and post-process control.
 
 ## Quick start
@@ -35,51 +35,41 @@ Program.mkProgram init update
 |> Program.withRenderer (fun () -> Renderer3D.create pipeline view)
 ````
 
-Your view function receives a `RenderBuffer3D`:
+Your view function receives a `RenderBuffer3D` and chains members of the fluent Draw DSL (see [Draw DSL](../draw-dsl.html)):
 
 ```fsharp
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
     buffer
-    |> Draw3D.beginCamera worldCamera
-    |> Draw3D.setAmbientLight { Color = Color(40, 40, 40); Intensity = 1f }
-    |> Draw3D.addDirectionalLight {
+      .beginCamera(worldCamera)
+      .setAmbientLight { Color = Color(40, 40, 40); Intensity = 1f }
+      .addDirectionalLight {
         Direction = Vector3(0.3f, -0.7f, 0.2f)
         Color = Color.White
         Intensity = 0.8f
         CastsShadows = true
         ShadowBias = ValueNone
-    }
-    |> Draw3D.drawModel playerModel playerTransform
-    |> Draw3D.endCamera
-    |> Draw3D.drop
+      }
+      .model(playerModel, playerTransform)
+      .endCamera()
+      .drop()
 ```
-
-## Command API
-
-Two ways to add commands to the buffer:
-
-| Layer | When to use |
-|-------|-------------|
-| `Draw3D.*` DSL | Everyday use — pipe-friendly, supports partial application |
-| `Command3D.*` factories | When you need to store or reuse commands without a buffer |
 
 ## Geometry commands
 
-The lighting/camera/shadow commands are identical across backends. The **geometry** commands share most names but differ where the underlying mesh type differs:
+One member set covers both backends — the buffer takes your backend's own mesh/model/material types, and the transform type (`System.Numerics.Matrix4x4` on raylib, `Microsoft.Xna.Framework.Matrix` on MonoGame):
 
-| Command | raylib | MonoGame |
-|---------|--------|----------|
-| Draw a loaded model | `drawModel model transform` | `drawModel model transform` |
-| Single primitive mesh | `drawMesh mesh transform material` (`Mesh`) | `drawPrimitive mesh transform material` (`PrimitiveMesh`) |
-| Instanced mesh | `drawMeshInstanced mesh transforms material count` | `drawInstanced mesh transforms material count` |
-| Skeletal/animated | `drawSkinnedMesh mesh transform material bones` | `drawAnimatedModel animatedModel transform` (bones derived internally) |
-| Billboard | `drawBillboard texture position size color` | `drawBillboard texture position size color` |
-| Batched billboards | `drawBillboardBatch ...` | `drawBillboardBatch ...` |
-| Debug line | `drawLine3D start finish color` | `drawLine3D start finish color` |
-
-> _**NOTE**_: On raylib the transform is `System.Numerics.Matrix4x4`; on MonoGame it is
-> `Microsoft.Xna.Framework.Matrix`. The `Draw3D.*` DSL takes whichever your backend uses; the
-> Core layout geometry converts at the boundary.
+| Member | What it draws |
+|--------|---------------|
+| `.model(model, transform)` | A loaded model with its authored materials |
+| `.modelWith(model, transform, material)` | Model with a whole-model material override |
+| `.modelWithPerMesh(model, transform, resolver)` | Model with a per-mesh-part material resolver |
+| `.mesh(mesh, transform, material)` | Single primitive mesh (raylib `Mesh` / MonoGame `PrimitiveMesh`) |
+| `.instanced(mesh, transforms, material, count)` | Many copies of one mesh in one draw call |
+| `.animatedModel(animModel, transform)` | Skeletal animation (bone palette derived for you) |
+| `.skinnedMesh(mesh, transform, material, bones)` | Explicit bone palette (**raylib only**) |
+| `.billboard(tex, position, size, color)` | Camera-facing quad |
+| `.billboardBatch(textures, positions, sizes, colors, count)` | Batched billboards |
+| `.line3D(start, finish, color)` | Debug line |
 
 ## Lighting
 
@@ -88,25 +78,26 @@ The lighting/camera/shadow commands are identical across backends. The **geometr
 
 ```fsharp
 buffer
-|> Draw3D.setAmbientLight { Color = Color(30, 30, 30); Intensity = 1f }
-|> Draw3D.addDirectionalLight {
+  .setAmbientLight { Color = Color(30, 30, 30); Intensity = 1f }
+  .addDirectionalLight {
     Direction = Vector3(0f, -1f, 0f)
     Color = Color.White; Intensity = 0.8f
     CastsShadows = true
-}
-|> Draw3D.addPointLight {
+  }
+  .addPointLight {
     Position = Vector3(5f, 3f, 0f)
     Color = Color.Orange; Intensity = 1f
     Radius = 10f; Falloff = 2f
     CastsShadows = false; ShadowBias = ValueNone
-}
-|> Draw3D.addSpotLight {
+  }
+  .addSpotLight {
     Position = Vector3(0f, 5f, 0f)
     Direction = Vector3(0f, -1f, 0f)
     Color = Color.White; Intensity = 1f
     Radius = 15f; InnerCutoff = 0.5f; OuterCutoff = 0.7f
     CastsShadows = true; ShadowBias = ValueNone
-}
+  }
+  .drop()
 ```
 
 See [Lighting](lighting.html) for the light-type fields and shadow configuration.
@@ -117,10 +108,11 @@ Enable or disable shadow casting per-section:
 
 ```fsharp
 buffer
-|> Draw3D.enableShadows
-|> Draw3D.drawModel groundModel groundTransform   // casts shadows
-|> Draw3D.disableShadows
-|> Draw3D.drawModel skyboxModel skyboxTransform   // no shadows
+  .enableShadows()
+  .model(groundModel, groundTransform)   // casts shadows
+  .disableShadows()
+  .model(skyboxModel, skyboxTransform)   // no shadows
+  .drop()
 ```
 
 ## Post-processing
@@ -132,10 +124,10 @@ passes ping-pong through pooled render targets.
 
 Two entry points:
 
-| Function | Depth available? | When to use |
-|----------|-----------------|-------------|
-| `Draw3D.postProcess action` | No (`Context.Depth = ValueNone`) | Color-only effects: desaturation, vignette, tone mapping, blur |
-| `Draw3D.postProcessWithDepth action` | Yes (`Context.Depth = ValueSome`) | Distance effects: fog, depth-of-field, SSAO |
+| Member | Depth available? | When to use |
+|--------|-----------------|-------------|
+| `.postProcess(action)` | No (`Context.Depth = ValueNone`) | Color-only effects: desaturation, vignette, tone mapping, blur |
+| `.postProcessWithDepth(action)` | Yes (`Context.Depth = ValueSome`) | Distance effects: fog, depth-of-field, SSAO |
 
 Use plain `postProcess` when you don't sample depth — the pipeline skips the
 depth-production cost entirely. Emit passes conditionally from the view (e.g. only
@@ -145,22 +137,22 @@ while a hit-flash is active).
 // Color-only: desaturate the scene while a hit-flash is active
 if isHitFlash model then
     buffer
-    |> Draw3D.postProcess (fun ctx ->
+      .postProcess(fun ctx ->
         // ctx.Source is the scene render target (or the previous pass's output)
         // Draw a fullscreen quad of it with your shader...
         drawFullscreenQuad ctx.Source myShader)
-    |> Draw3D.drop
+      .drop()
 ```
 
 ### Depth-aware post-processing
 
-`postProcessWithDepth` gives the action a `PostProcessContext3D` whose `Depth`
+`.postProcessWithDepth(...)` gives the action a `PostProcessContext3D` whose `Depth`
 field is a camera-POV depth texture. Sample it and linearize with the camera's
 near/far planes to get view-space distance:
 
 ```fsharp
 buffer
-|> Draw3D.postProcessWithDepth (fun ctx ->
+  .postProcessWithDepth(fun ctx ->
     // ctx.Source — the scene color (Texture2D / RenderTarget2D)
     // ctx.Depth — camera-POV depth (ValueSome Texture2D, NDC z in [0,1])
     // ctx.Width, ctx.Height — dimensions
@@ -169,7 +161,7 @@ buffer
     | ValueSome depthTex -> // bind depthTex, apply distance effect
     | ValueNone ->          // no depth — draw the scene through unchanged
     ())
-|> Draw3D.drop
+  .drop()
 ```
 
 ### Depth texture contract
@@ -236,12 +228,13 @@ let minimapConfig =
     |> Camera3D.withClear Color.Black
 
 buffer
-|> Draw3D.beginCameraWith mainConfig
-|> // ... main scene ...
-|> Draw3D.endCamera
-|> Draw3D.beginCameraWith minimapConfig
-|> // ... minimap ...
-|> Draw3D.endCamera
+  .beginCameraWith(mainConfig)
+  // ... main scene ...
+  .endCamera()
+  .beginCameraWith(minimapConfig)
+  // ... minimap ...
+  .endCamera()
+  .drop()
 ```
 
 > _**NOTE — viewport coordinates differ by backend.**_ On raylib, `Camera3DConfig.Viewport`
@@ -270,34 +263,36 @@ The 2D renderer clears with `ValueNone` to preserve the 3D scene underneath.
 
 Each backend exposes a way to run custom GPU work outside the deferred command buffer:
 
-**raylib** — `drawImmediate` runs raw rlgl/raylib calls (the batch is flushed and state restored):
+**raylib** — `.drawImmediate(...)` runs raw rlgl/raylib calls (the batch is flushed and state restored):
 
 ```fsharp
 buffer
-|> Draw3D.drawImmediate (fun () ->
+  .drawImmediate(fun () ->
     Raylib.DrawCube(Vector3.Zero, 1f, 1f, 1f, Color.Red))
+  .drop()
 ```
 
 **MonoGame** — two options:
-- `beginEffect` / `endEffect` open a **shading scope**: draws inside are shaded by a user
+- `.beginEffect(...)` / `.endEffect()` open a **shading scope**: draws inside are shaded by a user
   `Effect` that *inherits* the gathered scene data (camera matrices, lights, the shadow pass
   output, material, bones, frame time) — you only declare the uniforms your effect consumes
   (e.g. `dirLightDir`, `boneMatrices`, `shadowViewProjs`, `time`). Ideal for toon/cel/wireframe
-  without re-implementing the scene gather. The scope closes at `endEffect` or the next `endCamera`.
+  without re-implementing the scene gather. The scope closes at `.endEffect()` or the next
+  `.endCamera()`.
 
   ```fsharp
   buffer
-  |> Draw3D.beginCamera camera
-  |> Draw3D.beginEffect toonEffect
-  |> Draw3D.drawModel model transform
-  |> Draw3D.endEffect
-  |> Draw3D.endCamera
+    .beginCamera(camera)
+    .beginEffect(toonEffect)
+    .model(model, transform)
+    .endEffect()
+    .endCamera()
+    .drop()
   ```
 
-- `drawMeshEffect meshPart transform effect` is a fully user-owned effect (the pipeline only
-  sets World/View/Projection); the caller owns all lighting/material parameters.
-- `drawImmediate` (callback receives a `SceneContext` with the graphics device + gathered scene
-  data) for raw device access.
+- A per-mesh-part effect draw (the pipeline only sets World/View/Projection; the caller owns
+  all lighting/material parameters), and `.drawImmediate(...)` (the callback receives a
+  `SceneContext` with the graphics device + gathered scene data) for raw device access.
 
 See [Shaders](../shaders.html) for loading custom shaders/effects per backend, and the
 [Shader Uniform Reference](../shader-uniforms.html) for the exact uniform names the
@@ -305,6 +300,7 @@ See [Shaders](../shaders.html) for loading custom shaders/effects per backend, a
 
 ## See also
 
+- [Draw DSL](../draw-dsl.html) — the full fluent draw surface (2D and 3D)
 - [Camera](../camera.html) — Camera3D helpers, Camera3DConfig, multi-camera patterns
 - [Shaders](../shaders.html) — Custom shader loading and parameters
 - [Rendering Overview](../rendering.html) — 2D + 3D pipeline architecture
