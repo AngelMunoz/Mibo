@@ -625,6 +625,11 @@ module internal PbrShading =
           // Instanced draws always upload the material (one material across all instances).
           PbrUniforms.uploadMaterial(&p, &material)
           PbrUniforms.bindTextures(&p, &material, whiteTex res)
+          // Invalidate the material short-circuit: instanced draws always upload,
+          // but the cache still holds the last non-instanced key. Without this,
+          // a subsequent non-instanced draw whose key matches the stale cache
+          // would skip texture binding and sample the instanced pass's textures.
+          res.HasLastMaterial <- false
 
           if res.LightsDirty then
             PbrUniforms.uploadLights(
