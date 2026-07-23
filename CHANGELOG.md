@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **MonoGame 3D:** models and primitives no longer render with the wrong texture when drawn after instanced draws. Instanced draws always uploaded and bound their material but left the material short-circuit cache stale, so a subsequent non-instanced draw whose material key matched the cached value skipped texture rebinding and sampled whatever the instanced pass had bound.
+
 ## [3.1.0] - 2026-07-19
 
 ### Added
