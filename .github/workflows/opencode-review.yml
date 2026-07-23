@@ -1,0 +1,35 @@
+name: opencode-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: anomalyco/opencode/github@latest
+        env:
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+        with:
+          model: kimi-for-coding/k3
+          prompt: |
+            Review this pull request:
+            - Ensure AGENTS.md rules are respected
+            - Look out for perf regressions particularly around gc pressure
+            - Whem new code is added make sure performance is accounted for and not a secondary thing
+            - Look out for rendering affecting changes not noted in the PR
+            - Look out for asymetry between backends. E.g. something added to raylib and not monogame and viceversa
+            - When bug fixes are submtted for rendering concerns, make sure both backends are fixed or do not share the same bug
