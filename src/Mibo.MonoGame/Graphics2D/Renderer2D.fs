@@ -347,6 +347,16 @@ module private CommandHandlers =
     /// True when there is pending lit geometry awaiting submission.
     mutable HasBatch: bool
 
+    /// True when the SpriteBatch/PrimitiveBatch are currently in the Ended
+    /// (suspended) state because handleLitSprite's entry flush drained them for
+    /// a lit run. Distinct from HasBatch: a non-lit command interleaved inside
+    /// a lighting block (e.g. SetSamplerState between two lit sprites) drains
+    /// the lit geometry and reopens the batches via the exit guard, clearing
+    /// this — so a later EndLighting knows NOT to restartBatches a second time
+    /// (which would double-Begin). Cleared by handleEndLighting and
+    /// flushLitRunAndReopen after they reopen.
+    mutable BatchesSuspended: bool
+
     // ── Cached EffectParameter handles ──
     // Kill the per-draw effect.Parameters["..."] dictionary lookups the legacy
     // path did for MatrixTransform and Texture. Recached whenever the effect
@@ -441,6 +451,7 @@ module private CommandHandlers =
     CurNormalMap = ValueNone
     CurLightCtx = Unchecked.defaultof<_>
     HasBatch = false
+    BatchesSuspended = false
     CachedEffect = null
     CachedMatrixParam = null
     CachedTexParam = null
@@ -1499,6 +1510,7 @@ module private CommandHandlers =
     // flushBatches+restartBatches enforced, but once per run instead of per sprite.
     if not res.LitBatch.HasBatch then
       flushBatches res gd
+      res.LitBatch.BatchesSuspended <- true
 
     // Select effect (plain vs normal-map) exactly as the legacy path did.
     let effect =
@@ -1548,11 +1560,42 @@ module private CommandHandlers =
     =
     if lightCtx.ShaderActive then
       // EndLighting is a natural batch boundary: submit the block's pending lit
-      // geometry in order before re-arming the dirty flag. This also means the
-      // exit guard below does not have to fire on the command after EndLighting.
+      // geometry in order before re-arming the dirty flag.
       litBatchFlush &res.LitBatch gd
       lightCtx.ShaderActive <- false
       lightCtx.UniformsDirty <- true
+
+      // If the lit run left the SpriteBatch/PrimitiveBatch suspended (Ended),
+      // re-open them here so the next non-lit command's flushBatches->End() is
+      // balanced. The exit guard in execute keys off HasBatch, which
+      // litBatchFlush just cleared, so it would NOT reopen — EndLighting must.
+      // Gated on BatchesSuspended (not ShaderActive/HasBatch): a non-lit command
+      // interleaved before EndLighting already reopened via the exit guard, and
+      // a blind restartBatches here would double-Begin.
+      if res.LitBatch.BatchesSuspended then
+        restartBatches res &state
+        res.LitBatch.BatchesSuspended <- false
+
+  /// Drain any pending lit geometry and, if the lit run left the
+  /// SpriteBatch/PrimitiveBatch suspended (Ended), re-open them so a subsequent
+  /// `SpriteBatch.End()`/`PrimitiveBatch.End()` is balanced.
+  ///
+  /// Used by the renderer's frame-end cleanup: a frame may legitimately end
+  /// inside a lighting block (no EndLighting before the final EndCamera), in
+  /// which case the batches are still in the Ended state handleLitSprite put
+  /// them in. Calling End() then would throw. This restores the Begun state
+  /// using the renderer state `execute` left behind. No-op when no lit run is
+  /// pending (the batches are already Begun).
+  let inline flushLitRunAndReopen
+    (litBatch: byref<LitBatchState>)
+    (state: byref<RendererState>)
+    (res: RenderResources)
+    (gd: GraphicsDevice)
+    =
+    if litBatch.HasBatch then
+      litBatchFlush &litBatch gd
+      restartBatches res &state
+      litBatch.BatchesSuspended <- false
 
   // ── Main dispatch ─────────────────────────────────────────────
 
@@ -1583,6 +1626,10 @@ module private CommandHandlers =
       | _ when res.LitBatch.HasBatch ->
         litBatchFlush &res.LitBatch gd
         restartBatches res &state
+        // The batches were suspended for the lit run; restartBatches just
+        // reopened them. Clear the flag so a later EndLighting does not
+        // restartBatches a second time (double-Begin).
+        res.LitBatch.BatchesSuspended <- false
       | _ -> ()
 
       match cmd with
@@ -2014,10 +2061,21 @@ type Renderer2D<'Model>
         try
           CommandHandlers.execute(&state, buffer, res, gd)
         finally
-          // Submit any trailing lit run that wasn't flushed by EndLighting / the
-          // exit guard (e.g. lit sprites at the very end of the frame), so it
-          // draws before the batches close.
-          CommandHandlers.litBatchFlush &_litBatch gd
+          // LitBatchState is a struct held by value in res.LitBatch, so execute
+          // mutated a copy that diverged from the instance's _litBatch field.
+          // Copy back before the trailing flush so it drains the geometry
+          // execute actually accumulated (and so next frame starts from the
+          // right cursors/key).
+          _litBatch <- res.LitBatch
+
+          // Invariant: HasBatch=true means the SpriteBatch/PrimitiveBatch were
+          // suspended (Ended) for the lit run (see handleLitSprite's entry flush).
+          // If the frame ended mid-lit-run (no EndLighting before EndCamera),
+          // they are still Ended. Drain the trailing lit geometry and re-open
+          // both batches so the End() below is balanced — otherwise End() throws
+          // "Begin must be called before calling End" on every frame that ends
+          // inside a lighting block.
+          CommandHandlers.flushLitRunAndReopen &_litBatch &state res gd
           sb.End()
           pb.End()
       else
@@ -2056,8 +2114,13 @@ type Renderer2D<'Model>
 
         try
           CommandHandlers.execute(&state, buffer, res, gd)
-          // Submit any trailing lit run into the scene RT before the batches close.
-          CommandHandlers.litBatchFlush &_litBatch gd
+          // See hot-path note: res.LitBatch is a struct copy; sync back before
+          // the trailing flush so it sees the geometry execute accumulated.
+          _litBatch <- res.LitBatch
+          // Submit any trailing lit run into the scene RT before the batches
+          // close, and re-open the batches if the frame ended inside a lighting
+          // block so the End() calls below are balanced (see flushLitRunAndReopen).
+          CommandHandlers.flushLitRunAndReopen &_litBatch &state res gd
           sb.End()
           pb.End()
           sceneDone <- true
@@ -2085,9 +2148,13 @@ type Renderer2D<'Model>
           // If execute threw before the batches were ended, close them so the
           // renderer stays usable next frame (Begin guards against re-entrancy).
           if not sceneDone then
-            // Still flush lit geometry so a half-drawn frame doesn't leave the
-            // accumulator holding state into the next frame.
-            CommandHandlers.litBatchFlush &_litBatch gd
+            // Sync the struct copy back (see hot-path note) so a half-drawn
+            // frame's pending lit geometry is still flushed, and so the
+            // accumulator doesn't carry stale cursors into the next frame.
+            _litBatch <- res.LitBatch
+            // Drain the lit run and re-open the batches if the run left them
+            // suspended, so the End() calls below are balanced.
+            CommandHandlers.flushLitRunAndReopen &_litBatch &state res gd
             sb.End()
             pb.End()
 
