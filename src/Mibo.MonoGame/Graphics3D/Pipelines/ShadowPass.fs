@@ -231,12 +231,23 @@ module internal ShadowPass =
       | ValueNone -> 50.0f
 
     let resolution = float32 atlasCfg.Resolution
-    let gridSize = MathF.Sqrt(float32 atlasCfg.MaxCasters)
-    let slotResolution = resolution / gridSize
+
+    // Effective directional tile resolution. With a dedicated directional region
+    // (DirectionalAtlasRatio > 0) the directional caster occupies a top rectangle of size
+    // (Resolution × Resolution×ratio); the texel density is set by the smaller side. Without
+    // it, the legacy uniform grid gives the directional caster a 1/gridSize tile.
+    let dirTileResolution =
+      if atlasCfg.DirectionalAtlasRatio > 0.0f then
+        let h = resolution * atlasCfg.DirectionalAtlasRatio
+        min resolution h
+      else
+        let gridSize = MathF.Sqrt(float32 atlasCfg.MaxCasters)
+        resolution / gridSize
+
     // World-space size of one shadow texel in the directional light's X/Y plane.
     // The config's GridSnapSize overrides this when set; otherwise we default to the
     // texel size so the shadow-map pixels stay locked to world geometry.
-    let texelWorld = orthoSize * 2.0f / slotResolution
+    let texelWorld = orthoSize * 2.0f / dirTileResolution
     let snapSize = max atlasCfg.GridSnapSize texelWorld
 
     // Lock the shadow origin Y to the configured world height so jumping does not slide
@@ -266,7 +277,12 @@ module internal ShadowPass =
         Vector3.UnitY
 
     let shadowNear = 1.0f
-    let shadowFar = lightDistance + orthoSize * 2.0f
+    // The light sits at snappedOrigin + lightFromDir*lightDistance. Caster geometry lies
+    // within orthoSize of the origin on the near side, so the farthest it can be from the
+    // light is lightDistance + orthoSize. The previous (+orthoSize*2) doubled the z-range
+    // and wasted depth precision on empty space behind the scene (more shadow acne). Keep
+    // a one-unit margin so casters at the ortho boundary don't clip at the far plane.
+    let shadowFar = lightDistance + orthoSize + 1.0f
 
     let view = Matrix.CreateLookAt(lightPos, snappedOrigin, safeUp)
 
@@ -1056,7 +1072,9 @@ module internal ShadowPass =
         p.Shadow.ShadowAtlasTex.SetValue(res.Atlas.Fbo)
 
       gd.Textures[5] <- res.Atlas.Fbo
-      gd.SamplerStates[5] <- SamplerState.PointClamp
+      // Comparison sampler on DX12/Vulkan (SM6 hardware PCF via SampleCmpLevelZero);
+      // PointClamp on OpenGL/DX11 (manual PCF). Matches the ForwardPbr.fx profile branch.
+      gd.SamplerStates[5] <- ShadowSampler.forActiveBackend()
     | ValueNone -> ()
 
   // ─────────────────────────────────────────────────────────────────────────────

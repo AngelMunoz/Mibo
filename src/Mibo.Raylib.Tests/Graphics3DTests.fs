@@ -1015,6 +1015,7 @@ let shadowAtlasTests =
         Pipelines.ShadowAtlasConfig.defaults with
             MaxCasters = 16
             Resolution = 2048
+            DirectionalAtlasRatio = 0.0f
       }
 
       let bias = Pipelines.ShadowBiasConfig.defaults
@@ -1031,6 +1032,7 @@ let shadowAtlasTests =
         Pipelines.ShadowAtlasConfig.defaults with
             MaxCasters = 16
             Resolution = 2048
+            DirectionalAtlasRatio = 0.0f
       }
 
       let bias = Pipelines.ShadowBiasConfig.defaults
@@ -1058,6 +1060,7 @@ let shadowAtlasTests =
         Pipelines.ShadowAtlasConfig.defaults with
             MaxCasters = 16
             Resolution = 2048
+            DirectionalAtlasRatio = 0.0f
       }
 
       let bias = Pipelines.ShadowBiasConfig.defaults
@@ -1083,6 +1086,7 @@ let shadowAtlasTests =
         Pipelines.ShadowAtlasConfig.defaults with
             MaxCasters = 16
             Resolution = 2048
+            DirectionalAtlasRatio = 0.0f
       }
 
       let bias = Pipelines.ShadowBiasConfig.defaults
@@ -1111,6 +1115,7 @@ let shadowAtlasTests =
         Pipelines.ShadowAtlasConfig.defaults with
             MaxCasters = 9
             Resolution = 2048
+            DirectionalAtlasRatio = 0.0f
       }
 
       let bias = Pipelines.ShadowBiasConfig.defaults
