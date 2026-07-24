@@ -165,16 +165,20 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
       Camera3D.render camera
       |> Camera3D.withClear Microsoft.Xna.Framework.Color.White
     )
-    .setAmbientLight({
-      Color = Mibo.Color.White
-      Intensity = 0.5f
-    })
-    .addDirectionalLight({
-      Direction = System.Numerics.Vector3(1.f, -1.f, 1.f)
-      Color = Mibo.Color.White
-      Intensity = 1.f
-      CastsShadows = false
-    })
+    .setAmbientLight(
+      {
+        Color = Mibo.Color.White
+        Intensity = 0.5f
+      }
+    )
+    .addDirectionalLight(
+      {
+        Direction = System.Numerics.Vector3(1.f, -1.f, 1.f)
+        Color = Mibo.Color.White
+        Intensity = 1.f
+        CastsShadows = false
+      }
+    )
     .mesh(primSet.Cube, transform, material)
     .endCamera()
     .drop()
@@ -193,7 +197,6 @@ let create() : MonoGameProgram<Model, Msg> =
         Width = 800
         Height = 600
         Title = "Mibo MonoGame 3D Game"
-        TargetFPS = 60
   })
   |> Program.withInput
   |> Program.withSubscription(fun ctx _model ->

@@ -52,7 +52,7 @@ open Mibo.Elmish
 let program =
   Program.mkProgram init update
   |> Program.withConfig (fun cfg ->
-      { cfg with Width = 1280; Height = 720; Title = "My Game"; TargetFPS = 60 })
+      { cfg with Width = 1280; Height = 720; Title = "My Game" })
   |> Program.withRenderer (fun () -> Renderer2D.create view)
 
 // raylib:
