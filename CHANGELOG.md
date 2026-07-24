@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **3D Rendering:** instanced grid rendering can shade each cell type, sub-mesh, or the whole grid with a custom effect instead of the default PBR shader. Provide the effect per sub-mesh, per cell key, or once for the whole grid; cell types without an effect keep the default look.
+
 ## [3.1.1] - 2026-07-22
 
 ### Fixed
