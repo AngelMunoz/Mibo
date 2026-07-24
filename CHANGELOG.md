@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **MonoGame 2D:** lit sprites are now batched. Many lit sprites sharing the same texture (and normal map) collapse into a single draw call instead of one draw call per sprite, removing the per-sprite batch teardown. Visuals and the `.litSprite(...)` API are unchanged.
+
 ## [3.1.1] - 2026-07-22
 
 ### Fixed
