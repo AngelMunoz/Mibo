@@ -408,7 +408,8 @@ let drawCountTests =
     }
   ]
 
-let allTests =
+[<Tests>]
+let tests =
   testList "Mibo.MonoGame lit-sprite batching" [
     uvTests
     cornerTests
