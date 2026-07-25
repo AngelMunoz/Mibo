@@ -116,7 +116,7 @@ let main _args =
     let program =
         Program.mkProgram init update
         |> Program.withConfig (fun cfg ->
-            { cfg with Title = "My Game"; Width = 1280; Height = 720; TargetFPS = 60 })
+            { cfg with Title = "My Game"; Width = 1280; Height = 720 })
         |> Program.withAssets
         |> Program.withRenderer (fun () -> Renderer2D.create view)
 

@@ -95,6 +95,179 @@ module private PostProcessDrain =
       | ValueNone -> ()
 
 // ═══════════════════════════════════════════════════════════════════
+// Lit-sprite vertex tessellation — pure CPU math, factored out so the
+// renderer's batcher and the unit tests share one source of truth.
+// Produces a 4-vertex indexed quad (TL, TR, BR, BL) with the same
+// world-space positions, UVs, and flip/rotation/origin handling the
+// legacy per-sprite DrawUserPrimitives path used.
+// ═══════════════════════════════════════════════════════════════════
+
+/// <summary>Indexed quad vertex layout produced by lit-sprite tessellation.</summary>
+/// <remarks>
+/// Vertices are ordered TL (top-left), TR (top-right), BR (bottom-right), BL (bottom-left).
+/// The index pattern <c>[0;1;2; 0;2;3]</c> winds two triangles (TL,TR,BR) and (TL,BR,BL),
+/// matching the legacy 6-vertex DrawUserPrimitives layout so visuals are identical.
+/// Positions are world-space destination coordinates (the lit shader derives
+/// <c>WorldPos = input.Position.xy</c>); the shared <c>MatrixTransform = view * projection</c>
+/// is applied in the vertex shader.
+/// </remarks>
+[<Struct>]
+type internal LitQuadVerts = {
+  TL: VertexPositionColorTexture
+  TR: VertexPositionColorTexture
+  BR: VertexPositionColorTexture
+  BL: VertexPositionColorTexture
+}
+
+/// <summary>Pure tessellation of a lit-sprite <see cref="SpriteState"/> into a 4-vertex quad.</summary>
+/// <remarks>
+/// Reproduces the corner-transform / UV / flip math from the original per-sprite draw path
+/// verbatim. Negative <c>Source.Width</c>/<c>Height</c> signal a flip (same convention the
+/// unlit SpriteBatch path turns into FlipHorizontally/FlipVertically); the flip is folded
+/// into the UVs by swapping u0/u1 (v0/v1) so UVs stay in [0,1].
+/// </remarks>
+module internal LitBatchTessellation =
+
+  /// <summary>
+  /// Compute the UVs for the sprite's source rect, folding negative source
+  /// width/height (flip) into u0/u1 (v0/v1) swaps. Returns (u0, u1, v0, v1)
+  /// where (u0,v0) maps to the TL corner and (u1,v1) to the BR corner.
+  /// </summary>
+  let computeUvs
+    (src: Rectangle)
+    (texW: float32)
+    (texH: float32)
+    : struct (float32 * float32 * float32 * float32) =
+    let flipX = src.Width < 0
+    let flipY = src.Height < 0
+    let srcW = if flipX then -src.Width else src.Width
+    let srcH = if flipY then -src.Height else src.Height
+
+    let uLeft = float32 src.X / texW
+    let uRight = float32(src.X + srcW) / texW
+    let vTop = float32 src.Y / texH
+    let vBot = float32(src.Y + srcH) / texH
+
+    // u0/v0 map to the TL corner, u1 to the right column, v1 to the bottom row;
+    // swapping on the flipped axis mirrors it.
+    let u0 = if flipX then uRight else uLeft
+    let u1 = if flipX then uLeft else uRight
+    let v0 = if flipY then vBot else vTop
+    let v1 = if flipY then vTop else vBot
+    struct (u0, u1, v0, v1)
+
+  /// <summary>
+  /// Compute the four world-space destination corners with origin/rotation applied.
+  /// Matches the legacy transformCorner helper exactly.
+  /// </summary>
+  let computeCorners
+    (dest: Rectangle)
+    (origin: Vector2)
+    (rotation: float32)
+    : struct (Vector2 * Vector2 * Vector2 * Vector2) =
+    let cosR = cos rotation
+    let sinR = sin rotation
+
+    let transformCorner(lx: float32, ly: float32) =
+      let tx = lx - origin.X
+      let ty = ly - origin.Y
+      let rx = tx * cosR - ty * sinR
+      let ry = tx * sinR + ty * cosR
+      Vector2(float32 dest.X + rx + origin.X, float32 dest.Y + ry + origin.Y)
+
+    let tl = transformCorner(0.0f, 0.0f)
+    let tr = transformCorner(float32 dest.Width, 0.0f)
+    let bl = transformCorner(0.0f, float32 dest.Height)
+    let br = transformCorner(float32 dest.Width, float32 dest.Height)
+    struct (tl, tr, bl, br)
+
+  /// <summary>Tessellate a lit sprite into a 4-vertex indexed quad.</summary>
+  /// <param name="texW">The albedo texture's pixel width (for UV normalization).</param>
+  /// <param name="texH">The albedo texture's pixel height.</param>
+  /// <returns>The four quad vertices (TL, TR, BR, BL) in world space.</returns>
+  let tessellate
+    (sprite: SpriteState)
+    (texW: float32)
+    (texH: float32)
+    : LitQuadVerts =
+    let struct (u0, u1, v0, v1) = computeUvs sprite.Source texW texH
+
+    let struct (tl, tr, bl, br) =
+      computeCorners sprite.Dest sprite.Origin sprite.Rotation
+
+    let color = sprite.Color
+
+    {
+      TL =
+        VertexPositionColorTexture(
+          Vector3(tl.X, tl.Y, 0.0f),
+          color,
+          Vector2(u0, v0)
+        )
+      TR =
+        VertexPositionColorTexture(
+          Vector3(tr.X, tr.Y, 0.0f),
+          color,
+          Vector2(u1, v0)
+        )
+      BR =
+        VertexPositionColorTexture(
+          Vector3(br.X, br.Y, 0.0f),
+          color,
+          Vector2(u1, v1)
+        )
+      BL =
+        VertexPositionColorTexture(
+          Vector3(bl.X, bl.Y, 0.0f),
+          color,
+          Vector2(u0, v1)
+        )
+    }
+
+  /// <summary>
+  /// Index pattern for one tessellated quad: two triangles wound TL,TR,BR / TL,BR,BL.
+  /// Add <c>baseVertex</c> to each to offset within a larger vertex buffer.
+  /// </summary>
+  let writeIndices (indices: int[]) (offset: int) (baseVertex: int) =
+    indices[offset] <- baseVertex + 0
+    indices[offset + 1] <- baseVertex + 1
+    indices[offset + 2] <- baseVertex + 2
+    indices[offset + 3] <- baseVertex + 0
+    indices[offset + 4] <- baseVertex + 2
+    indices[offset + 5] <- baseVertex + 3
+
+  /// <summary>
+  /// Pure batch-key change predicate. Returns true when the current sub-batch
+  /// key (effect, texture, normalMap) differs from the incoming sprite's, so the
+  /// accumulator must flush before appending. Exposed for unit testing the
+  /// flush-trigger logic without a GraphicsDevice.
+  /// </summary>
+  /// <param name="hasBatch">Whether the accumulator currently has pending geometry.</param>
+  /// <param name="curEffect">The effect reference of the current pending batch.</param>
+  /// <param name="curTexture">The albedo texture reference of the current pending batch.</param>
+  /// <param name="curNormalMap">The normal-map reference of the current pending batch.</param>
+  /// <param name="effect">The incoming sprite's effect reference.</param>
+  /// <param name="texture">The incoming sprite's albedo texture reference.</param>
+  /// <param name="normalMap">The incoming sprite's normal-map reference.</param>
+  let batchKeyChanged
+    (hasBatch: bool)
+    (curEffect: obj)
+    (curTexture: obj)
+    (curNormalMap: obj voption)
+    (effect: obj)
+    (texture: obj)
+    (normalMap: obj voption)
+    : bool =
+    not hasBatch
+    || not(obj.ReferenceEquals(curEffect, effect))
+    || not(obj.ReferenceEquals(curTexture, texture))
+    || (match curNormalMap, normalMap with
+        | ValueSome a, ValueSome b -> not(obj.ReferenceEquals(a, b))
+        | ValueSome _, ValueNone -> true
+        | ValueNone, ValueSome _ -> true
+        | ValueNone, ValueNone -> false)
+
+// ═══════════════════════════════════════════════════════════════════
 // Private command handlers — extracted from Renderer2D for readability
 // ═══════════════════════════════════════════════════════════════════
 
@@ -135,6 +308,69 @@ module private CommandHandlers =
     WindowHeight: int
   }
 
+  // ── Lit-sprite accumulator ────────────────────────────────────
+  // Replaces the legacy one-draw-per-lit-sprite path. Consecutive lit
+  // sprites sharing the same (effect, texture, normalMap) collapse into a
+  // single DrawUserIndexedPrimitives call. Vertices carry world-space XY
+  // (the lit shader derives WorldPos = input.Position.xy); the shared
+  // MatrixTransform = view * projection is uploaded once per flush. The
+  // accumulator is drained by flushBatches (so every state-transition
+  // command flushes it automatically) and on lit-run exit.
+
+  /// <summary>Mutable state for the lit-sprite batch accumulator.</summary>
+  /// <remarks>
+  /// One instance per <see cref="Renderer2D"/> (held on <see cref="RenderResources"/>)
+  /// so stacked renderers don't clobber each other. All scratch arrays are reused
+  /// across frames and flushes (AGENTS.md: avoid allocations in hot paths) and grown
+  /// in place when exceeded.
+  /// </remarks>
+  [<Struct>]
+  type LitBatchState = {
+    /// Reused quad vertex buffer (4 verts per sprite), grown on demand.
+    mutable Verts: VertexPositionColorTexture[]
+    /// Reused index buffer (6 indices per sprite), grown on demand.
+    mutable Indices: int[]
+    /// Live vertex cursor (number of verts written this batch).
+    mutable VertCount: int
+    /// Live index cursor (number of indices written this batch).
+    mutable IndexCount: int
+
+    // ── Current sub-batch key: flush when any of these change ──
+    // A strict (effect, texture, normalMap) key guarantees every sprite in a
+    // batch samples the correct normal map (no last-wins sampler bug) and the
+    // correct albedo; it also mirrors raylib's effective texture-id batching.
+    mutable CurEffect: Effect
+    mutable CurTexture: Texture2D
+    mutable CurNormalMap: Texture2D voption
+    /// The active lighting context (owns the effects + uniforms to upload).
+    mutable CurLightCtx: LightContext2D
+    /// True when there is pending lit geometry awaiting submission.
+    mutable HasBatch: bool
+
+    /// True when the SpriteBatch/PrimitiveBatch are currently in the Ended
+    /// (suspended) state because handleLitSprite's entry flush drained them for
+    /// a lit run. Distinct from HasBatch: a non-lit command interleaved inside
+    /// a lighting block (e.g. SetSamplerState between two lit sprites) drains
+    /// the lit geometry and reopens the batches via the exit guard, clearing
+    /// this — so a later EndLighting knows NOT to restartBatches a second time
+    /// (which would double-Begin). Cleared by handleEndLighting and
+    /// flushLitRunAndReopen after they reopen.
+    mutable BatchesSuspended: bool
+
+    // ── Cached EffectParameter handles ──
+    // Kill the per-draw effect.Parameters["..."] dictionary lookups the legacy
+    // path did for MatrixTransform and Texture. Recached whenever the effect
+    // instance changes.
+    mutable CachedEffect: Effect
+    mutable CachedMatrixParam: EffectParameter
+    mutable CachedTexParam: EffectParameter
+
+    // ── Render state for the flush (set via restartBatches/litBatchReset) ──
+    mutable Transform: Matrix
+    mutable Blend: BlendState
+    mutable Rasterizer: RasterizerState
+  }
+
   /// <summary>
   /// Backend resources the command handlers close over. The MonoGame analog
   /// of raylib's implicit global batch + primitives.
@@ -144,10 +380,10 @@ module private CommandHandlers =
     PrimitiveBatch: PrimitiveBatch
     WhitePixel: Texture2D
     mutable Stack: CameraFrame list
-    /// Per-renderer scratch buffer for the lit-sprite quad draw. Kept on the
-    /// resources struct (rather than a module-level mutable) so layered/stacked
-    /// Renderer2D instances don't clobber each other's in-progress quad.
-    QuadVerts: VertexPositionColorTexture[]
+    /// Per-renderer lit-sprite accumulator. Kept on the resources struct
+    /// (rather than a module-level mutable) so layered/stacked Renderer2D
+    /// instances don't clobber each other's in-progress batch.
+    mutable LitBatch: LitBatchState
   }
 
   // ── BlendMode helpers ─────────────────────────────────────────
@@ -203,7 +439,217 @@ module private CommandHandlers =
     else
       defaultRasterizer
 
-  let inline private flushBatches(res: RenderResources) =
+  // ── Lit-sprite batch accumulator functions ────────────────────
+
+  let litBatchInit() : LitBatchState = {
+    Verts = Array.zeroCreate<VertexPositionColorTexture> 2048
+    Indices = Array.zeroCreate<int> 3072
+    VertCount = 0
+    IndexCount = 0
+    CurEffect = null
+    CurTexture = null
+    CurNormalMap = ValueNone
+    CurLightCtx = Unchecked.defaultof<_>
+    HasBatch = false
+    BatchesSuspended = false
+    CachedEffect = null
+    CachedMatrixParam = null
+    CachedTexParam = null
+    Transform = Matrix.Identity
+    Blend = BlendState.NonPremultiplied
+    Rasterizer = defaultRasterizer
+  }
+
+  /// Grow the vertex/index arrays (double capacity, copy contents). Called only
+  /// when a sprite would overflow the current buffers — amortized O(1) per sprite.
+  let private litBatchEnsureCapacity
+    (st: byref<LitBatchState>)
+    (extraVerts: int)
+    (extraIndices: int)
+    =
+    if st.VertCount + extraVerts > st.Verts.Length then
+      let nextCap = max (st.Verts.Length * 2) (st.VertCount + extraVerts)
+      let next = Array.zeroCreate<VertexPositionColorTexture> nextCap
+      Array.Copy(st.Verts, next, st.VertCount)
+      st.Verts <- next
+
+    if st.IndexCount + extraIndices > st.Indices.Length then
+      let nextCap = max (st.Indices.Length * 2) (st.IndexCount + extraIndices)
+      let next = Array.zeroCreate<int> nextCap
+      Array.Copy(st.Indices, next, st.IndexCount)
+      st.Indices <- next
+
+  /// (Re)cache the MatrixTransform and Texture EffectParameter handles for an
+  /// effect. Avoids the per-draw effect.Parameters["..."] dictionary lookup the
+  /// legacy path paid for every sprite.
+  let private litBatchCacheEffectParams
+    (st: byref<LitBatchState>)
+    (effect: Effect)
+    =
+    if not(obj.ReferenceEquals(st.CachedEffect, effect)) then
+      st.CachedEffect <- effect
+      st.CachedMatrixParam <- effect.Parameters["MatrixTransform"]
+      st.CachedTexParam <- effect.Parameters["Texture"]
+
+  /// Submit the pending lit geometry as one DrawUserIndexedPrimitives call,
+  /// then reset the cursors. No-op when there is nothing pending.
+  /// Uploads light uniforms once (gated by UniformsDirty) and binds the
+  /// shared MatrixTransform/Texture/(NormalMap) once per flush.
+  let litBatchFlush (st: byref<LitBatchState>) (gd: GraphicsDevice) =
+    if not st.HasBatch || st.IndexCount = 0 then
+      ()
+
+    else
+      let lightCtx = st.CurLightCtx
+      let effect = st.CurEffect
+
+      // Upload uniforms once per flush (dirty gate), to both effect variants.
+      // Matches the legacy per-sprite cadence: Reset/EndLighting/EnableShadows/
+      // DisableShadows set UniformsDirty; the first flush after that re-uploads.
+      lightCtx.EnsureLocationsCached()
+
+      if lightCtx.UniformsDirty then
+        lightCtx.UploadUniforms()
+        lightCtx.UniformsDirty <- false
+
+      litBatchCacheEffectParams &st effect
+
+      // MatrixTransform = view * projection (row-vector convention — see the
+      // comment in the legacy handleLitSprite). MUST be view * projection; using
+      // projection * view sends vertices to garbage clip coords (invisible).
+      let matrixParam = st.CachedMatrixParam
+
+      if matrixParam <> null then
+        matrixParam.SetValue(st.Transform)
+
+      let texParam = st.CachedTexParam
+
+      if texParam <> null then
+        texParam.SetValue(st.CurTexture)
+
+      match st.CurNormalMap with
+      | ValueSome nm ->
+        let nmParam = lightCtx.NormalMapParameter
+
+        if nmParam <> null then
+          nmParam.SetValue(nm)
+      | ValueNone -> ()
+
+      let prevBlend = gd.BlendState
+      let prevDepth = gd.DepthStencilState
+      let prevRaster = gd.RasterizerState
+
+      gd.BlendState <- st.Blend
+      gd.DepthStencilState <- DepthStencilState.None
+      gd.RasterizerState <- st.Rasterizer
+
+      let primitiveCount = st.IndexCount / 3
+
+      for pass in effect.CurrentTechnique.Passes do
+        pass.Apply()
+        // The parameter SetValue calls above are null-guarded so a malformed
+        // effect (missing MatrixTransform/Texture params) degrades to the
+        // shader's defaults instead of crashing — the draw itself always runs,
+        // matching the legacy per-sprite path.
+        gd.DrawUserIndexedPrimitives(
+          PrimitiveType.TriangleList,
+          st.Verts,
+          0,
+          st.VertCount,
+          st.Indices,
+          0,
+          primitiveCount
+        )
+        |> ignore
+
+      gd.BlendState <- prevBlend
+      gd.DepthStencilState <- prevDepth
+      gd.RasterizerState <- prevRaster
+
+      st.VertCount <- 0
+      st.IndexCount <- 0
+      st.HasBatch <- false
+
+  /// Append a lit sprite to the accumulator. Flushes first if the
+  /// (effect, texture, normalMap) key changed since the previous sprite.
+  /// The caller selects the effect (plain vs normal-map) from sprite.NormalMap
+  /// exactly as the legacy path did.
+  let litBatchAdd
+    (st: byref<LitBatchState>)
+    (lightCtx: LightContext2D)
+    (effect: Effect)
+    (sprite: SpriteState)
+    (gd: GraphicsDevice)
+    =
+    let texture = sprite.Texture
+    let normalMap = sprite.NormalMap
+
+    // Strict batch key: flush on any change so every sprite samples the
+    // correct albedo and normal map.
+    let curNmBox =
+      match st.CurNormalMap with
+      | ValueSome t -> ValueSome(box t)
+      | ValueNone -> ValueNone
+
+    let nmBox =
+      match normalMap with
+      | ValueSome t -> ValueSome(box t)
+      | ValueNone -> ValueNone
+
+    let keyChanged =
+      LitBatchTessellation.batchKeyChanged
+        st.HasBatch
+        st.CurEffect
+        st.CurTexture
+        curNmBox
+        effect
+        texture
+        nmBox
+
+    if keyChanged && st.HasBatch then
+      litBatchFlush &st gd
+
+    st.CurEffect <- effect
+    st.CurTexture <- texture
+    st.CurNormalMap <- normalMap
+    st.CurLightCtx <- lightCtx
+
+    // Tessellate into the reused arrays (pure CPU math — see LitBatchTessellation).
+    litBatchEnsureCapacity &st 4 6
+
+    let texW = float32 texture.Width
+    let texH = float32 texture.Height
+    let q = LitBatchTessellation.tessellate sprite texW texH
+    let baseVertex = st.VertCount
+
+    st.Verts[baseVertex] <- q.TL
+    st.Verts[baseVertex + 1] <- q.TR
+    st.Verts[baseVertex + 2] <- q.BR
+    st.Verts[baseVertex + 3] <- q.BL
+    st.VertCount <- baseVertex + 4
+
+    LitBatchTessellation.writeIndices st.Indices st.IndexCount baseVertex
+    st.IndexCount <- st.IndexCount + 6
+
+    st.HasBatch <- true
+
+  /// Store the current transform/blend/rasterizer for the next flush. Does NOT
+  /// flush — the surrounding flushBatches already drained the batch. Parallel to
+  /// PrimitiveBatch.SetTransform/SetBlendState/SetRasterizerState.
+  let litBatchReset
+    (st: byref<LitBatchState>)
+    (matrix: Matrix)
+    (blend: BlendState)
+    (rasterizer: RasterizerState)
+    =
+    st.Transform <- matrix
+    st.Blend <- blend
+    st.Rasterizer <- rasterizer
+
+  let inline private flushBatches (res: RenderResources) (gd: GraphicsDevice) =
+    // Drain the lit accumulator first so its geometry is submitted in order
+    // relative to the pending SpriteBatch/PrimitiveBatch draws.
+    litBatchFlush &res.LitBatch gd
     res.SpriteBatch.End()
     res.PrimitiveBatch.Flush()
 
@@ -227,12 +673,16 @@ module private CommandHandlers =
     res.PrimitiveBatch.SetBlendState(toBlendState state.Blend)
     res.PrimitiveBatch.SetRasterizerState(raster)
     res.PrimitiveBatch.SetEffect(state.Shader)
+    // Re-arm the lit accumulator with the current transform/blend/rasterizer so
+    // the next flush uses them. litBatchReset does not flush (flushBatches did).
+    litBatchReset &res.LitBatch matrix (toBlendState state.Blend) raster
 
   let inline private endAndRestart
     (res: RenderResources)
     (state: byref<RendererState>)
+    (gd: GraphicsDevice)
     =
-    flushBatches res
+    flushBatches res gd
     restartBatches res &state
 
   // ── Camera / viewport stack ───────────────────────────────────
@@ -294,7 +744,7 @@ module private CommandHandlers =
     =
     pushFrame res &state
     state.Camera <- ValueSome c
-    endAndRestart res &state
+    endAndRestart res &state gd
 
   let private beginCameraConfig
     (config: Camera2DConfig)
@@ -302,7 +752,7 @@ module private CommandHandlers =
     (res: RenderResources)
     (gd: GraphicsDevice)
     =
-    flushBatches res
+    flushBatches res gd
     pushFrame res &state
     state.Camera <- ValueSome config.Camera
 
@@ -324,7 +774,7 @@ module private CommandHandlers =
     (res: RenderResources)
     (gd: GraphicsDevice)
     =
-    flushBatches res
+    flushBatches res gd
     popFrame gd res &state
     restartBatches res &state
 
@@ -336,7 +786,7 @@ module private CommandHandlers =
     (res: RenderResources)
     (gd: GraphicsDevice)
     =
-    flushBatches res
+    flushBatches res gd
     pushFrame res &state
     state.Camera <- ValueNone
     state.Shader <- ValueNone
@@ -1038,9 +1488,12 @@ module private CommandHandlers =
       prev := p
 
   // ── Lit sprite draw path ────────────────────────────────────────
-  // Bypasses SpriteBatch: draws the sprite directly with the lit Effect
-  // and DrawUserPrimitives so the shader gets world-position + texture
-  // + normal-map binding. Mirrors raylib's handleLitSprite.
+  // Lit sprites accumulate into res.LitBatch (4 verts + 6 indices each) and
+  // are submitted as one DrawUserIndexedPrimitives per (effect, texture,
+  // normalMap) group — collapsing the legacy one-draw-per-sprite path.
+  // Uniform upload, MatrixTransform/Texture/NormalMap binding, and the
+  // blend/depth/raster state save+restore all happen once per flush (in
+  // litBatchFlush), not per sprite. Mirrors raylib's batched handleLitSprite.
 
   let private handleLitSprite
     (lightCtx: LightContext2D)
@@ -1049,10 +1502,18 @@ module private CommandHandlers =
     (res: RenderResources)
     (gd: GraphicsDevice)
     =
-    // 1. Flush both batches — lit sprite draws outside the batch pipeline
-    flushBatches res
+    // Entering a lit run: if no lit batch is active yet, flush the pending
+    // SpriteBatch/PrimitiveBatch draws ONCE so they render before the lit
+    // geometry. While the lit run is active the other batches stay suspended
+    // (nothing should be appending to them); they are re-opened lazily on the
+    // next non-lit command (see the exit guard in execute) or by handleEndLighting.
+    // This preserves the lit/unlit draw-order contract the legacy per-sprite
+    // flushBatches+restartBatches enforced, but once per run instead of per sprite.
+    if not res.LitBatch.HasBatch then
+      flushBatches res gd
+      res.LitBatch.BatchesSuspended <- true
 
-    // 2. Select effect (plain vs normal-map)
+    // Select effect (plain vs normal-map) exactly as the legacy path did.
     let effect =
       match sprite.NormalMap with
       | ValueSome _ -> lightCtx.NormalMapEffect
@@ -1060,20 +1521,12 @@ module private CommandHandlers =
 
     lightCtx.ShaderActive <- true
 
-    // 3. Lazy uniform upload (once per frame on first lit sprite)
-    if lightCtx.UniformsDirty then
-      lightCtx.UploadUniforms()
-      lightCtx.UniformsDirty <- false
-
-    lightCtx.EnsureLocationsCached()
-
-    // 4. Set MatrixTransform = view * projection (camera * ortho).
-    //    XNA/MonoGame row-vector convention: A * B applies A first, so the
-    //    correct world -> clip chain is world -> screen (view) -> clip
-    //    (projection). This MUST match PrimitiveBatch.ensureProjection
-    //    (currentMatrix * proj) and the SpriteBatch transform composition;
-    //    using projection * view sends vertices to garbage clip coords and
-    //    the sprite gets clipped away entirely (invisible).
+    // MatrixTransform = view * projection is recomputed and stored on the batch
+    // state every sprite. It is cheap (a viewport read + one ortho + one matrix
+    // multiply) and only actually uploaded once per flush (litBatchFlush). It
+    // must be view * projection (row-vector convention) — projection * view
+    // sends vertices to garbage clip coords (invisible). See the comment in
+    // litBatchFlush.
     let vp = gd.Viewport
 
     let projection =
@@ -1089,153 +1542,61 @@ module private CommandHandlers =
     let view = currentMatrix &state
     let matrixTransform = view * projection
 
-    let param = effect.Parameters["MatrixTransform"]
+    litBatchReset
+      &res.LitBatch
+      matrixTransform
+      (toBlendState state.Blend)
+      (currentRasterizer &state)
 
-    if param <> null then
-      param.SetValue(matrixTransform)
-
-    // 5. Set texture and normal map
-    let texParam = effect.Parameters["Texture"]
-
-    if texParam <> null then
-      texParam.SetValue(sprite.Texture)
-
-    match sprite.NormalMap with
-    | ValueSome nm ->
-      let nmParam = lightCtx.NormalMapParameter
-
-      if nmParam <> null then
-        nmParam.SetValue(nm)
-    | ValueNone -> ()
-
-    // 6. Build quad vertices (two triangles) in screen space
-    let dest = sprite.Dest
-    let src = sprite.Source
-    let origin = sprite.Origin
-    let rotation = sprite.Rotation
-    let color = sprite.Color
-
-    // Compute UVs from source rect (normalized to texture size).
-    // Negative source width/height signal a flip — same convention the unlit
-    // SpriteBatch path turns into FlipHorizontally/FlipVertically and that
-    // LightCommands.litAnimatedSprite derives from AnimatedSprite.FlipX/FlipY.
-    // Use the absolute extent so the UVs stay in the valid [0,1] range, and
-    // fold the flip into u0/u1 (v0/v1) by swapping the axis coordinate.
-    // Computing u1 from a negative width yields out-of-range UVs that sample
-    // the wrong texels every frame, making flipped animations flicker/blink.
-    let texW = float32 sprite.Texture.Width
-    let texH = float32 sprite.Texture.Height
-
-    let flipX = src.Width < 0
-    let flipY = src.Height < 0
-    let srcW = if flipX then -src.Width else src.Width
-    let srcH = if flipY then -src.Height else src.Height
-
-    let uLeft = float32 src.X / texW
-    let uRight = float32(src.X + srcW) / texW
-    let vTop = float32 src.Y / texH
-    let vBot = float32(src.Y + srcH) / texH
-
-    // u0/v0 map to the TL corner, u1 to the right column, v1 to the bottom row
-    // (see the quad assembly below); swapping on the flipped axis mirrors it.
-    let u0 = if flipX then uRight else uLeft
-    let u1 = if flipX then uLeft else uRight
-    let v0 = if flipY then vBot else vTop
-    let v1 = if flipY then vTop else vBot
-
-    // Compute 4 corners with origin/rotation applied
-    let cosR = cos rotation
-    let sinR = sin rotation
-
-    let transformCorner(lx: float32, ly: float32) =
-      let tx = lx - origin.X
-      let ty = ly - origin.Y
-      let rx = tx * cosR - ty * sinR
-      let ry = tx * sinR + ty * cosR
-      Vector2(float32 dest.X + rx + origin.X, float32 dest.Y + ry + origin.Y)
-
-    let tl = transformCorner(0.0f, 0.0f)
-    let tr = transformCorner(float32 dest.Width, 0.0f)
-    let bl = transformCorner(0.0f, float32 dest.Height)
-    let br = transformCorner(float32 dest.Width, float32 dest.Height)
-
-    // Per-renderer scratch quad buffer (res.QuadVerts) — avoids per-draw heap
-    // allocation in the hot path (AGENTS.md: avoid allocations in hot paths)
-    // while keeping each Renderer2D instance isolated.
-    let quadVerts = res.QuadVerts
-
-    quadVerts[0] <-
-      VertexPositionColorTexture(
-        Vector3(tl.X, tl.Y, 0.0f),
-        color,
-        Vector2(u0, v0)
-      )
-
-    quadVerts[1] <-
-      VertexPositionColorTexture(
-        Vector3(tr.X, tr.Y, 0.0f),
-        color,
-        Vector2(u1, v0)
-      )
-
-    quadVerts[2] <-
-      VertexPositionColorTexture(
-        Vector3(br.X, br.Y, 0.0f),
-        color,
-        Vector2(u1, v1)
-      )
-
-    quadVerts[3] <-
-      VertexPositionColorTexture(
-        Vector3(tl.X, tl.Y, 0.0f),
-        color,
-        Vector2(u0, v0)
-      )
-
-    quadVerts[4] <-
-      VertexPositionColorTexture(
-        Vector3(br.X, br.Y, 0.0f),
-        color,
-        Vector2(u1, v1)
-      )
-
-    quadVerts[5] <-
-      VertexPositionColorTexture(
-        Vector3(bl.X, bl.Y, 0.0f),
-        color,
-        Vector2(u0, v1)
-      )
-
-    // 7. Draw with the lit effect
-    let prevBlend = gd.BlendState
-    let prevDepth = gd.DepthStencilState
-    let prevRaster = gd.RasterizerState
-
-    gd.BlendState <- toBlendState state.Blend
-    gd.DepthStencilState <- DepthStencilState.None
-    gd.RasterizerState <- currentRasterizer &state
-
-    for pass in effect.CurrentTechnique.Passes do
-      pass.Apply()
-
-      gd.DrawUserPrimitives(PrimitiveType.TriangleList, quadVerts, 0, 2)
-      |> ignore
-
-    gd.BlendState <- prevBlend
-    gd.DepthStencilState <- prevDepth
-    gd.RasterizerState <- prevRaster
-
-    // 8. Re-begin both batches for subsequent non-lit commands
-    restartBatches res &state
+    // Append to the accumulator. litBatchAdd flushes automatically when the
+    // (effect, texture, normalMap) key changes. Uniform upload + GPU submission
+    // happen inside litBatchFlush, gated by UniformsDirty.
+    litBatchAdd &res.LitBatch lightCtx effect sprite gd
 
   let private handleEndLighting
     (lightCtx: LightContext2D)
     (state: byref<RendererState>)
     (res: RenderResources)
+    (gd: GraphicsDevice)
     =
     if lightCtx.ShaderActive then
+      // EndLighting is a natural batch boundary: submit the block's pending lit
+      // geometry in order before re-arming the dirty flag.
+      litBatchFlush &res.LitBatch gd
       lightCtx.ShaderActive <- false
       lightCtx.UniformsDirty <- true
+
+      // If the lit run left the SpriteBatch/PrimitiveBatch suspended (Ended),
+      // re-open them here so the next non-lit command's flushBatches->End() is
+      // balanced. The exit guard in execute keys off HasBatch, which
+      // litBatchFlush just cleared, so it would NOT reopen — EndLighting must.
+      // Gated on BatchesSuspended (not ShaderActive/HasBatch): a non-lit command
+      // interleaved before EndLighting already reopened via the exit guard, and
+      // a blind restartBatches here would double-Begin.
+      if res.LitBatch.BatchesSuspended then
+        restartBatches res &state
+        res.LitBatch.BatchesSuspended <- false
+
+  /// Drain any pending lit geometry and, if the lit run left the
+  /// SpriteBatch/PrimitiveBatch suspended (Ended), re-open them so a subsequent
+  /// `SpriteBatch.End()`/`PrimitiveBatch.End()` is balanced.
+  ///
+  /// Used by the renderer's frame-end cleanup: a frame may legitimately end
+  /// inside a lighting block (no EndLighting before the final EndCamera), in
+  /// which case the batches are still in the Ended state handleLitSprite put
+  /// them in. Calling End() then would throw. This restores the Begun state
+  /// using the renderer state `execute` left behind. No-op when no lit run is
+  /// pending (the batches are already Begun).
+  let inline flushLitRunAndReopen
+    (litBatch: byref<LitBatchState>)
+    (state: byref<RendererState>)
+    (res: RenderResources)
+    (gd: GraphicsDevice)
+    =
+    if litBatch.HasBatch then
+      litBatchFlush &litBatch gd
+      restartBatches res &state
+      litBatch.BatchesSuspended <- false
 
   // ── Main dispatch ─────────────────────────────────────────────
 
@@ -1250,7 +1611,29 @@ module private CommandHandlers =
     let pb = res.PrimitiveBatch
 
     for i = 0 to buffer.Count - 1 do
-      match buffer[i] with
+      let cmd = buffer[i]
+
+      // Lit-run exit guard: if we were accumulating lit geometry and the next
+      // command is not part of the lighting block, submit the lit geometry in
+      // order and re-open the suspended SpriteBatch/PrimitiveBatch before the
+      // non-lit command runs. This is the counterpart to handleLitSprite's
+      // entry flush and preserves lit/unlit draw order without flushing per sprite.
+      match cmd with
+      | Command2D.LitSprite _
+      | Command2D.NoopLight _
+      | Command2D.EndLighting _
+      | Command2D.EnableShadows _
+      | Command2D.DisableShadows _ -> ()
+      | _ when res.LitBatch.HasBatch ->
+        litBatchFlush &res.LitBatch gd
+        restartBatches res &state
+        // The batches were suspended for the lit run; restartBatches just
+        // reopened them. Clear the flag so a later EndLighting does not
+        // restartBatches a second time (double-Begin).
+        res.LitBatch.BatchesSuspended <- false
+      | _ -> ()
+
+      match cmd with
       // Sprite & Text
       | Command2D.Sprite(texture, dest, source, origin, rotation, color, _) ->
         // Translate negative source rect dimensions into SpriteEffects
@@ -1425,10 +1808,10 @@ module private CommandHandlers =
       | Command2D.BeginShader(shader, _) ->
         pushFrame res &state
         state.Shader <- ValueSome shader
-        endAndRestart res &state
+        endAndRestart res &state gd
 
       | Command2D.EndShader _ ->
-        flushBatches res
+        flushBatches res gd
         popFrame gd res &state
         restartBatches res &state
 
@@ -1437,12 +1820,12 @@ module private CommandHandlers =
         pushFrame res &state
         state.HasRenderTarget <- true
         state.RenderTarget <- ValueSome target
-        flushBatches res
+        flushBatches res gd
         gd.SetRenderTarget(target)
         restartBatches res &state
 
       | Command2D.EndTarget _ ->
-        flushBatches res
+        flushBatches res gd
         popFrame gd res &state
         restartBatches res &state
 
@@ -1450,15 +1833,15 @@ module private CommandHandlers =
       | Command2D.SetBlend(mode, _) ->
         if state.Blend <> mode then
           state.Blend <- mode
-          endAndRestart res &state
+          endAndRestart res &state gd
 
       | Command2D.SetSamplerState(sampler, _) ->
         if state.Sampler <> sampler then
           state.Sampler <- sampler
-          endAndRestart res &state
+          endAndRestart res &state gd
 
       | Command2D.SetScissor(x, y, w, h, _) ->
-        flushBatches res
+        flushBatches res gd
         state.HasScissor <- true
         state.ScissorRect <- Rectangle(x, y, w, h)
         gd.ScissorRectangle <- state.ScissorRect
@@ -1466,12 +1849,12 @@ module private CommandHandlers =
 
       | Command2D.ClearScissor _ ->
         state.HasScissor <- false
-        endAndRestart res &state
+        endAndRestart res &state gd
 
       | Command2D.SetLineWidth(width, _) -> pb.LineWidth <- width
 
       | Command2D.SetViewport(x, y, w, h, _) ->
-        flushBatches res
+        flushBatches res gd
         state.HasCustomViewport <- true
         gd.Viewport <- Viewport(x, y, w, h)
         state.Viewport <- gd.Viewport
@@ -1481,7 +1864,7 @@ module private CommandHandlers =
       | Command2D.DrawImmediate(action, _) -> drawImmediate action &state res gd
 
       | Command2D.Clear(color, _) ->
-        flushBatches res
+        flushBatches res gd
         sb.GraphicsDevice.Clear(color)
         restartBatches res &state
 
@@ -1492,7 +1875,7 @@ module private CommandHandlers =
         handleLitSprite lightCtx sprite &state res gd
 
       | Command2D.EndLighting(lightCtx, _) ->
-        handleEndLighting lightCtx &state res
+        handleEndLighting lightCtx &state res gd
 
       | Command2D.EnableShadows(lightCtx, _) -> lightCtx.UniformsDirty <- true
 
@@ -1576,9 +1959,11 @@ type Renderer2D<'Model>
   let mutable _fullScreenQuad: Mibo.Elmish.Graphics3D.FullScreenQuad voption =
     ValueNone
 
-  // Per-instance lit-sprite quad scratch buffer (two triangles = 6 verts).
-  // Instance-scoped so stacked Renderer2D instances don't clobber each other.
-  let _quadVerts = Array.zeroCreate<VertexPositionColorTexture> 6
+  // Per-instance lit-sprite accumulator (CommandHandlers.LitBatchState).
+  // Instance-scoped so stacked Renderer2D instances don't clobber each other's
+  // in-progress batch. Initialized against the device on first Draw.
+  let mutable _litBatch: CommandHandlers.LitBatchState =
+    CommandHandlers.litBatchInit()
 
   let mutable _camera: Camera2D voption = ValueNone
   let mutable _windowWidth = 0
@@ -1596,6 +1981,7 @@ type Renderer2D<'Model>
       _primitiveBatch <- ValueSome(new PrimitiveBatch(gd))
       _whitePixel <- ValueSome(createWhitePixel gd)
       _rtPool <- ValueSome(new RenderTargetPool(gd))
+      _litBatch <- CommandHandlers.litBatchInit()
     | ValueSome _ -> ()
 
   interface IRenderer<'Model> with
@@ -1649,8 +2035,16 @@ type Renderer2D<'Model>
         PrimitiveBatch = pb
         WhitePixel = _whitePixel.Value
         Stack = []
-        QuadVerts = _quadVerts
+        LitBatch = _litBatch
       }
+
+      // Arm the lit accumulator with the initial transform/blend/rasterizer so
+      // the first lit flush of the frame uses them (parallel to pb.Begin above).
+      CommandHandlers.litBatchReset
+        &_litBatch
+        initialMatrix
+        (CommandHandlers.toBlendState BlendMode.NonPremultiplied)
+        CommandHandlers.defaultRasterizer
 
       // When the view emits no PostProcess commands, take the hot path (no scene RT,
       // no collection scan, no per-frame allocation). When present, collect them, render
@@ -1668,6 +2062,21 @@ type Renderer2D<'Model>
         try
           CommandHandlers.execute(&state, buffer, res, gd)
         finally
+          // LitBatchState is a struct held by value in res.LitBatch, so execute
+          // mutated a copy that diverged from the instance's _litBatch field.
+          // Copy back before the trailing flush so it drains the geometry
+          // execute actually accumulated (and so next frame starts from the
+          // right cursors/key).
+          _litBatch <- res.LitBatch
+
+          // Invariant: HasBatch=true means the SpriteBatch/PrimitiveBatch were
+          // suspended (Ended) for the lit run (see handleLitSprite's entry flush).
+          // If the frame ended mid-lit-run (no EndLighting before EndCamera),
+          // they are still Ended. Drain the trailing lit geometry and re-open
+          // both batches so the End() below is balanced — otherwise End() throws
+          // "Begin must be called before calling End" on every frame that ends
+          // inside a lighting block.
+          CommandHandlers.flushLitRunAndReopen &_litBatch &state res gd
           sb.End()
           pb.End()
       else
@@ -1706,6 +2115,13 @@ type Renderer2D<'Model>
 
         try
           CommandHandlers.execute(&state, buffer, res, gd)
+          // See hot-path note: res.LitBatch is a struct copy; sync back before
+          // the trailing flush so it sees the geometry execute accumulated.
+          _litBatch <- res.LitBatch
+          // Submit any trailing lit run into the scene RT before the batches
+          // close, and re-open the batches if the frame ended inside a lighting
+          // block so the End() calls below are balanced (see flushLitRunAndReopen).
+          CommandHandlers.flushLitRunAndReopen &_litBatch &state res gd
           sb.End()
           pb.End()
           sceneDone <- true
@@ -1733,6 +2149,13 @@ type Renderer2D<'Model>
           // If execute threw before the batches were ended, close them so the
           // renderer stays usable next frame (Begin guards against re-entrancy).
           if not sceneDone then
+            // Sync the struct copy back (see hot-path note) so a half-drawn
+            // frame's pending lit geometry is still flushed, and so the
+            // accumulator doesn't carry stale cursors into the next frame.
+            _litBatch <- res.LitBatch
+            // Drain the lit run and re-open the batches if the run left them
+            // suspended, so the End() calls below are balanced.
+            CommandHandlers.flushLitRunAndReopen &_litBatch &state res gd
             sb.End()
             pb.End()
 

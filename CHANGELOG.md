@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **MonoGame 2D:** consecutive lit sprites sharing the same texture and normal map collapse into a single draw call instead of one per sprite. Visuals and the `.litSprite(...)` API are unchanged.
+
+### Changed
+
+- **Breaking:** **Core:** `GameConfig.TargetFPS` is now `int voption` and defaults to `ValueNone` — when unset, the framework imposes no render-rate cap and leaves the backend's default framerate behavior untouched. Previously the default was `60`, which forced a fixed timestep on every game. To set a cap, use `GameConfig.withTargetFPS 60` (or `TargetFPS = ValueSome 60` inline); the old `TargetFPS = 0` "unlimited" sentinel is now simply omitting the field.
+
 ## [3.1.1] - 2026-07-22
 
 ### Fixed

@@ -141,8 +141,8 @@ Program.mkProgram init update
   { cfg with
       Title = "My Game"
       Width = 1280
-      Height = 720
-      TargetFPS = 60 })
+      Height = 720 })
+|> GameConfig.withTargetFPS 60
 // ... then wrap with MonoGameProgram and add device-level config:
 |> MonoGameProgram.ofProgram
 |> MonoGameProgram.withConfig (fun (game, gdm) ->
@@ -158,7 +158,7 @@ type GameConfig = {
   Width: int          // default: 800
   Height: int         // default: 600
   Title: string       // default: varies by backend
-  TargetFPS: int      // default: 60; 0 = unlimited
+  TargetFPS: int voption  // default: ValueNone (backend default); ValueSome n to cap
   MinWidth: int voption
   MinHeight: int voption
 }

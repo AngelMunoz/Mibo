@@ -180,6 +180,7 @@ Point light shadows are bounded by the light's radius, so they're cheaper than d
 
 ### Performance
 
+- Lit sprites are batched: consecutive lit sprites sharing the same texture (and normal map) collapse into a single draw call rather than one per sprite. Group lit sprites by texture in your view to get the most out of this.
 - Occluders are uploaded as a uniform array to the GPU each frame (max 128 by default).
 - The shadow raymarch loops up to 64 iterations per lit pixel per shadow-casting light.
 - Keep shadow-casting lights few (1–2 directional, 2–4 point) for good performance.

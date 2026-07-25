@@ -17,8 +17,10 @@ type GameConfig = {
   Height: int
   /// Window title.
   Title: string
-  /// Target frames per second. 0 = unlimited.
-  TargetFPS: int
+  /// Target render rate. <c>ValueNone</c> = use the backend's default (no cap
+  /// imposed); <c>ValueSome n</c> = cap at n FPS (MonoGame fixed timestep at
+  /// 1/n, Raylib <c>SetTargetFPS</c>). Defaults to <c>ValueNone</c>.
+  TargetFPS: int voption
   /// Minimum window width in pixels. When set, enables resizable window.
   MinWidth: int voption
   /// Minimum window height in pixels. When set, enables resizable window.
@@ -30,7 +32,7 @@ module GameConfig =
     Width = 800
     Height = 600
     Title = "Mibo F#"
-    TargetFPS = 60
+    TargetFPS = ValueNone
     MinWidth = ValueNone
     MinHeight = ValueNone
   }
@@ -49,7 +51,14 @@ module GameConfig =
   }
 
   let withTitle title config = { config with Title = title }
-  let withTargetFPS fps config = { config with TargetFPS = fps }
+
+  /// Cap the render rate at the given FPS (MonoGame fixed timestep at 1/fps,
+  /// Raylib <c>SetTargetFPS</c>). Omit it (the default) to leave the backend's
+  /// framerate behavior untouched.
+  let withTargetFPS fps config = {
+    config with
+        TargetFPS = ValueSome fps
+  }
 
 /// <summary>
 /// The Elmish program record that defines the complete game architecture.
