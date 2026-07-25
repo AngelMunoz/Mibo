@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <Compile Include="CullingTests.fs" />
+    <Compile Include="ShadowAtlasTests.fs" />
     <Compile Include="Layout3DTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>

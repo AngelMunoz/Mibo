@@ -247,7 +247,8 @@ module internal ShadowPass =
     // World-space size of one shadow texel in the directional light's X/Y plane.
     // The config's GridSnapSize overrides this when set; otherwise we default to the
     // texel size so the shadow-map pixels stay locked to world geometry.
-    let texelWorld = orthoSize * 2.0f / dirTileResolution
+    // DirectionalLightSize is the FULL ortho height (matches the raylib backend).
+    let texelWorld = orthoSize / dirTileResolution
     let snapSize = max atlasCfg.GridSnapSize texelWorld
 
     // Lock the shadow origin Y to the configured world height so jumping does not slide
@@ -278,20 +279,24 @@ module internal ShadowPass =
 
     let shadowNear = 1.0f
     // The light sits at snappedOrigin + lightFromDir*lightDistance. Caster geometry lies
-    // within orthoSize of the origin on the near side, so the farthest it can be from the
-    // light is lightDistance + orthoSize. The previous (+orthoSize*2) doubled the z-range
-    // and wasted depth precision on empty space behind the scene (more shadow acne). Keep
-    // a one-unit margin so casters at the ortho boundary don't clip at the far plane.
+    // within the ortho window (half-height orthoSize/2) of the origin on the near side;
+    // lightDistance + orthoSize keeps a generous margin without doubling the z-range like
+    // the old (+orthoSize*2) did, which wasted depth precision on empty space behind the
+    // scene (more shadow acne). Matches the raylib backend.
     let shadowFar = lightDistance + orthoSize + 1.0f
 
     let view = Matrix.CreateLookAt(lightPos, snappedOrigin, safeUp)
 
+    // DirectionalLightSize is the FULL ortho height, matching the raylib backend's ortho
+    // FovY semantics — same config value, same coverage, same texel density.
+    let halfSize = orthoSize * 0.5f
+
     let proj =
       Matrix.CreateOrthographicOffCenter(
-        -orthoSize,
-        orthoSize,
-        -orthoSize,
-        orthoSize,
+        -halfSize,
+        halfSize,
+        -halfSize,
+        halfSize,
         shadowNear,
         shadowFar
       )
@@ -1072,8 +1077,8 @@ module internal ShadowPass =
         p.Shadow.ShadowAtlasTex.SetValue(res.Atlas.Fbo)
 
       gd.Textures[5] <- res.Atlas.Fbo
-      // Comparison sampler on DX12/Vulkan (SM6 hardware PCF via SampleCmpLevelZero);
-      // PointClamp on OpenGL/DX11 (manual PCF). Matches the ForwardPbr.fx profile branch.
+      // LinearClamp on DX12/Vulkan (bilinear-filtered depth smooths the manual 5×5 PCF);
+      // PointClamp on OpenGL/DX11 (manual 3×3 PCF). Matches the ForwardPbr.fx profile branch.
       gd.SamplerStates[5] <- ShadowSampler.forActiveBackend()
     | ValueNone -> ()
 

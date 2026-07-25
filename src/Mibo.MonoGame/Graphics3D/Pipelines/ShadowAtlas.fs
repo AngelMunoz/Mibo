@@ -99,11 +99,14 @@ type ShadowAtlasConfig = {
   DirectionalLightDistance: float32 voption
 
   /// <summary>
-  /// Half-size of directional light orthographic projection. Default: 50.
+  /// Full height of the directional light's orthographic projection, in world units.
+  /// Default: 50.
   /// </summary>
   /// <remarks>
   /// Controls the coverage area of directional shadows. Larger values cast shadows over
-  /// a wider area but reduce resolution. Typical range: 20-100 units.
+  /// a wider area but reduce resolution. Typical range: 20-100 units. Matches the raylib
+  /// backend's interpretation (ortho <c>FovY</c> semantics): the same value gives the
+  /// same coverage and texel density on both backends.
   /// </remarks>
   DirectionalLightSize: float32 voption
 
@@ -240,8 +243,9 @@ module ShadowSampler =
 /// MonoGame cannot create a sampleable depth-only render target on either backend (depth
 /// buffers are non-sampleable), so the shadow depth is written into the color attachment
 /// via <c>DepthShadow.fx</c> (non-linear <c>position.z</c> to <c>.r</c>). The forward pass
-/// samples it with a comparison sampler (<c>SamplerState.ComparisonFunction</c>) for
-/// hardware PCF — no <c>textureSize</c> or manual 3×3 loop required (SM3.0-clean).
+/// samples it with manual PCF: a 5×5 kernel over bilinear-filtered depth on DX12/Vulkan,
+/// a 3×3 point-sampled kernel on OpenGL/DX11 (hardware comparison samplers don't apply
+/// to a color render target).
 /// </para>
 /// <para>
 /// The render target is allocated lazily against the real <c>GraphicsDevice</c> on first
@@ -252,6 +256,14 @@ module ShadowSampler =
 /// </remarks>
 [<Sealed>]
 type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
+
+  do
+    if
+      config.DirectionalAtlasRatio < 0.0f || config.DirectionalAtlasRatio > 1.0f
+    then
+      failwithf
+        "DirectionalAtlasRatio must be between 0.0 and 1.0. Got %f."
+        (float config.DirectionalAtlasRatio)
 
   let gridSize =
     let sqrt = Math.Sqrt(float config.MaxCasters) |> int
@@ -340,14 +352,6 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
         float32 w / res,
         float32 h / res
       )
-
-  // The directional tile's resolution (for the shadow camera's texel-density math).
-  // In legacy mode it's the grid tile; in dedicated mode it's the ratio region's min side.
-  let directionalTileSize =
-    if useDedicatedDirectional then
-      min config.Resolution dirRegionHeight
-    else
-      regionSize
 
   /// <summary>Grid size (rows/columns) of the atlas.</summary>
   member _.GridSize = gridSize
@@ -563,8 +567,3 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
 
   /// <summary>Get the number of active caster regions (computed by PrepareUniforms).</summary>
   member _.ActiveCasterCount = activeCasterCount
-
-  /// <summary>The directional caster's tile resolution (its smaller side), used by the
-  /// shadow camera for texel-density/snap math. With a dedicated region this is the ratio
-  /// slice; otherwise the legacy grid tile size.</summary>
-  member _.DirectionalTileSize = directionalTileSize
