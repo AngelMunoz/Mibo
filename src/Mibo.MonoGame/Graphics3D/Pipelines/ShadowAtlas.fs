@@ -252,6 +252,12 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
   let mutable nextId = 0
   let mutable slotAllocator = 0
 
+  // Region indices returned by RemoveCaster, reused by AddCaster before bumping the
+  // allocator. Keeps the slot space dense for manual Add/Remove users: the old
+  // decrement-only allocator left holes, and a hole in the dedicated-directional layout
+  // maps pi outside the bottom-strip grid (viewport beyond the atlas).
+  let freeSlots = Stack<int>()
+
   // Pre-allocate uniform arrays (per-frame upload scratch — sized to MaxCasters).
   let viewProjsUniforms = Array.zeroCreate<Matrix> config.MaxCasters
   let uvOffsets = Array.zeroCreate<Vector4> config.MaxCasters
@@ -381,16 +387,22 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
     casters.Clear()
     viewProjs.Clear()
     slotAllocator <- 0
+    freeSlots.Clear()
 
   /// <summary>Clear all casters and reset slot allocator. Call at start of each frame.</summary>
   member _.Clear() =
     casters.Clear()
     viewProjs.Clear()
     slotAllocator <- 0
+    freeSlots.Clear()
 
   /// <summary>Allocate a slot in the atlas. Returns region index, or ValueNone if full.</summary>
   member private _.AllocateSlot(regionCount: int) =
-    if slotAllocator + regionCount > config.MaxCasters then
+    // Reuse a freed single-region slot before bumping the allocator (regionCount is 1 in
+    // practice; multi-region requests always bump so the bump space stays contiguous).
+    if regionCount = 1 && freeSlots.Count > 0 then
+      ValueSome(freeSlots.Pop())
+    elif slotAllocator + regionCount > config.MaxCasters then
       ValueNone
     else
       let slot = slotAllocator
@@ -438,10 +450,8 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
   member this.RemoveCaster(id: int<ShadowCasterId>) =
     match casters.TryGetValue(id) with
     | true, caster ->
-      slotAllocator <- slotAllocator - caster.RegionCount
-
-      if slotAllocator < 0 then
-        slotAllocator <- 0
+      for r = 0 to caster.RegionCount - 1 do
+        freeSlots.Push(caster.AtlasRegion + r)
 
       casters.Remove(id) |> ignore
     | false, _ -> ()

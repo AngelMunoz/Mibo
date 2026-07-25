@@ -1832,11 +1832,15 @@ type ForwardPipelineBase
   let mutable userEffectMaterial: Material = Unchecked.defaultof<Material>
   let mutable userEffectMaterialCreated = false
 
-  // Resolved `instanceTransform` attribute location per user shader Id, memoized on the first
+  // Resolved `instanceTransform` attribute location per user shader, memoized on the first
   // instanced draw inside a beginEffect/endEffect scope (-1 = the shader doesn't declare the
-  // attribute -> no opt-in -> instanced draws fall back to the PBR instanced path). Mirrors the
-  // MonoGame IsInstanceCapable memoization.
-  let mutable instanceAttrLocs: Dictionary<uint, int> = Dictionary<uint, int>()
+  // attribute -> no opt-in -> instanced draws fall back to the PBR instanced path). Keyed by
+  // the full Shader value (Id + Locs pointer), not the GL Id alone: OpenGL reuses program
+  // ids after unload, so an Id-keyed cache could hand a reloaded shader its predecessor's
+  // stale location. Mirrors the MonoGame IsInstanceCapable memoization (keyed by Effect
+  // reference).
+  let mutable instanceAttrLocs: Dictionary<Shader, int> =
+    Dictionary<Shader, int>()
 
   // Per-light shadow caster slot mapping (computed in runShadowPass, read in uploadLights).
   // Indexed by lights.PointLights/SpotLights buffer position; -1 = no shadow. Reallocated per
@@ -2155,13 +2159,13 @@ type ForwardPipelineBase
       // instancing under a user scope. A shader that declares it shades its own instances; one
       // that doesn't falls back to the PBR instanced path.
       let attrLoc =
-        match instanceAttrLocs.TryGetValue userShader.Id with
+        match instanceAttrLocs.TryGetValue userShader with
         | true, loc -> loc
         | false, _ ->
           let loc =
             Raylib.GetShaderLocationAttrib(userShader, "instanceTransform")
 
-          instanceAttrLocs[userShader.Id] <- loc
+          instanceAttrLocs[userShader] <- loc
           loc
 
       if attrLoc >= 0 then

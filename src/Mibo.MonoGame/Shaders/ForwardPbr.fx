@@ -154,10 +154,12 @@ float computeShadowAt(float3 worldPos, int casterIdx) {
   float2 atlasUV = float2(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5) * uvOff.zw + uvOff.xy;
 
   // Clamp PCF taps to this caster's atlas tile. Tiles are flush (no guard padding), so a
-  // wide kernel stepping ±2 texels would otherwise bleed into a neighbor caster's region
-  // and read its depth. Clamp keeps every tap inside [tileMin, tileMax].
+  // tap stepping outside the tile would bleed into a neighbor caster's region and read its
+  // depth. The max is pulled back half a texel: with point sampling, a tap clamped to
+  // exactly tileMax would land on the first texel of the neighboring tile, so clamp to the
+  // last texel center inside this tile instead.
   float2 tileMin = uvOff.xy;
-  float2 tileMax = uvOff.xy + uvOff.zw;
+  float2 tileMax = uvOff.xy + uvOff.zw - shadowTexelSize * 0.5;
 
   // Receiver-side bias: shrink the receiver depth before comparing so a surface doesn't
   // shadow itself.

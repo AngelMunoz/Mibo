@@ -1524,6 +1524,154 @@ let shadowAtlasTests =
       atlas.Clear()
       Expect.equal atlas.Count 0 "Should have 0 casters after clear"
     }
+
+    test "RemoveCaster of a middle caster returns its slot to the reuse pool" {
+      // Regression: the old decrement-only allocator left holes — removing a middle
+      // caster and adding a new one bump-allocated past the live slots, leaving a hole
+      // (in the dedicated layout a hole maps pi outside the bottom-strip grid).
+      let cfg = {
+        Pipelines.ShadowAtlasConfig.defaults with
+            MaxCasters = 4
+      }
+
+      let bias = Pipelines.ShadowBiasConfig.defaults
+      let atlas = Pipelines.ShadowAtlas(cfg, bias)
+
+      let add() =
+        atlas.AddCaster(
+          Pipelines.ShadowCasterType.Point,
+          v3a,
+          v3b,
+          Vector3.Zero,
+          true,
+          ValueNone
+        )
+
+      add() |> ignore
+      let middle = add()
+      add() |> ignore
+
+      match middle with
+      | ValueSome middleId ->
+        let freedRegion =
+          (atlas.Casters |> Seq.find(fun c -> c.Id = middleId)).AtlasRegion
+
+        atlas.RemoveCaster(middleId)
+
+        match add() with
+        | ValueSome newId ->
+          let reusedRegion =
+            (atlas.Casters |> Seq.find(fun c -> c.Id = newId)).AtlasRegion
+
+          Expect.equal
+            reusedRegion
+            freedRegion
+            "New caster should reuse the freed slot"
+        | ValueNone -> Tests.failtest "Expected caster to be allocated"
+      | ValueNone -> Tests.failtest "Expected caster to be allocated"
+    }
+
+    test "freed slots are reused when the bump allocator is exhausted" {
+      // Regression: the decrement-only allocator "freed" a middle slot by lowering the
+      // high-water mark, so the next AddCaster re-allocated a slot a live caster still
+      // occupied (collision) while leaving a real hole behind.
+      let cfg = {
+        Pipelines.ShadowAtlasConfig.defaults with
+            MaxCasters = 4
+      }
+
+      let bias = Pipelines.ShadowBiasConfig.defaults
+      let atlas = Pipelines.ShadowAtlas(cfg, bias)
+
+      let add() =
+        atlas.AddCaster(
+          Pipelines.ShadowCasterType.Point,
+          v3a,
+          v3b,
+          Vector3.Zero,
+          true,
+          ValueNone
+        )
+
+      let ids = [| add(); add(); add(); add() |]
+
+      // Remove the second caster (a middle slot), then re-add.
+      match ids[1] with
+      | ValueSome id -> atlas.RemoveCaster(id)
+      | ValueNone -> Tests.failtest "Expected caster to be allocated"
+
+      match add() with
+      | ValueSome _ ->
+        let regions =
+          atlas.Casters
+          |> Seq.map(fun c -> c.AtlasRegion)
+          |> Seq.sort
+          |> Seq.toList
+
+        Expect.equal
+          regions
+          [ 0; 1; 2; 3 ]
+          "Regions stay dense: no collisions, no holes"
+      | ValueNone -> Tests.failtest "Freed slot should have been reusable"
+    }
+
+    test "dedicated-region UVs follow caster enable/disable" {
+      // The strip subdivision count is adjusted incrementally by UpdateCaster, so the
+      // layout reflects an enable/disable toggle immediately — the shadow pass renders
+      // region viewports before PrepareUniforms runs.
+      let cfg = {
+        Pipelines.ShadowAtlasConfig.defaults with
+            MaxCasters = 16
+            Resolution = 2048
+            DirectionalAtlasRatio = 0.5f
+      }
+
+      let bias = Pipelines.ShadowBiasConfig.defaults
+      let atlas = Pipelines.ShadowAtlas(cfg, bias)
+
+      let addCaster t =
+        atlas.AddCaster(t, Vector3.Zero, v3a, Vector3.Zero, true, ValueNone)
+
+      addCaster Pipelines.ShadowCasterType.Directional |> ignore
+      addCaster Pipelines.ShadowCasterType.Point |> ignore
+      let pt1 = addCaster Pipelines.ShadowCasterType.Point
+
+      // 2 point casters → half-width tiles in the bottom strip.
+      let uv1 = atlas.GetUVOffsetScale(1)
+
+      Expect.floatClose
+        Accuracy.medium
+        (float uv1.Z)
+        0.5
+        "Two point casters: half-width tile"
+
+      match pt1 with
+      | ValueSome id -> atlas.UpdateCaster(id, enabled = false)
+      | ValueNone -> Tests.failtest "Expected caster to be allocated"
+
+      // One enabled point caster left → full-width strip, no PrepareUniforms needed.
+      let uv1After = atlas.GetUVOffsetScale(1)
+
+      Expect.floatClose
+        Accuracy.medium
+        (float uv1After.Z)
+        1.0
+        "One enabled point caster: full-width strip"
+
+      Expect.floatClose
+        Accuracy.medium
+        (float uv1After.W)
+        0.5
+        "One enabled point caster: half-height strip"
+
+      // Re-enable → back to the two-caster layout.
+      match pt1 with
+      | ValueSome id -> atlas.UpdateCaster(id, enabled = true)
+      | ValueNone -> Tests.failtest "Expected caster to be allocated"
+
+      let uv1Final = atlas.GetUVOffsetScale(1)
+      Expect.equal uv1Final uv1 "Re-enabling restores the two-caster layout"
+    }
   ]
 
 // ──────────────────────────────────────────────

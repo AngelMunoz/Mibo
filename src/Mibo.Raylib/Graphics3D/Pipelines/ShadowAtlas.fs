@@ -225,6 +225,12 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
   let mutable nextId = 0
   let mutable slotAllocator = 0
 
+  // Region indices returned by RemoveCaster, reused by AddCaster before bumping the
+  // allocator. Keeps the slot space dense for manual Add/Remove users: the old
+  // decrement-only allocator left holes, and a hole in the dedicated-directional layout
+  // maps pi outside the bottom-strip grid (viewport beyond the atlas).
+  let freeSlots = Stack<int>()
+
   // Pre-allocate uniform arrays
   let viewProjsUniforms = Array.zeroCreate<Matrix4x4> config.MaxCasters
   let uvOffsets = Array.zeroCreate<Vector4> config.MaxCasters
@@ -234,12 +240,22 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
   let mutable activeCasterCount = 0
 
   // Number of enabled non-directional casters (point/spot). Drives the bottom-strip
-  // subdivision in the dedicated-directional layout. Kept current by every caster mutation
-  // (Add/Remove/Update/Clear) via UpdateRegionCount, so the viewports rendered during the
-  // shadow pass and the UVs uploaded afterwards always derive from the same count.
+  // subdivision in the dedicated-directional layout. Adjusted incrementally (O(1)) by
+  // every caster mutation (Add/Remove/Update/Clear), so the viewports rendered during the
+  // shadow pass and the UVs uploaded afterwards always derive from the same count — and
+  // per-frame re-registration stays O(casters) instead of O(casters²). PrepareUniforms
+  // recomputes it once per frame as a safety net (same as the MonoGame backend).
   // Defaults to 0 so a directional-only frame gives the directional caster its full ratio
   // region.
   let mutable activePointSpotCount = 0
+
+  // A caster's contribution to activePointSpotCount: its regions, when enabled and not
+  // directional (the directional caster occupies the dedicated top region instead).
+  let regionContribution(c: ShadowCasterData) =
+    if c.Enabled && c.Type <> ShadowCasterType.Directional then
+      c.RegionCount
+    else
+      0
 
   // ── Region layout ──
   // When DirectionalAtlasRatio > 0, the directional caster (always slot 0) gets a dedicated
@@ -376,31 +392,33 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
     casters.Clear()
     viewProjs.Clear()
     slotAllocator <- 0
+    freeSlots.Clear()
 
   /// <summary>Clear all casters and reset slot allocator. Call at start of each frame.</summary>
   member _.Clear() =
     casters.Clear()
     viewProjs.Clear()
     slotAllocator <- 0
+    freeSlots.Clear()
     activePointSpotCount <- 0
 
   /// <summary>Allocate a slot in the atlas. Returns region index, or ValueNone if full.</summary>
   member private _.AllocateSlot(regionCount: int) =
-    if slotAllocator + regionCount > config.MaxCasters then
+    // Reuse a freed single-region slot before bumping the allocator (regionCount is 1 in
+    // practice; multi-region requests always bump so the bump space stays contiguous).
+    if regionCount = 1 && freeSlots.Count > 0 then
+      ValueSome(freeSlots.Pop())
+    elif slotAllocator + regionCount > config.MaxCasters then
       ValueNone
     else
       let slot = slotAllocator
       slotAllocator <- slotAllocator + regionCount
       ValueSome slot
 
-  /// <summary>Free a slot in the atlas.</summary>
+  /// <summary>Free a slot in the atlas, returning its regions to the reuse pool.</summary>
   member private _.FreeSlot(regionIndex: int, regionCount: int) =
-    // Simple linear allocator - just decrement count
-    // In practice, we'd need a more sophisticated allocator for defragmentation
-    slotAllocator <- slotAllocator - regionCount
-
-    if slotAllocator < 0 then
-      slotAllocator <- 0
+    for r = 0 to regionCount - 1 do
+      freeSlots.Push(regionIndex + r)
 
   /// <summary>
   /// Register a new shadow caster and allocate atlas regions.
@@ -437,16 +455,16 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
       }
 
       casters[id] <- caster
-      this.UpdateRegionCount()
+      activePointSpotCount <- activePointSpotCount + regionContribution caster
       ValueSome id
 
   /// <summary>Remove a shadow caster and free its atlas regions.</summary>
   member this.RemoveCaster(id: int<ShadowCasterId>) =
     match casters.TryGetValue(id) with
     | true, caster ->
+      activePointSpotCount <- activePointSpotCount - regionContribution caster
       this.FreeSlot(caster.AtlasRegion, caster.RegionCount)
       casters.Remove(id) |> ignore
-      this.UpdateRegionCount()
     | false, _ -> ()
 
   /// <summary>Update a shadow caster's properties.</summary>
@@ -461,7 +479,7 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
     ) =
     match casters.TryGetValue(id) with
     | true, caster ->
-      casters[id] <- {
+      let updated = {
         caster with
             LightPosition = defaultArg lightPosition caster.LightPosition
             LightDirection = defaultArg lightDirection caster.LightDirection
@@ -470,7 +488,11 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
             BiasOverride = defaultArg biasOverride caster.BiasOverride
       }
 
-      this.UpdateRegionCount()
+      casters[id] <- updated
+
+      activePointSpotCount <-
+        activePointSpotCount - regionContribution caster
+        + regionContribution updated
     | false, _ -> ()
 
   /// <summary>Get UV offset/scale for a region index.</summary>
@@ -504,9 +526,9 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
 
   /// <summary>
   /// Recompute the enabled non-directional caster count driving the bottom-strip
-  /// subdivision. Called by every caster mutation so the region layout is always current:
-  /// the shadow pass renders region viewports before PrepareUniforms runs, so the count
-  /// must not wait for it. O(casters), bounded by MaxCasters.
+  /// subdivision. Caster mutations already adjust the count incrementally (O(1));
+  /// PrepareUniforms calls this once per frame as a safety net. O(casters), bounded by
+  /// MaxCasters.
   /// </summary>
   member private _.UpdateRegionCount() =
     let mutable psCount = 0

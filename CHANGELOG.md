@@ -12,8 +12,8 @@
 
 - **Breaking:** **Core:** `GameConfig.TargetFPS` is now `int voption` and defaults to `ValueNone` — when unset, the framework imposes no render-rate cap and leaves the backend's default framerate behavior untouched. Previously the default was `60`, which forced a fixed timestep on every game. To set a cap, use `GameConfig.withTargetFPS 60` (or `TargetFPS = ValueSome 60` inline); the old `TargetFPS = 0` "unlimited" sentinel is now simply omitting the field.
 - **MonoGame 3D:** **Breaking (behavioral):** `DirectionalLightSize` is now the full height of the directional shadow ortho window in world units (was the half-size), matching the raylib backend. The same value now covers half the world area with twice the shadow texel density; double your configured value to keep the previous coverage.
-- **MonoGame 3D:** directional shadow PCF taps are clamped to the caster's atlas tile on every backend, so the 3×3 kernel can no longer bleed into a neighboring caster's region at tile borders. All backends run the same point-sampled 3×3 PCF kernel as the raylib backend.
-- **3D:** the directional shadow camera's far plane is tightened to the light distance plus the ortho half-size (was twice that), spending less depth precision on empty space behind the scene. Affects both backends.
+- **3D:** directional shadow PCF taps are clamped to the caster's atlas tile on both backends, so the 3×3 kernel can no longer bleed into a neighboring caster's region at tile borders. All backends run the same point-sampled 3×3 PCF kernel.
+- **Raylib 3D:** the directional shadow camera's far plane is tightened to the light distance plus the full ortho size plus a one-unit margin (was light distance plus twice the ortho size), spending less depth precision on empty space behind the scene. MonoGame's far plane keeps its previous coverage — it was already light distance plus the full ortho height.
 
 ### Fixed
 

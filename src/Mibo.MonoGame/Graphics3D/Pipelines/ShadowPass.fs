@@ -279,10 +279,11 @@ module internal ShadowPass =
 
     let shadowNear = 1.0f
     // The light sits at snappedOrigin + lightFromDir*lightDistance. Caster geometry lies
-    // within the ortho window (half-height orthoSize/2) of the origin on the near side;
-    // lightDistance + orthoSize keeps a generous margin without doubling the z-range like
-    // the old (+orthoSize*2) did, which wasted depth precision on empty space behind the
-    // scene (more shadow acne). Matches the raylib backend.
+    // within the ortho window (half-height orthoSize/2) of the origin on the near side, so
+    // lightDistance + orthoSize covers it with margin; the extra unit keeps casters at the
+    // ortho boundary from clipping at the far plane. Coverage matches the previous release:
+    // the old lightDistance + orthoSize*2 used the half-size orthoSize, i.e. the same
+    // distance plus the full window height. Matches the raylib backend.
     let shadowFar = lightDistance + orthoSize + 1.0f
 
     let view = Matrix.CreateLookAt(lightPos, snappedOrigin, safeUp)

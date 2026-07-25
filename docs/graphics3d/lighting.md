@@ -241,7 +241,8 @@ let pipeline = ForwardPipeline(
 > high-quality default; 8192 is expensive.
 
 > _**NOTE — directional far-plane coverage.**_ The directional shadow camera's far plane
-> is the light distance plus the ortho half-size (`DirectionalLightSize`). Geometry
+> is the light distance plus the full ortho size (`DirectionalLightSize`) plus a one-unit
+> margin. Geometry
 > farther than that from the light — measured along the light direction — is clipped and
 > stops casting shadows; receivers there render fully lit. Deep scenes that slope away
 > from the light (terrain, tall structures at the frustum edge) may need a larger
