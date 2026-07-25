@@ -148,23 +148,36 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
           snapshot[i] <- span[i]
 
         snapshots.Add struct (snapshot, count)
-        let meshesAndMaterials = this.GetMeshesAndMaterial sample
 
-        match shaderForKey key with
+        let scope = shaderForKey key
+
+        match scope with
+        | ValueSome s -> buffer.Add(Command3D.BeginEffect s)
+        | ValueNone -> ()
+
+        // Use the triples resolver directly when present: routing through
+        // GetMeshesAndMaterial would run its Array.map wrapper and allocate a fresh array
+        // per group per frame (the shader component is unused here — the per-key scope
+        // supersedes per-sub-mesh shaders).
+        match this.PerMeshShaderResolver with
+        | ValueSome triples ->
+          let meshMaterialShaders = triples sample
+
+          for mi = 0 to meshMaterialShaders.Length - 1 do
+            let struct (mesh, material, _) = meshMaterialShaders[mi]
+
+            buffer.Add(Command3D.drawMeshInstanced mesh snapshot material count)
         | ValueNone ->
-          for mi = 0 to meshesAndMaterials.Length - 1 do
-            let struct (mesh, material) = meshesAndMaterials[mi]
-
-            buffer.Add(Command3D.drawMeshInstanced mesh snapshot material count)
-        | ValueSome s ->
-          buffer.Add(Command3D.BeginEffect s)
+          let meshesAndMaterials = this.GetMeshesAndMaterial sample
 
           for mi = 0 to meshesAndMaterials.Length - 1 do
             let struct (mesh, material) = meshesAndMaterials[mi]
 
             buffer.Add(Command3D.drawMeshInstanced mesh snapshot material count)
 
-          buffer.Add(Command3D.EndEffect)
+        match scope with
+        | ValueSome _ -> buffer.Add(Command3D.EndEffect)
+        | ValueNone -> ()
 
 module CellGridRenderer3D =
 
@@ -491,19 +504,31 @@ module HexGrid3DRenderer =
 
 type InstancedRenderContext<'T, 'K when 'K: equality> with
 
+  /// <summary>Emit instanced draw commands for every occupied cell of <paramref name="grid"/>,
+  /// shaded by the default PBR instanced path.</summary>
   member ctx.RenderCellGridInstanced(buffer, grid: CellGrid3D<'T>) =
     CellGridRenderer3D.renderInstanced ctx grid buffer
 
+  /// <summary>Emit instanced draw commands for every occupied cell of <paramref name="grid"/>,
+  /// grouping cells by <paramref name="shaderForKey"/>: cells whose key maps to a shader are
+  /// shaded by it (when it opts into instancing), keys mapped to ValueNone keep the default PBR
+  /// instanced path. See docs/graphics3d/instancing.md.</summary>
   member ctx.RenderCellGridInstanced
     (buffer, grid: CellGrid3D<'T>, shaderForKey: 'K -> Raylib_cs.Shader voption)
     =
     CellGridRenderer3D.renderInstancedWithEffect ctx grid shaderForKey buffer
 
+  /// <summary>Emit instanced draw commands for the occupied cells of <paramref name="grid"/>
+  /// inside <paramref name="bounds"/>, shaded by the default PBR instanced path.</summary>
   member ctx.RenderCellGridVolumeInstanced
     (buffer, bounds: BoundingBox, grid: CellGrid3D<'T>)
     =
     CellGridRenderer3D.renderVolumeInstanced ctx bounds grid buffer
 
+  /// <summary>Emit instanced draw commands for the occupied cells of <paramref name="grid"/>
+  /// inside <paramref name="bounds"/>, grouping cells by <paramref name="shaderForKey"/>:
+  /// cells whose key maps to a shader are shaded by it (when it opts into instancing), keys
+  /// mapped to ValueNone keep the default PBR instanced path. See docs/graphics3d/instancing.md.</summary>
   member ctx.RenderCellGridVolumeInstanced
     (
       buffer,
@@ -518,19 +543,33 @@ type InstancedRenderContext<'T, 'K when 'K: equality> with
       shaderForKey
       buffer
 
+  /// <summary>Emit instanced draw commands for every occupied cell of the hex
+  /// <paramref name="grid"/>, shaded by the default PBR instanced path.</summary>
   member ctx.RenderHexGridInstanced(buffer, grid: HexGrid3D<'T>) =
     HexGrid3DRenderer.renderInstanced ctx grid buffer
 
+  /// <summary>Emit instanced draw commands for every occupied cell of the hex
+  /// <paramref name="grid"/>, grouping cells by <paramref name="shaderForKey"/>: cells whose key
+  /// maps to a shader are shaded by it (when it opts into instancing), keys mapped to ValueNone
+  /// keep the default PBR instanced path. See docs/graphics3d/instancing.md.</summary>
   member ctx.RenderHexGridInstanced
     (buffer, grid: HexGrid3D<'T>, shaderForKey: 'K -> Raylib_cs.Shader voption)
     =
     HexGrid3DRenderer.renderInstancedWithEffect ctx grid shaderForKey buffer
 
+  /// <summary>Emit instanced draw commands for the occupied cells of the hex
+  /// <paramref name="grid"/> inside <paramref name="bounds"/>, shaded by the default PBR
+  /// instanced path.</summary>
   member ctx.RenderHexGridVolumeInstanced
     (buffer, bounds: BoundingBox, grid: HexGrid3D<'T>)
     =
     HexGrid3DRenderer.renderVolumeInstanced ctx bounds grid buffer
 
+  /// <summary>Emit instanced draw commands for the occupied cells of the hex
+  /// <paramref name="grid"/> inside <paramref name="bounds"/>, grouping cells by
+  /// <paramref name="shaderForKey"/>: cells whose key maps to a shader are shaded by it (when
+  /// it opts into instancing), keys mapped to ValueNone keep the default PBR instanced path.
+  /// See docs/graphics3d/instancing.md.</summary>
   member ctx.RenderHexGridVolumeInstanced
     (
       buffer,

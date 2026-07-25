@@ -1216,6 +1216,115 @@ let shadowAtlasTests =
         "Should return override bias"
     }
 
+    test
+      "dedicated-region UVs reflect registered casters before PrepareUniforms" {
+      // Regression: the shadow pass renders region viewports BEFORE PrepareUniforms runs,
+      // so the point/spot count driving the bottom-strip subdivision must be current from
+      // registration alone. Before the fix the count was only set in PrepareUniforms, so
+      // viewports rendered with the previous frame's count while UVs used the current one
+      // (broken point/spot shadows on frame 1 and on every caster-count change).
+      let cfg = {
+        Pipelines.ShadowAtlasConfig.defaults with
+            MaxCasters = 16
+            Resolution = 2048
+            DirectionalAtlasRatio = 0.5f
+      }
+
+      let bias = Pipelines.ShadowBiasConfig.defaults
+      let atlas = Pipelines.ShadowAtlas(cfg, bias)
+
+      let addCaster t =
+        atlas.AddCaster(t, Vector3.Zero, v3a, Vector3.Zero, true, ValueNone)
+        |> ignore
+
+      addCaster Pipelines.ShadowCasterType.Directional
+      addCaster Pipelines.ShadowCasterType.Point
+      addCaster Pipelines.ShadowCasterType.Point
+
+      // No PrepareUniforms call — the layout must already reflect all 3 casters.
+      // Directional: full-width top half. 2 point casters → 2 columns of half-width,
+      // quarter-height tiles in the bottom strip.
+      let uv0 = atlas.GetUVOffsetScale(0)
+      Expect.floatClose Accuracy.medium (float uv0.X) 0.0 "Dir offset X"
+      Expect.floatClose Accuracy.medium (float uv0.Y) 0.0 "Dir offset Y"
+      Expect.floatClose Accuracy.medium (float uv0.Z) 1.0 "Dir scale X"
+      Expect.floatClose Accuracy.medium (float uv0.W) 0.5 "Dir scale Y"
+
+      let uv1 = atlas.GetUVOffsetScale(1)
+      Expect.floatClose Accuracy.medium (float uv1.X) 0.0 "Point 0 offset X"
+      Expect.floatClose Accuracy.medium (float uv1.Y) 0.5 "Point 0 offset Y"
+      Expect.floatClose Accuracy.medium (float uv1.Z) 0.5 "Point 0 scale X"
+      Expect.floatClose Accuracy.medium (float uv1.W) 0.25 "Point 0 scale Y"
+
+      let uv2 = atlas.GetUVOffsetScale(2)
+      Expect.floatClose Accuracy.medium (float uv2.X) 0.5 "Point 1 offset X"
+      Expect.floatClose Accuracy.medium (float uv2.Y) 0.5 "Point 1 offset Y"
+      Expect.floatClose Accuracy.medium (float uv2.Z) 0.5 "Point 1 scale X"
+      Expect.floatClose Accuracy.medium (float uv2.W) 0.25 "Point 1 scale Y"
+
+      // PrepareUniforms must not change the layout — viewports and UVs derive from the
+      // same count.
+      atlas.PrepareUniforms()
+      let uv1After = atlas.GetUVOffsetScale(1)
+      Expect.equal uv1After uv1 "Layout stable across PrepareUniforms"
+    }
+
+    test "dedicated-region UVs follow caster removal" {
+      let cfg = {
+        Pipelines.ShadowAtlasConfig.defaults with
+            MaxCasters = 16
+            Resolution = 2048
+            DirectionalAtlasRatio = 0.5f
+      }
+
+      let bias = Pipelines.ShadowBiasConfig.defaults
+      let atlas = Pipelines.ShadowAtlas(cfg, bias)
+
+      let addCaster t =
+        atlas.AddCaster(t, Vector3.Zero, v3a, Vector3.Zero, true, ValueNone)
+
+      addCaster Pipelines.ShadowCasterType.Directional |> ignore
+      addCaster Pipelines.ShadowCasterType.Point |> ignore
+      let pt1 = addCaster Pipelines.ShadowCasterType.Point
+
+      // Remove the LAST registered caster so the remaining slots stay dense (the pipeline
+      // re-registers all casters every frame, so slots are always densely allocated).
+      match pt1 with
+      | ValueSome id -> atlas.RemoveCaster(id)
+      | ValueNone -> ()
+
+      // One point caster left → single full-width bottom strip.
+      let uv1 = atlas.GetUVOffsetScale(1)
+      Expect.floatClose Accuracy.medium (float uv1.X) 0.0 "Point offset X"
+      Expect.floatClose Accuracy.medium (float uv1.Y) 0.5 "Point offset Y"
+      Expect.floatClose Accuracy.medium (float uv1.Z) 1.0 "Point scale X"
+      Expect.floatClose Accuracy.medium (float uv1.W) 0.5 "Point scale Y"
+    }
+
+    test "ShadowAtlas rejects out-of-range DirectionalAtlasRatio" {
+      let tooBig = {
+        Pipelines.ShadowAtlasConfig.defaults with
+            DirectionalAtlasRatio = 1.5f
+      }
+
+      Expect.throws
+        (fun () ->
+          Pipelines.ShadowAtlas(tooBig, Pipelines.ShadowBiasConfig.defaults)
+          |> ignore)
+        "Ratio above 1.0 should throw"
+
+      let negative = {
+        Pipelines.ShadowAtlasConfig.defaults with
+            DirectionalAtlasRatio = -0.5f
+      }
+
+      Expect.throws
+        (fun () ->
+          Pipelines.ShadowAtlas(negative, Pipelines.ShadowBiasConfig.defaults)
+          |> ignore)
+        "Negative ratio should throw"
+    }
+
     test "GridSize and RegionSize computed correctly for 16 casters at 2048" {
       let cfg = {
         Pipelines.ShadowAtlasConfig.defaults with

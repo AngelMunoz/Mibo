@@ -197,6 +197,14 @@ module ShadowBiasConfig =
 [<Sealed>]
 type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
 
+  do
+    if
+      config.DirectionalAtlasRatio < 0.0f || config.DirectionalAtlasRatio > 1.0f
+    then
+      failwithf
+        "DirectionalAtlasRatio must be between 0.0 and 1.0. Got %f."
+        (float config.DirectionalAtlasRatio)
+
   let gridSize =
     let sqrt = Math.Sqrt(float config.MaxCasters) |> int
 
@@ -225,9 +233,12 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
   let casterTypes = Array.zeroCreate<int> config.MaxCasters
   let mutable activeCasterCount = 0
 
-  // Number of non-directional casters registered this frame (point/spot). Used to subdivide
-  // the bottom atlas strip into a square grid. Set in PrepareUniforms; defaults to 0 so a
-  // directional-only frame gives the directional caster its full ratio region.
+  // Number of enabled non-directional casters (point/spot). Drives the bottom-strip
+  // subdivision in the dedicated-directional layout. Kept current by every caster mutation
+  // (Add/Remove/Update/Clear) via UpdateRegionCount, so the viewports rendered during the
+  // shadow pass and the UVs uploaded afterwards always derive from the same count.
+  // Defaults to 0 so a directional-only frame gives the directional caster its full ratio
+  // region.
   let mutable activePointSpotCount = 0
 
   // ── Region layout ──
@@ -280,13 +291,6 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
         float32 w / res,
         float32 h / res
       )
-
-  // The directional tile's resolution (smaller side) for the shadow camera texel math.
-  let directionalTileSize =
-    if useDedicatedDirectional then
-      min config.Resolution dirRegionHeight
-    else
-      regionSize
 
   /// <summary>Grid size (rows/columns) of the atlas.</summary>
   member _.GridSize = gridSize
@@ -378,6 +382,7 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
     casters.Clear()
     viewProjs.Clear()
     slotAllocator <- 0
+    activePointSpotCount <- 0
 
   /// <summary>Allocate a slot in the atlas. Returns region index, or ValueNone if full.</summary>
   member private _.AllocateSlot(regionCount: int) =
@@ -432,6 +437,7 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
       }
 
       casters[id] <- caster
+      this.UpdateRegionCount()
       ValueSome id
 
   /// <summary>Remove a shadow caster and free its atlas regions.</summary>
@@ -440,6 +446,7 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
     | true, caster ->
       this.FreeSlot(caster.AtlasRegion, caster.RegionCount)
       casters.Remove(id) |> ignore
+      this.UpdateRegionCount()
     | false, _ -> ()
 
   /// <summary>Update a shadow caster's properties.</summary>
@@ -462,6 +469,8 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
             Enabled = defaultArg enabled caster.Enabled
             BiasOverride = defaultArg biasOverride caster.BiasOverride
       }
+
+      this.UpdateRegionCount()
     | false, _ -> ()
 
   /// <summary>Get UV offset/scale for a region index.</summary>
@@ -494,11 +503,12 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
     Rlgl.Viewport(0, 0, config.Resolution, config.Resolution)
 
   /// <summary>
-  /// Prepare uniform arrays for upload to shader.
-  /// Call each frame before rendering.
+  /// Recompute the enabled non-directional caster count driving the bottom-strip
+  /// subdivision. Called by every caster mutation so the region layout is always current:
+  /// the shadow pass renders region viewports before PrepareUniforms runs, so the count
+  /// must not wait for it. O(casters), bounded by MaxCasters.
   /// </summary>
-  member _.PrepareUniforms() =
-    // Count non-directional casters so the bottom strip can subdivide to fit them.
+  member private _.UpdateRegionCount() =
     let mutable psCount = 0
 
     for kvp in casters do
@@ -508,6 +518,13 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
         psCount <- psCount + c.RegionCount
 
     activePointSpotCount <- psCount
+
+  /// <summary>
+  /// Prepare uniform arrays for upload to shader.
+  /// Call each frame before rendering.
+  /// </summary>
+  member this.PrepareUniforms() =
+    this.UpdateRegionCount()
 
     let mutable index = 0
 
@@ -564,11 +581,6 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
 
   /// <summary>Get the number of active caster regions (computed by PrepareUniforms).</summary>
   member _.ActiveCasterCount = activeCasterCount
-
-  /// <summary>The directional caster's tile resolution (its smaller side), used by the
-  /// shadow camera for texel-density/snap math. With a dedicated region this is the ratio
-  /// slice; otherwise the legacy grid tile size.</summary>
-  member _.DirectionalTileSize = directionalTileSize
 
 // ------------------------------------------------------------------
 // Helper Functions for Shadow Rendering

@@ -571,7 +571,13 @@ module internal ShadowPassHelpers =
       | ValueNone -> 50.0f
 
     let shadowNear = 1.0f
-    let shadowFar = lightDistance + orthoSize * 2.0f
+    // The light sits at shadowOrigin + lightFromDir*lightDistance. Caster geometry lies
+    // within orthoSize of the origin on the near side, so the farthest it can be from the
+    // light is lightDistance + orthoSize. The previous (+orthoSize*2) doubled the z-range
+    // and wasted depth precision on empty space behind the scene (more shadow acne). Keep
+    // a one-unit margin so casters at the ortho boundary don't clip at the far plane.
+    // Matches the MonoGame backend (ShadowPass.fs).
+    let shadowFar = lightDistance + orthoSize + 1.0f
 
     Rlgl.SetClipPlanes(float shadowNear, float shadowFar)
 
@@ -1597,7 +1603,9 @@ module internal PipelineFunctions =
       // No camera → no shadow pass; slots stay all -1 (no shadows).
       ()
     | ValueSome activeCamera ->
-      if meshDrawCount > 0 then
+      // Instanced-only scenes cast shadows too (matches the MonoGame backend, which gates
+      // on mesh + instanced counts).
+      if meshDrawCount > 0 || instancedDrawCount > 0 then
         let struct (hasC, ptSlots, spSlots) =
           collectShadowCasters(lights, shadowAtlas)
 
