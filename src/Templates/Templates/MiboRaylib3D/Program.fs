@@ -189,7 +189,6 @@ let main _ =
           Width = 800
           Height = 600
           Title = "Mibo Raylib 3D Game"
-          TargetFPS = 60
     })
     |> Program.withInput
     |> Program.withSubscription(fun ctx _model ->

@@ -62,16 +62,10 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
     this.Window.Title <- config.Title
     this.IsMouseVisible <- true
 
-    if config.TargetFPS > 0 then
-      // Use MonoGame's native fixed timestep for FPS capping.
-      // IsFixedTimeStep=true calls Update at a fixed rate with consistent
-      // ElapsedGameTime, matching raylib's SetTargetFPS behavior.
+    config.TargetFPS
+    |> ValueOption.iter(fun fps ->
       this.IsFixedTimeStep <- true
-
-      this.TargetElapsedTime <-
-        TimeSpan.FromSeconds(1.0 / float config.TargetFPS)
-    else
-      this.IsFixedTimeStep <- false
+      this.TargetElapsedTime <- TimeSpan.FromSeconds(1.0 / float fps))
 
     // Apply device-level config callbacks after the Core GameConfig.
     // These run before Initialize/GraphicsDevice creation, so settings like

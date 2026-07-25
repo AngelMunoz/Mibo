@@ -6,6 +6,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Mibo.MonoGame.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="GameContext.fs" />
     <Compile Include="Color.fs" />
     <Compile Include="Input.fs" />

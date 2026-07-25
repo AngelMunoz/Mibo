@@ -25,8 +25,7 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
     Raylib.SetExitKey(KeyboardKey.Null)
     Raylib.InitAudioDevice()
 
-    if config.TargetFPS > 0 then
-      Raylib.SetTargetFPS(config.TargetFPS)
+    config.TargetFPS |> ValueOption.iter Raylib.SetTargetFPS
 
     match config.MinWidth, config.MinHeight with
     | ValueSome w, ValueSome h -> Raylib.SetWindowMinSize(w, h)

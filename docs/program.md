@@ -29,7 +29,7 @@ let program =
   Program.mkProgram init update
   // 1. Configure window settings via GameConfig
   |> Program.withConfig (fun cfg ->
-      { cfg with Width = 1280; Height = 720; Title = "My Game"; TargetFPS = 60 })
+      { cfg with Width = 1280; Height = 720; Title = "My Game" })
   // 2. Add services (Core builder; asset caching is automatic via IAssets/IAssetCache)
   |> Program.withAssets
   |> Program.withTick Tick // Enqueue a message every frame
@@ -137,7 +137,7 @@ Gives you direct access to the `GameConfig` record before the game initializes.
 
 ```fsharp
 |> Program.withConfig (fun cfg ->
-    { cfg with Width = 1280; Height = 720; Title = "My Game"; TargetFPS = 60 })
+    { cfg with Width = 1280; Height = 720; Title = "My Game" })
 ```
 
 > _**NOTE**_: `Width`/`Height` here are **config-time** values. For the **live, resizable** window size at runtime (in `init`/`update`/`view`), read `ctx.WindowWidth`/`ctx.WindowHeight` — these update on resize. See the "Window size" section of [MonoGame type quirks](monogame-types.html) for the full note.
