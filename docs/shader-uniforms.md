@@ -401,7 +401,9 @@ buffer
   (the way `ForwardPbr.fx` indexes with `pointLightShadowIdx[i]` /
   `spotLightShadowIdx[j]`), or declare exactly the slots the shader reads.
   Declaring fewer slots than the pipeline maximums is safe on the upload side —
-  uploads are clamped to the effect's declared element count.
+  uploads are clamped to the effect's declared element count, and the light count
+  uniforms (`pointLightCount`/`spotLightCount`) are clamped to the declared slots
+  as well.
 
 ## See also
 

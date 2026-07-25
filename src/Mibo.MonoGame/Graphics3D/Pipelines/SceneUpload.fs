@@ -15,7 +15,9 @@ open Mibo.Elmish.Graphics3D
 // inherits exactly what it declares and nothing more. Array uniforms declared with
 // FEWER slots than the framework maximums (8 point / 4 spot lights, 16 shadow
 // casters, 128 bones) inherit only their declared prefix — uploads are clamped to
-// the parameter's element count rather than erroring.
+// the parameter's element count rather than erroring, and the point/spot light
+// COUNT uniforms are likewise clamped to the declared array slots so the shader's
+// light loop never indexes past its own declaration.
 //
 // This is NOT the PBR hot path. The default pipeline shades via the cached
 // PbrEffectParams (ForwardHelpers) to skip re-resolving names every draw. SceneUpload
@@ -41,7 +43,8 @@ open Mibo.Elmish.Graphics3D
 /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ShadowResult"/>), and bones
 /// (<c>boneMatrices[128]</c>, only when supplied). Array uniforms declared with fewer slots
 /// than the framework maximums receive only their declared prefix — uploads are clamped
-/// to the parameter's element count rather than throwing.
+/// to the parameter's element count rather than throwing, and the point/spot light count
+/// uniforms are clamped to the declared array slots as well.
 /// </para>
 /// <para>
 /// <b>Shadows are opt-in by declaration.</b> A user effect that wants shadow sampling declares the
@@ -140,6 +143,19 @@ module SceneUpload =
   let inline private setVec4Array (p: EffectParameter) (v: Vector4[]) =
     if not(obj.ReferenceEquals(p, null)) then
       p.SetValue(clampToDeclared p v)
+
+  /// <summary>
+  /// Declared element count of an array uniform (null param → <paramref name="fallback"/>).
+  /// Used to clamp the point/spot light COUNT uniforms to the effect's declared array
+  /// slots: an effect declaring <c>pointLightPos[2]</c> must not receive a count of 5,
+  /// or its light loop indexes past its own declaration (reading adjacent constant-buffer
+  /// data on GL).
+  /// </summary>
+  let inline private declaredSlots (p: EffectParameter) (fallback: int) =
+    if obj.ReferenceEquals(p, null) then
+      fallback
+    else
+      p.Elements.Count
 
   /// <summary>Binds the shadow atlas to the effect's named shadow sampler param.</summary>
   let inline private setShadowAtlas (pp: EffectParameter) (tex: Texture2D) =
@@ -276,8 +292,13 @@ module SceneUpload =
 
       setFloat (p "dirLightIntensity") d.Intensity
 
-    // ── Lights: point (upload active count slots) ──
-    let ptCount = min lights.PointLights.Count pointPos.Length
+    // ── Lights: point (upload active count slots, clamped to the effect's declared
+    //    pointLightPos slots so the shader's light loop never indexes past its own
+    //    declaration — pointLightPos is the canonical point-array declaration) ──
+    let ptCount =
+      min
+        (min lights.PointLights.Count pointPos.Length)
+        (declaredSlots (p "pointLightPos") pointPos.Length)
 
     let ptShadowIdx =
       match shadows with
@@ -310,8 +331,12 @@ module SceneUpload =
     setFloatArray (p "pointLightFalloff") pointFalloff
     setIntArray (p "pointLightShadowIdx") pointShadowIdx
 
-    // ── Lights: spot (upload active count slots) ──
-    let spCount = min lights.SpotLights.Count spotPos.Length
+    // ── Lights: spot (upload active count slots, clamped to the effect's declared
+    //    spotLightPos slots — same rationale as point lights above) ──
+    let spCount =
+      min
+        (min lights.SpotLights.Count spotPos.Length)
+        (declaredSlots (p "spotLightPos") spotPos.Length)
 
     let spShadowIdx =
       match shadows with
