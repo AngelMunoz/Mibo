@@ -4,23 +4,17 @@
   "tools": {
     "fantomas": {
       "version": "7.0.5",
-      "commands": [
-        "fantomas"
-      ],
+      "commands": ["fantomas"],
       "rollForward": true
     },
     "fsdocs-tool": {
       "version": "21.0.0",
-      "commands": [
-        "fsdocs"
-      ],
+      "commands": ["fsdocs"],
       "rollForward": false
     },
     "dotnet-mgfxc": {
       "version": "3.8.5",
-      "commands": [
-        "mgfxc"
-      ],
+      "commands": ["mgfxc"],
       "rollForward": false
     }
   }
