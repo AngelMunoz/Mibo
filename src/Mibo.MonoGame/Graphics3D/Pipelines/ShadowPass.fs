@@ -1077,9 +1077,9 @@ module internal ShadowPass =
         p.Shadow.ShadowAtlasTex.SetValue(res.Atlas.Fbo)
 
       gd.Textures[5] <- res.Atlas.Fbo
-      // LinearClamp on DX12/Vulkan (bilinear-filtered depth smooths the manual 5×5 PCF);
-      // PointClamp on OpenGL/DX11 (manual 3×3 PCF). Matches the ForwardPbr.fx profile branch.
-      gd.SamplerStates[5] <- ShadowSampler.forActiveBackend()
+      // PointClamp on every backend: the forward shader point-samples depth and does
+      // the 3×3 PCF comparison in-shader (matches ForwardPbr.fx and the raylib backend).
+      gd.SamplerStates[5] <- SamplerState.PointClamp
     | ValueNone -> ()
 
   // ─────────────────────────────────────────────────────────────────────────────

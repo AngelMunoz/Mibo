@@ -98,14 +98,11 @@ float3 cameraPos;
 // Shadow atlas sampling. The atlas is an R32F COLOR target holding a packed depth value
 // in .r (MonoGame cannot make a sampleable depth-only RT), so hardware comparison samplers
 // (SamplerComparisonState / SampleCmp) don't apply — they expect a true depth-stencil
-// resource. The depth value is read and the comparison done in-shader:
-//  - SM6 (DX12/Vulkan): a LinearClamp sampler on the R32F texture gives bilinear-filtered
-//    depth samples, so each PCF tap is an interpolated value → smooth shadow edges (the
-//    quality win, without the point-sampling aliasing of the legacy path).
-//  - OGL (SM3.0) / DX11 (SM5.0): point-sampled reads (bilinear on R32F is not reliably
-//    available through mgfxc on these profiles).
-// Both paths then do the SAME manual comparison (recvZ > d ? shadowed : lit), so the
-// comparison semantics and receiver-side bias are identical everywhere.
+// resource. All profiles point-sample the depth value and do the comparison in-shader
+// (recvZ > d ? shadowed : lit), matching the raylib backend. Bilinear-filtered depth was
+// tried on SM6 and rejected: interpolating depth across a caster silhouette blends two
+// unrelated depths into a value no real surface has, which biases the comparison and
+// smears/bleeds edges — PCF must filter the comparison, not the depth.
 #if defined(SM6)
 Texture2D shadowAtlas : register(t5);
 SamplerState shadowSampler : register(s5);
@@ -130,9 +127,9 @@ float shadowBiases[MAX_SHADOW_CASTERS];      // per-caster receiver-side bias (p
 int pointLightShadowIdx[MAX_POINT_LIGHTS];   // -1 = no shadow
 int spotLightShadowIdx[MAX_SPOT_LIGHTS];     // -1 = no shadow
 
-// Generic shadow lookup for a caster slot. 3x3 PCF. SM6 fetches bilinear-filtered depth
-// (smooth edges); legacy fetches point samples. The comparison is identical on both:
-// (recvZ > d) ? shadowed : lit, with a per-caster receiver-side bias subtracted from recvZ
+// Generic shadow lookup for a caster slot. 3x3 PCF, point-sampled on every profile
+// (same kernel as the raylib backend): each tap fetches a depth value and the binary
+// comparisons are averaged. A per-caster receiver-side bias is subtracted from recvZ
 // so a flat caster/receiver surface doesn't shadow itself across the frustum.
 float computeShadowAt(float3 worldPos, int casterIdx) {
   if (casterIdx < 0)
@@ -167,38 +164,23 @@ float computeShadowAt(float3 worldPos, int casterIdx) {
   float bias = shadowBiases[casterIdx];
   float recvZ = ndc.z - bias;
 
-  // PCF kernel. SM6 uses a 5×5 grid (25 taps) with bilinear-filtered depth per tap, so the
-  // penumbra spreads across ~5 texels and shadow edges read smooth instead of pixelated.
-  // The wider kernel doesn't change the bias math — each tap still compares recvZ > d, and
-  // the per-caster bias is what prevents self-shadowing, unaffected by kernel width.
-  // Legacy (OGL/DX11) keeps a 3×3 point-sampled kernel: 25 point taps are too costly on
-  // SM3.0, and bilinear isn't reliably available there anyway.
+  // 3×3 PCF kernel (9 taps), identical on every profile and matching the raylib backend.
+  // Wider kernels (a 5×5 grid was tried on SM6) cost ~3× the fetches for no quality win
+  // at this texel density — the 9-step gradient reads sharper. Taps are clamped to this
+  // caster's atlas tile: tiles are flush (no guard padding), so a tap stepping outside
+  // the tile would bleed into a neighbor caster's region and read its depth.
   float shadow = 0.0;
-#if defined(SM6)
   [unroll]
-  for (int x = -2; x <= 2; x++) {
+  for (int x = -1; x <= 1; x++) {
     [unroll]
-    for (int y = -2; y <= 2; y++) {
-      // Clamp to the caster's tile so the wide kernel never bleeds into a neighbor region.
+    for (int y = -1; y <= 1; y++) {
       float2 sampleUV =
         clamp(atlasUV + float2(float(x), float(y)) * shadowTexelSize, tileMin, tileMax);
       float d = FETCH_DEPTH(sampleUV);
       shadow += (recvZ > d) ? 0.0 : 1.0;
     }
   }
-  return shadow / 25.0;
-#else
-  [unroll]
-  for (int x = -1; x <= 1; x++) {
-    [unroll]
-    for (int y = -1; y <= 1; y++) {
-      float2 sampleUV = atlasUV + float2(float(x), float(y)) * shadowTexelSize;
-      float d = FETCH_DEPTH(sampleUV);
-      shadow += (recvZ > d) ? 0.0 : 1.0;
-    }
-  }
   return shadow / 9.0;
-#endif
 }
 
 float computeDirShadow(float3 worldPos) {

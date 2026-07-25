@@ -4,7 +4,6 @@ open System
 open System.Collections.Generic
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
-open MonoGame.Framework.Utilities
 open Mibo.Elmish
 
 // ------------------------------------------------------------------
@@ -197,38 +196,6 @@ module ShadowBiasConfig =
   }
 
 // ------------------------------------------------------------------
-// Shadow sampler selection (profile-gated bilinear depth reads).
-//
-// The shadow atlas is an R32F COLOR target holding a packed depth value (MonoGame cannot
-// make a sampleable depth-only RT), so the shader reads .r and does the comparison itself
-// — hardware comparison samplers (SamplerComparisonState / SampleCmp) do not apply.
-//
-// On DX12/Vulkan (SM6) the forward shader samples the atlas with SampleLevel and a LINEAR
-// clamp sampler, so each PCF tap fetches a bilinear-filtered depth value and shadow edges
-// are smooth rather than point-aliased. On OpenGL (SM3.0) / DX11 (SM5.0) the shader reads
-// point samples (bilinear on R32F isn't reliably available through mgfxc there), so slot 5
-// stays PointClamp. The sampler is selected by the runtime backend
-// (PlatformInfo.GraphicsBackend), matching the .mgfx variant ShaderLoader picks.
-// ------------------------------------------------------------------
-
-/// <summary>The sampler state to bind to shadow atlas slot 5 for the active backend.
-/// LinearClamp (bilinear-filtered depth reads) on DX12/Vulkan; PointClamp on OpenGL/DX11.</summary>
-module ShadowSampler =
-  /// <summary>True when the active backend compiles the SM6 bilinear-depth shader path.</summary>
-  let isBilinearDepth() : bool =
-    match PlatformInfo.GraphicsBackend with
-    | GraphicsBackend.DirectX12
-    | GraphicsBackend.Vulkan -> true
-    | _ -> false
-
-  /// <summary>The slot-5 sampler for the active backend (PBR hot path).</summary>
-  let forActiveBackend() : SamplerState =
-    if isBilinearDepth() then
-      SamplerState.LinearClamp
-    else
-      SamplerState.PointClamp
-
-// ------------------------------------------------------------------
 // Shadow Atlas Implementation
 // ------------------------------------------------------------------
 
@@ -243,9 +210,9 @@ module ShadowSampler =
 /// MonoGame cannot create a sampleable depth-only render target on either backend (depth
 /// buffers are non-sampleable), so the shadow depth is written into the color attachment
 /// via <c>DepthShadow.fx</c> (non-linear <c>position.z</c> to <c>.r</c>). The forward pass
-/// samples it with manual PCF: a 5×5 kernel over bilinear-filtered depth on DX12/Vulkan,
-/// a 3×3 point-sampled kernel on OpenGL/DX11 (hardware comparison samplers don't apply
-/// to a color render target).
+/// samples it with a manual 3×3 PCF over point-sampled depth on every backend (hardware
+/// comparison samplers don't apply to a color render target) — the same kernel the
+/// raylib backend runs.
 /// </para>
 /// <para>
 /// The render target is allocated lazily against the real <c>GraphicsDevice</c> on first

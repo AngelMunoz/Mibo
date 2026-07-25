@@ -725,8 +725,8 @@ type ForwardPipelineBase
       gd.SamplerStates[2] <- SamplerState.LinearWrap
       gd.SamplerStates[3] <- SamplerState.LinearWrap
       gd.SamplerStates[4] <- SamplerState.LinearWrap
-      // s5 (shadow atlas) is bound per-shadow-pass by ShadowSampler.forActiveBackend()
-      // (LinearClamp on DX12/Vulkan, PointClamp elsewhere); set a safe default here.
+      // s5 (shadow atlas) is bound per-shadow-pass to PointClamp by ShadowPass.fs
+      // (point-sampled depth for the manual 3×3 PCF); set a safe default here.
       gd.SamplerStates[5] <- SamplerState.PointClamp
 
       // Pre-scan — capture camera, lights, shadow state, and post-process actions in one pass

@@ -261,11 +261,9 @@ let pipeline = ForwardPipeline(
 
 > _**NOTE — shadow technique differs.**_ MonoGame cannot create a sampleable depth-only
 > render target, so it writes shadow depth into an R32F color attachment (`DepthShadow.fx`)
-> and samples it with manual PCF. On the DX12/Vulkan backends the atlas is sampled with a
-> linear filter so each PCF tap is a bilinear-filtered depth value (smooth edges); on
-> OpenGL/DX11 it is point-sampled. raylib samples a real depth texture via GLSL derivatives.
-> The user-facing config and behavior (shadow quality, bias tuning) are equivalent; only the
-> internal path differs.
+> and samples it with a manual 3×3 PCF over point-sampled depth — the same kernel the
+> raylib backend runs against its real depth texture. The user-facing config and behavior
+> (shadow quality, bias tuning) are equivalent; only the internal path differs.
 
 ## See also
 

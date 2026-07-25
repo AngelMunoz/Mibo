@@ -10,7 +10,7 @@
 ### Changed
 
 - **MonoGame 3D:** **Breaking (behavioral):** `DirectionalLightSize` is now the full height of the directional shadow ortho window in world units (was the half-size), matching the raylib backend. The same value now covers half the world area with twice the shadow texel density; double your configured value to keep the previous coverage.
-- **MonoGame 3D:** directional shadows sample the shadow atlas with bilinear-filtered depth on the DirectX 12 and Vulkan backends, softening shadow edges compared to the previous point-sampled reads (OpenGL and DirectX 11 keep point sampling). The DX12/Vulkan PCF kernel also widens to 5×5.
+- **MonoGame 3D:** directional shadow PCF taps are clamped to the caster's atlas tile on every backend, so the 3×3 kernel can no longer bleed into a neighboring caster's region at tile borders. All backends run the same point-sampled 3×3 PCF kernel as the raylib backend.
 - **3D:** the directional shadow camera's far plane is tightened to the light distance plus the ortho half-size (was twice that), spending less depth precision on empty space behind the scene. Affects both backends.
 
 ### Fixed
