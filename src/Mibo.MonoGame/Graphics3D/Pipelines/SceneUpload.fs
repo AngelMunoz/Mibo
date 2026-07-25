@@ -12,7 +12,12 @@ open Mibo.Elmish.Graphics3D
 // scene (matrices + material + lights + bones). Absent parameters return null from
 // Parameters["name"] (MonoGame) and are skipped — so an effect that declares only a
 // subset of the contract (e.g. a toon shader with matModel/viewProj/dirLight*/albedoColor)
-// inherits exactly what it declares and nothing more.
+// inherits exactly what it declares and nothing more. Array uniforms declared with
+// FEWER slots than the framework maximums (8 point / 4 spot lights, 16 shadow
+// casters, 128 bones) inherit only their declared prefix — uploads are clamped to
+// the parameter's element count rather than erroring, and the point/spot light
+// COUNT uniforms are likewise clamped to the declared array slots so the shader's
+// light loop never indexes past its own declaration.
 //
 // This is NOT the PBR hot path. The default pipeline shades via the cached
 // PbrEffectParams (ForwardHelpers) to skip re-resolving names every draw. SceneUpload
@@ -36,7 +41,10 @@ open Mibo.Elmish.Graphics3D
 /// M spot, including per-light shadow indices), shadows (the atlas + <c>shadowViewProjs</c>/
 /// <c>shadowUVOffsets</c>/<c>shadowTexelSize</c>/<c>dirLightCastsShadows</c>, when the frame has a
 /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ShadowResult"/>), and bones
-/// (<c>boneMatrices[128]</c>, only when supplied).
+/// (<c>boneMatrices[128]</c>, only when supplied). Array uniforms declared with fewer slots
+/// than the framework maximums receive only their declared prefix — uploads are clamped
+/// to the parameter's element count rather than throwing, and the point/spot light count
+/// uniforms are clamped to the declared array slots as well.
 /// </para>
 /// <para>
 /// <b>Shadows are opt-in by declaration.</b> A user effect that wants shadow sampling declares the
@@ -51,6 +59,44 @@ open Mibo.Elmish.Graphics3D
 /// </para>
 /// </remarks>
 module SceneUpload =
+
+  // ── Array clamping: an effect may declare FEWER array slots than the framework's
+  //    pooled upload arrays (8 point / 4 spot lights, 16 shadow casters, 128 bones).
+  //    MonoGame's SetValue throws IndexOutOfRange when the value is longer than the
+  //    parameter's element list, so uploads are clamped to the declared element count
+  //    ("inherit exactly what you declare" applies to smaller declarations too).
+  //    Clamped copies are cached per parameter — SceneUpload is not the per-frame hot
+  //    path, and the common full-size path stays allocation-free. The cache lives for
+  //    the app's lifetime and holds one small array per clamped parameter. ──
+  let private clampCache =
+    System.Collections.Generic.Dictionary<EffectParameter, obj>()
+
+  let private clampToDeclared (p: EffectParameter) (v: 'T[]) : 'T[] =
+    let declared = p.Elements.Count
+
+    if declared >= v.Length then
+      v
+    else
+      let mutable cachedObj = Unchecked.defaultof<obj>
+
+      let existing =
+        if clampCache.TryGetValue(p, &cachedObj) then
+          match cachedObj with
+          | :? ('T array) as cached when cached.Length = declared ->
+            ValueSome cached
+          | _ -> ValueNone
+        else
+          ValueNone
+
+      match existing with
+      | ValueSome cached ->
+        Array.blit v 0 cached 0 declared
+        cached
+      | ValueNone ->
+        let cached = Array.zeroCreate<'T> declared
+        Array.blit v 0 cached 0 declared
+        clampCache[p] <- box cached
+        cached
 
   // ── null-safe setters (mirror ForwardHelpers' set* but self-contained: this module
   //    can't see the private ForwardHelpers). null params = absent uniform = no-op. ──
@@ -80,23 +126,36 @@ module SceneUpload =
 
   let inline private setVec3Array (p: EffectParameter) (v: Vector3[]) =
     if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
+      p.SetValue(clampToDeclared p v)
 
   let inline private setFloatArray (p: EffectParameter) (v: float32[]) =
     if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
+      p.SetValue(clampToDeclared p v)
 
   let inline private setIntArray (p: EffectParameter) (v: int[]) =
     if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
+      p.SetValue(clampToDeclared p v)
 
   let inline private setMatrixArray (p: EffectParameter) (v: Matrix[]) =
     if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
+      p.SetValue(clampToDeclared p v)
 
   let inline private setVec4Array (p: EffectParameter) (v: Vector4[]) =
     if not(obj.ReferenceEquals(p, null)) then
-      p.SetValue v
+      p.SetValue(clampToDeclared p v)
+
+  /// <summary>
+  /// Declared element count of an array uniform (null param → <paramref name="fallback"/>).
+  /// Used to clamp the point/spot light COUNT uniforms to the effect's declared array
+  /// slots: an effect declaring <c>pointLightPos[2]</c> must not receive a count of 5,
+  /// or its light loop indexes past its own declaration (reading adjacent constant-buffer
+  /// data on GL).
+  /// </summary>
+  let inline private declaredSlots (p: EffectParameter) (fallback: int) =
+    if obj.ReferenceEquals(p, null) then
+      fallback
+    else
+      p.Elements.Count
 
   /// <summary>Binds the shadow atlas to the effect's named shadow sampler param.</summary>
   let inline private setShadowAtlas (pp: EffectParameter) (tex: Texture2D) =
@@ -233,8 +292,13 @@ module SceneUpload =
 
       setFloat (p "dirLightIntensity") d.Intensity
 
-    // ── Lights: point (upload active count slots) ──
-    let ptCount = min lights.PointLights.Count pointPos.Length
+    // ── Lights: point (upload active count slots, clamped to the effect's declared
+    //    pointLightPos slots so the shader's light loop never indexes past its own
+    //    declaration — pointLightPos is the canonical point-array declaration) ──
+    let ptCount =
+      min
+        (min lights.PointLights.Count pointPos.Length)
+        (declaredSlots (p "pointLightPos") pointPos.Length)
 
     let ptShadowIdx =
       match shadows with
@@ -267,8 +331,12 @@ module SceneUpload =
     setFloatArray (p "pointLightFalloff") pointFalloff
     setIntArray (p "pointLightShadowIdx") pointShadowIdx
 
-    // ── Lights: spot (upload active count slots) ──
-    let spCount = min lights.SpotLights.Count spotPos.Length
+    // ── Lights: spot (upload active count slots, clamped to the effect's declared
+    //    spotLightPos slots — same rationale as point lights above) ──
+    let spCount =
+      min
+        (min lights.SpotLights.Count spotPos.Length)
+        (declaredSlots (p "spotLightPos") spotPos.Length)
 
     let spShadowIdx =
       match shadows with

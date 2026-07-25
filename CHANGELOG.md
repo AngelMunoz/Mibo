@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **MonoGame 3D:** custom effects in a `beginEffect` scope that declare fewer light, shadow-caster, or bone array slots than the pipeline maximums (8 point / 4 spot lights, 16 shadow casters, 128 bones) no longer crash with an `IndexOutOfRangeException` during scene upload — array uniforms are clamped to the effect's declared element count, and the `pointLightCount`/`spotLightCount` uniforms are clamped to the declared slots too, so a shader's light loop never indexes past its own declaration. Note that on the OpenGL backend, uniform arrays indexed only with compile-time constants can still crash inside MonoGame's GL constant-buffer upload; index them dynamically (see `docs/shader-uniforms.md` → "Convention notes").
+
 ## [3.2.0] - 2026-07-25
 
 ### Added
