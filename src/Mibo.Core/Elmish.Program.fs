@@ -62,8 +62,11 @@ module Program =
   /// </remarks>
   /// <example>
   /// <code>
-  /// program |&gt; Program.withConfig (fun cfg -&gt;
-  ///     { cfg with Width = 1920; Height = 1080; Title = "My Game"; TargetFPS = 60 }
+  /// program
+  /// |&gt; Program.withConfig (
+  ///   GameConfig.withWidth 1920
+  ///   &gt;&gt; GameConfig.withHeight 1080
+  ///   &gt;&gt; GameConfig.withTitle "My Game"
   /// )
   /// </code>
   /// </example>
