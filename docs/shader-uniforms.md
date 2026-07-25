@@ -389,6 +389,19 @@ buffer
   pipeline constructor (raylib) or baked `#define`s (MonoGame). See
   [3D Lighting](graphics3d/lighting.html#light-limits) for the limits and how to
   change them.
+- **MonoGame/OpenGL: index uniform arrays dynamically.** On the DesktopGL
+  backend, a uniform array that is only ever indexed with compile-time constants
+  (e.g. `shadowViewProjs[0]`) can be trimmed by the MojoShader/GLSL toolchain
+  down to the referenced elements — while the effect's parameter table still
+  reports the declared element count. MonoGame's GL constant-buffer upload then
+  writes past the end of the shader's constant buffer and crashes in
+  `EffectPass.Apply` (an `ArgumentException` from `Buffer.BlockCopy`). DirectX
+  and Vulkan keep the declared size, so this surfaces as an OpenGL-only crash.
+  To avoid it, index the array with a uniform value somewhere in the shader
+  (the way `ForwardPbr.fx` indexes with `pointLightShadowIdx[i]` /
+  `spotLightShadowIdx[j]`), or declare exactly the slots the shader reads.
+  Declaring fewer slots than the pipeline maximums is safe on the upload side —
+  uploads are clamped to the effect's declared element count.
 
 ## See also
 
