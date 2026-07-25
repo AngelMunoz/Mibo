@@ -547,9 +547,10 @@ module private CommandHandlers =
 
       for pass in effect.CurrentTechnique.Passes do
         pass.Apply()
-        // Null guard: DrawUserIndexedPrimitives throws if the cached texParam
-        // lookup failed on a malformed effect. Skip the draw rather than crash
-        // the frame — matches the legacy path's defensive `if param <> null`.
+        // The parameter SetValue calls above are null-guarded so a malformed
+        // effect (missing MatrixTransform/Texture params) degrades to the
+        // shader's defaults instead of crashing — the draw itself always runs,
+        // matching the legacy per-sprite path.
         gd.DrawUserIndexedPrimitives(
           PrimitiveType.TriangleList,
           st.Verts,
