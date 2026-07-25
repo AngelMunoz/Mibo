@@ -212,7 +212,8 @@ this keeps directional shadows high-resolution without tuning `MaxCasters` to yo
 count. Point/spot casters subdivide the remaining atlas area into a square grid. Set
 `DirectionalAtlasRatio` to `1.0` for directional-only scenes (the directional light gets
 the whole atlas) or `0.0` to restore the uniform grid (every caster shares a
-`1/MaxCasters` tile). `MaxCasters` must be a perfect square (4, 9, 16, 25, 36).
+`1/MaxCasters` tile). `MaxCasters` must be a perfect square (4, 9, 16, 25, 36) — a
+constraint of the uniform grid, but enforced at atlas construction either way.
 
 ```fsharp
 // raylib:
@@ -239,6 +240,14 @@ let pipeline = ForwardPipeline(
 > doubling the resolution roughly doubles the shadow-pass fragment work. 4096 is a good
 > high-quality default; 8192 is expensive.
 
+> _**NOTE — directional far-plane coverage.**_ The directional shadow camera's far plane
+> is the light distance plus the ortho half-size (`DirectionalLightSize`). Geometry
+> farther than that from the light — measured along the light direction — is clipped and
+> stops casting shadows; receivers there render fully lit. Deep scenes that slope away
+> from the light (terrain, tall structures at the frustum edge) may need a larger
+> `DirectionalLightSize` (at the cost of texel density) or a `DirectionalOriginY` /
+> `OriginStrategy` that centers the frustum on the action.
+
 | Field | Default | raylib | MonoGame | Description |
 |-------|---------|--------|----------|-------------|
 | `Resolution` | 2048 | ✓ | ✓ | Atlas texture resolution (square) |
@@ -246,7 +255,7 @@ let pipeline = ForwardPipeline(
 | `DirectionalAtlasRatio` | 0.5 | ✓ | ✓ | Fraction of the atlas the directional light occupies. `0.0` = uniform grid (every caster shares a `1/MaxCasters` tile). |
 | `OriginStrategy` | `CameraTarget` | ✓ | ✓ | Where directional shadows are centered (`CameraTarget`/`SceneCenter`/`Custom`) |
 | `DirectionalLightDistance` | auto | ✓ | ✓ | Distance to place the directional light camera behind the origin |
-| `DirectionalLightSize` | auto | ✓ | ✓ | Ortho projection half-size for directional shadows |
+| `DirectionalLightSize` | auto | ✓ | ✓ | Full height of the directional shadow ortho window, in world units |
 | `DirectionalOriginY` | 0.0 | — | ✓ | Lock the shadow frustum's vertical origin (prevents vertical sliding) |
 | `GridSnapSize` | 2.0 | ✓ | ✓ | Snap shadow origin to a grid to reduce shimmer |
 

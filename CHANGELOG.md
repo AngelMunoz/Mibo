@@ -4,13 +4,18 @@
 
 ### Added
 
-- **3D Rendering:** instanced grid rendering can shade each cell type, sub-mesh, or the whole grid with a custom effect instead of the default PBR shader. Provide the effect per sub-mesh, per cell key, or once for the whole grid; cell types without an effect keep the default look.
-- **3D Rendering:** `ShadowAtlasConfig.DirectionalAtlasRatio` (default `0.5`) gives the single directional shadow light a dedicated region of the shadow atlas instead of sharing one tile of the caster grid, so directional shadows stay high-resolution without tuning `MaxCasters` to your light count. Point/spot casters subdivide the remaining atlas area. Set it to `1.0` for directional-only scenes or `0.0` to restore the previous uniform-grid layout. Available on both backends.
-- **MonoGame 3D:** directional shadows sample the shadow atlas with bilinear-filtered depth on the DirectX 12 and Vulkan backends, softening shadow edges compared to the previous point-sampled reads (OpenGL and DirectX 11 keep point sampling). The DX12/Vulkan PCF kernel also widens to 5×5.
+- **3D:** **Breaking:** `ShadowAtlasConfig` gains a `DirectionalAtlasRatio` field (`ShadowAtlasConfig.defaults` sets it to `0.5`; code constructing the record literally must add the field). It gives the single directional shadow light a dedicated region of the shadow atlas instead of sharing one tile of the caster grid, so directional shadows stay high-resolution without tuning `MaxCasters` to your light count. Point/spot casters subdivide the remaining atlas area. Set it to `1.0` for directional-only scenes or `0.0` to restore the previous uniform-grid layout. Available on both backends. **Breaking (behavioral):** the `0.5` default re-lays-out existing directional shadows; use `0.0` for the previous layout.
+- **3D:** instanced grid rendering can shade each cell type, sub-mesh, or the whole grid with a custom effect instead of the default PBR shader. Provide the effect per sub-mesh, per cell key, or once for the whole grid; cell types without an effect keep the default look.
 
 ### Changed
 
-- **3D Rendering:** the directional shadow camera's far plane is tightened to the light distance plus the ortho half-size (was twice that), spending less depth precision on empty space behind the scene. Affects both backends.
+- **MonoGame 3D:** **Breaking (behavioral):** `DirectionalLightSize` is now the full height of the directional shadow ortho window in world units (was the half-size), matching the raylib backend. The same value now covers half the world area with twice the shadow texel density; double your configured value to keep the previous coverage.
+- **MonoGame 3D:** directional shadows sample the shadow atlas with bilinear-filtered depth on the DirectX 12 and Vulkan backends, softening shadow edges compared to the previous point-sampled reads (OpenGL and DirectX 11 keep point sampling). The DX12/Vulkan PCF kernel also widens to 5×5.
+- **3D:** the directional shadow camera's far plane is tightened to the light distance plus the ortho half-size (was twice that), spending less depth precision on empty space behind the scene. Affects both backends.
+
+### Fixed
+
+- **Raylib 3D:** scenes made only of instanced draws now render shadows — the shadow pass previously ran only when at least one non-instanced mesh was drawn.
 
 ## [3.1.1] - 2026-07-22
 
