@@ -571,7 +571,13 @@ module internal ShadowPassHelpers =
       | ValueNone -> 50.0f
 
     let shadowNear = 1.0f
-    let shadowFar = lightDistance + orthoSize * 2.0f
+    // The light sits at shadowOrigin + lightFromDir*lightDistance. Caster geometry lies
+    // within orthoSize of the origin on the near side, so the farthest it can be from the
+    // light is lightDistance + orthoSize. The previous (+orthoSize*2) doubled the z-range
+    // and wasted depth precision on empty space behind the scene (more shadow acne). Keep
+    // a one-unit margin so casters at the ortho boundary don't clip at the far plane.
+    // Matches the MonoGame backend (ShadowPass.fs).
+    let shadowFar = lightDistance + orthoSize + 1.0f
 
     Rlgl.SetClipPlanes(float shadowNear, float shadowFar)
 
@@ -1597,7 +1603,9 @@ module internal PipelineFunctions =
       // No camera → no shadow pass; slots stay all -1 (no shadows).
       ()
     | ValueSome activeCamera ->
-      if meshDrawCount > 0 then
+      // Instanced-only scenes cast shadows too (matches the MonoGame backend, which gates
+      // on mesh + instanced counts).
+      if meshDrawCount > 0 || instancedDrawCount > 0 then
         let struct (hasC, ptSlots, spSlots) =
           collectShadowCasters(lights, shadowAtlas)
 
@@ -1824,11 +1832,15 @@ type ForwardPipelineBase
   let mutable userEffectMaterial: Material = Unchecked.defaultof<Material>
   let mutable userEffectMaterialCreated = false
 
-  // Resolved `instanceTransform` attribute location per user shader Id, memoized on the first
+  // Resolved `instanceTransform` attribute location per user shader, memoized on the first
   // instanced draw inside a beginEffect/endEffect scope (-1 = the shader doesn't declare the
-  // attribute -> no opt-in -> instanced draws fall back to the PBR instanced path). Mirrors the
-  // MonoGame IsInstanceCapable memoization.
-  let mutable instanceAttrLocs: Dictionary<uint, int> = Dictionary<uint, int>()
+  // attribute -> no opt-in -> instanced draws fall back to the PBR instanced path). Keyed by
+  // the full Shader value (Id + Locs pointer), not the GL Id alone: OpenGL reuses program
+  // ids after unload, so an Id-keyed cache could hand a reloaded shader its predecessor's
+  // stale location. Mirrors the MonoGame IsInstanceCapable memoization (keyed by Effect
+  // reference).
+  let mutable instanceAttrLocs: Dictionary<Shader, int> =
+    Dictionary<Shader, int>()
 
   // Per-light shadow caster slot mapping (computed in runShadowPass, read in uploadLights).
   // Indexed by lights.PointLights/SpotLights buffer position; -1 = no shadow. Reallocated per
@@ -2147,13 +2159,13 @@ type ForwardPipelineBase
       // instancing under a user scope. A shader that declares it shades its own instances; one
       // that doesn't falls back to the PBR instanced path.
       let attrLoc =
-        match instanceAttrLocs.TryGetValue userShader.Id with
+        match instanceAttrLocs.TryGetValue userShader with
         | true, loc -> loc
         | false, _ ->
           let loc =
             Raylib.GetShaderLocationAttrib(userShader, "instanceTransform")
 
-          instanceAttrLocs[userShader.Id] <- loc
+          instanceAttrLocs[userShader] <- loc
           loc
 
       if attrLoc >= 0 then

@@ -52,9 +52,9 @@ reference only `Mibo.Core` and be shared across the MonoGame and Raylib backends
 
 ## Package and namespace changes
 
-| Old | New | Namespace(s) |
-|-----|-----|--------------|
-| `Mibo` (single package) | `Mibo.Core` | `Mibo.Elmish`, `Mibo.Input`, `Mibo.Layout`, `Mibo.Layout3D` |
+| Old                     | New             | Namespace(s)                                                                                                                                                                              |
+| ----------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Mibo` (single package) | `Mibo.Core`     | `Mibo.Elmish`, `Mibo.Input`, `Mibo.Layout`, `Mibo.Layout3D`                                                                                                                               |
 | `Mibo` (single package) | `Mibo.MonoGame` | `Mibo.Elmish`, `Mibo.Input`, `Mibo.Animation`, `Mibo.Elmish.Graphics2D`, `Mibo.Elmish.Graphics2D.Lighting`, `Mibo.Elmish.Graphics3D`, `Mibo.Elmish.Graphics3D.Pipelines`, `Mibo.Layout3D` |
 
 Most `open` declarations stay the same — the `Mibo.Elmish`, `Mibo.Input`, and
@@ -71,24 +71,24 @@ Most `open` declarations stay the same — the `Mibo.Elmish`, `Mibo.Input`, and
 
 ## Migration checklist
 
-| Area | Breaking? | Effort |
-|------|-----------|--------|
-| Package references | Yes | Low — replace `Mibo` with `Mibo.Core` + `Mibo.MonoGame` |
-| Program setup | Yes | Medium — `withConfig` split into `GameConfig` + `MonoGameProgram` wrapper; `withRenderer` signature changed |
-| GameContext access | Yes | Medium — direct fields → service registry |
-| Input types | Yes | Medium — MonoGame enums → backend-neutral codes |
-| InputMapper setup | Yes | Low — `Program.withInputMapper` → `MonoGameProgram.withInputMapper` (on the `MonoGameProgram` wrapper) |
-| Assets | Yes | Low — `Assets.texture path ctx` → `assets.Texture path`; `IAssets` now extends `IAssetCache` |
-| Cmd / Sub | Yes | Low — new `Msg` and `Quit` cases in DU |
-| Content pipeline & asset paths | Maybe | Low–Medium — only if you relied on XNB-baked animation data |
-| 2D rendering | Yes | Medium — renderer/command/DSL module names changed (`Batch2DRenderer`→`Renderer2D`, etc.) |
-| 3D rendering | Yes | Medium — `withPipeline` removed; use `Renderer3D.create (ForwardPipeline(...)) view` |
-| 2D animation | No | None — `SpriteSheet`/`AnimatedSprite` API unchanged |
-| 3D animation | N/A (new) | Low — the old package had no 3D animation; new backend ships `AnimatedModel` |
-| Camera | Yes | Low — `Camera2D`/`Camera3D` modules exist; `Camera3D.create` takes just position/target/FOV with defaulted up/near/far |
-| Culling | Yes | Low — `isGenericVisible` renamed `isVisibleBox` (box-vs-frustum test) |
-| Layout / Spatial | No | None — moved to Core, same API |
-| System pipeline | No | None — moved to Core, same API |
+| Area                           | Breaking? | Effort                                                                                                                 |
+| ------------------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Package references             | Yes       | Low — replace `Mibo` with `Mibo.Core` + `Mibo.MonoGame`                                                                |
+| Program setup                  | Yes       | Medium — `withConfig` split into `GameConfig` + `MonoGameProgram` wrapper; `withRenderer` signature changed            |
+| GameContext access             | Yes       | Medium — direct fields → service registry                                                                              |
+| Input types                    | Yes       | Medium — MonoGame enums → backend-neutral codes                                                                        |
+| InputMapper setup              | Yes       | Low — `Program.withInputMapper` → `MonoGameProgram.withInputMapper` (on the `MonoGameProgram` wrapper)                 |
+| Assets                         | Yes       | Low — `Assets.texture path ctx` → `assets.Texture path`; `IAssets` now extends `IAssetCache`                           |
+| Cmd / Sub                      | Yes       | Low — new `Msg` and `Quit` cases in DU                                                                                 |
+| Content pipeline & asset paths | Maybe     | Low–Medium — only if you relied on XNB-baked animation data                                                            |
+| 2D rendering                   | Yes       | Medium — renderer/command/DSL module names changed (`Batch2DRenderer`→`Renderer2D`, etc.)                              |
+| 3D rendering                   | Yes       | Medium — `withPipeline` removed; use `Renderer3D.create (ForwardPipeline(...)) view`                                   |
+| 2D animation                   | No        | None — `SpriteSheet`/`AnimatedSprite` API unchanged                                                                    |
+| 3D animation                   | N/A (new) | Low — the old package had no 3D animation; new backend ships `AnimatedModel`                                           |
+| Camera                         | Yes       | Low — `Camera2D`/`Camera3D` modules exist; `Camera3D.create` takes just position/target/FOV with defaulted up/near/far |
+| Culling                        | Yes       | Low — `isGenericVisible` renamed `isVisibleBox` (box-vs-frustum test)                                                  |
+| Layout / Spatial               | No        | None — moved to Core, same API                                                                                         |
+| System pipeline                | No        | None — moved to Core, same API                                                                                         |
 
 ---
 
@@ -138,11 +138,12 @@ Program.mkProgram init update
 // After — window-level config via Core GameConfig
 Program.mkProgram init update
 |> Program.withConfig (fun cfg ->
-  { cfg with
-      Title = "My Game"
-      Width = 1280
-      Height = 720 })
-|> GameConfig.withTargetFPS 60
+  GameConfig.defaultConfig
+  |> GameConfig.withWidth 1280
+  |> GameConfig.withHeight 720
+  |> GameConfig.withTitle "My Game title"
+  |> GameConfig.withTargetFPS 60
+)
 // ... then wrap with MonoGameProgram and add device-level config:
 |> MonoGameProgram.ofProgram
 |> MonoGameProgram.withConfig (fun (game, gdm) ->
@@ -211,11 +212,11 @@ new `MonoThreeD` sample registers a 3D renderer and a 2D overlay renderer:
 
 ### Removed builders
 
-| Old builder | Replacement |
-|-------------|-------------|
-| `Program.withComponent` | Use `Program.withServiceRegistration` |
-| `Program.withComponentRef` | Use `Program.withServiceRegistration` + `GameContext.getService` |
-| `Program.withPipeline` | Use `Program.withRenderer (fun () -> Renderer3D.create (ForwardPipeline(...)) view)` |
+| Old builder                | Replacement                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------ |
+| `Program.withComponent`    | Use `Program.withServiceRegistration`                                                |
+| `Program.withComponentRef` | Use `Program.withServiceRegistration` + `GameContext.getService`                     |
+| `Program.withPipeline`     | Use `Program.withRenderer (fun () -> Renderer3D.create (ForwardPipeline(...)) view)` |
 
 ### Game host
 
@@ -522,18 +523,18 @@ let update msg model =
 
 #### Old → new module mapping
 
-| Old (`Mibo.Elmish.Graphics2D`) | New (`Mibo.Elmish.Graphics2D` / `.Lighting`) |
-|--------------------------------|----------------------------------------------|
-| `Batch2DRenderer.create game view` | `Renderer2D.create view` |
-| `Batch2DRenderer.createWithConfig game cfg view` | `Renderer2D.createWith cfg view` |
-| `Batch2DConfig` (+ `withClearColor`/`withLighting`/`withPostProcess`/`withLitSprite`/`withShadowCaster`) | `Renderer2DConfig` (+ `Renderer2DConfig.defaults`/`noClear`) |
-| `RenderBuffer<RenderCmd2D>` (= `RenderBuffer<int<RenderLayer>, RenderCmd2D>`) | `RenderBuffer2D` (= `RenderBuffer<int<RenderLayer>, Command2D>`) |
-| `RenderCmd2D` DU (`DrawSprite`, `DrawText`, `DrawLine2D`, …) | `Command2D` DU (same cases, renamed) |
-| `RenderLayer` measure | `RenderLayer` measure (unchanged) |
-| `sprite { }` / `text { }` CEs + `Buffer2D` extensions (`buffer.Sprite(...)`) | `SpriteState` / `TextState` records + the `Draw` module (`Draw.sprite state buffer`, `Draw.text state buffer`) |
-| `Draw2D` fluent module | `Draw` module (sprites, text, shapes, lines, triangles, polys, cameras, shaders, targets, particles) |
-| `Lighting2DConfig`, `PointLight2D`, `DirectionalLight2D`, `AmbientLight2D`, `Occluder2D`, `Shadows2DConfig` | `LightContext2D` + the same light/occluder records under `Mibo.Elmish.Graphics2D.Lighting` |
-| 2D post-process (`VignetteConfig`, `BloomConfig2D`, `ColorGradeConfig`, `PostProcess2DConfig`) | `PostProcess2D` module + `PostProcessPass` |
+| Old (`Mibo.Elmish.Graphics2D`)                                                                              | New (`Mibo.Elmish.Graphics2D` / `.Lighting`)                                                                   |
+| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Batch2DRenderer.create game view`                                                                          | `Renderer2D.create view`                                                                                       |
+| `Batch2DRenderer.createWithConfig game cfg view`                                                            | `Renderer2D.createWith cfg view`                                                                               |
+| `Batch2DConfig` (+ `withClearColor`/`withLighting`/`withPostProcess`/`withLitSprite`/`withShadowCaster`)    | `Renderer2DConfig` (+ `Renderer2DConfig.defaults`/`noClear`)                                                   |
+| `RenderBuffer<RenderCmd2D>` (= `RenderBuffer<int<RenderLayer>, RenderCmd2D>`)                               | `RenderBuffer2D` (= `RenderBuffer<int<RenderLayer>, Command2D>`)                                               |
+| `RenderCmd2D` DU (`DrawSprite`, `DrawText`, `DrawLine2D`, …)                                                | `Command2D` DU (same cases, renamed)                                                                           |
+| `RenderLayer` measure                                                                                       | `RenderLayer` measure (unchanged)                                                                              |
+| `sprite { }` / `text { }` CEs + `Buffer2D` extensions (`buffer.Sprite(...)`)                                | `SpriteState` / `TextState` records + the `Draw` module (`Draw.sprite state buffer`, `Draw.text state buffer`) |
+| `Draw2D` fluent module                                                                                      | `Draw` module (sprites, text, shapes, lines, triangles, polys, cameras, shaders, targets, particles)           |
+| `Lighting2DConfig`, `PointLight2D`, `DirectionalLight2D`, `AmbientLight2D`, `Occluder2D`, `Shadows2DConfig` | `LightContext2D` + the same light/occluder records under `Mibo.Elmish.Graphics2D.Lighting`                     |
+| 2D post-process (`VignetteConfig`, `BloomConfig2D`, `ColorGradeConfig`, `PostProcess2DConfig`)              | `PostProcess2D` module + `PostProcessPass`                                                                     |
 
 #### Renderer creation
 
@@ -593,22 +594,22 @@ shadows, normal maps, and per-instance lit-sprite quads are all supported.
 
 #### Old → new module mapping
 
-| Old | New (`Mibo.Elmish.Graphics3D` / `.Pipelines`) |
-|-----|-----------------------------------------------|
-| `Program.withPipeline cfg view` (`Mibo.Rendering.Graphics3D`) | `Program.withRenderer (fun () -> Renderer3D.create (ForwardPipeline(...)) view)` |
-| `PipelineRenderer` / `RenderPipeline` / `IRenderPipeline` | `Renderer3D` + `IRenderPipeline3D` + `ForwardPipeline`/`ForwardPipelineBase` |
-| `ForwardPbrPipeline` (old class name) | `ForwardPipeline` (the PBR Cook-Torrance pipeline) |
-| `PipelineConfig` (+ `withShadows`/`withPostProcess`/`withDefaultLighting`/`withShader`) | `ForwardPipeline(?postProcess, ?shadowAtlas, ?shadowBias)` constructor + `Renderer3DConfig` |
-| `ShadowConfig` | `ShadowAtlasConfig` + `ShadowBiasConfig` (each with `.defaults`) |
-| `PostProcessConfig` (+ `withBloom`/`withToneMapping`) | `PostProcessConfig3D` + `PostProcessPass3D` |
-| `PipelineBuffer<RenderCommand>` | `RenderBuffer3D` (= `RenderBuffer<unit, Command3D>`) |
-| `RenderCommand` DU (`SetCamera`, `AddLight`, `Draw`, `DrawSpriteBillboard`, …) | `Command3D` DU (`BeginCamera`, `AddPointLight`, `DrawModel`, `DrawBillboard`, …) |
-| `draw { }` / `quad { }` / `billboard { }` CEs + `PipelineBuffer` extensions (`.Camera(...).Draw(...).AddLight(...)`) | the `Draw3D` module (pipe-friendly: `Draw3D.drawModel …`, `Draw3D.addPointLight …`, `Draw3D.beginCamera …`) |
-| `Light` DU (`Directional`/`Point`/`Spot`), `DirectionalLight`, `PointLight`, `SpotLight`, `ShadowSettings` | `AmbientLight3D` + `DirectionalLight3D` + `PointLight3D` + `SpotLight3D` records (ambient is now its own record, not a field of a lighting state) |
-| `Material` / `PBRMaterial` / `MaterialFlags` | `Material3D` record (+ `Material3D.defaults`, `Material3D.fromModelMeshPart`) |
-| `Mesh` + `Mesh.fromModel` | `PrimitiveMesh` / `Primitive3D` (unit cube/sphere/cylinder/plane/torus/cone) |
-| Cascaded shadow maps | Shadow atlas (directional/point/spot, R32F, 3×3 PCF) |
-| 3D post-processing (bloom, SSAO, tone mapping: Reinhard/ACES/Filmic/AgX) | `PostProcess3D` (bloom, tone mapping) |
+| Old                                                                                                                  | New (`Mibo.Elmish.Graphics3D` / `.Pipelines`)                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Program.withPipeline cfg view` (`Mibo.Rendering.Graphics3D`)                                                        | `Program.withRenderer (fun () -> Renderer3D.create (ForwardPipeline(...)) view)`                                                                  |
+| `PipelineRenderer` / `RenderPipeline` / `IRenderPipeline`                                                            | `Renderer3D` + `IRenderPipeline3D` + `ForwardPipeline`/`ForwardPipelineBase`                                                                      |
+| `ForwardPbrPipeline` (old class name)                                                                                | `ForwardPipeline` (the PBR Cook-Torrance pipeline)                                                                                                |
+| `PipelineConfig` (+ `withShadows`/`withPostProcess`/`withDefaultLighting`/`withShader`)                              | `ForwardPipeline(?postProcess, ?shadowAtlas, ?shadowBias)` constructor + `Renderer3DConfig`                                                       |
+| `ShadowConfig`                                                                                                       | `ShadowAtlasConfig` + `ShadowBiasConfig` (each with `.defaults`)                                                                                  |
+| `PostProcessConfig` (+ `withBloom`/`withToneMapping`)                                                                | `PostProcessConfig3D` + `PostProcessPass3D`                                                                                                       |
+| `PipelineBuffer<RenderCommand>`                                                                                      | `RenderBuffer3D` (= `RenderBuffer<unit, Command3D>`)                                                                                              |
+| `RenderCommand` DU (`SetCamera`, `AddLight`, `Draw`, `DrawSpriteBillboard`, …)                                       | `Command3D` DU (`BeginCamera`, `AddPointLight`, `DrawModel`, `DrawBillboard`, …)                                                                  |
+| `draw { }` / `quad { }` / `billboard { }` CEs + `PipelineBuffer` extensions (`.Camera(...).Draw(...).AddLight(...)`) | the `Draw3D` module (pipe-friendly: `Draw3D.drawModel …`, `Draw3D.addPointLight …`, `Draw3D.beginCamera …`)                                       |
+| `Light` DU (`Directional`/`Point`/`Spot`), `DirectionalLight`, `PointLight`, `SpotLight`, `ShadowSettings`           | `AmbientLight3D` + `DirectionalLight3D` + `PointLight3D` + `SpotLight3D` records (ambient is now its own record, not a field of a lighting state) |
+| `Material` / `PBRMaterial` / `MaterialFlags`                                                                         | `Material3D` record (+ `Material3D.defaults`, `Material3D.fromModelMeshPart`)                                                                     |
+| `Mesh` + `Mesh.fromModel`                                                                                            | `PrimitiveMesh` / `Primitive3D` (unit cube/sphere/cylinder/plane/torus/cone)                                                                      |
+| Cascaded shadow maps                                                                                                 | Shadow atlas (directional/point/spot, R32F, 3×3 PCF)                                                                                              |
+| 3D post-processing (bloom, SSAO, tone mapping: Reinhard/ACES/Filmic/AgX)                                             | `PostProcess3D` (bloom, tone mapping)                                                                                                             |
 
 #### Renderer creation
 
@@ -852,21 +853,21 @@ etc. yourself. Drop those `Batch2DConfig.withLitSprite`/`withShader` lines.
 
 These modules moved to `Mibo.Core` with **identical APIs**:
 
-| Module | Namespace | Notes |
-|--------|-----------|-------|
-| `System` pipeline | `Mibo.Elmish` | `start`, `pipeMutable`, `snapshot`, `pipe`, `dispatch`, `dispatchWith`, `finish` |
-| `Cmd` / `Sub` | `Mibo.Elmish` | Same + new `Msg` and `Quit` cases |
-| `GameTime`, `DispatchMode`, `FixedStepConfig` | `Mibo.Elmish` | Unchanged |
-| `GameConfig` | `Mibo.Elmish` | Unchanged |
-| `HeadlessProgram` / `HeadlessRunner` | `Mibo.Elmish` | Unchanged |
-| `CellGrid2D`, `HexGrid`, `Layout`, `HexLayout` | `Mibo.Layout` | Unchanged |
-| `CellGrid3D`, `HexGrid3D`, `Layout3D`, `HexLayout3D` | `Mibo.Layout3D` | Unchanged |
-| `Grid2DSpatial`, `Hex2DSpatial` | `Mibo.Layout` | Unchanged |
-| `Grid3DSpatial`, `Hex3DSpatial` | `Mibo.Layout3D` | Unchanged |
-| `LayeredGrid2D`, `LayeredHexGrid`, `LayeredLayout`, `LayeredHexLayout` | `Mibo.Layout` | Unchanged |
-| `LayeredHexGrid3D`, `LayeredHexLayout3D` | `Mibo.Layout3D` | Unchanged |
-| `Platformer`, `TopDown` stamps | `Mibo.Layout` | Unchanged |
-| `Interior`, `Terrain` stamps | `Mibo.Layout3D` | Unchanged |
+| Module                                                                 | Namespace       | Notes                                                                            |
+| ---------------------------------------------------------------------- | --------------- | -------------------------------------------------------------------------------- |
+| `System` pipeline                                                      | `Mibo.Elmish`   | `start`, `pipeMutable`, `snapshot`, `pipe`, `dispatch`, `dispatchWith`, `finish` |
+| `Cmd` / `Sub`                                                          | `Mibo.Elmish`   | Same + new `Msg` and `Quit` cases                                                |
+| `GameTime`, `DispatchMode`, `FixedStepConfig`                          | `Mibo.Elmish`   | Unchanged                                                                        |
+| `GameConfig`                                                           | `Mibo.Elmish`   | Unchanged                                                                        |
+| `HeadlessProgram` / `HeadlessRunner`                                   | `Mibo.Elmish`   | Unchanged                                                                        |
+| `CellGrid2D`, `HexGrid`, `Layout`, `HexLayout`                         | `Mibo.Layout`   | Unchanged                                                                        |
+| `CellGrid3D`, `HexGrid3D`, `Layout3D`, `HexLayout3D`                   | `Mibo.Layout3D` | Unchanged                                                                        |
+| `Grid2DSpatial`, `Hex2DSpatial`                                        | `Mibo.Layout`   | Unchanged                                                                        |
+| `Grid3DSpatial`, `Hex3DSpatial`                                        | `Mibo.Layout3D` | Unchanged                                                                        |
+| `LayeredGrid2D`, `LayeredHexGrid`, `LayeredLayout`, `LayeredHexLayout` | `Mibo.Layout`   | Unchanged                                                                        |
+| `LayeredHexGrid3D`, `LayeredHexLayout3D`                               | `Mibo.Layout3D` | Unchanged                                                                        |
+| `Platformer`, `TopDown` stamps                                         | `Mibo.Layout`   | Unchanged                                                                        |
+| `Interior`, `Terrain` stamps                                           | `Mibo.Layout3D` | Unchanged                                                                        |
 
 ---
 
@@ -1068,20 +1069,20 @@ If you aim to share a game core between `Mibo.MonoGame` and `Mibo.Raylib`, these
 are the divergences to plan for (surfaced by comparing the `MonoThreeD` and
 `ThreeDSample` samples):
 
-| Concern | Mibo.MonoGame | Mibo.Raylib |
-|---------|---------------|-------------|
-| Host | `MiboGame(mgProgram)` + `MonoGameProgram.withConfig` for `Content.RootDirectory` | `RaylibGame(program)` + `Program.withAssetsBasePath AppContext.BaseDirectory` |
-| Input mapper | `MonoGameProgram.withInputMapper` | `RaylibProgram.withInputMapper` |
-| 3D pipeline | `ForwardPipeline(shadowBias=, shadowAtlas=)` | `ForwardPbrPipeline(shadowBiasConfig=, shadowAtlasConfig=)` (different field names) |
-| Shadow config | `ShadowBiasConfig.defaults`, `ShadowAtlasConfig { Resolution; GridSnapSize }` | explicit per-light biases, `shadowAtlasConfig { Resolution; DirectionalLightSize }` |
-| `Camera3D` | struct record, **radians** FOV, defaulted near/far | the raylib `Camera3D` struct, **degrees** FOV, no explicit near/far |
-| Vector / Color / Matrix | `Microsoft.Xna.Framework.*` (`Color(int)`, `Matrix.Create*`) | `System.Numerics` + `Raylib_cs` (`Color(byte)`, `Raymath.Matrix*`) |
-| 3D animated model | `AnimatedModel` + `Draw3D.drawAnimatedModel` (bundles model+mesh+state) | `Animation3DState` + `Animation3DState.applyToModel` + `Draw3D.drawModel` |
-| Animated mesh loader | `assets.AnimatedMesh rawPath` (Assimp — XNB drops anim data) | not needed — raylib loads `.glb` once with animations |
-| Assets | XNB content pipeline (names without extension) | raw files (paths with extension) |
-| Procedural 1×1 texture | `new Texture2D(gd,1,1) + SetData` | `GenImageColor + LoadTextureFromImage` |
-| Default font | none — load `assets.Font "diagnostics"` | `Raylib.GetFontDefault()` |
-| Material factory | `Material3D.fromModelMeshPart` | `Material3D.fromRaylibMaterial` |
+| Concern                 | Mibo.MonoGame                                                                    | Mibo.Raylib                                                                         |
+| ----------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Host                    | `MiboGame(mgProgram)` + `MonoGameProgram.withConfig` for `Content.RootDirectory` | `RaylibGame(program)` + `Program.withAssetsBasePath AppContext.BaseDirectory`       |
+| Input mapper            | `MonoGameProgram.withInputMapper`                                                | `RaylibProgram.withInputMapper`                                                     |
+| 3D pipeline             | `ForwardPipeline(shadowBias=, shadowAtlas=)`                                     | `ForwardPbrPipeline(shadowBiasConfig=, shadowAtlasConfig=)` (different field names) |
+| Shadow config           | `ShadowBiasConfig.defaults`, `ShadowAtlasConfig { Resolution; GridSnapSize }`    | explicit per-light biases, `shadowAtlasConfig { Resolution; DirectionalLightSize }` |
+| `Camera3D`              | struct record, **radians** FOV, defaulted near/far                               | the raylib `Camera3D` struct, **degrees** FOV, no explicit near/far                 |
+| Vector / Color / Matrix | `Microsoft.Xna.Framework.*` (`Color(int)`, `Matrix.Create*`)                     | `System.Numerics` + `Raylib_cs` (`Color(byte)`, `Raymath.Matrix*`)                  |
+| 3D animated model       | `AnimatedModel` + `Draw3D.drawAnimatedModel` (bundles model+mesh+state)          | `Animation3DState` + `Animation3DState.applyToModel` + `Draw3D.drawModel`           |
+| Animated mesh loader    | `assets.AnimatedMesh rawPath` (Assimp — XNB drops anim data)                     | not needed — raylib loads `.glb` once with animations                               |
+| Assets                  | XNB content pipeline (names without extension)                                   | raw files (paths with extension)                                                    |
+| Procedural 1×1 texture  | `new Texture2D(gd,1,1) + SetData`                                                | `GenImageColor + LoadTextureFromImage`                                              |
+| Default font            | none — load `assets.Font "diagnostics"`                                          | `Raylib.GetFontDefault()`                                                           |
+| Material factory        | `Material3D.fromModelMeshPart`                                                   | `Material3D.fromRaylibMaterial`                                                     |
 
 **Portability tip:** pin your model's math types to `System.Numerics` (not
 `Microsoft.Xna.Framework`) even on MonoGame. `Mibo.Core`'s layout/spatial modules

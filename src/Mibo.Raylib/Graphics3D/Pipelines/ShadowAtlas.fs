@@ -130,6 +130,27 @@ type ShadowAtlasConfig = {
   /// tighter, more shadow-dense scenes. Measured in world units (distance, not squared).
   /// </remarks>
   MaxShadowLightDistance: float32
+
+  /// <summary>
+  /// Fraction of the atlas the single directional caster occupies. Default: 0.5.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The directional light is registered first (slot 0) and there is exactly one of it.
+  /// With a non-zero ratio it gets a dedicated top region of the atlas sized
+  /// <c>(Resolution × Resolution × ratio)</c> — e.g. 0.5 of an 8192² atlas is 8192×4096
+  /// (~4K), instead of the <c>1/MaxCasters</c> tile the uniform grid would give it. This
+  /// makes directional shadows high-resolution by default without the user tuning
+  /// <c>MaxCasters</c> to their scene's light count.
+  /// </para>
+  /// <para>
+  /// Point/spot casters subdivide the remaining bottom strip <c>(Resolution × (1-ratio))</c>
+  /// into a square grid based on their active count. <c>1.0</c> gives the directional light
+  /// the whole atlas (directional-only scenes). <c>0.0</c> restores the legacy uniform grid
+  /// (all casters share <c>1/MaxCasters</c> tiles — backward compatible).
+  /// </para>
+  /// </remarks>
+  DirectionalAtlasRatio: float32
 }
 
 /// <summary>Global shadow bias configuration.</summary>
@@ -154,6 +175,7 @@ module ShadowAtlasConfig =
     DirectionalLightSize = ValueNone
     GridSnapSize = 2.0f
     MaxShadowLightDistance = 50.0f
+    DirectionalAtlasRatio = 0.5f
   }
 
 module ShadowBiasConfig =
@@ -175,6 +197,14 @@ module ShadowBiasConfig =
 [<Sealed>]
 type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
 
+  do
+    if
+      config.DirectionalAtlasRatio < 0.0f || config.DirectionalAtlasRatio > 1.0f
+    then
+      failwithf
+        "DirectionalAtlasRatio must be between 0.0 and 1.0. Got %f."
+        (float config.DirectionalAtlasRatio)
+
   let gridSize =
     let sqrt = Math.Sqrt(float config.MaxCasters) |> int
 
@@ -195,6 +225,12 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
   let mutable nextId = 0
   let mutable slotAllocator = 0
 
+  // Region indices returned by RemoveCaster, reused by AddCaster before bumping the
+  // allocator. Keeps the slot space dense for manual Add/Remove users: the old
+  // decrement-only allocator left holes, and a hole in the dedicated-directional layout
+  // maps pi outside the bottom-strip grid (viewport beyond the atlas).
+  let freeSlots = Stack<int>()
+
   // Pre-allocate uniform arrays
   let viewProjsUniforms = Array.zeroCreate<Matrix4x4> config.MaxCasters
   let uvOffsets = Array.zeroCreate<Vector4> config.MaxCasters
@@ -202,6 +238,75 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
   let biases = Array.zeroCreate<float32> config.MaxCasters
   let casterTypes = Array.zeroCreate<int> config.MaxCasters
   let mutable activeCasterCount = 0
+
+  // Number of enabled non-directional casters (point/spot). Drives the bottom-strip
+  // subdivision in the dedicated-directional layout. Adjusted incrementally (O(1)) by
+  // every caster mutation (Add/Remove/Update/Clear), so the viewports rendered during the
+  // shadow pass and the UVs uploaded afterwards always derive from the same count — and
+  // per-frame re-registration stays O(casters) instead of O(casters²). PrepareUniforms
+  // recomputes it once per frame as a safety net (same as the MonoGame backend).
+  // Defaults to 0 so a directional-only frame gives the directional caster its full ratio
+  // region.
+  let mutable activePointSpotCount = 0
+
+  // A caster's contribution to activePointSpotCount: its regions, when enabled and not
+  // directional (the directional caster occupies the dedicated top region instead).
+  let regionContribution(c: ShadowCasterData) =
+    if c.Enabled && c.Type <> ShadowCasterType.Directional then
+      c.RegionCount
+    else
+      0
+
+  // ── Region layout ──
+  // When DirectionalAtlasRatio > 0, the directional caster (always slot 0) gets a dedicated
+  // top rectangle; point/spot casters subdivide the remaining bottom strip. When the ratio
+  // is 0, the legacy uniform grid (1/MaxCasters tiles) is used unchanged.
+  let useDedicatedDirectional = config.DirectionalAtlasRatio > 0.0f
+
+  let dirRegionHeight =
+    int(float config.Resolution * float config.DirectionalAtlasRatio)
+
+  // Compute the pixel rect (x, y, w, h) for a flat region index. Pixels are integers (the
+  // viewport), so non-power-of-two subdivisions round — that's fine for rendering but would
+  // drift the UV scale, so UVs are computed separately by regionUV (grid-fraction math for
+  // the legacy path, exact rect-derived math for the dedicated region).
+  let regionRect(regionIndex: int) : struct (int * int * int * int) =
+    if not useDedicatedDirectional then
+      let row = regionIndex / regionsPerRow
+      let col = regionIndex % regionsPerRow
+      struct (col * regionSize, row * regionSize, regionSize, regionSize)
+    elif regionIndex = 0 then
+      struct (0, 0, config.Resolution, dirRegionHeight)
+    else
+      let stripHeight = config.Resolution - dirRegionHeight
+      let cols = max 1 (int(ceil(sqrt(float activePointSpotCount))))
+      let tileW = config.Resolution / cols
+      let tileH = stripHeight / cols
+      let pi = regionIndex - 1
+      let row = pi / cols
+      let col = pi % cols
+      struct (col * tileW, dirRegionHeight + row * tileH, tileW, tileH)
+
+  // UV offset/scale (xy=offset, zw=scale) for a region. The legacy uniform-grid path uses
+  // exact 1/gridSize fractions (preserving the original UV layout — integer pixel rounding
+  // in the viewport would otherwise drift the scale, e.g. 2048/3 vs 1/3). The dedicated
+  // directional path derives UVs from the pixel rect (the ratio slice is exact).
+  let regionUV(regionIndex: int) : Vector4 =
+    if not useDedicatedDirectional then
+      let row = regionIndex / regionsPerRow
+      let col = regionIndex % regionsPerRow
+      let g = float32 gridSize
+      Vector4(float32 col / g, float32 row / g, 1.0f / g, 1.0f / g)
+    else
+      let res = float32 config.Resolution
+      let struct (x, y, w, h) = regionRect regionIndex
+
+      Vector4(
+        float32 x / res,
+        float32 y / res,
+        float32 w / res,
+        float32 h / res
+      )
 
   /// <summary>Grid size (rows/columns) of the atlas.</summary>
   member _.GridSize = gridSize
@@ -287,30 +392,33 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
     casters.Clear()
     viewProjs.Clear()
     slotAllocator <- 0
+    freeSlots.Clear()
 
   /// <summary>Clear all casters and reset slot allocator. Call at start of each frame.</summary>
   member _.Clear() =
     casters.Clear()
     viewProjs.Clear()
     slotAllocator <- 0
+    freeSlots.Clear()
+    activePointSpotCount <- 0
 
   /// <summary>Allocate a slot in the atlas. Returns region index, or ValueNone if full.</summary>
   member private _.AllocateSlot(regionCount: int) =
-    if slotAllocator + regionCount > config.MaxCasters then
+    // Reuse a freed single-region slot before bumping the allocator (regionCount is 1 in
+    // practice; multi-region requests always bump so the bump space stays contiguous).
+    if regionCount = 1 && freeSlots.Count > 0 then
+      ValueSome(freeSlots.Pop())
+    elif slotAllocator + regionCount > config.MaxCasters then
       ValueNone
     else
       let slot = slotAllocator
       slotAllocator <- slotAllocator + regionCount
       ValueSome slot
 
-  /// <summary>Free a slot in the atlas.</summary>
+  /// <summary>Free a slot in the atlas, returning its regions to the reuse pool.</summary>
   member private _.FreeSlot(regionIndex: int, regionCount: int) =
-    // Simple linear allocator - just decrement count
-    // In practice, we'd need a more sophisticated allocator for defragmentation
-    slotAllocator <- slotAllocator - regionCount
-
-    if slotAllocator < 0 then
-      slotAllocator <- 0
+    for r = 0 to regionCount - 1 do
+      freeSlots.Push(regionIndex + r)
 
   /// <summary>
   /// Register a new shadow caster and allocate atlas regions.
@@ -347,12 +455,14 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
       }
 
       casters[id] <- caster
+      activePointSpotCount <- activePointSpotCount + regionContribution caster
       ValueSome id
 
   /// <summary>Remove a shadow caster and free its atlas regions.</summary>
   member this.RemoveCaster(id: int<ShadowCasterId>) =
     match casters.TryGetValue(id) with
     | true, caster ->
+      activePointSpotCount <- activePointSpotCount - regionContribution caster
       this.FreeSlot(caster.AtlasRegion, caster.RegionCount)
       casters.Remove(id) |> ignore
     | false, _ -> ()
@@ -369,7 +479,7 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
     ) =
     match casters.TryGetValue(id) with
     | true, caster ->
-      casters[id] <- {
+      let updated = {
         caster with
             LightPosition = defaultArg lightPosition caster.LightPosition
             LightDirection = defaultArg lightDirection caster.LightDirection
@@ -377,18 +487,16 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
             Enabled = defaultArg enabled caster.Enabled
             BiasOverride = defaultArg biasOverride caster.BiasOverride
       }
+
+      casters[id] <- updated
+
+      activePointSpotCount <-
+        activePointSpotCount - regionContribution caster
+        + regionContribution updated
     | false, _ -> ()
 
   /// <summary>Get UV offset/scale for a region index.</summary>
-  member _.GetUVOffsetScale(regionIndex: int) =
-    let row = regionIndex / regionsPerRow
-    let col = regionIndex % regionsPerRow
-
-    let offset =
-      Vector2(float32 col / float32 gridSize, float32 row / float32 gridSize)
-
-    let scale = Vector2(1.0f / float32 gridSize, 1.0f / float32 gridSize)
-    Vector4(offset.X, offset.Y, scale.X, scale.Y)
+  member _.GetUVOffsetScale(regionIndex: int) = regionUV regionIndex
 
   /// <summary>Set the view-projection matrix for a specific atlas region.</summary>
   member _.SetRegionViewProj(regionIndex: int, vp: Matrix4x4) =
@@ -402,15 +510,13 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
 
   /// <summary>Get viewport rectangle for a region index.</summary>
   member _.GetRegionViewport(regionIndex: int) =
-    let row = regionIndex / regionsPerRow
-    let col = regionIndex % regionsPerRow
-    Rlgl.Viewport(col * regionSize, row * regionSize, regionSize, regionSize)
+    let struct (x, y, w, h) = regionRect regionIndex
+    Rlgl.Viewport(x, y, w, h)
 
   /// <summary>Get scissor rectangle for a region index.</summary>
   member _.GetRegionScissor(regionIndex: int) =
-    let row = regionIndex / regionsPerRow
-    let col = regionIndex % regionsPerRow
-    Rlgl.Scissor(col * regionSize, row * regionSize, regionSize, regionSize)
+    let struct (x, y, w, h) = regionRect regionIndex
+    Rlgl.Scissor(x, y, w, h)
 
   /// <summary>Clear a specific region in the atlas.</summary>
   member this.ClearRegion(regionIndex: int) =
@@ -419,10 +525,29 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
     Rlgl.Viewport(0, 0, config.Resolution, config.Resolution)
 
   /// <summary>
-  /// Prepare uniform arrays for upload to shader.
-  /// Call this each frame before rendering.
+  /// Recompute the enabled non-directional caster count driving the bottom-strip
+  /// subdivision. Caster mutations already adjust the count incrementally (O(1));
+  /// PrepareUniforms calls this once per frame as a safety net. O(casters), bounded by
+  /// MaxCasters.
   /// </summary>
-  member _.PrepareUniforms() =
+  member private _.UpdateRegionCount() =
+    let mutable psCount = 0
+
+    for kvp in casters do
+      let c = kvp.Value
+
+      if c.Enabled && c.Type <> ShadowCasterType.Directional then
+        psCount <- psCount + c.RegionCount
+
+    activePointSpotCount <- psCount
+
+  /// <summary>
+  /// Prepare uniform arrays for upload to shader.
+  /// Call each frame before rendering.
+  /// </summary>
+  member this.PrepareUniforms() =
+    this.UpdateRegionCount()
+
     let mutable index = 0
 
     for kvp in casters do
@@ -439,21 +564,9 @@ type ShadowAtlas(config: ShadowAtlasConfig, biasConfig: ShadowBiasConfig) =
             | true, vp -> viewProjsUniforms[index] <- vp
             | false, _ -> viewProjsUniforms[index] <- Matrix4x4.Identity
 
-            // Inline GetUVOffsetScale
-            let regionIndex = caster.AtlasRegion + r
-            let row = regionIndex / regionsPerRow
-            let col = regionIndex % regionsPerRow
-
-            let offset =
-              Vector2(
-                float32 col / float32 gridSize,
-                float32 row / float32 gridSize
-              )
-
-            let scale =
-              Vector2(1.0f / float32 gridSize, 1.0f / float32 gridSize)
-
-            uvOffsets[index] <- Vector4(offset.X, offset.Y, scale.X, scale.Y)
+            // UV offset/scale (legacy grid uses exact 1/gridSize fractions; dedicated
+            // region derives from the pixel rect).
+            uvOffsets[index] <- regionUV regionIndex
 
             lightPositions[index] <- caster.LightPosition
 

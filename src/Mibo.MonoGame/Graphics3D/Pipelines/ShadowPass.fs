@@ -231,12 +231,24 @@ module internal ShadowPass =
       | ValueNone -> 50.0f
 
     let resolution = float32 atlasCfg.Resolution
-    let gridSize = MathF.Sqrt(float32 atlasCfg.MaxCasters)
-    let slotResolution = resolution / gridSize
+
+    // Effective directional tile resolution. With a dedicated directional region
+    // (DirectionalAtlasRatio > 0) the directional caster occupies a top rectangle of size
+    // (Resolution × Resolution×ratio); the texel density is set by the smaller side. Without
+    // it, the legacy uniform grid gives the directional caster a 1/gridSize tile.
+    let dirTileResolution =
+      if atlasCfg.DirectionalAtlasRatio > 0.0f then
+        let h = resolution * atlasCfg.DirectionalAtlasRatio
+        min resolution h
+      else
+        let gridSize = MathF.Sqrt(float32 atlasCfg.MaxCasters)
+        resolution / gridSize
+
     // World-space size of one shadow texel in the directional light's X/Y plane.
     // The config's GridSnapSize overrides this when set; otherwise we default to the
     // texel size so the shadow-map pixels stay locked to world geometry.
-    let texelWorld = orthoSize * 2.0f / slotResolution
+    // DirectionalLightSize is the FULL ortho height (matches the raylib backend).
+    let texelWorld = orthoSize / dirTileResolution
     let snapSize = max atlasCfg.GridSnapSize texelWorld
 
     // Lock the shadow origin Y to the configured world height so jumping does not slide
@@ -266,16 +278,26 @@ module internal ShadowPass =
         Vector3.UnitY
 
     let shadowNear = 1.0f
-    let shadowFar = lightDistance + orthoSize * 2.0f
+    // The light sits at snappedOrigin + lightFromDir*lightDistance. Caster geometry lies
+    // within the ortho window (half-height orthoSize/2) of the origin on the near side, so
+    // lightDistance + orthoSize covers it with margin; the extra unit keeps casters at the
+    // ortho boundary from clipping at the far plane. Coverage matches the previous release:
+    // the old lightDistance + orthoSize*2 used the half-size orthoSize, i.e. the same
+    // distance plus the full window height. Matches the raylib backend.
+    let shadowFar = lightDistance + orthoSize + 1.0f
 
     let view = Matrix.CreateLookAt(lightPos, snappedOrigin, safeUp)
 
+    // DirectionalLightSize is the FULL ortho height, matching the raylib backend's ortho
+    // FovY semantics — same config value, same coverage, same texel density.
+    let halfSize = orthoSize * 0.5f
+
     let proj =
       Matrix.CreateOrthographicOffCenter(
-        -orthoSize,
-        orthoSize,
-        -orthoSize,
-        orthoSize,
+        -halfSize,
+        halfSize,
+        -halfSize,
+        halfSize,
         shadowNear,
         shadowFar
       )
@@ -1056,6 +1078,8 @@ module internal ShadowPass =
         p.Shadow.ShadowAtlasTex.SetValue(res.Atlas.Fbo)
 
       gd.Textures[5] <- res.Atlas.Fbo
+      // PointClamp on every backend: the forward shader point-samples depth and does
+      // the 3×3 PCF comparison in-shader (matches ForwardPbr.fx and the raylib backend).
       gd.SamplerStates[5] <- SamplerState.PointClamp
     | ValueNone -> ()
 

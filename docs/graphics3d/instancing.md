@@ -143,6 +143,50 @@ supported (no per-instance bone palette).
 See [Shader Uniform Reference](../shader-uniforms.html#instancing-opt-in) for
 the full per-backend input contract and minimal example shaders.
 
+## Shading a whole grid with effects
+
+Grid instancing can apply a custom effect per sub-mesh, per cell type, or across
+the whole grid. Provide an effect where you want one; cells or sub-meshes
+without one keep the default PBR look. The effect must still declare the
+instancing opt-in described above, or those draws fall back to the PBR
+instanced path.
+
+**Per sub-mesh** — build the context with a `(mesh, material, shader)` triple
+for each cell type. Each sub-mesh carrying an effect is shaded by it:
+
+```fsharp
+// raylib: Shader voption ; MonoGame: Effect voption
+let ctx =
+    InstancedRenderContext(
+        getKey = (fun c -> c.TileType),
+        getMeshesMaterialAndShader = fun c ->
+            [| struct (baseMesh, baseMat, ValueSome toonShader)
+               struct (decoMesh,  decoMat,  ValueNone) |],   // deco keeps PBR
+        getTransform = fun pos c -> Raymath.MatrixTranslate(pos.X, pos.Y, pos.Z))
+
+buffer.renderCellGridInstanced(ctx, grid).drop()
+```
+
+**Per cell type** — pass a resolver that returns an effect per grid key:
+
+```fsharp
+let ctx =
+    InstancedRenderContext(
+        getKey = (fun c -> c.TileType),
+        getMeshesAndMaterial = (fun c -> ...),
+        getTransform = fun pos c -> ...)
+
+buffer
+    .renderCellGridInstanced(ctx, grid, function
+        | Water -> ValueSome waterShader
+        | Lava  -> ValueSome lavaShader
+        | _     -> ValueNone)
+    .drop()
+```
+
+**Whole grid** — a special case of per-cell-type: pass `fun _ -> ValueSome effect`
+to shade every cell with one effect.
+
 ## Performance tips
 
 - **Key function** — Keep `getKey` cheap. It's called per cell per frame.

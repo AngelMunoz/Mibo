@@ -307,7 +307,15 @@ type ForwardPipelineBase
     | ValueSome userEffect ->
       // Per-group scope: shade with the user effect via name-resolved SceneUpload. The effect
       // inherits scene data (camera/lights/material/bones), NOT the PBR shader itself.
-      PbrShading.shadeWithEffect(gd, &state, &frame, pbrRes, userEffect, draw)
+      // SceneUpload binds PointClamp on sampler slot 5 for user shaders (they do their own
+      // PCF); save/restore so the scope can't clobber the backend-specific shadow sampler
+      // the built-in PBR path depends on for the rest of the frame.
+      let savedSampler = gd.SamplerStates[5]
+
+      try
+        PbrShading.shadeWithEffect(gd, &state, &frame, pbrRes, userEffect, draw)
+      finally
+        gd.SamplerStates[5] <- savedSampler
 
 
   // ----------------------------------------------------------------
@@ -717,7 +725,8 @@ type ForwardPipelineBase
       gd.SamplerStates[2] <- SamplerState.LinearWrap
       gd.SamplerStates[3] <- SamplerState.LinearWrap
       gd.SamplerStates[4] <- SamplerState.LinearWrap
-      // s5 is set per-shadow-pass to PointClamp; set a safe default here.
+      // s5 (shadow atlas) is bound per-shadow-pass to PointClamp by ShadowPass.fs
+      // (point-sampled depth for the manual 3×3 PCF); set a safe default here.
       gd.SamplerStates[5] <- SamplerState.PointClamp
 
       // Pre-scan — capture camera, lights, shadow state, and post-process actions in one pass

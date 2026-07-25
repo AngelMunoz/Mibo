@@ -83,21 +83,31 @@ float spotLightOuterCutoff[MAX_SPOT_LIGHTS];
 float3 cameraPos;
 
 // ------------------------------------------------------------------
-// Shadow atlas (B10 directional; B11 adds point/spot). Multi-caster.
+// Shadow atlas (directional + point/spot). Multi-caster.
 //
-// SM3.0 approach (works identically on OGL and DX):
-//  - Regular sampler2D + manual PCF (hardware SamplerComparisonState / SampleCmp
-//    isn't reliably portable through mgfxc on both profiles).
-//  - Slope-scale bias via RasterizerState.SlopeScaleDepthBias on the shadow pass
-//    (no dFdx/dFdy shader math — applied during caster rasterization).
-//  - Texel size passed as a uniform (replaces textureSize, which has no SM3.0 equivalent).
-//  - Per-light shadow caster index (-1 = none): O(1) lookup, replaces the canonical
-//    raylib O(N*M) caster-matching scan.
+// Profile-gated sampling — see the FETCH_DEPTH block below for the full rationale. Both
+// profiles do the same manual comparison (recvZ > d ? shadowed : lit) with a per-caster
+// receiver-side bias (shadowBiases) so a flat caster/receiver surface doesn't shadow
+// itself across the frustum. Slope-scale bias is applied via RasterizerState on the shadow
+// pass. Texel size is passed as a uniform (textureSize has no SM3.0 equivalent). Per-light
+// shadow caster index (-1 = none): O(1) lookup.
 // ------------------------------------------------------------------
 
 #define MAX_SHADOW_CASTERS 16
 
-#if OPENGL
+// Shadow atlas sampling. The atlas is an R32F COLOR target holding a packed depth value
+// in .r (MonoGame cannot make a sampleable depth-only RT), so hardware comparison samplers
+// (SamplerComparisonState / SampleCmp) don't apply — they expect a true depth-stencil
+// resource. All profiles point-sample the depth value and do the comparison in-shader
+// (recvZ > d ? shadowed : lit), matching the raylib backend. Bilinear-filtered depth was
+// tried on SM6 and rejected: interpolating depth across a caster silhouette blends two
+// unrelated depths into a value no real surface has, which biases the comparison and
+// smears/bleeds edges — PCF must filter the comparison, not the depth.
+#if defined(SM6)
+Texture2D shadowAtlas : register(t5);
+SamplerState shadowSampler : register(s5);
+#define FETCH_DEPTH(uv) shadowAtlas.SampleLevel(shadowSampler, uv, 0.0).r
+#elif OPENGL
 sampler2D shadowAtlas : register(s5) = sampler_state {
   AddressU = Clamp;
   AddressV = Clamp;
@@ -105,8 +115,10 @@ sampler2D shadowAtlas : register(s5) = sampler_state {
   MagFilter = Point;
   MipFilter = Point;
 };
+#define FETCH_DEPTH(uv) tex2Dlod(shadowAtlas, float4(uv, 0.0, 0.0)).r
 #else
 DECLARE_TEX(shadowAtlas, 5);
+#define FETCH_DEPTH(uv) shadowAtlas.SampleLevel(shadowAtlasSampler, uv, 0.0).r
 #endif
 float4x4 shadowViewProjs[MAX_SHADOW_CASTERS];
 float4 shadowUVOffsets[MAX_SHADOW_CASTERS]; // xy = offset, zw = scale (atlas region remap)
@@ -115,11 +127,10 @@ float shadowBiases[MAX_SHADOW_CASTERS];      // per-caster receiver-side bias (p
 int pointLightShadowIdx[MAX_POINT_LIGHTS];   // -1 = no shadow
 int spotLightShadowIdx[MAX_SPOT_LIGHTS];     // -1 = no shadow
 
-// Generic shadow lookup for a caster slot. Manual 3x3 PCF. A per-caster receiver-side
-// bias is subtracted from the receiver depth before comparison (projCoord.z - bias > d) —
-// matching the Raylib backend. The rasterizer-side DepthBias alone is insufficient: with
-// the instanced world now casting, the floor self-shadows across the whole frustum because
-// caster and receiver are the same surface; the receiver-side bias closes that gap.
+// Generic shadow lookup for a caster slot. 3x3 PCF, point-sampled on every profile
+// (same kernel as the raylib backend): each tap fetches a depth value and the binary
+// comparisons are averaged. A per-caster receiver-side bias is subtracted from recvZ
+// so a flat caster/receiver surface doesn't shadow itself across the frustum.
 float computeShadowAt(float3 worldPos, int casterIdx) {
   if (casterIdx < 0)
     return 1.0;
@@ -142,22 +153,32 @@ float computeShadowAt(float3 worldPos, int casterIdx) {
   // increases downward. Flip y so the atlas lookup matches the viewport transform.
   float2 atlasUV = float2(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5) * uvOff.zw + uvOff.xy;
 
+  // Clamp PCF taps to this caster's atlas tile. Tiles are flush (no guard padding), so a
+  // tap stepping outside the tile would bleed into a neighbor caster's region and read its
+  // depth. The max is pulled back half a texel: with point sampling, a tap clamped to
+  // exactly tileMax would land on the first texel of the neighboring tile, so clamp to the
+  // last texel center inside this tile instead.
+  float2 tileMin = uvOff.xy;
+  float2 tileMax = uvOff.xy + uvOff.zw - shadowTexelSize * 0.5;
+
   // Receiver-side bias: shrink the receiver depth before comparing so a surface doesn't
-  // shadow itself. Rasterizer-side DepthBias alone left the floor self-shadowing because
-  // the bias direction/precision couldn't separate caster from receiver on the same plane.
+  // shadow itself.
   float bias = shadowBiases[casterIdx];
   float recvZ = ndc.z - bias;
 
+  // 3×3 PCF kernel (9 taps), identical on every profile and matching the raylib backend.
+  // Wider kernels (a 5×5 grid was tried on SM6) cost ~3× the fetches for no quality win
+  // at this texel density — the 9-step gradient reads sharper. Taps are clamped to this
+  // caster's atlas tile: tiles are flush (no guard padding), so a tap stepping outside
+  // the tile would bleed into a neighbor caster's region and read its depth.
   float shadow = 0.0;
   [unroll]
   for (int x = -1; x <= 1; x++) {
     [unroll]
     for (int y = -1; y <= 1; y++) {
-      // tex2Dlod (explicit LOD 0 — the shadow atlas has no mipmaps) instead of tex2D:
-      // tex2D is a gradient instruction, which SM3.0 forbids inside loops with break
-      // (the point/spot light loops break on count). tex2Dlod is gradient-free.
-      float2 sampleUV = atlasUV + float2(float(x), float(y)) * shadowTexelSize;
-      float d = SAMPLE_TEX_LOD(shadowAtlas, sampleUV, 0.0).r;
+      float2 sampleUV =
+        clamp(atlasUV + float2(float(x), float(y)) * shadowTexelSize, tileMin, tileMax);
+      float d = FETCH_DEPTH(sampleUV);
       shadow += (recvZ > d) ? 0.0 : 1.0;
     }
   }

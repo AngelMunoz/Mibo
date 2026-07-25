@@ -29,6 +29,7 @@ open System.Runtime.CompilerServices
 open Mibo
 open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics3D
+open Mibo.Layout3D
 
 /// <summary>Rectangle witnesses (fills, outlines, rounded, gradients).</summary>
 type WithRects2D<'T
@@ -1245,6 +1246,130 @@ type Draw =
     (buffer: 'B, start: Vector3, finish: Vector3, color: Color)
     : 'B =
     buffer.AddLine3D(start, finish, color)
+    buffer
+
+  // ──────────────────────────────────────────────
+  // 3D — Grid Instancing
+  //
+  // Renders a Cell/Hex grid with one instanced draw per (key × sub-mesh).
+  // The witness is on the context (an opaque backend handle —
+  // InstancedRenderContext on both backends), not the buffer: F# SRTP resolves
+  // members in the type's own declaration file, and the context is declared in
+  // the backend's Layout3D file where it sees the grid types. The context owns
+  // the key/material/transform resolvers and pooled storage. Two shader
+  // sources, both additive:
+  //   * Per-sub-mesh: build the context with the (mesh, material, shader) triple
+  //     overload — each ValueSome sub-mesh is wrapped in its own effect scope.
+  //   * Per-key / whole-grid: pass shaderForKey. ValueSome wraps the whole key's
+  //     draws in one scope; ValueNone falls through to the default PBR path
+  //     (whole-grid shading: fun _ -> ValueSome shader).
+  // ──────────────────────────────────────────────
+
+  /// <summary>Renders a cell grid instanced. If the context was built with the
+  /// per-sub-mesh shader overload, each <c>ValueSome</c> sub-mesh is shaded by
+  /// its own effect; otherwise the default PBR instanced path is used.</summary>
+  [<Extension>]
+  static member inline renderCellGridInstanced<'Ctx, 'Buf, 'T
+    when 'Ctx: (member RenderCellGridInstanced: 'Buf * CellGrid3D<'T> -> unit)>
+    (buffer: 'Buf, ctx: 'Ctx, grid: CellGrid3D<'T>)
+    : 'Buf =
+    ctx.RenderCellGridInstanced(buffer, grid)
+    buffer
+
+  /// <summary>Renders a cell grid instanced, wrapping each key's draws in an
+  /// effect scope when <paramref name="shaderForKey"/> returns <c>ValueSome</c>.</summary>
+  [<Extension>]
+  static member inline renderCellGridInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
+    when 'Ctx: (member RenderCellGridInstanced:
+      'Buf * CellGrid3D<'T> * ('Key -> 'S ValueOption) -> unit)
+    and 'Key: equality>
+    (
+      buffer: 'Buf,
+      ctx: 'Ctx,
+      grid: CellGrid3D<'T>,
+      [<InlineIfLambda>] shaderForKey: 'Key -> 'S ValueOption
+    ) : 'Buf =
+    ctx.RenderCellGridInstanced(buffer, grid, shaderForKey)
+    buffer
+
+  /// <summary>Like <c>renderCellGridInstanced</c> but restricted to a bounding volume.</summary>
+  [<Extension>]
+  static member inline renderCellGridVolumeInstanced<'Ctx, 'Buf, 'T
+    when 'Ctx: (member RenderCellGridVolumeInstanced:
+      'Buf * BoundingBox * CellGrid3D<'T> -> unit)>
+    (buffer: 'Buf, ctx: 'Ctx, bounds: BoundingBox, grid: CellGrid3D<'T>)
+    : 'Buf =
+    ctx.RenderCellGridVolumeInstanced(buffer, bounds, grid)
+    buffer
+
+  /// <summary>Like <c>renderCellGridInstanced</c> but restricted to a bounding
+  /// volume, with per-key effect scoping.</summary>
+  [<Extension>]
+  static member inline renderCellGridVolumeInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
+    when 'Ctx: (member RenderCellGridVolumeInstanced:
+      'Buf * BoundingBox * CellGrid3D<'T> * ('Key -> 'S ValueOption) -> unit)
+    and 'Key: equality>
+    (
+      buffer: 'Buf,
+      ctx: 'Ctx,
+      bounds: BoundingBox,
+      grid: CellGrid3D<'T>,
+      [<InlineIfLambda>] shaderForKey: 'Key -> 'S ValueOption
+    ) : 'Buf =
+    ctx.RenderCellGridVolumeInstanced(buffer, bounds, grid, shaderForKey)
+    buffer
+
+  /// <summary>Renders a hex grid instanced. Per-sub-mesh shader scoping applies
+  /// when the context was built with the triple overload.</summary>
+  [<Extension>]
+  static member inline renderHexGridInstanced<'Ctx, 'Buf, 'T
+    when 'Ctx: (member RenderHexGridInstanced: 'Buf * HexGrid3D<'T> -> unit)>
+    (buffer: 'Buf, ctx: 'Ctx, grid: HexGrid3D<'T>)
+    : 'Buf =
+    ctx.RenderHexGridInstanced(buffer, grid)
+    buffer
+
+  /// <summary>Renders a hex grid instanced, wrapping each key's draws in an
+  /// effect scope when <paramref name="shaderForKey"/> returns <c>ValueSome</c>.</summary>
+  [<Extension>]
+  static member inline renderHexGridInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
+    when 'Ctx: (member RenderHexGridInstanced:
+      'Buf * HexGrid3D<'T> * ('Key -> 'S ValueOption) -> unit)
+    and 'Key: equality>
+    (
+      buffer: 'Buf,
+      ctx: 'Ctx,
+      grid: HexGrid3D<'T>,
+      [<InlineIfLambda>] shaderForKey: 'Key -> 'S ValueOption
+    ) : 'Buf =
+    ctx.RenderHexGridInstanced(buffer, grid, shaderForKey)
+    buffer
+
+  /// <summary>Like <c>renderHexGridInstanced</c> but restricted to a bounding volume.</summary>
+  [<Extension>]
+  static member inline renderHexGridVolumeInstanced<'Ctx, 'Buf, 'T
+    when 'Ctx: (member RenderHexGridVolumeInstanced:
+      'Buf * BoundingBox * HexGrid3D<'T> -> unit)>
+    (buffer: 'Buf, ctx: 'Ctx, bounds: BoundingBox, grid: HexGrid3D<'T>)
+    : 'Buf =
+    ctx.RenderHexGridVolumeInstanced(buffer, bounds, grid)
+    buffer
+
+  /// <summary>Like <c>renderHexGridInstanced</c> but restricted to a bounding
+  /// volume, with per-key effect scoping.</summary>
+  [<Extension>]
+  static member inline renderHexGridVolumeInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
+    when 'Ctx: (member RenderHexGridVolumeInstanced:
+      'Buf * BoundingBox * HexGrid3D<'T> * ('Key -> 'S ValueOption) -> unit)
+    and 'Key: equality>
+    (
+      buffer: 'Buf,
+      ctx: 'Ctx,
+      bounds: BoundingBox,
+      grid: HexGrid3D<'T>,
+      [<InlineIfLambda>] shaderForKey: 'Key -> 'S ValueOption
+    ) : 'Buf =
+    ctx.RenderHexGridVolumeInstanced(buffer, bounds, grid, shaderForKey)
     buffer
 
   // ──────────────────────────────────────────────

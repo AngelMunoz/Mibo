@@ -3,7 +3,8 @@
 //
 // MonoGame cannot create a sampleable depth-only RenderTarget2D (depth buffers are
 // non-sampleable on both backends), so the shadow depth is written into a color
-// attachment. The forward pass samples this with a comparison sampler for hardware PCF.
+// attachment. The forward pass samples it with manual 3×3 PCF over point-sampled
+// depth on every backend (see ForwardPbr.fx).
 //
 // §6.1: plain float4x4 (no row_major), mul(position, matrix) vector-LEFT.
 // §6.3: SM3.0-clean profile split.

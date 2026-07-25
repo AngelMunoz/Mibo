@@ -113,26 +113,26 @@ type internal PbrResources() =
 
   /// <summary>Per-effect memoization of the <c>Instanced</c>-technique probe (the convention
   /// ForwardPbr.fx and Instanced.fx already use). Maps every effect seen on first instanced draw
-  /// inside a <c>beginEffect</c> scope to whether it exposes the technique, so neither outcome is
-  /// re-probed. An effect that doesn't expose it is absent and instanced draws fall back to the PBR
-  /// instanced path. See docs/graphics3d/instancing.md.</summary>
-  member val InstanceCapableEffects: System.Collections.Generic.Dictionary<
+  /// inside a <c>beginEffect</c> scope to its resolved <c>Instanced</c> technique — null when the
+  /// effect doesn't opt in — so neither the probe nor the technique handle is re-resolved per
+  /// draw. An effect without the technique falls back to the PBR instanced path. See
+  /// docs/graphics3d/instancing.md.</summary>
+  member val InstancedTechniques: System.Collections.Generic.Dictionary<
     Effect,
-    bool
-   > = System.Collections.Generic.Dictionary<Effect, bool>() with get, set
+    EffectTechnique
+   > =
+    System.Collections.Generic.Dictionary<Effect, EffectTechnique>() with get, set
 
-  /// <summary>True iff <paramref name="effect"/> has been seen to expose an <c>Instanced</c>
-  /// technique. Probes + memoizes on first lookup (both outcomes); subsequent lookups are a
+  /// <summary>The effect's <c>Instanced</c> technique when it opts into instancing; null
+  /// otherwise. Probes + memoizes on first lookup (both outcomes); subsequent lookups are a
   /// dictionary read, never a re-probe.</summary>
-  member this.IsInstanceCapable(effect: Effect) : bool =
-    match this.InstanceCapableEffects.TryGetValue(effect) with
-    | true, capable -> capable
+  member this.TryInstancedTechnique(effect: Effect) : EffectTechnique =
+    match this.InstancedTechniques.TryGetValue(effect) with
+    | true, tech -> tech
     | false, _ ->
-      let capable =
-        not(obj.ReferenceEquals(effect.Techniques["Instanced"], null))
-
-      this.InstanceCapableEffects[effect] <- capable
-      capable
+      let tech = effect.Techniques["Instanced"]
+      this.InstancedTechniques[effect] <- tech
+      tech
 
 /// <summary>The extracted PBR draw handlers + the user-effect scope shading path.</summary>
 module internal PbrShading =
@@ -752,12 +752,17 @@ module internal PbrShading =
       Matrix.Invert(&t, &inv) |> ignore
       Matrix.Transpose inv
 
-    // Techniques are stable for this effect — resolve once instead of per part per frame.
+    // Techniques are stable for this effect — resolve once per draw instead of per part.
+    // The name indexer returns null when absent (no enumerator/closure allocation).
     let standardTech =
-      effect.Techniques |> Seq.tryFind(fun t -> t.Name = "Standard")
+      match effect.Techniques["Standard"] with
+      | null -> None
+      | t -> Some t
 
     let skinnedTech =
-      effect.Techniques |> Seq.tryFind(fun t -> t.Name = "Skinned")
+      match effect.Techniques["Skinned"] with
+      | null -> None
+      | t -> Some t
 
     match draw with
     | Command3D.DrawPrimitive(mesh, transform, material) ->
@@ -1007,44 +1012,10 @@ module internal PbrShading =
     | Command3D.DrawInstanced(mesh, transforms, material, count) ->
       // Does the user effect opt into instancing? An effect exposing an `Instanced` technique
       // (the convention ForwardPbr.fx and Instanced.fx already use) shades the instances directly;
-      // one that doesn't falls back to the PBR instanced path (see remarks).
-      if res.IsInstanceCapable(effect) then
-        let struct (instanceCount, _instVB) =
-          stageInstanceData(gd, res, mesh, transforms, count)
-
-        if instanceCount > 0 then
-          gd.Indices <- mesh.Indices
-
-          effect.CurrentTechnique <- effect.Techniques["Instanced"]
-
-          // matModel is identity: the per-instance world transform arrives on stream 1
-          // (VertexInstanceWorld rows), so a shader that still declares matModel sees a benign value.
-          SceneUpload.uploadToEffect(
-            gd,
-            effect,
-            state.View,
-            state.Projection,
-            camPos,
-            Matrix.Identity,
-            Matrix.Identity,
-            frame.Lights,
-            frame.Shadows,
-            ValueNone,
-            material,
-            frame.Time
-          )
-
-          for pass in effect.CurrentTechnique.Passes do
-            pass.Apply()
-
-            gd.DrawInstancedPrimitives(
-              PrimitiveType.TriangleList,
-              0,
-              0,
-              mesh.PrimitiveCount,
-              instanceCount
-            )
-      else
+      // one that doesn't falls back to the PBR instanced path (see remarks). The probe result —
+      // including the technique handle — is memoized per effect.
+      match res.TryInstancedTechnique(effect) with
+      | null ->
         // Effect didn't opt in — fall back to the PBR instanced path (see remarks).
         drawInstanced(
           gd,
@@ -1056,5 +1027,48 @@ module internal PbrShading =
           material,
           count
         )
+      | instancedTech ->
+        let struct (instanceCount, _instVB) =
+          stageInstanceData(gd, res, mesh, transforms, count)
+
+        if instanceCount > 0 then
+          gd.Indices <- mesh.Indices
+
+          // Restore the previous technique afterwards: leaving `Instanced` current would leak
+          // into subsequent non-instanced draws in the same scope, which would read
+          // per-instance rows from the stale stream-1 buffer.
+          let savedTechnique = effect.CurrentTechnique
+          effect.CurrentTechnique <- instancedTech
+
+          try
+            // matModel is identity: the per-instance world transform arrives on stream 1
+            // (VertexInstanceWorld rows), so a shader that still declares matModel sees a benign value.
+            SceneUpload.uploadToEffect(
+              gd,
+              effect,
+              state.View,
+              state.Projection,
+              camPos,
+              Matrix.Identity,
+              Matrix.Identity,
+              frame.Lights,
+              frame.Shadows,
+              ValueNone,
+              material,
+              frame.Time
+            )
+
+            for pass in instancedTech.Passes do
+              pass.Apply()
+
+              gd.DrawInstancedPrimitives(
+                PrimitiveType.TriangleList,
+                0,
+                0,
+                mesh.PrimitiveCount,
+                instanceCount
+              )
+          finally
+            effect.CurrentTechnique <- savedTechnique
 
     | _ -> ()

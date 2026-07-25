@@ -205,8 +205,15 @@ PointLight3D.create (pos, radius)
 
 ### Atlas configuration
 
-The shadow atlas controls resolution and caster capacity. `MaxCasters` must be a perfect square
-(4, 9, 16, 25, 36) — it lays out the atlas as a √N × √N grid.
+The shadow atlas controls resolution and caster capacity. The single directional light is
+the dominant shadow in most scenes, so by default it gets a dedicated region of the atlas
+(`DirectionalAtlasRatio`, default `0.5`) rather than sharing one tile of the caster grid —
+this keeps directional shadows high-resolution without tuning `MaxCasters` to your light
+count. Point/spot casters subdivide the remaining atlas area into a square grid. Set
+`DirectionalAtlasRatio` to `1.0` for directional-only scenes (the directional light gets
+the whole atlas) or `0.0` to restore the uniform grid (every caster shares a
+`1/MaxCasters` tile). `MaxCasters` must be a perfect square (4, 9, 16, 25, 36) — a
+constraint of the uniform grid, but enforced at atlas construction either way.
 
 ```fsharp
 // raylib:
@@ -214,7 +221,6 @@ let pipeline = ForwardPbrPipeline(
     shadowAtlasConfig = {
         ShadowAtlasConfig.defaults with
             Resolution = 4096
-            MaxCasters = 9
             DirectionalLightSize = ValueSome 30.f
     }
 )
@@ -224,27 +230,41 @@ let pipeline = ForwardPipeline(
     shadowAtlas = {
         ShadowAtlasConfig.defaults with
             Resolution = 4096
-            MaxCasters = 9
             DirectionalOriginY = 0.0f       // MonoGame-only: lock shadow frustum Y
     }
 )
 ```
 
+> Higher `Resolution` produces sharper shadows but costs proportionally more: the shadow
+> pass re-renders shadow-casting geometry into the directional region every frame, so
+> doubling the resolution roughly doubles the shadow-pass fragment work. 4096 is a good
+> high-quality default; 8192 is expensive.
+
+> _**NOTE — directional far-plane coverage.**_ The directional shadow camera's far plane
+> is the light distance plus the full ortho size (`DirectionalLightSize`) plus a one-unit
+> margin. Geometry
+> farther than that from the light — measured along the light direction — is clipped and
+> stops casting shadows; receivers there render fully lit. Deep scenes that slope away
+> from the light (terrain, tall structures at the frustum edge) may need a larger
+> `DirectionalLightSize` (at the cost of texel density) or a `DirectionalOriginY` /
+> `OriginStrategy` that centers the frustum on the action.
+
 | Field | Default | raylib | MonoGame | Description |
 |-------|---------|--------|----------|-------------|
 | `Resolution` | 2048 | ✓ | ✓ | Atlas texture resolution (square) |
-| `MaxCasters` | 16 | ✓ | ✓ | Maximum shadow casters (perfect square) |
+| `MaxCasters` | 16 | ✓ | ✓ | Maximum point/spot shadow casters (perfect square). Unused for the directional caster when `DirectionalAtlasRatio > 0`. |
+| `DirectionalAtlasRatio` | 0.5 | ✓ | ✓ | Fraction of the atlas the directional light occupies. `0.0` = uniform grid (every caster shares a `1/MaxCasters` tile). |
 | `OriginStrategy` | `CameraTarget` | ✓ | ✓ | Where directional shadows are centered (`CameraTarget`/`SceneCenter`/`Custom`) |
 | `DirectionalLightDistance` | auto | ✓ | ✓ | Distance to place the directional light camera behind the origin |
-| `DirectionalLightSize` | auto | ✓ | ✓ | Ortho projection half-size for directional shadows |
+| `DirectionalLightSize` | auto | ✓ | ✓ | Full height of the directional shadow ortho window, in world units |
 | `DirectionalOriginY` | 0.0 | — | ✓ | Lock the shadow frustum's vertical origin (prevents vertical sliding) |
 | `GridSnapSize` | 2.0 | ✓ | ✓ | Snap shadow origin to a grid to reduce shimmer |
 
 > _**NOTE — shadow technique differs.**_ MonoGame cannot create a sampleable depth-only
 > render target, so it writes shadow depth into an R32F color attachment (`DepthShadow.fx`)
-> and samples it with a comparison sampler for hardware PCF. raylib samples depth textures
-> directly via GLSL derivatives. The user-facing config and behavior (shadow quality, bias
-> tuning) are equivalent; only the internal path differs.
+> and samples it with a manual 3×3 PCF over point-sampled depth — the same kernel the
+> raylib backend runs against its real depth texture. The user-facing config and behavior
+> (shadow quality, bias tuning) are equivalent; only the internal path differs.
 
 ## See also
 

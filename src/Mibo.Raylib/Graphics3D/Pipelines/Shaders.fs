@@ -394,11 +394,19 @@ float computeShadowFromAtlas(vec3 worldPos, int casterIndex)
     float dzdy = dFdy(projCoord.z);
     float bias = baseBias + length(vec2(dzdx, dzdy)) * 3.0;
 
+    // Clamp PCF taps to this caster's atlas tile: tiles are flush (no guard padding), so a
+    // tap stepping outside the tile would bleed into a neighbor caster's region and read its
+    // depth. The max is pulled back half a texel so a clamped tap lands on the last texel
+    // center inside the tile, not the first texel of the neighbor. Matches the MonoGame
+    // backend (ForwardPbr.fx).
     float shadow = 0.0;
     vec2 texel = 1.0 / vec2(textureSize(shadowAtlas, 0));
+    vec2 tileMin = shadowUVOffsets[casterIndex].xy;
+    vec2 tileMax = shadowUVOffsets[casterIndex].xy + shadowUVOffsets[casterIndex].zw - texel * 0.5;
     for (int x = -1; x <= 1; x++) {{
         for (int y = -1; y <= 1; y++) {{
-            float d = texture(shadowAtlas, atlasUV + vec2(float(x), float(y)) * texel).r;
+            vec2 tapUV = clamp(atlasUV + vec2(float(x), float(y)) * texel, tileMin, tileMax);
+            float d = texture(shadowAtlas, tapUV).r;
             shadow += (projCoord.z - bias > d) ? 0.0 : 1.0;
         }}
     }}
@@ -429,11 +437,19 @@ float computePointShadow(vec3 worldPos, int casterIndex)
     float dzdy = dFdy(projCoord.z);
     float bias = baseBias + length(vec2(dzdx, dzdy)) * 3.0;
 
+    // Clamp PCF taps to this caster's atlas tile: tiles are flush (no guard padding), so a
+    // tap stepping outside the tile would bleed into a neighbor caster's region and read its
+    // depth. The max is pulled back half a texel so a clamped tap lands on the last texel
+    // center inside the tile, not the first texel of the neighbor. Matches the MonoGame
+    // backend (ForwardPbr.fx).
     float shadow = 0.0;
     vec2 texel = 1.0 / vec2(textureSize(shadowAtlas, 0));
+    vec2 tileMin = shadowUVOffsets[casterIndex].xy;
+    vec2 tileMax = shadowUVOffsets[casterIndex].xy + shadowUVOffsets[casterIndex].zw - texel * 0.5;
     for (int x = -1; x <= 1; x++) {{
         for (int y = -1; y <= 1; y++) {{
-            float d = texture(shadowAtlas, atlasUV + vec2(float(x), float(y)) * texel).r;
+            vec2 tapUV = clamp(atlasUV + vec2(float(x), float(y)) * texel, tileMin, tileMax);
+            float d = texture(shadowAtlas, tapUV).r;
             shadow += (projCoord.z - bias > d) ? 0.0 : 1.0;
         }}
     }}
@@ -462,11 +478,19 @@ float computeSpotShadow(vec3 worldPos, int casterIndex)
     float dzdy = dFdy(projCoord.z);
     float bias = baseBias + length(vec2(dzdx, dzdy)) * 3.0;
 
+    // Clamp PCF taps to this caster's atlas tile: tiles are flush (no guard padding), so a
+    // tap stepping outside the tile would bleed into a neighbor caster's region and read its
+    // depth. The max is pulled back half a texel so a clamped tap lands on the last texel
+    // center inside the tile, not the first texel of the neighbor. Matches the MonoGame
+    // backend (ForwardPbr.fx).
     float shadow = 0.0;
     vec2 texel = 1.0 / vec2(textureSize(shadowAtlas, 0));
+    vec2 tileMin = shadowUVOffsets[casterIndex].xy;
+    vec2 tileMax = shadowUVOffsets[casterIndex].xy + shadowUVOffsets[casterIndex].zw - texel * 0.5;
     for (int x = -1; x <= 1; x++) {{
         for (int y = -1; y <= 1; y++) {{
-            float d = texture(shadowAtlas, atlasUV + vec2(float(x), float(y)) * texel).r;
+            vec2 tapUV = clamp(atlasUV + vec2(float(x), float(y)) * texel, tileMin, tileMax);
+            float d = texture(shadowAtlas, tapUV).r;
             shadow += (projCoord.z - bias > d) ? 0.0 : 1.0;
         }}
     }}

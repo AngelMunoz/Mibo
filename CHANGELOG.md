@@ -4,11 +4,20 @@
 
 ### Added
 
+- **3D:** **Breaking:** `ShadowAtlasConfig` gains a `DirectionalAtlasRatio` field (`ShadowAtlasConfig.defaults` sets it to `0.5`; code constructing the record literally must add the field). It gives the single directional shadow light a dedicated region of the shadow atlas instead of sharing one tile of the caster grid, so directional shadows stay high-resolution without tuning `MaxCasters` to your light count. Point/spot casters subdivide the remaining atlas area. Set it to `1.0` for directional-only scenes or `0.0` to restore the previous uniform-grid layout. Available on both backends. **Breaking (behavioral):** the `0.5` default re-lays-out existing directional shadows; use `0.0` for the previous layout.
+- **3D:** instanced grid rendering can shade each cell type, sub-mesh, or the whole grid with a custom effect instead of the default PBR shader. Provide the effect per sub-mesh, per cell key, or once for the whole grid; cell types without an effect keep the default look.
 - **MonoGame 2D:** consecutive lit sprites sharing the same texture and normal map collapse into a single draw call instead of one per sprite. Visuals and the `.litSprite(...)` API are unchanged.
 
 ### Changed
 
 - **Breaking:** **Core:** `GameConfig.TargetFPS` is now `int voption` and defaults to `ValueNone` — when unset, the framework imposes no render-rate cap and leaves the backend's default framerate behavior untouched. Previously the default was `60`, which forced a fixed timestep on every game. To set a cap, use `GameConfig.withTargetFPS 60` (or `TargetFPS = ValueSome 60` inline); the old `TargetFPS = 0` "unlimited" sentinel is now simply omitting the field.
+- **MonoGame 3D:** **Breaking (behavioral):** `DirectionalLightSize` is now the full height of the directional shadow ortho window in world units (was the half-size), matching the raylib backend. The same value now covers half the world area with twice the shadow texel density; double your configured value to keep the previous coverage.
+- **3D:** directional shadow PCF taps are clamped to the caster's atlas tile on both backends, so the 3×3 kernel can no longer bleed into a neighboring caster's region at tile borders. All backends run the same point-sampled 3×3 PCF kernel.
+- **Raylib 3D:** the directional shadow camera's far plane is tightened to the light distance plus the full ortho size plus a one-unit margin (was light distance plus twice the ortho size), spending less depth precision on empty space behind the scene. MonoGame's far plane keeps its previous coverage — it was already light distance plus the full ortho height.
+
+### Fixed
+
+- **Raylib 3D:** scenes made only of instanced draws now render shadows — the shadow pass previously ran only when at least one non-instanced mesh was drawn.
 
 ## [3.1.1] - 2026-07-22
 

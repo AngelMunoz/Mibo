@@ -325,6 +325,10 @@ module SceneUpload =
       // param (and makes the register(s5) in the shader pick it up regardless).
       setShadowAtlas (p "shadowAtlas") s.Atlas
       gd.Textures[5] <- s.Atlas
+      // User-effect shaders declare a regular sampler2D and do their own PCF, so slot 5
+      // stays PointClamp on this path (a linear/comparison sampler would break their
+      // sampling). The built-in PBR path (ShadowPass.fs) binds the backend-appropriate
+      // shadow sampler (linear on DX12/Vulkan, point elsewhere).
       gd.SamplerStates[5] <- SamplerState.PointClamp
     | ValueNone -> setInt (p "dirLightCastsShadows") 0
 
