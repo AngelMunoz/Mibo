@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-07-25
+
 ### Added
 
 - **3D:** **Breaking:** `ShadowAtlasConfig` gains a `DirectionalAtlasRatio` field (`ShadowAtlasConfig.defaults` sets it to `0.5`; code constructing the record literally must add the field). It gives the single directional shadow light a dedicated region of the shadow atlas instead of sharing one tile of the caster grid, so directional shadows stay high-resolution without tuning `MaxCasters` to your light count. Point/spot casters subdivide the remaining atlas area. Set it to `1.0` for directional-only scenes or `0.0` to restore the previous uniform-grid layout. Available on both backends. **Breaking (behavioral):** the `0.5` default re-lays-out existing directional shadows; use `0.0` for the previous layout.
