@@ -4,6 +4,61 @@ open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
+open Mibo.Elmish.Graphics2D
+
+/// <summary>
+/// Camera-facing quad draw payload. Rotation in degrees around the view axis;
+/// all-zero SourceRect = full texture.
+/// </summary>
+[<Struct>]
+type Billboard3D = {
+  Texture: Texture2D
+  Position: Vector3
+  Size: Vector2
+  Color: Color
+  Rotation: float32
+  SourceRect: Rectangle
+  Blend: BlendMode
+}
+
+/// <summary>
+/// SoA billboard batch payload. Rotations/SourceRects may be null (= all defaults)
+/// and are indexed defensively. The batch is drawn with Textures[0].
+/// </summary>
+[<Struct>]
+type BillboardBatch3D = {
+  Textures: Texture2D[]
+  Positions: Vector3[]
+  Sizes: Vector2[]
+  Colors: Color[]
+  Rotations: float32[]
+  SourceRects: Rectangle[]
+  Blend: BlendMode
+  Count: int
+}
+
+/// <summary>Convenience builders for <see cref="T:Mibo.Elmish.Graphics3D.Billboard3D"/>.</summary>
+module Billboard3D =
+
+  /// <summary>
+  /// Creates a billboard with default framing: no rotation, full-texture source rect,
+  /// <see cref="T:Mibo.Elmish.Graphics2D.BlendMode.AlphaBlend"/> blending.
+  /// </summary>
+  let create
+    (texture: Texture2D)
+    (position: Vector3)
+    (size: Vector2)
+    (color: Color)
+    : Billboard3D =
+    {
+      Texture = texture
+      Position = position
+      Size = size
+      Color = color
+      Rotation = 0.0f
+      SourceRect = Rectangle.Empty
+      Blend = BlendMode.AlphaBlend
+    }
 
 /// <summary>
 /// Optional material override for <see cref="M:Mibo.Elmish.Graphics3D.Command3D.DrawModelWith"/> /
@@ -42,6 +97,7 @@ type Command3D =
   | DrawInstanced of
     mesh: PrimitiveMesh *
     transforms: Matrix[] *
+    colors: Color[] voption *
     material: Material3D *
     instanceCount: int
   | DrawPrimitive of
@@ -52,18 +108,9 @@ type Command3D =
     meshPart: ModelMeshPart *
     transform: Matrix *
     effect: Effect
-  | DrawBillboard of
-    texture: Texture2D *
-    position: Vector3 *
-    size: Vector2 *
-    color: Color
+  | DrawBillboard of billboard: Billboard3D
   | DrawLine3D of start: Vector3 * finish: Vector3 * color: Color
-  | DrawBillboardBatch of
-    textures: Texture2D[] *
-    positions: Vector3[] *
-    sizes: Vector2[] *
-    colors: Color[] *
-    count: int
+  | DrawBillboardBatch of batch: BillboardBatch3D
   | BeginCamera of camera: Camera3D
   | BeginCameraConfig of config: Camera3DConfig
   | EndCamera

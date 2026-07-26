@@ -28,6 +28,13 @@
     <Compile Include="Graphics3D/SceneContext.fs" />
     <Compile Include="Graphics3D/FullScreenQuad.fs" />
     <Compile Include="Graphics3D/PostProcessContext3D.fs" />
+    <!-- BlendMode (Graphics2D/Command2D.fs) is referenced by Graphics3D/Command3D.fs
+         (billboard payloads), so these Graphics2D files compile before the 3D commands. -->
+    <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
+    <Compile Include="Graphics2D/Lighting/LightContext.fs" />
+    <Compile Include="Graphics2D/Lighting/ParticleTypes.fs" />
+    <Compile Include="Graphics2D/PostProcessContext2D.fs" />
+    <Compile Include="Graphics2D/Command2D.fs" />
     <Compile Include="Graphics3D/Command3D.fs" />
     <Compile Include="Graphics3D/RenderBuffer3D.fs" />
     <Compile Include="Graphics3D/RenderTargetPool3D.fs" />
@@ -42,11 +49,6 @@
     <Compile Include="Graphics3D/Pipelines/ForwardPipeline.fs" />
     <Compile Include="Graphics3D/Draw3D.fs" />
     <Compile Include="Layout3D/Renderer3D.fs" />
-    <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
-    <Compile Include="Graphics2D/Lighting/LightContext.fs" />
-    <Compile Include="Graphics2D/Lighting/ParticleTypes.fs" />
-    <Compile Include="Graphics2D/PostProcessContext2D.fs" />
-    <Compile Include="Graphics2D/Command2D.fs" />
     <Compile Include="Graphics2D/RenderBuffer2D.fs" />
     <Compile Include="Graphics2D/PrimitiveBatch.fs" />
     <Compile Include="Graphics2D/RenderTargetPool.fs" />

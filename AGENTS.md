@@ -157,6 +157,7 @@ Instanced draws inside a `Draw3D.beginEffect`/`endEffect` scope are shaded by th
 
 - **raylib:** the shader declares `in mat4 instanceTransform;` — that declaration *is* the opt-in. On raylib 6.0, `DrawMeshInstanced` binds the per-instance VBO through the dedicated `SHADER_LOC_VERTEX_INSTANCETRANSFORM` slot, which raylib auto-resolves from the `instanceTransform` attribute at shader load (no manual `Locs` wiring). `matModel` is unused for instanced draws; `viewProj` is view-projection only.
 - **MonoGame:** the effect exposes a technique named `Instanced` whose vertex shader reads the per-instance matrix as four `float4` rows on `TEXCOORD1..4` (the `VertexInstanceWorld` layout, usage indices 1-4 to avoid the mesh's `TEXCOORD0` on stream 0). The pipeline binds the two-stream vertex layout (mesh on stream 0, instance rows on stream 1) and calls `DrawInstancedPrimitives` through the user effect.
+- **MonoGame:** colored instanced draws (`.instanced(..., colors = ...)`) additionally feed a `float4` per-instance color on `TEXCOORD5` (the `VertexInstanceWorldColor` layout, offset 64). An effect may declare `float4 InstanceColor : TEXCOORD5` to receive it; effects that don't declare it still work — the built-in fallback shades colored draws. Instances beyond the `colors` array length get white.
 
 A shader/effect that doesn't declare the opt-in is unaffected: instanced draws fall back to the built-in PBR instanced path. Skinned + instanced draws are not supported (no per-instance bone palette).
 

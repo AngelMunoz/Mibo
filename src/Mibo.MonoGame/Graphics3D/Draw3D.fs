@@ -4,6 +4,7 @@ open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Animation
 open Mibo.Elmish
+open Mibo.Elmish.Graphics2D
 
 /// <summary>
 /// Pipe-friendly drawing DSL for 3D rendering. Each function takes a
@@ -181,7 +182,13 @@ module Draw3D =
     (buffer: RenderBuffer3D)
     =
     buffer.Add(
-      Command3D.DrawInstanced(mesh, transforms, material, instanceCount)
+      Command3D.DrawInstanced(
+        mesh,
+        transforms,
+        ValueNone,
+        material,
+        instanceCount
+      )
     )
 
     buffer
@@ -209,7 +216,10 @@ module Draw3D =
     (color: Color)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.DrawBillboard(texture, position, size, color))
+    buffer.Add(
+      Command3D.DrawBillboard(Billboard3D.create texture position size color)
+    )
+
     buffer
 
   /// <summary>Draws a 3D line between two points.</summary>
@@ -235,7 +245,16 @@ module Draw3D =
     (buffer: RenderBuffer3D)
     =
     buffer.Add(
-      Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count)
+      Command3D.DrawBillboardBatch {
+        Textures = textures
+        Positions = positions
+        Sizes = sizes
+        Colors = colors
+        Rotations = null
+        SourceRects = null
+        Blend = BlendMode.AlphaBlend
+        Count = count
+      }
     )
 
     buffer

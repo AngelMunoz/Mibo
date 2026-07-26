@@ -69,3 +69,47 @@ technique Instanced {
     PixelShader = compile PS_SHADERMODEL PS_Main();
   }
 }
+
+// Colored variant: stream 1 additionally carries a per-instance color on TEXCOORD5
+// (VertexInstanceWorldColor). Albedo scales by InstanceColor.rgb, alpha by InstanceColor.a.
+struct VS_INPUT_COLOR {
+  float4 Position : POSITION0;
+  float3 Normal   : NORMAL0;
+  float2 TexCoord : TEXCOORD0;
+  // Per-instance (stream 1, instanceFrequency = 1)
+  float4 WorldRow0 : TEXCOORD1;
+  float4 WorldRow1 : TEXCOORD2;
+  float4 WorldRow2 : TEXCOORD3;
+  float4 WorldRow3 : TEXCOORD4;
+  float4 InstanceColor : TEXCOORD5;
+};
+
+struct VS_OUTPUT_COLOR {
+  float4 Position : SV_POSITION;
+  float3 Normal   : TEXCOORD0;
+  float4 InstanceColor : TEXCOORD1;
+};
+
+VS_OUTPUT_COLOR VS_MainColor(VS_INPUT_COLOR input) {
+  VS_OUTPUT_COLOR output;
+  float4x4 world = float4x4(input.WorldRow0, input.WorldRow1, input.WorldRow2, input.WorldRow3);
+  output.Position = mul(mul(input.Position, world), ViewProj);
+  output.Normal = mul(input.Normal, (float3x3)world);
+  output.InstanceColor = input.InstanceColor;
+  return output;
+}
+
+float4 PS_MainColor(VS_OUTPUT_COLOR input) : SV_TARGET {
+  float3 N = normalize(input.Normal);
+  float3 L = normalize(-DirLightDir);
+  float diffuse = max(dot(N, L), 0.0);
+  float3 lighting = AmbientColor + DirLightColor * diffuse;
+  return float4(AlbedoColor * input.InstanceColor.rgb * lighting, input.InstanceColor.a);
+}
+
+technique InstancedColor {
+  pass P0 {
+    VertexShader = compile VS_SHADERMODEL VS_MainColor();
+    PixelShader = compile PS_SHADERMODEL PS_MainColor();
+  }
+}

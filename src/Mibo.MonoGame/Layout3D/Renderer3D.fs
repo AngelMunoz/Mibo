@@ -122,7 +122,15 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
           for mi = 0 to meshesAndMaterials.Length - 1 do
             let struct (mesh, material) = meshesAndMaterials[mi]
 
-            buffer.Add(Command3D.DrawInstanced(mesh, snapshot, material, count))
+            buffer.Add(
+              Command3D.DrawInstanced(
+                mesh,
+                snapshot,
+                ValueNone,
+                material,
+                count
+              )
+            )
         | ValueSome triples ->
           // Per-sub-mesh path — wrap each ValueSome sub-mesh in its own BeginEffect/EndEffect.
           let arr = triples sample
@@ -133,13 +141,25 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
             match shader with
             | ValueNone ->
               buffer.Add(
-                Command3D.DrawInstanced(mesh, snapshot, material, count)
+                Command3D.DrawInstanced(
+                  mesh,
+                  snapshot,
+                  ValueNone,
+                  material,
+                  count
+                )
               )
             | ValueSome s ->
               buffer.Add(Command3D.BeginEffect s)
 
               buffer.Add(
-                Command3D.DrawInstanced(mesh, snapshot, material, count)
+                Command3D.DrawInstanced(
+                  mesh,
+                  snapshot,
+                  ValueNone,
+                  material,
+                  count
+                )
               )
 
               buffer.Add(Command3D.EndEffect)
@@ -186,14 +206,30 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
           for mi = 0 to meshMaterialShaders.Length - 1 do
             let struct (mesh, material, _) = meshMaterialShaders[mi]
 
-            buffer.Add(Command3D.DrawInstanced(mesh, snapshot, material, count))
+            buffer.Add(
+              Command3D.DrawInstanced(
+                mesh,
+                snapshot,
+                ValueNone,
+                material,
+                count
+              )
+            )
         | ValueNone ->
           let meshesAndMaterials = this.GetMeshesAndMaterial sample
 
           for mi = 0 to meshesAndMaterials.Length - 1 do
             let struct (mesh, material) = meshesAndMaterials[mi]
 
-            buffer.Add(Command3D.DrawInstanced(mesh, snapshot, material, count))
+            buffer.Add(
+              Command3D.DrawInstanced(
+                mesh,
+                snapshot,
+                ValueNone,
+                material,
+                count
+              )
+            )
 
         match scope with
         | ValueSome _ -> buffer.Add(Command3D.EndEffect)

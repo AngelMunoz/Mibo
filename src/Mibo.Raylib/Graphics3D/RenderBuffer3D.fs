@@ -138,11 +138,20 @@ type RenderBuffer3D with
       mesh: Mesh,
       transforms: Matrix4x4[],
       material: Material3D,
-      instanceCount: int
+      instanceCount: int,
+      colors: Raylib_cs.Color[] voption
     ) =
-    b.Add(
-      Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount)
-    )
+    match colors with
+    | ValueSome _ ->
+      raise(
+        System.NotSupportedException(
+          "Per-instance colors are only supported on the MonoGame backend"
+        )
+      )
+    | ValueNone ->
+      b.Add(
+        Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount)
+      )
 
   member inline b.AddDrawModel(model: Model, transform: Matrix4x4) =
     b.Add(Command3D.DrawModel(model, transform))
@@ -213,15 +222,25 @@ type RenderBuffer3D with
   // ── Billboards & Lines ──
 
   member inline b.AddBillboard
-    (texture: Texture2D, position: Vector3, size: Vector2, color: Color)
-    =
+    (
+      texture: Texture2D,
+      position: Vector3,
+      size: Vector2,
+      color: Color,
+      rotation: float32,
+      sourceRect: Rectangle,
+      blend: BlendMode voption
+    ) =
     b.Add(
-      Command3D.DrawBillboard(
-        texture,
-        position,
-        size,
-        RaylibColor.toRaylibColor color
-      )
+      Command3D.DrawBillboard {
+        Texture = texture
+        Position = position
+        Size = size
+        Color = RaylibColor.toRaylibColor color
+        Rotation = rotation
+        SourceRect = sourceRect
+        Blend = defaultValueArg blend BlendMode.Alpha
+      }
     )
 
   member inline b.AddBillboardBatch
@@ -230,10 +249,22 @@ type RenderBuffer3D with
       positions: Vector3[],
       sizes: Vector2[],
       colors: Raylib_cs.Color[],
-      count: int
+      count: int,
+      rotations: float32[],
+      sourceRects: Rectangle[],
+      blend: BlendMode voption
     ) =
     b.Add(
-      Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count)
+      Command3D.DrawBillboardBatch {
+        Textures = textures
+        Positions = positions
+        Sizes = sizes
+        Colors = colors
+        Rotations = rotations
+        SourceRects = sourceRects
+        Blend = defaultValueArg blend BlendMode.Alpha
+        Count = count
+      }
     )
 
   member inline b.AddLine3D(start: Vector3, finish: Vector3, color: Color) =

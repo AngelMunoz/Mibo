@@ -97,7 +97,10 @@ module Draw3D =
     (color: Color)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.drawBillboard texture position size color)
+    buffer.Add(
+      Command3D.DrawBillboard(Billboard3D.create texture position size color)
+    )
+
     buffer
 
   /// <summary>Draws a 3D line between two points.</summary>
@@ -151,7 +154,16 @@ module Draw3D =
     (buffer: RenderBuffer3D)
     =
     buffer.Add(
-      Command3D.drawBillboardBatch textures positions sizes colors count
+      Command3D.DrawBillboardBatch {
+        Textures = textures
+        Positions = positions
+        Sizes = sizes
+        Colors = colors
+        Rotations = null
+        SourceRects = null
+        Blend = BlendMode.Alpha
+        Count = count
+      }
     )
 
     buffer

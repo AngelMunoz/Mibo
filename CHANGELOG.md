@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **MonoGame 3D, Raylib 3D:** billboards gain rotation, atlas sub-rects, and blend control. `buffer.billboard(...)` takes optional `rotation` (degrees around the view axis), `sourceRect` (pixel-space atlas/flipbook sub-rect; an all-zero rect means the full texture), and `blend` (MonoGame: `BlendMode.AlphaBlend | NonPremultiplied | Additive | Opaque`, default `AlphaBlend`; raylib: `Raylib_cs.BlendMode`, default `Alpha`). `buffer.billboardBatch(...)` takes matching optional `rotations`/`sourceRects`/`blend` — a null or too-short array falls back to defaults for the remaining items. Blended billboards draw in buffer order with no depth sorting; non-opaque modes test depth but don't write it, `Opaque` writes depth. Note that a MonoGame batch draws every item with the first texture (use an atlas plus `sourceRects`); raylib honors per-item textures.
+- **MonoGame 3D:** `buffer.instanced(...)` gains an optional `colors` array for per-instance tinting — albedo is multiplied by `color.rgb` and final alpha by `color.a`; instances beyond `colors.Length` render white. Custom effects that opt into instancing may declare `float4 InstanceColor : TEXCOORD5` to receive the per-instance color; effects that don't declare it still work. MonoGame only — passing `colors` on raylib raises `NotSupportedException`.
+
 ### Fixed
 
 - **MonoGame 3D:** custom effects in a `beginEffect` scope that declare fewer light, shadow-caster, or bone array slots than the pipeline maximums (8 point / 4 spot lights, 16 shadow casters, 128 bones) no longer crash with an `IndexOutOfRangeException` during scene upload — array uniforms are clamped to the effect's declared element count, and the `pointLightCount`/`spotLightCount` uniforms are clamped to the declared slots too, so a shader's light loop never indexes past its own declaration. Note that on the OpenGL backend, uniform arrays indexed only with compile-time constants can still crash inside MonoGame's GL constant-buffer upload; index them dynamically (see `docs/shader-uniforms.md` → "Convention notes").

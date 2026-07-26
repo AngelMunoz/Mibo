@@ -151,9 +151,12 @@ type RenderBuffer3D with
       mesh: PrimitiveMesh,
       transforms: Matrix[],
       material: Material3D,
-      instanceCount: int
+      instanceCount: int,
+      colors: Microsoft.Xna.Framework.Color[] voption
     ) =
-    b.Add(Command3D.DrawInstanced(mesh, transforms, material, instanceCount))
+    b.Add(
+      Command3D.DrawInstanced(mesh, transforms, colors, material, instanceCount)
+    )
 
   member inline b.AddDrawModel(model: Model, transform: Matrix) =
     b.Add(Command3D.DrawModel(model, transform))
@@ -228,15 +231,25 @@ type RenderBuffer3D with
   // ── Billboards & Lines ──
 
   member inline b.AddBillboard
-    (texture: Texture2D, position: Vector3, size: Vector2, color: Color)
-    =
+    (
+      texture: Texture2D,
+      position: Vector3,
+      size: Vector2,
+      color: Color,
+      rotation: float32,
+      sourceRect: Microsoft.Xna.Framework.Rectangle,
+      blend: BlendMode voption
+    ) =
     b.Add(
-      Command3D.DrawBillboard(
-        texture,
-        Conversions.fromNumericsVector3 position,
-        Conversions.fromNumericsVector2 size,
-        MonoGameColor.toMonoGameColor color
-      )
+      Command3D.DrawBillboard {
+        Texture = texture
+        Position = Conversions.fromNumericsVector3 position
+        Size = Conversions.fromNumericsVector2 size
+        Color = MonoGameColor.toMonoGameColor color
+        Rotation = rotation
+        SourceRect = sourceRect
+        Blend = defaultValueArg blend BlendMode.AlphaBlend
+      }
     )
 
   member inline b.AddBillboardBatch
@@ -245,10 +258,22 @@ type RenderBuffer3D with
       positions: Microsoft.Xna.Framework.Vector3[],
       sizes: Microsoft.Xna.Framework.Vector2[],
       colors: Microsoft.Xna.Framework.Color[],
-      count: int
+      count: int,
+      rotations: float32[],
+      sourceRects: Microsoft.Xna.Framework.Rectangle[],
+      blend: BlendMode voption
     ) =
     b.Add(
-      Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count)
+      Command3D.DrawBillboardBatch {
+        Textures = textures
+        Positions = positions
+        Sizes = sizes
+        Colors = colors
+        Rotations = rotations
+        SourceRects = sourceRects
+        Blend = defaultValueArg blend BlendMode.AlphaBlend
+        Count = count
+      }
     )
 
   member inline b.AddLine3D(start: Vector3, finish: Vector3, color: Color) =

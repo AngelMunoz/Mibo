@@ -95,6 +95,15 @@ type internal PbrResources() =
   member val InstanceStaging =
     Array.zeroCreate<VertexInstanceWorld> 64 with get, set
 
+  /// <summary>Growable per-instance vertex buffer (VertexInstanceWorldColor rows) for colored
+  /// instanced draws. Grown on demand; stays a DynamicVertexBuffer (see stageInstanceData).</summary>
+  member val InstanceColorVertexBuffer: VertexBuffer voption =
+    ValueNone with get, set
+
+  /// <summary>CPU staging array — packed VertexInstanceWorldColor rows per instance. Grows as needed.</summary>
+  member val InstanceColorStaging =
+    Array.zeroCreate<VertexInstanceWorldColor> 64 with get, set
+
   /// <summary>MaterialKey short-circuit: whether the last draw's material is still current.</summary>
   member val HasLastMaterial = false with get, set
 
@@ -594,9 +603,95 @@ module internal PbrShading =
       struct (instanceCount, instVB)
 
   /// <summary>
+  /// The colored counterpart of <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PbrShading.stageInstanceData"/>:
+  /// stages per-instance world matrices + colors into the reusable
+  /// <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorldColor"/> buffer (growing it on demand),
+  /// uploads them, and binds the two-stream vertex layout (mesh on stream 0, colored per-instance
+  /// rows on stream 1 — world on TEXCOORD1..4, color on TEXCOORD5). Instances past
+  /// <paramref name="colors"/>' length are clamped to <c>Color.White</c> (identity multiplier).
+  /// Returns the clamped instance count (0 when there is nothing to draw) and the instance vertex
+  /// buffer.
+  /// </summary>
+  /// <remarks>Does not bind indices or draw — the caller selects its effect/technique, uploads
+  /// scene data, and issues <c>DrawInstancedPrimitives</c>.</remarks>
+  let stageInstanceColorData
+    (
+      gd: GraphicsDevice,
+      res: PbrResources,
+      mesh: PrimitiveMesh,
+      transforms: Matrix[],
+      colors: Color[],
+      instanceCount: int
+    ) : struct (int * VertexBuffer) =
+    // Clamp to the transforms array: an instanceCount larger than the buffer
+    // would index out of range when staging per-instance world matrices.
+    let instanceCount =
+      min instanceCount (if isNull transforms then 0 else transforms.Length)
+
+    if instanceCount <= 0 then
+      struct (0, Unchecked.defaultof<VertexBuffer>)
+    else
+      if res.InstanceColorStaging.Length < instanceCount then
+        res.InstanceColorStaging <-
+          Array.zeroCreate<VertexInstanceWorldColor> instanceCount
+
+      let colorCount = if isNull colors then 0 else colors.Length
+
+      for i = 0 to instanceCount - 1 do
+        let color = if i < colorCount then colors[i] else Color.White
+
+        res.InstanceColorStaging[i] <-
+          VertexInstanceWorldColor.Create(transforms[i], color)
+
+      // Must stay a DynamicVertexBuffer for the same reason as stageInstanceData:
+      // the native DX12 backend needs the discard-rename path for intra-frame re-uploads.
+      match res.InstanceColorVertexBuffer with
+      | ValueNone ->
+        let vb =
+          new DynamicVertexBuffer(
+            gd,
+            typeof<VertexInstanceWorldColor>,
+            instanceCount,
+            BufferUsage.WriteOnly
+          )
+
+        res.InstanceColorVertexBuffer <- ValueSome vb
+      | ValueSome vb when vb.VertexCount < instanceCount ->
+        vb.Dispose()
+
+        let vb' =
+          new DynamicVertexBuffer(
+            gd,
+            typeof<VertexInstanceWorldColor>,
+            instanceCount,
+            BufferUsage.WriteOnly
+          )
+
+        res.InstanceColorVertexBuffer <- ValueSome vb'
+      | _ -> ()
+
+      let instVB =
+        match res.InstanceColorVertexBuffer with
+        | ValueSome vb -> vb
+        | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable (created above)
+
+      instVB.SetData(res.InstanceColorStaging, 0, instanceCount)
+
+      gd.SetVertexBuffers(
+        VertexBufferBinding(mesh.Vertices, 0, 0),
+        VertexBufferBinding(instVB, 0, 1)
+      )
+
+      struct (instanceCount, instVB)
+
+  /// <summary>
   /// Handles <c>DrawInstanced</c>: native hardware instancing via two vertex streams (mesh + per-
-  /// instance VertexInstanceWorld rows). Prefers the PBR Instanced technique; falls back to minimal
-  /// Instanced.fx (flat albedo + 1 directional) when the PBR effect can't load.
+  /// instance rows). Prefers the PBR Instanced technique; falls back to minimal Instanced.fx
+  /// (flat albedo + 1 directional) when the PBR effect can't load. With <c>ValueSome</c> colors the
+  /// colored stream (<see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorldColor"/>, color on
+  /// TEXCOORD5) is bound and the <c>InstancedColor</c> technique is used (PBR effect and the
+  /// Instanced.fx fallback alike); instances past the colors array's length draw white.
+  /// <c>ValueNone</c> keeps the plain <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/> path.
   /// </summary>
   let drawInstanced
     (
@@ -606,11 +701,15 @@ module internal PbrShading =
       res: PbrResources,
       mesh: PrimitiveMesh,
       transforms: Matrix[],
+      colors: Color[] voption,
       material: Material3D,
       instanceCount: int
     ) =
     let struct (instanceCount, _instVB) =
-      stageInstanceData(gd, res, mesh, transforms, instanceCount)
+      match colors with
+      | ValueNone -> stageInstanceData(gd, res, mesh, transforms, instanceCount)
+      | ValueSome cs ->
+        stageInstanceColorData(gd, res, mesh, transforms, cs, instanceCount)
 
     if instanceCount > 0 then
       gd.Indices <- mesh.Indices
@@ -619,7 +718,11 @@ module internal PbrShading =
       if ensureEffect(gd, res) then
         match res.Effect, res.Params with
         | ValueSome e, ValueSome p ->
-          e.CurrentTechnique <- e.Techniques["Instanced"]
+          e.CurrentTechnique <-
+            e.Techniques[match colors with
+                         | ValueSome _ -> "InstancedColor"
+                         | ValueNone -> "Instanced"]
+
           PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
           PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
           // Instanced draws always upload the material (one material across all instances).
@@ -713,6 +816,16 @@ module internal PbrShading =
             match effect.Parameters.["DirLightColor"] with
             | null -> ()
             | pc -> pc.SetValue Vector3.Zero
+
+          // Colored draws bind the VertexInstanceWorldColor stream (TEXCOORD5) — select the
+          // fallback effect's matching technique. ValueNone keeps the effect's default
+          // (CurrentTechnique untouched, the historical behavior).
+          match colors with
+          | ValueSome _ ->
+            match effect.Techniques.["InstancedColor"] with
+            | null -> ()
+            | t -> effect.CurrentTechnique <- t
+          | ValueNone -> ()
 
           for pass in effect.CurrentTechnique.Passes do
             pass.Apply()
@@ -1009,11 +1122,13 @@ module internal PbrShading =
           finally
             part.Effect <- saved
 
-    | Command3D.DrawInstanced(mesh, transforms, material, count) ->
+    | Command3D.DrawInstanced(mesh, transforms, colors, material, count) ->
       // Does the user effect opt into instancing? An effect exposing an `Instanced` technique
       // (the convention ForwardPbr.fx and Instanced.fx already use) shades the instances directly;
       // one that doesn't falls back to the PBR instanced path (see remarks). The probe result —
-      // including the technique handle — is memoized per effect.
+      // including the technique handle — is memoized per effect. Colored draws bind the
+      // VertexInstanceWorldColor stream: the user shader may declare
+      // `float4 InstanceColor : TEXCOORD5` to read the per-instance color.
       match res.TryInstancedTechnique(effect) with
       | null ->
         // Effect didn't opt in — fall back to the PBR instanced path (see remarks).
@@ -1024,12 +1139,16 @@ module internal PbrShading =
           res,
           mesh,
           transforms,
+          colors,
           material,
           count
         )
       | instancedTech ->
         let struct (instanceCount, _instVB) =
-          stageInstanceData(gd, res, mesh, transforms, count)
+          match colors with
+          | ValueNone -> stageInstanceData(gd, res, mesh, transforms, count)
+          | ValueSome cs ->
+            stageInstanceColorData(gd, res, mesh, transforms, cs, count)
 
         if instanceCount > 0 then
           gd.Indices <- mesh.Indices
