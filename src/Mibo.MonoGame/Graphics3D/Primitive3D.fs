@@ -148,6 +148,101 @@ type VertexInstanceWorld = {
 
 
 /// <summary>
+/// Per-instance vertex data for colored hardware instancing: a 4×4 world matrix packed as four
+/// <see cref="T:Microsoft.Xna.Framework.Vector4"/> rows plus a per-instance color
+/// (stream 1, instanceFrequency = 1).
+/// </summary>
+/// <remarks>
+/// Matches the <c>InstancedColor</c> techniques in <c>Shaders/ForwardPbr.fx</c> and
+/// <c>Shaders/Instanced.fx</c>: the world rows arrive on <c>TEXCOORD1..4</c> (the same
+/// <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/> contract) and the color on
+/// <c>TEXCOORD5</c>. Usage indices 1–5 avoid <c>TEXCOORD0</c> (owned by the mesh's own
+/// texture coords on stream 0). A user effect inside a <c>beginEffect</c> scope may declare
+/// <c>float4 InstanceColor : TEXCOORD5</c> in its <c>Instanced</c> technique to read the color.
+/// </remarks>
+[<Struct>]
+type VertexInstanceWorldColor = {
+
+  /// <summary>Row 0 of the per-instance world matrix (M11, M12, M13, M14).</summary>
+  Row0: Vector4
+
+  /// <summary>Row 1 of the per-instance world matrix (M21, M22, M23, M24).</summary>
+  Row1: Vector4
+
+  /// <summary>Row 2 of the per-instance world matrix (M31, M32, M33, M34).</summary>
+  Row2: Vector4
+
+  /// <summary>Row 3 of the per-instance world matrix (M41, M42, M43, M44).</summary>
+  Row3: Vector4
+
+  /// <summary>Per-instance color multiplier (normalized RGBA, TEXCOORD5).</summary>
+  Color: Vector4
+} with
+
+
+  /// <summary>Constructs a per-instance vertex from a world <see cref="T:Microsoft.Xna.Framework.Matrix"/>
+  /// and a tint <see cref="T:Microsoft.Xna.Framework.Color"/>.</summary>
+  static member Create(world: Matrix, color: Color) : VertexInstanceWorldColor = {
+    // MonoGame Matrix is row-major; each row is exposed as a Vector4.
+    Row0 = Vector4(world.M11, world.M12, world.M13, world.M14)
+    Row1 = Vector4(world.M21, world.M22, world.M23, world.M24)
+    Row2 = Vector4(world.M31, world.M32, world.M33, world.M34)
+    Row3 = Vector4(world.M41, world.M42, world.M43, world.M44)
+    Color = color.ToVector4()
+  }
+
+  interface IVertexType with
+
+    member this.VertexDeclaration =
+      // Lazily-initialized static declaration. usageIndex 1–5 to avoid TEXCOORD0
+      // (owned by the mesh's own texture coords on stream 0).
+      match VertexInstanceWorldColor.s_declaration with
+      | null ->
+        let decl =
+          new VertexDeclaration(
+            sizeof<VertexInstanceWorldColor>,
+            VertexElement(
+              0,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              1
+            ),
+            VertexElement(
+              16,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              2
+            ),
+            VertexElement(
+              32,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              3
+            ),
+            VertexElement(
+              48,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              4
+            ),
+            VertexElement(
+              64,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              5
+            )
+          )
+
+        VertexInstanceWorldColor.s_declaration <- decl
+        decl
+      | decl -> decl
+
+  /// <summary>Static backing field for the lazily-initialized <see cref="T:Microsoft.Xna.Framework.Graphics.VertexDeclaration"/>.</summary>
+  static member val private s_declaration: VertexDeclaration =
+    null with get, set
+
+
+/// <summary>
 /// Pre-generated primitive meshes for 3D rendering. The MonoGame analog of raylib's
 /// <c>GenMeshCube</c>/<c>GenMeshSphere</c>/etc. — there is no native generator, so these
 /// are built once from <see cref="T:Microsoft.Xna.Framework.Graphics.VertexPositionNormalTexture"/>

@@ -189,6 +189,22 @@ technique Instanced {   // the opt-in: the pipeline selects this technique for i
 }
 ```
 
+**Per-instance color (optional, MonoGame only).** When the draw supplies a
+`colors` array, the pipeline feeds each instance's tint as an additional
+`float4` on `TEXCOORD5` (offset 64 in the instance vertex, right after the four
+matrix rows). Declare it in your input struct to receive it:
+
+```hlsl
+struct VS_INPUT_INSTANCED {
+  // ... mesh + Row0..Row3 as above ...
+  float4 InstanceColor : TEXCOORD5;   // albedo *= rgb; final alpha *= a
+};
+```
+
+The declaration is optional — an effect that omits it still works; the built-in
+fallback shades colored draws instead. Instances beyond the `colors` array
+length receive white.
+
 > **Skinned + instanced is not supported.** There is no per-instance bone
 > palette; an animated crowd requires a separate scheme (e.g. a texture or
 > buffer of bone matrices indexed per instance). Until such a path exists, keep

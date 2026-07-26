@@ -65,12 +65,14 @@ One member set covers both backends — the buffer takes your backend's own mesh
 | `.animatedModel(animModel, transform)` | Skeletal animation — bone palette derived for you |
 | `.animatedModelWith(...)` / `.animatedModelWithPerMesh(...)` | Animated model + material override |
 | `.skinnedMesh(mesh, transform, material, bones)` | Explicit bone palette (**raylib only**) |
-| `.instanced(mesh, transforms, material, count)` | Many copies of one mesh in one draw call |
-| `.billboard(tex, position, size, color)` | Camera-facing quad |
-| `.billboardBatch(...)` | Batched billboards |
+| `.instanced(mesh, transforms, material, count, ?colors)` | Many copies of one mesh in one draw call; optional per-instance `colors` tint (**MonoGame only**) |
+| `.billboard(tex, position, size, color, ?rotation, ?sourceRect, ?blend)` | Camera-facing quad; optional rotation (degrees around view axis), atlas sub-rect, blend mode |
+| `.billboardBatch(textures, positions, sizes, colors, count, ?rotations, ?sourceRects, ?blend)` | Batched billboards; optional per-item arrays (null or short = defaults for those items) |
 | `.line3D(start, finish, color)` | Debug line |
 
 > _**TIP**_: Use the instanced/batched variants when drawing many copies of the same thing. One draw call is faster than many.
+
+Billboard details: `sourceRect` is a pixel-space sub-rect of the texture (atlas/flipbook frame); an all-zero rect means the full texture. Blended billboards draw in buffer order with **no depth sorting** — non-`Opaque` modes test depth but don't write it, `Opaque` uses full depth. On MonoGame, a billboard batch draws every item with `textures[0]` (use an atlas plus `sourceRects`); raylib honors per-item textures.
 
 ## Camera commands
 

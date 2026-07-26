@@ -188,6 +188,9 @@ buffer
   .skinnedMesh(mesh, transform, material, bones)   // explicit palette (raylib)
   .instanced(chunkMesh, chunkTransforms, chunkMaterial, chunkCount)
   .billboard(markerTex, Vector3(0f, 2f, 0f), Vector2(1f, 1f), Color.White)
+  // optional: rotation (degrees), atlas sub-rect, blend mode
+  .billboard(flameTex, Vector3(2f, 1f, 0f), Vector2(1f, 1f), Color.White,
+             rotation = 45f, sourceRect = Rectangle(0, 0, 32, 32), blend = BlendMode.Additive)
   .line3D(Vector3.Zero, Vector3.UnitY, Color.Red)
   .endCamera()
   .postProcess(fun pp -> (* color-only pass *))
@@ -196,7 +199,8 @@ buffer
 ```
 
 - **Models and materials** — `model`, `modelWith` (whole-model override), `modelWithPerMesh` (resolver by flat mesh-part index). Materials are the backend `Material3D`.
-- **Meshes and instancing** — `mesh` (raylib `Mesh` / MonoGame `PrimitiveMesh`) and `instanced` for bulk draws.
+- **Meshes and instancing** — `mesh` (raylib `Mesh` / MonoGame `PrimitiveMesh`) and `instanced` for bulk draws. `instanced` takes an optional `colors` array for per-instance tinting (**MonoGame only**).
+- **Billboards** — `billboard`/`billboardBatch` take optional `rotation` (degrees around the view axis), `sourceRect` (pixel-space atlas frame; all-zero = full texture), and `blend` (MonoGame: the `BlendMode` DU; raylib: `Raylib_cs.BlendMode`). Blended billboards draw in buffer order with no depth sorting. A MonoGame batch draws every item with the first texture — use an atlas plus `sourceRects`; raylib honors per-item textures.
 - **Animated models** — `animatedModel` consumes the backend animation state record; the bone palette is derived for you (MonoGame computes it from the state; raylib applies it to the model). `animatedModelWith`/`animatedModelWithPerMesh` add material overrides. `skinnedMesh` is the explicit-palette form (raylib).
 - **Effect scopes** — `beginEffect`/`endEffect` shade a group with your own shader, inheriting the scene's camera/lights/shadows; see `docs/shader-uniforms.md`.
 - **Lights** — `AmbientLight3D`, `DirectionalLight3D`, `PointLight3D`, `SpotLight3D` are backend-neutral Core types already shared by both backends.

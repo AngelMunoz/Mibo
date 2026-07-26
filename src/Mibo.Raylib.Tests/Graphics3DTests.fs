@@ -101,12 +101,37 @@ let command3DFactoryTests =
       let cmd = Command3D.drawBillboard tex v3a v2a Color.Blue
 
       match cmd with
-      | Command3D.DrawBillboard(t, pos, size, c) ->
-        Expect.equal t tex "Texture should match"
-        Expect.equal pos v3a "Position should match"
-        Expect.equal size v2a "Size should match"
-        Expect.equal c Color.Blue "Color should match"
+      | Command3D.DrawBillboard bb ->
+        Expect.equal bb.Texture tex "Texture should match"
+        Expect.equal bb.Position v3a "Position should match"
+        Expect.equal bb.Size v2a "Size should match"
+        Expect.equal bb.Color Color.Blue "Color should match"
+        Expect.equal bb.Rotation 0.0f "Rotation should default to 0"
+
+        Expect.equal
+          bb.SourceRect
+          (Rectangle(0.0f, 0.0f, 0.0f, 0.0f))
+          "SourceRect should default to all-zero (full texture)"
+
+        Expect.equal bb.Blend BlendMode.Alpha "Blend should default to Alpha"
       | _ -> Tests.failtest "Expected DrawBillboard"
+    }
+
+    test "Billboard3D.create fills rotation/sourceRect/blend defaults" {
+      let bb = Billboard3D.create tex v3a v2a Color.White
+
+      Expect.equal bb.Texture tex "Texture should match"
+      Expect.equal bb.Position v3a "Position should match"
+      Expect.equal bb.Size v2a "Size should match"
+      Expect.equal bb.Color Color.White "Color should match"
+      Expect.equal bb.Rotation 0.0f "Rotation should be 0"
+
+      Expect.equal
+        bb.SourceRect
+        (Rectangle(0.0f, 0.0f, 0.0f, 0.0f))
+        "SourceRect should be all-zero (full texture)"
+
+      Expect.equal bb.Blend BlendMode.Alpha "Blend should be Alpha"
     }
 
     test "drawLine3D creates DrawLine3D with correct fields" {
@@ -156,12 +181,17 @@ let command3DFactoryTests =
       let cmd = Command3D.drawBillboardBatch textures positions sizes colors 2
 
       match cmd with
-      | Command3D.DrawBillboardBatch(ts, ps, ss, cs, count) ->
-        Expect.equal ts textures "Textures should match"
-        Expect.equal ps positions "Positions should match"
-        Expect.equal ss sizes "Sizes should match"
-        Expect.equal cs colors "Colors should match"
-        Expect.equal count 2 "Count should match"
+      | Command3D.DrawBillboardBatch batch ->
+        Expect.equal batch.Textures textures "Textures should match"
+        Expect.equal batch.Positions positions "Positions should match"
+        Expect.equal batch.Sizes sizes "Sizes should match"
+        Expect.equal batch.Colors colors "Colors should match"
+        Expect.isNull batch.Rotations "Rotations should default to null"
+
+        Expect.isNull batch.SourceRects "SourceRects should default to null"
+
+        Expect.equal batch.Blend BlendMode.Alpha "Blend should default to Alpha"
+        Expect.equal batch.Count 2 "Count should match"
       | _ -> Tests.failtest "Expected DrawBillboardBatch"
     }
 
@@ -821,12 +851,39 @@ let draw3DDSLTests =
       | _ -> Tests.failtest "First should be DrawLine3D"
 
       match buf.Item 1 with
-      | Command3D.DrawBillboard _ -> ()
+      | Command3D.DrawBillboard bb ->
+        Expect.equal bb.Texture tex "Texture should match"
+        Expect.equal bb.Rotation 0.0f "Rotation should default to 0"
+        Expect.equal bb.Blend BlendMode.Alpha "Blend should default to Alpha"
       | _ -> Tests.failtest "Second should be DrawBillboard"
 
       match buf.Item 2 with
       | Command3D.SetShadowOrigin _ -> ()
       | _ -> Tests.failtest "Third should be SetShadowOrigin"
+    }
+
+    test
+      "Draw3D.drawBillboardBatch fills null rotations/sourceRects and Alpha blend" {
+      use buf = new RenderBuffer3D()
+
+      buf
+      |> Draw3D.drawBillboardBatch
+        [| tex |]
+        [| v3a |]
+        [| v2a |]
+        [| Color.Red |]
+        1
+      |> ignore
+
+      Expect.equal buf.Count 1 "Should have 1 command"
+
+      match buf.Item 0 with
+      | Command3D.DrawBillboardBatch batch ->
+        Expect.isNull batch.Rotations "Rotations should be null"
+        Expect.isNull batch.SourceRects "SourceRects should be null"
+        Expect.equal batch.Blend BlendMode.Alpha "Blend should be Alpha"
+        Expect.equal batch.Count 1 "Count should match"
+      | _ -> Tests.failtest "Expected DrawBillboardBatch"
     }
 
     test "Draw3D.modelWith adds a DrawModelWith(All) command" {

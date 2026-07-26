@@ -40,6 +40,23 @@ buffer
 
 One draw call renders all 100 cubes. (On MonoGame, pass `prims.Cube` and `Matrix[]` transforms — the member takes your backend's mesh and matrix types.)
 
+## Per-instance color (MonoGame only)
+
+Pass an optional `colors` array to tint each instance individually. The albedo is multiplied by `color.rgb` and the final alpha by `color.a`:
+
+```fsharp
+let colors =
+    [| Color.Red; Color.White; Color(80uy, 160uy, 255uy, 255uy) |]
+
+buffer
+  .instanced(Primitive3D.cube, transforms, material, 100, colors = colors)
+  .drop()
+```
+
+The array may be shorter than `count` — instances beyond `colors.Length` render white. A custom effect that opts into instancing can receive the per-instance color by declaring `float4 InstanceColor : TEXCOORD5` in its vertex input; effects that don't declare it still work (the built-in fallback shades colored draws). See [Shader Uniform Reference](../shader-uniforms.html#instancing-opt-in).
+
+> _**NOTE**_: Per-instance color is **MonoGame only**. Passing `colors` on raylib raises `NotSupportedException` — its instanced draw has a fixed instance attribute layout.
+
 ## InstancedRenderContext for cell grids
 
 For grid-based worlds (voxels, tile maps), `InstancedRenderContext<'T, 'K>` handles grouping and batching automatically. It groups cells by a key function, then emits one instanced draw per group per sub-mesh.

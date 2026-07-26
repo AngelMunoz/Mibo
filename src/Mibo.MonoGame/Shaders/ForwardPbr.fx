@@ -255,6 +255,46 @@ VS_OUTPUT VS_Instanced(VS_INPUT_INSTANCED input) {
 }
 
 // ------------------------------------------------------------------
+// Colored instanced vertex shader (dual stream; per-instance world matrix
+// on TEXCOORD1..4 plus a per-instance color on TEXCOORD5, matching
+// VertexInstanceWorldColor)
+// ------------------------------------------------------------------
+
+struct VS_INPUT_INSTANCED_COLOR {
+  // Stream 0 (per-vertex mesh)
+  float3 Position  : POSITION0;
+  float2 TexCoord  : TEXCOORD0;
+  float3 Normal    : NORMAL0;
+  // Stream 1 (per-instance) — 4 rows composing a 4x4 world matrix + a color.
+  float4 Row0      : TEXCOORD1;
+  float4 Row1      : TEXCOORD2;
+  float4 Row2      : TEXCOORD3;
+  float4 Row3      : TEXCOORD4;
+  float4 InstanceColor : TEXCOORD5;
+};
+
+struct VS_OUTPUT_COLOR {
+  float4 Position  : SV_POSITION;
+  float2 TexCoord  : TEXCOORD0;
+  float3 Normal    : TEXCOORD1;
+  float3 WorldPos  : TEXCOORD2;
+  float4 InstanceColor : TEXCOORD3;
+};
+
+VS_OUTPUT_COLOR VS_InstancedColor(VS_INPUT_INSTANCED_COLOR input) {
+  VS_OUTPUT_COLOR output;
+  float4x4 world = float4x4(input.Row0, input.Row1, input.Row2, input.Row3);
+  float4 wp = mul(float4(input.Position, 1.0), world);
+  output.Position = mul(wp, viewProj);
+  output.TexCoord = input.TexCoord;
+  // Same uniform-scale assumption as VS_Instanced.
+  output.Normal = mul(input.Normal, (float3x3) world);
+  output.WorldPos = wp.xyz;
+  output.InstanceColor = input.InstanceColor;
+  return output;
+}
+
+// ------------------------------------------------------------------
 // Skinned vertex shader (forward-declared; F# side does not bind in B9,
 // B12 wires bone-matrix upload). 4-bone linear blend skinning.
 // ------------------------------------------------------------------
@@ -362,16 +402,19 @@ float3 calcPBR(float3 V, float3 N, float3 L, float3 radiance, float3 albedo, flo
   return (kD * albedo / PI + spec) * radiance * NdotL;
 }
 
-float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
-  float2 uv = input.TexCoord * tiling;
+// Shared PBR lighting body for all pixel-shader entry points. instanceColor is the
+// per-instance multiplier (float4(1,1,1,1) on the non-colored paths): albedo scales by
+// instanceColor.rgb, the final alpha by instanceColor.a.
+float4 shadePBR(float2 texCoord, float3 fragNormal, float3 worldPos, float4 instanceColor) {
+  float2 uv = texCoord * tiling;
   float4 texColor = SAMPLE_TEX(texture0, uv) * albedoColor;
-  float3 albedo = texColor.rgb;
-  float3 normal = getNormal(input.Normal, uv);
+  float3 albedo = texColor.rgb * instanceColor.rgb;
+  float3 normal = getNormal(fragNormal, uv);
 
   float r = clamp(roughness, 0.04, 1.0);
   float m = clamp(metallic, 0.0, 1.0);
 
-  float3 V = normalize(cameraPos - input.WorldPos);
+  float3 V = normalize(cameraPos - worldPos);
 
   // Ambient
   float3 ambient = ambientColor * albedo * ambientIntensity;
@@ -379,7 +422,7 @@ float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
   // Directional (L points toward the light; dirLightDir points along travel)
   float3 L = normalize(-dirLightDir);
   float3 radiance = dirLightColor * dirLightIntensity;
-  float dirShadow = computeDirShadow(input.WorldPos);
+  float dirShadow = computeDirShadow(worldPos);
   float3 dirResult = calcPBR(V, normal, L, radiance, albedo, r, m) * dirShadow;
 
   // Point lights ([loop]+break for OGL SM3.0; §6.3)
@@ -387,13 +430,13 @@ float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
   [loop]
   for (int i = 0; i < MAX_POINT_LIGHTS; i++) {
     if (i >= pointLightCount) break;
-    float3 toLight = pointLightPos[i] - input.WorldPos;
+    float3 toLight = pointLightPos[i] - worldPos;
     float dist = length(toLight);
     if (dist < pointLightRadius[i]) {
       float3 pL = normalize(toLight);
       float atten = pow(clamp(1.0 - dist / pointLightRadius[i], 0.0, 1.0), pointLightFalloff[i]);
       float3 pRad = pointLightColor[i] * pointLightIntensity[i] * atten;
-      float pShadow = computeShadowAt(input.WorldPos, pointLightShadowIdx[i]);
+      float pShadow = computeShadowAt(worldPos, pointLightShadowIdx[i]);
       pointResult += calcPBR(V, normal, pL, pRad, albedo, r, m) * pShadow;
     }
   }
@@ -403,7 +446,7 @@ float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
   [loop]
   for (int j = 0; j < MAX_SPOT_LIGHTS; j++) {
     if (j >= spotLightCount) break;
-    float3 toLight = spotLightPos[j] - input.WorldPos;
+    float3 toLight = spotLightPos[j] - worldPos;
     float dist = length(toLight);
     if (dist < spotLightRadius[j]) {
       float3 sL = normalize(toLight);
@@ -412,15 +455,23 @@ float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
       float intensity = clamp((theta - spotLightOuterCutoff[j]) / max(epsilon, 0.0001), 0.0, 1.0);
       float distAtten = 1.0 - (dist / spotLightRadius[j]);
       float3 sRad = spotLightColor[j] * spotLightIntensity[j] * intensity * distAtten;
-      float sShadow = computeShadowAt(input.WorldPos, spotLightShadowIdx[j]);
+      float sShadow = computeShadowAt(worldPos, spotLightShadowIdx[j]);
       spotResult += calcPBR(V, normal, sL, sRad, albedo, r, m) * sShadow;
     }
   }
 
   float3 emission = emissionColor.rgb * SAMPLE_TEX(texture4, uv).rgb;
   float3 result = ambient + dirResult + pointResult + spotResult + emission;
-  float alpha = texColor.a * opacity;
+  float alpha = texColor.a * opacity * instanceColor.a;
   return float4(result, alpha);
+}
+
+float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
+  return shadePBR(input.TexCoord, input.Normal, input.WorldPos, float4(1.0, 1.0, 1.0, 1.0));
+}
+
+float4 PS_MainColor(VS_OUTPUT_COLOR input) : SV_TARGET {
+  return shadePBR(input.TexCoord, input.Normal, input.WorldPos, input.InstanceColor);
 }
 
 // ------------------------------------------------------------------
@@ -438,6 +489,13 @@ technique Instanced {
   pass P0 {
     VertexShader = compile VS_SHADERMODEL VS_Instanced();
     PixelShader = compile PS_SHADERMODEL PS_Main();
+  }
+};
+
+technique InstancedColor {
+  pass P0 {
+    VertexShader = compile VS_SHADERMODEL VS_InstancedColor();
+    PixelShader = compile PS_SHADERMODEL PS_MainColor();
   }
 };
 

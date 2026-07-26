@@ -1126,13 +1126,23 @@ type Draw =
     buffer.AddDrawMesh(mesh, transform, material)
     buffer
 
-  /// <summary>Draws many instances of the same mesh. Prefer over repeated Mesh calls.</summary>
+  /// <summary>Draws many instances of the same mesh. Prefer over repeated Mesh calls.
+  /// <paramref name="colors"/> tints each instance (albedo × color.rgb, alpha × color.a);
+  /// <b>MonoGame only</b> — the raylib backend raises <see cref="T:System.NotSupportedException"/>
+  /// when colors are supplied.</summary>
   [<Extension>]
-  static member inline instanced<'B, 'M, 'X, 'Mat
-    when 'B: (member AddDrawInstanced: 'M * 'X[] * 'Mat * int -> unit)>
-    (buffer: 'B, mesh: 'M, transforms: 'X[], material: 'Mat, instanceCount: int)
-    : 'B =
-    buffer.AddDrawInstanced(mesh, transforms, material, instanceCount)
+  static member inline instanced<'B, 'M, 'X, 'Mat, 'C
+    when 'B: (member AddDrawInstanced:
+      'M * 'X[] * 'Mat * int * 'C[] voption -> unit)>
+    (
+      buffer: 'B,
+      mesh: 'M,
+      transforms: 'X[],
+      material: 'Mat,
+      instanceCount: int,
+      [<Struct>] ?colors: 'C[]
+    ) : 'B =
+    buffer.AddDrawInstanced(mesh, transforms, material, instanceCount, colors)
     buffer
 
   /// <summary>Draws a model with a world transform and its authored materials.</summary>
@@ -1214,29 +1224,73 @@ type Draw =
     buffer.AddSkinnedMesh(mesh, transform, material, bones)
     buffer
 
-  /// <summary>Draws a billboard (camera-facing quad) with a texture.</summary>
+  /// <summary>Draws a billboard (camera-facing quad) with a texture.
+  /// <paramref name="rotation"/> spins the quad around the view axis, in degrees.
+  /// <paramref name="sourceRect"/> selects an atlas/flipbook sub-rectangle in pixels
+  /// (an all-zero rect = full texture). <paramref name="blend"/> overrides the blend
+  /// mode (default: alpha blend); blended billboards draw in buffer order with no
+  /// depth sorting.</summary>
   [<Extension>]
-  static member inline billboard<'B, 'T
-    when 'B: (member AddBillboard: 'T * Vector3 * Vector2 * Color -> unit)>
-    (buffer: 'B, texture: 'T, position: Vector3, size: Vector2, color: Color)
-    : 'B =
-    buffer.AddBillboard(texture, position, size, color)
+  static member inline billboard<'B, 'T, 'R, 'Blend
+    when 'B: (member AddBillboard:
+      'T * Vector3 * Vector2 * Color * float32 * 'R * 'Blend voption -> unit)>
+    (
+      buffer: 'B,
+      texture: 'T,
+      position: Vector3,
+      size: Vector2,
+      color: Color,
+      [<Struct>] ?rotation: float32,
+      [<Struct>] ?sourceRect: 'R,
+      [<Struct>] ?blend: 'Blend
+    ) : 'B =
+    buffer.AddBillboard(
+      texture,
+      position,
+      size,
+      color,
+      defaultValueArg rotation 0f,
+      defaultValueArg sourceRect (Unchecked.defaultof<'R>),
+      blend
+    )
+
     buffer
 
   /// <summary>Draws multiple billboards in a single batch. All arrays are
-  /// backend handles (XNA arrays on MonoGame) — no per-frame conversion.</summary>
+  /// backend handles (XNA arrays on MonoGame) — no per-frame conversion.
+  /// <paramref name="rotations"/> and <paramref name="sourceRects"/> are optional
+  /// per-item arrays (null or shorter than <paramref name="count"/> = no rotation /
+  /// full texture for those items); see <c>billboard</c> for their semantics.
+  /// <paramref name="blend"/> overrides the blend mode for the whole batch
+  /// (default: alpha blend). On MonoGame the batch draws with <c>textures[0]</c>;
+  /// raylib honors per-item textures.</summary>
   [<Extension>]
-  static member inline billboardBatch<'B, 'T, 'P, 'S, 'C
-    when 'B: (member AddBillboardBatch: 'T[] * 'P[] * 'S[] * 'C[] * int -> unit)>
+  static member inline billboardBatch<'B, 'T, 'P, 'S, 'C, 'R, 'Blend
+    when 'B: (member AddBillboardBatch:
+      'T[] * 'P[] * 'S[] * 'C[] * int * float32[] * 'R[] * 'Blend voption ->
+        unit)>
     (
       buffer: 'B,
       textures: 'T[],
       positions: 'P[],
       sizes: 'S[],
       colors: 'C[],
-      count: int
+      count: int,
+      [<Struct>] ?rotations: float32[],
+      [<Struct>] ?sourceRects: 'R[],
+      [<Struct>] ?blend: 'Blend
     ) : 'B =
-    buffer.AddBillboardBatch(textures, positions, sizes, colors, count)
+    buffer.AddBillboardBatch(
+      textures,
+      positions,
+      sizes,
+      colors,
+      count,
+      defaultValueArg rotations null,
+      defaultValueArg sourceRects null,
+      blend
+    )
+
     buffer
 
   /// <summary>Draws a 3D line between two points.</summary>

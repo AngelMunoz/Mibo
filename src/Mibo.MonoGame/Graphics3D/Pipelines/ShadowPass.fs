@@ -521,9 +521,11 @@ module internal ShadowPass =
 
               skinnedCount <- skinnedCount + 1
             | _ -> ()
-      | Command3D.DrawInstanced(mesh, transforms, _material, instanceCount) when
-        instanceCount > 0
-        ->
+      | Command3D.DrawInstanced(mesh,
+                                transforms,
+                                _colors,
+                                _material,
+                                instanceCount) when instanceCount > 0 ->
         // The world's instanced geometry (block grid, platforms, etc.). Collected whole (one entry
         // per emitted DrawInstanced). No per-instance cull — the sample chunk-culls the source
         // commands, so the emitted count is already bounded.

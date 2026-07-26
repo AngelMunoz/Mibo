@@ -19,6 +19,60 @@ type MaterialOverride =
   | PerMesh of resolver: (int -> Material3D)
 
 /// <summary>
+/// Camera-facing quad draw payload. Rotation in degrees around the view axis;
+/// all-zero <c>SourceRect</c> = full texture.
+/// </summary>
+[<Struct>]
+type Billboard3D = {
+  Texture: Texture2D
+  Position: Vector3
+  Size: Vector2
+  Color: Color
+  Rotation: float32
+  SourceRect: Rectangle
+  Blend: BlendMode
+}
+
+/// <summary>Factory functions for <see cref="T:Mibo.Elmish.Graphics3D.Billboard3D"/>.</summary>
+module Billboard3D =
+
+  /// <summary>
+  /// Creates a <see cref="T:Mibo.Elmish.Graphics3D.Billboard3D"/> with defaults:
+  /// <c>Rotation = 0</c>, all-zero <c>SourceRect</c> (full texture), <c>Blend = BlendMode.Alpha</c>.
+  /// </summary>
+  let inline create
+    (texture: Texture2D)
+    (position: Vector3)
+    (size: Vector2)
+    (color: Color)
+    =
+    {
+      Texture = texture
+      Position = position
+      Size = size
+      Color = color
+      Rotation = 0f
+      SourceRect = Rectangle(0f, 0f, 0f, 0f)
+      Blend = BlendMode.Alpha
+    }
+
+/// <summary>
+/// SoA billboard batch payload. <c>Rotations</c>/<c>SourceRects</c> may be null (= all defaults)
+/// and are indexed defensively.
+/// </summary>
+[<Struct>]
+type BillboardBatch3D = {
+  Textures: Texture2D[]
+  Positions: Vector3[]
+  Sizes: Vector2[]
+  Colors: Color[]
+  Rotations: float32[]
+  SourceRects: Rectangle[]
+  Blend: BlendMode
+  Count: int
+}
+
+/// <summary>
 /// Closed set of 3D render commands. Stored in <see cref="T:Mibo.Elmish.Graphics3D.RenderBuffer3D"/>
 /// and dispatched via pattern matching — no interface boxing.
 /// </summary>
@@ -30,11 +84,7 @@ type Command3D =
     model: Model *
     transform: Matrix4x4 *
     matOverride: MaterialOverride
-  | DrawBillboard of
-    texture: Texture2D *
-    position: Vector3 *
-    size: Vector2 *
-    color: Color
+  | DrawBillboard of billboard: Billboard3D
   | DrawLine3D of start: Vector3 * finish: Vector3 * color: Color
   | DrawSkinnedMesh of
     mesh: Mesh *
@@ -46,12 +96,7 @@ type Command3D =
     transforms: Matrix4x4[] *
     material: Material3D *
     instanceCount: int
-  | DrawBillboardBatch of
-    textures: Texture2D[] *
-    positions: Vector3[] *
-    sizes: Vector2[] *
-    colors: Color[] *
-    count: int
+  | DrawBillboardBatch of batch: BillboardBatch3D
   | BeginCamera of camera: Camera3D
   | BeginCameraConfig of config: Camera3DConfig
   | EndCamera
@@ -113,7 +158,7 @@ module Command3D =
     (size: Vector2)
     (color: Color)
     =
-    Command3D.DrawBillboard(texture, position, size, color)
+    Command3D.DrawBillboard(Billboard3D.create texture position size color)
 
   let inline drawLine3D (start: Vector3) (finish: Vector3) (color: Color) =
     Command3D.DrawLine3D(start, finish, color)
@@ -141,7 +186,16 @@ module Command3D =
     (colors: Color[])
     (count: int)
     =
-    Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count)
+    Command3D.DrawBillboardBatch {
+      Textures = textures
+      Positions = positions
+      Sizes = sizes
+      Colors = colors
+      Rotations = null
+      SourceRects = null
+      Blend = BlendMode.Alpha
+      Count = count
+    }
 
   let inline beginCamera(camera: Camera3D) = Command3D.BeginCamera(camera)
 

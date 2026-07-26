@@ -1255,58 +1255,76 @@ module internal PipelineFunctions =
     Raylib.DrawMeshInstanced(mesh, mat, transforms, instanceCount)
     Raylib.EndShaderMode()
 
+  /// True when a billboard source rect is the all-zero sentinel (= full texture).
+  let inline isZeroSourceRect(rect: Rectangle) =
+    rect.X = 0.0f && rect.Y = 0.0f && rect.Width = 0.0f && rect.Height = 0.0f
+
+  /// Resolve a billboard source rect: the all-zero sentinel means full texture.
+  let inline resolveSourceRect (texture: Texture2D) (rect: Rectangle) =
+    if isZeroSourceRect rect then
+      Rectangle(0.0f, 0.0f, float32 texture.Width, float32 texture.Height)
+    else
+      rect
+
   /// Handle billboard draw using default shader.
-  let inline handleDrawBillboard
-    (
-      currentCamera: Camera3D,
-      texture: Texture2D,
-      position: Vector3,
-      size: Vector2,
-      color: Color
-    ) =
+  let inline handleDrawBillboard(currentCamera: Camera3D, bb: Billboard3D) =
     Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
 
-    let source =
-      Rectangle(0.0f, 0.0f, float32 texture.Width, float32 texture.Height)
+    let source = resolveSourceRect bb.Texture bb.SourceRect
 
-    Raylib.DrawBillboardRec(
+    Raylib.BeginBlendMode bb.Blend
+
+    Raylib.DrawBillboardPro(
       currentCamera,
-      texture,
+      bb.Texture,
       source,
-      position,
-      size,
-      color
+      bb.Position,
+      currentCamera.Up,
+      bb.Size,
+      bb.Size * 0.5f,
+      bb.Rotation,
+      bb.Color
     )
+
+    Raylib.EndBlendMode()
 
   /// Handle billboard batch draw using default shader.
   let inline handleDrawBillboardBatch
-    (
-      currentCamera: Camera3D,
-      textures: Texture2D[],
-      positions: Vector3[],
-      sizes: Vector2[],
-      colors: Color[],
-      count: int
-    ) =
+    (currentCamera: Camera3D, batch: BillboardBatch3D)
+    =
     Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
+    Raylib.BeginBlendMode batch.Blend
 
-    for bi = 0 to count - 1 do
+    for bi = 0 to batch.Count - 1 do
+      let tex = batch.Textures[bi]
+
       let source =
-        Rectangle(
-          0.0f,
-          0.0f,
-          float32 textures[bi].Width,
-          float32 textures[bi].Height
-        )
+        if not(isNull batch.SourceRects) && bi < batch.SourceRects.Length then
+          resolveSourceRect tex batch.SourceRects[bi]
+        else
+          Rectangle(0.0f, 0.0f, float32 tex.Width, float32 tex.Height)
 
-      Raylib.DrawBillboardRec(
+      let rotation =
+        if not(isNull batch.Rotations) && bi < batch.Rotations.Length then
+          batch.Rotations[bi]
+        else
+          0.0f
+
+      let size = batch.Sizes[bi]
+
+      Raylib.DrawBillboardPro(
         currentCamera,
-        textures[bi],
+        tex,
         source,
-        positions[bi],
-        sizes[bi],
-        colors[bi]
+        batch.Positions[bi],
+        currentCamera.Up,
+        size,
+        size * 0.5f,
+        rotation,
+        batch.Colors[bi]
       )
+
+    Raylib.EndBlendMode()
 
   /// Handle light command: add or set light, mark dirty.
   let inline handleLightCommand
@@ -2574,20 +2592,13 @@ type ForwardPipelineBase
               | ValueSome _ ->
                 this.Shade(frame, activeEffect, &currentCamera, buffer[i])
 
-          | Command3D.DrawBillboard(tex, pos, size, color) ->
+          | Command3D.DrawBillboard bb ->
             if cameraActive then
-              handleDrawBillboard(currentCamera, tex, pos, size, color)
+              handleDrawBillboard(currentCamera, bb)
 
-          | Command3D.DrawBillboardBatch(tex, pos, sizes, colors, count) ->
+          | Command3D.DrawBillboardBatch batch ->
             if cameraActive then
-              handleDrawBillboardBatch(
-                currentCamera,
-                tex,
-                pos,
-                sizes,
-                colors,
-                count
-              )
+              handleDrawBillboardBatch(currentCamera, batch)
 
           | Command3D.DrawLine3D(start, finish, color) ->
             if cameraActive then

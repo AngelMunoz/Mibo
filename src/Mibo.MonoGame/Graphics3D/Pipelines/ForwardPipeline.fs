@@ -16,6 +16,22 @@ module private ForwardHelpers =
 
   // LightBuffers + clearLights live in SceneData.fs; referenced here as Pipelines.LightBuffers.
 
+  /// <summary>Maps a <see cref="T:Mibo.Elmish.Graphics2D.BlendMode"/> to the corresponding
+  /// MonoGame <see cref="T:Microsoft.Xna.Framework.Graphics.BlendState"/> (mirrors
+  /// Renderer2D.toBlendState).</summary>
+  let toBlendState(mode: BlendMode) : BlendState =
+    match mode with
+    | BlendMode.AlphaBlend -> BlendState.AlphaBlend
+    | BlendMode.NonPremultiplied -> BlendState.NonPremultiplied
+    | BlendMode.Additive -> BlendState.Additive
+    | BlendMode.Opaque -> BlendState.Opaque
+
+  /// <summary>Billboard depth state: opaque quads write depth; transparent ones only read.</summary>
+  let toBillboardDepthState(mode: BlendMode) : DepthStencilState =
+    match mode with
+    | BlendMode.Opaque -> DepthStencilState.Default
+    | _ -> DepthStencilState.DepthRead
+
   /// <summary>Builds the view + projection matrices for a MonoGame <see cref="T:Mibo.Elmish.Camera3D"/>.</summary>
   /// <remarks>
   /// Uses native XNA <c>CreateLookAt</c> / <c>CreatePerspectiveFieldOfView</c> /
@@ -292,7 +308,11 @@ type ForwardPipelineBase
           transform,
           material
         )
-      | Command3D.DrawInstanced(mesh, transforms, material, instanceCount) ->
+      | Command3D.DrawInstanced(mesh,
+                                transforms,
+                                colors,
+                                material,
+                                instanceCount) ->
         PbrShading.drawInstanced(
           gd,
           &state,
@@ -300,6 +320,7 @@ type ForwardPipelineBase
           pbrRes,
           mesh,
           transforms,
+          colors,
           material,
           instanceCount
         )
@@ -379,6 +400,8 @@ type ForwardPipelineBase
   // Emits a single camera-facing quad into the staging array at quadIndex*4.
   // UVs are normalized to [0,1] from the pixel-space source rect (BasicEffect samples
   // in normalized space — the Renderer2D lit-quad path uses the same convention).
+  // rotationDeg spins the quad around the view axis (degrees, CCW in quad space);
+  // 0 keeps the exact unrotated math (no trig on the common path).
   static member private EmitQuad
     (
       staging: VertexPositionColorTexture[],
@@ -388,15 +411,38 @@ type ForwardPipelineBase
       color: Color,
       texWidth: float32,
       texHeight: float32,
-      texRect: Rectangle
+      texRect: Rectangle,
+      rotationDeg: float32
     ) =
     let halfW = size.X * 0.5f
     let halfH = size.Y * 0.5f
     // Unit quad corners (centered on origin, +Y up, +X right), transformed by the billboard matrix.
-    let c0 = Vector3.Transform(Vector3(-halfW, -halfH, 0.0f), world)
-    let c1 = Vector3.Transform(Vector3(halfW, -halfH, 0.0f), world)
-    let c2 = Vector3.Transform(Vector3(halfW, halfH, 0.0f), world)
-    let c3 = Vector3.Transform(Vector3(-halfW, halfH, 0.0f), world)
+    let c0, c1, c2, c3 =
+      if rotationDeg = 0.0f then
+        Vector3.Transform(Vector3(-halfW, -halfH, 0.0f), world),
+        Vector3.Transform(Vector3(halfW, -halfH, 0.0f), world),
+        Vector3.Transform(Vector3(halfW, halfH, 0.0f), world),
+        Vector3.Transform(Vector3(-halfW, halfH, 0.0f), world)
+      else
+        // Rotate the 2D corner offsets around the view axis before the billboard transform.
+        let rad = rotationDeg * (MathF.PI / 180.0f)
+        let cos = MathF.Cos rad
+        let sin = MathF.Sin rad
+        // (x, y) -> (x*cos - y*sin, x*sin + y*cos)
+        let x0 = -halfW * cos - (-halfH) * sin
+        let y0 = -halfW * sin + (-halfH) * cos
+        let x1 = halfW * cos - (-halfH) * sin
+        let y1 = halfW * sin + (-halfH) * cos
+        let x2 = halfW * cos - halfH * sin
+        let y2 = halfW * sin + halfH * cos
+        let x3 = -halfW * cos - halfH * sin
+        let y3 = -halfW * sin + halfH * cos
+
+        Vector3.Transform(Vector3(x0, y0, 0.0f), world),
+        Vector3.Transform(Vector3(x1, y1, 0.0f), world),
+        Vector3.Transform(Vector3(x2, y2, 0.0f), world),
+        Vector3.Transform(Vector3(x3, y3, 0.0f), world)
+
     let invW = 1.0f / texWidth
     let invH = 1.0f / texHeight
     let u0 = float32 texRect.X * invW
@@ -417,30 +463,37 @@ type ForwardPipelineBase
       VertexPositionColorTexture(c3, color, Vector2(u0, v0))
 
   member private this.handleDrawBillboard
-    (
-      gd: GraphicsDevice,
-      state: byref<ForwardState>,
-      texture: Texture2D,
-      position: Vector3,
-      size: Vector2,
-      color: Color
-    ) =
+    (gd: GraphicsDevice, state: byref<ForwardState>, billboard: Billboard3D)
+    =
+    let texture = billboard.Texture
     let cam = state.CurrentCamera
     let camFwd = cam.Target - cam.Position
-    let world = Matrix.CreateBillboard(position, cam.Position, cam.Up, camFwd)
+
+    let world =
+      Matrix.CreateBillboard(billboard.Position, cam.Position, cam.Up, camFwd)
 
     if billboardStaging.Length < 4 then
       billboardStaging <- Array.zeroCreate<VertexPositionColorTexture> 4
+
+    // All-zero/empty source rect = full texture.
+    let texRect =
+      if
+        billboard.SourceRect.Width <= 0 || billboard.SourceRect.Height <= 0
+      then
+        Rectangle(0, 0, texture.Width, texture.Height)
+      else
+        billboard.SourceRect
 
     ForwardPipelineBase.EmitQuad(
       billboardStaging,
       0,
       world,
-      size,
-      color,
+      billboard.Size,
+      billboard.Color,
       float32 texture.Width,
       float32 texture.Height,
-      Rectangle(0, 0, texture.Width, texture.Height)
+      texRect,
+      billboard.Rotation
     )
 
     let effect = this.ensureBillboardEffect gd
@@ -450,8 +503,8 @@ type ForwardPipelineBase
     effect.Projection <- state.Projection
     effect.Alpha <- 1.0f
 
-    gd.BlendState <- BlendState.AlphaBlend
-    gd.DepthStencilState <- DepthStencilState.DepthRead
+    gd.BlendState <- toBlendState billboard.Blend
+    gd.DepthStencilState <- toBillboardDepthState billboard.Blend
 
     if billboardIndices.Length < 6 then
       billboardIndices <- Array.zeroCreate<int> 6
@@ -480,15 +533,10 @@ type ForwardPipelineBase
     gd.BlendState <- BlendState.Opaque
 
   member private this.handleDrawBillboardBatch
-    (
-      gd: GraphicsDevice,
-      state: byref<ForwardState>,
-      textures: Texture2D[],
-      positions: Vector3[],
-      sizes: Vector2[],
-      colors: Color[],
-      count: int
-    ) =
+    (gd: GraphicsDevice, state: byref<ForwardState>, batch: BillboardBatch3D)
+    =
+    let count = batch.Count
+
     if count <= 0 then
       ()
     else
@@ -498,10 +546,13 @@ type ForwardPipelineBase
       // texture, so the common case is one draw call. Group by texture when that's not true.
       let cam = state.CurrentCamera
       let camFwd = cam.Target - cam.Position
-      let texture = textures[0]
+      let texture = batch.Textures[0]
       let texW = float32 texture.Width
       let texH = float32 texture.Height
-      let texRect = Rectangle(0, 0, texture.Width, texture.Height)
+      let fullRect = Rectangle(0, 0, texture.Width, texture.Height)
+      // Null/short arrays = all defaults; indexed defensively per item.
+      let rotations = batch.Rotations
+      let sourceRects = batch.SourceRects
 
       let vertCount = count * 4
       let idxCount = count * 6
@@ -515,17 +566,40 @@ type ForwardPipelineBase
 
       for i = 0 to count - 1 do
         let world =
-          Matrix.CreateBillboard(positions[i], cam.Position, cam.Up, camFwd)
+          Matrix.CreateBillboard(
+            batch.Positions[i],
+            cam.Position,
+            cam.Up,
+            camFwd
+          )
+
+        let rotation =
+          if isNull rotations || i >= rotations.Length then
+            0.0f
+          else
+            rotations[i]
+
+        let texRect =
+          if
+            isNull sourceRects
+            || i >= sourceRects.Length
+            || sourceRects[i].Width <= 0
+            || sourceRects[i].Height <= 0
+          then
+            fullRect
+          else
+            sourceRects[i]
 
         ForwardPipelineBase.EmitQuad(
           billboardStaging,
           i * 4,
           world,
-          sizes[i],
-          colors[i],
+          batch.Sizes[i],
+          batch.Colors[i],
           texW,
           texH,
-          texRect
+          texRect,
+          rotation
         )
 
         let b = i * 6
@@ -544,8 +618,8 @@ type ForwardPipelineBase
       effect.Projection <- state.Projection
       effect.Alpha <- 1.0f
 
-      gd.BlendState <- BlendState.AlphaBlend
-      gd.DepthStencilState <- DepthStencilState.DepthRead
+      gd.BlendState <- toBlendState batch.Blend
+      gd.DepthStencilState <- toBillboardDepthState batch.Blend
 
       for p in effect.CurrentTechnique.Passes do
         p.Apply()
@@ -662,6 +736,12 @@ type ForwardPipelineBase
       | ValueSome vb ->
         vb.Dispose()
         pbrRes.InstanceVertexBuffer <- ValueNone
+      | ValueNone -> ()
+
+      match pbrRes.InstanceColorVertexBuffer with
+      | ValueSome vb ->
+        vb.Dispose()
+        pbrRes.InstanceColorVertexBuffer <- ValueNone
       | ValueNone -> ()
 
       match billboardEffect with
@@ -923,21 +1003,13 @@ type ForwardPipelineBase
             this.handleDrawMeshEffect(gd, &state, part, transform, effect)
 
         // ── Billboards / lines (B8) ──
-        | Command3D.DrawBillboard(texture, position, size, color) ->
+        | Command3D.DrawBillboard billboard ->
           if state.HasCamera then
-            this.handleDrawBillboard(gd, &state, texture, position, size, color)
+            this.handleDrawBillboard(gd, &state, billboard)
 
-        | Command3D.DrawBillboardBatch(textures, positions, sizes, colors, count) ->
+        | Command3D.DrawBillboardBatch batch ->
           if state.HasCamera then
-            this.handleDrawBillboardBatch(
-              gd,
-              &state,
-              textures,
-              positions,
-              sizes,
-              colors,
-              count
-            )
+            this.handleDrawBillboardBatch(gd, &state, batch)
 
         | Command3D.DrawLine3D(s, f, color) ->
           if state.HasCamera then
