@@ -17,6 +17,20 @@ let private planOf(cmds: Command3D list) =
 
   BlockPlan.build buffer
 
+/// Builds the plan AND replays the buffer the way the multi-camera-block forward pass
+/// reconstructs live light sets (no FrameDefaults seeding — regression hook for the
+/// live-shading divergence found in PR #89 review).
+let private replayOf(cmds: Command3D list) =
+  use buffer = new RenderBuffer3D()
+
+  for cmd in cmds do
+    buffer.Add cmd
+
+  let plan = BlockPlan.build buffer
+  let lights = LightBuffers.create 1 4 4
+  let defaults = LightBuffers.create 1 4 4
+  plan, LightScoping.replay buffer plan lights defaults
+
 let private ambient(intensity: float32) =
   AmbientLight3D.create Mibo.Color.White
   |> AmbientLight3D.withIntensity intensity
@@ -383,5 +397,139 @@ let blockPlanTests =
         "points"
 
       Expect.isEmpty target.SpotLights "stale spots are gone"
+    }
+
+    // ── Live-replay regression tests (PR #89 review) ──
+    // The forward pass must shade each block with exactly plan.Blocks[k].Lights.
+    // Seeding the live buffers from plan.FrameDefaults diverged (double-applied
+    // between-block lights, future lights in early blocks, after-last-block leaks);
+    // the replay pins the seed-free protocol against the plan.
+
+    test "live replay: between-block light is applied once, not twice" {
+      let dBetween = dir false Vector3.UnitX
+      let p2 = point Vector3.Zero
+
+      let plan, sets =
+        replayOf [
+          Command3D.BeginCamera cam
+          Command3D.EndCamera
+          Command3D.AddDirectionalLight dBetween
+          Command3D.BeginCamera cam
+          Command3D.AddPointLight p2
+          Command3D.EndCamera
+        ]
+
+      Expect.sequenceEqual
+        sets[1].DirLights
+        [ dBetween ]
+        "block2 dirs applied exactly once"
+
+      Expect.sequenceEqual
+        sets[1].DirLights
+        plan.Blocks[1].Lights.DirLights
+        "replay matches the plan"
+    }
+
+    test "live replay: an early inheriting block does not see future lights" {
+      let dBetween = dir false Vector3.UnitX
+
+      let plan, sets =
+        replayOf [
+          Command3D.BeginCamera cam
+          Command3D.EndCamera
+          Command3D.AddDirectionalLight dBetween
+          Command3D.BeginCamera cam
+          Command3D.EndCamera
+        ]
+
+      Expect.isEmpty sets[0].DirLights "block1 predates the between-block dir"
+
+      Expect.sequenceEqual
+        sets[1].DirLights
+        [ dBetween ]
+        "block2 inherits the running set"
+
+      for i = 0 to 1 do
+        Expect.sequenceEqual
+          sets[i].DirLights
+          plan.Blocks[i].Lights.DirLights
+          $"block{i} matches the plan"
+    }
+
+    test "live replay: after-last-block lights affect no block" {
+      let p2 = point Vector3.Zero
+      let sAfter = spot Vector3.Zero
+
+      let plan, sets =
+        replayOf [
+          Command3D.BeginCamera cam
+          Command3D.EndCamera
+          Command3D.BeginCamera cam
+          Command3D.AddPointLight p2
+          Command3D.EndCamera
+          Command3D.AddSpotLight sAfter
+        ]
+
+      Expect.equal sets.Length plan.BlockCount "one set per block"
+      Expect.isEmpty sets[1].SpotLights "after-last-block spot affects no block"
+
+      for i = 0 to sets.Length - 1 do
+        Expect.sequenceEqual
+          sets[i].PointLights
+          plan.Blocks[i].Lights.PointLights
+          $"block{i} points match the plan"
+
+        Expect.sequenceEqual
+          sets[i].SpotLights
+          plan.Blocks[i].Lights.SpotLights
+          $"block{i} spots match the plan"
+    }
+
+    test "live replay: a resetting block starts from the defaults at its start" {
+      let p0 = point Vector3.One
+      let dBetween = dir false Vector3.UnitY
+      let p2 = point Vector3.Zero
+
+      let plan, sets =
+        replayOf [
+          Command3D.AddPointLight p0
+          Command3D.BeginCamera cam
+          Command3D.EndCamera
+          Command3D.AddDirectionalLight dBetween
+          Command3D.BeginCamera cam
+          Command3D.AddPointLight p2
+          Command3D.EndCamera
+        ]
+
+      Expect.sequenceEqual
+        sets[1].PointLights
+        [ p0; p2 ]
+        "defaults points, then the block's own"
+
+      Expect.sequenceEqual
+        sets[1].DirLights
+        [ dBetween ]
+        "between-block dir joins the defaults"
+
+      for i = 0 to sets.Length - 1 do
+        Expect.equal
+          sets[i].Ambient
+          plan.Blocks[i].Lights.Ambient
+          $"block{i} ambient matches the plan"
+
+        Expect.sequenceEqual
+          sets[i].DirLights
+          plan.Blocks[i].Lights.DirLights
+          $"block{i} dirs match the plan"
+
+        Expect.sequenceEqual
+          sets[i].PointLights
+          plan.Blocks[i].Lights.PointLights
+          $"block{i} points match the plan"
+
+        Expect.sequenceEqual
+          sets[i].SpotLights
+          plan.Blocks[i].Lights.SpotLights
+          $"block{i} spots match the plan"
     }
   ]

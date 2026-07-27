@@ -225,6 +225,22 @@ module private BlockPlanWalk =
 module BlockPlan =
 
   /// <summary>
+  /// The empty plan: no camera blocks, no frame defaults. Pipelines use it for single-camera
+  /// frames, which skip the buffer walk (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.BlockPlan.build"/>)
+  /// and its allocations entirely — every plan consumer is gated on the multi-block count.
+  /// </summary>
+  let empty: BlockPlan = {
+    BlockCount = 0
+    Blocks = [||]
+    FrameDefaults = {
+      Ambient = ValueNone
+      DirLights = [||]
+      PointLights = [||]
+      SpotLights = [||]
+    }
+  }
+
+  /// <summary>
   /// Walks the buffer once and produces the per-camera-block light/shadow plan for the frame:
   /// the block count, each block's final light set / shadow origin / initial shadow-caster
   /// toggle / buffer slice, and the frame-default light set.

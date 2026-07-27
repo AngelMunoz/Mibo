@@ -158,6 +158,12 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   /// <summary>Per-light shadow slot mapping for spot lights; -1 = no shadow.</summary>
   member val SpotShadowSlots: int[] = [||] with get, set
 
+  /// <summary>Grow-only scratch for save/restore of the caller's render-target bindings around
+  /// a shadow/depth pass — avoids a <c>GetRenderTargets()</c> array allocation per pass.
+  /// Resized only when the bound count changes; used sequentially (atlas pass, then depth
+  /// pre-pass), never re-entrantly.</summary>
+  member val RenderTargetScratch: RenderTargetBinding[] = [||] with get, set
+
   /// <summary>Pooled scratch for the multi-caster shadowViewProjs upload.</summary>
   member val ViewProjsScratch = Array.zeroCreate<Matrix> 16 with get, set
 
@@ -733,6 +739,24 @@ module internal ShadowPass =
   // ─────────────────────────────────────────────────────────────────────────────
 
   /// <summary>
+  /// Saves the caller's render-target bindings into the pooled scratch (resized only when the
+  /// bound count changes) — avoids <c>GetRenderTargets()</c>'s per-call array allocation, which
+  /// would otherwise happen once per shadow/depth pass (N per multi-camera-block frame).
+  /// Restore with <c>SetRenderTargets</c> on the returned array.
+  /// </summary>
+  let saveRenderTargets
+    (gd: GraphicsDevice)
+    (res: ShadowResources)
+    : RenderTargetBinding[] =
+    let count = gd.RenderTargetCount
+
+    if res.RenderTargetScratch.Length <> count then
+      res.RenderTargetScratch <- Array.zeroCreate count
+
+    gd.GetRenderTargets(res.RenderTargetScratch)
+    res.RenderTargetScratch
+
+  /// <summary>
   /// Renders collected casters into the shadow atlas from each registered light's view-projection.
   /// Filters to <c>CastsShadow = true</c> entries and frustum-culls per caster (primitives only;
   /// skinned/model-part/instanced draw unconditionally as before). Saves/restores device state.
@@ -767,7 +791,7 @@ module internal ShadowPass =
       let prevDepth = gd.DepthStencilState
       // Restore the caller's bindings, not the back-buffer: under post-processing this pass
       // runs interleaved while the scene render target is bound.
-      let prevTargets = gd.GetRenderTargets()
+      let prevTargets = saveRenderTargets gd res
 
       gd.SetRenderTarget(res.Atlas.Fbo)
 
@@ -863,7 +887,7 @@ module internal ShadowPass =
     let prevBlend = gd.BlendState
     let prevDepth = gd.DepthStencilState
     // Restore the caller's bindings, not the back-buffer (see renderAtlasCasters).
-    let prevTargets = gd.GetRenderTargets()
+    let prevTargets = saveRenderTargets gd res
 
     gd.SetRenderTarget depthTarget
     // 1.0 = far: uncovered pixels (skybox, gaps) read as far so post-process fog treats them as

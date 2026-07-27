@@ -24,8 +24,11 @@ let shadowPassTests =
       lights.PointLights.Add castingPoint
       lights.PointLights.Add castingPoint
 
-      let struct (hasCasters, pointSlots, _) =
-        collectShadowCasters(lights, atlas)
+      let pointSlots = Array.create<int> lights.PointLights.Count -1
+      let spotSlots = Array.create<int> lights.SpotLights.Count -1
+
+      let hasCasters =
+        collectShadowCasters(lights, atlas, pointSlots, spotSlots)
 
       Expect.isTrue hasCasters "dir + 2 point casters"
       Expect.sequenceEqual pointSlots [ 1; 2 ] "dir takes slot 0, points follow"
@@ -37,8 +40,11 @@ let shadowPassTests =
       let later = LightBuffers.create 3 8 4
       later.PointLights.Add castingPoint
 
-      let struct (laterHasCasters, laterPointSlots, _) =
-        collectShadowCasters(later, atlas)
+      let laterPointSlots = Array.create<int> later.PointLights.Count -1
+      let laterSpotSlots = Array.create<int> later.SpotLights.Count -1
+
+      let laterHasCasters =
+        collectShadowCasters(later, atlas, laterPointSlots, laterSpotSlots)
 
       Expect.isTrue laterHasCasters "one point caster"
       Expect.sequenceEqual laterPointSlots [ 0 ] "re-packed from slot 0"
@@ -52,8 +58,7 @@ let shadowPassTests =
       nonCastingFirst.DirLights.Add(dir false)
       nonCastingFirst.DirLights.Add(dir true)
 
-      let struct (hasCasters, _, _) =
-        collectShadowCasters(nonCastingFirst, atlas)
+      let hasCasters = collectShadowCasters(nonCastingFirst, atlas, [||], [||])
 
       Expect.isFalse
         hasCasters
@@ -65,7 +70,7 @@ let shadowPassTests =
       castingFirst.DirLights.Add(dir true)
       castingFirst.DirLights.Add(dir false)
 
-      let struct (hasCasters2, _, _) = collectShadowCasters(castingFirst, atlas)
+      let hasCasters2 = collectShadowCasters(castingFirst, atlas, [||], [||])
 
       Expect.isTrue hasCasters2 "DirLights[0] casts"
     }

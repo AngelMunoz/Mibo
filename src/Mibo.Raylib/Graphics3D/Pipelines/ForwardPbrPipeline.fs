@@ -442,21 +442,26 @@ module internal ShadowPassHelpers =
     struct (arr, count, skinnedStart, instArr, icount)
 
   /// <summary>
-  /// Register shadow casters for every shadow-casting light. Returns:
-  ///  - <c>hasCasters</c>: true if any caster was registered.
-  ///  - <c>pointShadowSlots</c>: array indexed by <c>lights.PointLights</c> buffer position;
+  /// Register shadow casters for every shadow-casting light into the caller-provided slot
+  /// arrays (grow-only scratch owned by the pipeline, pre-filled with -1 by the caller):
+  ///  - <c>pointShadowSlots</c>: indexed by <c>lights.PointLights</c> buffer position;
   ///    value is the caster's flat shader-array index, or -1 if the light doesn't cast / atlas full.
   ///  - <c>spotShadowSlots</c>: same shape for spot lights.
+  /// Returns true when at least one caster was registered.
   ///
   /// The flat index equals the order in which casters are registered (dir first, then point,
   /// then spot), which matches <c>ShadowAtlas.PrepareUniforms</c>'s flattening order — so the
   /// value uploaded to <c>pointLightShadowIdx[i]</c> indexes <c>shadowViewProjs[idx]</c> correctly.
   /// </summary>
-  let collectShadowCasters(lights: LightBuffers, atlas: ShadowAtlas) =
+  let collectShadowCasters
+    (
+      lights: LightBuffers,
+      atlas: ShadowAtlas,
+      pointShadowSlots: int[],
+      spotShadowSlots: int[]
+    ) =
     let mutable hasCasters = false
     let mutable casterSlot = 0
-    let pointShadowSlots = Array.create<int> lights.PointLights.Count -1
-    let spotShadowSlots = Array.create<int> lights.SpotLights.Count -1
 
     let tryAdd casterType pos dir target bias =
       match atlas.AddCaster(casterType, pos, dir, target, true, bias) with
@@ -516,7 +521,7 @@ module internal ShadowPassHelpers =
         | ValueSome slot -> spotShadowSlots[i] <- slot
         | ValueNone -> ()
 
-    struct (hasCasters, pointShadowSlots, spotShadowSlots)
+    hasCasters
 
   /// Build an orthographic camera for directional-light shadow rendering.
   let createDirectionalShadowCamera
@@ -599,7 +604,7 @@ module internal ShadowPassHelpers =
 /// loading a materialized light set into a live buffer set, and resetting the live buffers at a
 /// camera block's start.
 /// </summary>
-module private LightScoping =
+module internal LightScoping =
 
   /// <summary>Applies one light command in-order: ambient overwrites; directional/point/spot append.</summary>
   let inline apply (lights: LightBuffers) (cmd: Command3D) =
@@ -639,6 +644,56 @@ module private LightScoping =
       true
     else
       false
+
+  /// <summary>
+  /// Replays the buffer's camera and light commands the way the multi-camera-block forward
+  /// pass does — both buffers start empty, between-block commands accumulate into the
+  /// defaults, and each block resets (own commands) or inherits at its start — returning
+  /// every block's live light set at its close. Test hook pinning that live shading matches
+  /// the <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.BlockPlan"/>; allocates a snapshot per
+  /// block, so it is not for the hot path.
+  /// </summary>
+  let replay
+    (buffer: RenderBuffer3D)
+    (plan: BlockPlan)
+    (lights: LightBuffers)
+    (defaults: LightBuffers)
+    : BlockLightSet[] =
+    let sets = ResizeArray<BlockLightSet>(plan.BlockCount)
+    let mutable blockIndex = -1
+    let mutable inBlock = false
+
+    let closeBlock() =
+      if inBlock then
+        sets.Add {
+          Ambient = lights.Ambient
+          DirLights = lights.DirLights.ToArray()
+          PointLights = lights.PointLights.ToArray()
+          SpotLights = lights.SpotLights.ToArray()
+        }
+
+        inBlock <- false
+
+    for i = 0 to buffer.Count - 1 do
+      match buffer[i] with
+      | Command3D.BeginCamera _
+      | Command3D.BeginCameraConfig _ ->
+        closeBlock()
+        resetForBlock plan defaults lights &blockIndex |> ignore
+        inBlock <- true
+      | Command3D.EndCamera -> closeBlock()
+      | Command3D.SetAmbientLight _
+      | Command3D.AddDirectionalLight _
+      | Command3D.AddPointLight _
+      | Command3D.AddSpotLight _ as cmd ->
+        apply lights cmd
+
+        if not inBlock then
+          apply defaults cmd
+      | _ -> ()
+
+    closeBlock()
+    sets.ToArray()
 
 // ------------------------------------------------------------------
 // Pure / near-pure functions
@@ -1443,6 +1498,7 @@ module internal PipelineFunctions =
     (
       buffer: RenderBuffer3D,
       lights: LightBuffers,
+      gatherLights: bool,
       forward: byref<ShaderVariant>,
       instanced: byref<ShaderVariant>,
       skinned: byref<ShaderVariant>,
@@ -1479,10 +1535,18 @@ module internal PipelineFunctions =
           frameState with
               ShadowOrigin = ValueSome origin
         }
-      | Command3D.SetAmbientLight l -> lights.Ambient <- ValueSome l
-      | Command3D.AddDirectionalLight l -> lights.DirLights.Add l
-      | Command3D.AddPointLight l -> lights.PointLights.Add l
-      | Command3D.AddSpotLight l -> lights.SpotLights.Add l
+      | Command3D.SetAmbientLight l ->
+        if gatherLights then
+          lights.Ambient <- ValueSome l
+      | Command3D.AddDirectionalLight l ->
+        if gatherLights then
+          lights.DirLights.Add l
+      | Command3D.AddPointLight l ->
+        if gatherLights then
+          lights.PointLights.Add l
+      | Command3D.AddSpotLight l ->
+        if gatherLights then
+          lights.SpotLights.Add l
       | Command3D.DrawMesh(_, _, mat) ->
         warmMaterial(
           &forward,
@@ -1672,7 +1736,10 @@ module internal PipelineFunctions =
 
     Raylib.EndMode3D()
 
-  /// Render the shadow pass — collect casters, render regions to atlas.
+  /// Render the shadow pass — collect casters, render regions to atlas. Returns whether any
+  /// caster was registered. The per-light shadow-slot mappings live in caller-owned grow-only
+  /// arrays (the pipeline's fields), resized here when a pass sees more lights than any
+  /// previous pass and reset to -1 ("no shadow") on entry.
   let runShadowPass
     (
       shadowAtlas: ShadowAtlas,
@@ -1685,15 +1752,23 @@ module internal PipelineFunctions =
       instancedDraws: InstancedMeshDraw[],
       instancedDrawCount: int,
       frameState: inref<FrameState>,
-      gameCtx: GameContext
-    ) =
+      gameCtx: GameContext,
+      pointSlots: byref<int[]>,
+      spotSlots: byref<int[]>
+    ) : bool =
     shadowAtlas.Clear()
 
+    if pointSlots.Length < lights.PointLights.Count then
+      pointSlots <- Array.create<int> lights.PointLights.Count -1
+
+    Array.Fill(pointSlots, -1)
+
+    if spotSlots.Length < lights.SpotLights.Count then
+      spotSlots <- Array.create<int> lights.SpotLights.Count -1
+
+    Array.Fill(spotSlots, -1)
+
     let mutable hasCasters = false
-    // Per-light shadow-slot mappings; returned to the caller (the closure stores them on the
-    // pipeline fields so the forward-pass handlers can read them).
-    let mutable pointSlots = Array.create<int> lights.PointLights.Count -1
-    let mutable spotSlots = Array.create<int> lights.SpotLights.Count -1
 
     match frameState.Camera with
     | ValueNone ->
@@ -1703,12 +1778,8 @@ module internal PipelineFunctions =
       // Instanced-only scenes cast shadows too (matches the MonoGame backend, which gates
       // on mesh + instanced counts).
       if meshDrawCount > 0 || instancedDrawCount > 0 then
-        let struct (hasC, ptSlots, spSlots) =
-          collectShadowCasters(lights, shadowAtlas)
-
-        hasCasters <- hasC
-        pointSlots <- ptSlots
-        spotSlots <- spSlots
+        hasCasters <-
+          collectShadowCasters(lights, shadowAtlas, pointSlots, spotSlots)
 
         if shadowAtlas.Count > 0 then
           Raylib.BeginTextureMode(shadowAtlas.Fbo)
@@ -1825,7 +1896,7 @@ module internal PipelineFunctions =
           Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
           Raylib.EndTextureMode()
 
-    struct (hasCasters, pointSlots, spotSlots)
+    hasCasters
 
 // ------------------------------------------------------------------
 // ForwardFrame — per-frame scene state the Shade hook reads (byref, no alloc).
@@ -2043,7 +2114,7 @@ type ForwardPipelineBase
     let mutable hasCasters = false
 
     try
-      let struct (hasC, ptSlots, spSlots) =
+      hasCasters <-
         runShadowPass(
           shadowAtlas,
           atlasCfg,
@@ -2055,12 +2126,10 @@ type ForwardPipelineBase
           instancedDraws,
           instancedDrawCount,
           &frameState,
-          gameCtx
+          gameCtx,
+          &pointShadowSlots,
+          &spotShadowSlots
         )
-
-      hasCasters <- hasC
-      pointShadowSlots <- ptSlots
-      spotShadowSlots <- spSlots
     finally
       ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
       ArrayPool<InstancedMeshDraw>.Shared.Return(instancedDraws, false)
@@ -2120,74 +2189,76 @@ type ForwardPipelineBase
     | ValueSome _ -> Raylib.EndTextureMode()
     | ValueNone -> ()
 
-    let struct (meshDraws, meshDrawCount, skinnedStart, instancedDraws,
-                instancedDrawCount) =
-      collectMeshDraws(
-        buffer,
-        block.StartIndex,
-        block.EndIndex,
-        block.InitialCastEnabled
-      )
-
-    let mutable blockFrame = {
-      Camera = ValueSome camera
-      ShadowOrigin = block.ShadowOrigin
-    }
-
+    // Re-wrap the caller's texture mode even when the pass throws — raylib has no FBO
+    // stack, so an unwound frame would otherwise leave the pipeline outside texture mode.
     try
-      let struct (hasC, ptSlots, spSlots) =
-        runShadowPass(
-          shadowAtlas,
-          atlasCfg,
-          &resources,
-          blockLights,
-          meshDraws,
-          meshDrawCount,
-          skinnedStart,
-          instancedDraws,
-          instancedDrawCount,
-          &blockFrame,
-          gameCtx
+      let struct (meshDraws, meshDrawCount, skinnedStart, instancedDraws,
+                  instancedDrawCount) =
+        collectMeshDraws(
+          buffer,
+          block.StartIndex,
+          block.EndIndex,
+          block.InitialCastEnabled
         )
 
-      pointShadowSlots <- ptSlots
-      spotShadowSlots <- spSlots
+      let mutable blockFrame = {
+        Camera = ValueSome camera
+        ShadowOrigin = block.ShadowOrigin
+      }
 
-      uploadShadowUniforms(
-        hasC,
-        &forward,
-        &instanced,
-        &skinned,
-        shadowAtlas,
-        camera.Position,
-        atlasCfg.MaxCasters
-      )
+      try
+        let hasC =
+          runShadowPass(
+            shadowAtlas,
+            atlasCfg,
+            &resources,
+            blockLights,
+            meshDraws,
+            meshDrawCount,
+            skinnedStart,
+            instancedDraws,
+            instancedDrawCount,
+            &blockFrame,
+            gameCtx,
+            &pointShadowSlots,
+            &spotShadowSlots
+          )
 
-      if not hasC then
-        // Caster-less block: clear the flag so shaders don't sample the previous block's atlas.
-        setShaderInt forwardShader forward.Locs.DirLight.CastsShadows 0
-        setShaderInt instancedShader instanced.Locs.DirLight.CastsShadows 0
-        setShaderInt skinnedShader skinned.Locs.DirLight.CastsShadows 0
+        uploadShadowUniforms(
+          hasC,
+          &forward,
+          &instanced,
+          &skinned,
+          shadowAtlas,
+          camera.Position,
+          atlasCfg.MaxCasters
+        )
 
-      frame.PointShadowSlots <- ptSlots
-      frame.SpotShadowSlots <- spSlots
+        if not hasC then
+          // Caster-less block: clear the flag so shaders don't sample the previous block's atlas.
+          setShaderInt forwardShader forward.Locs.DirLight.CastsShadows 0
+          setShaderInt instancedShader instanced.Locs.DirLight.CastsShadows 0
+          setShaderInt skinnedShader skinned.Locs.DirLight.CastsShadows 0
 
-      frame.Shadows <-
-        shadowResultOf
-          shadowAtlas
-          atlasCfg
-          hasC
-          (blockLights.DirLights.Count > 0
-           && blockLights.DirLights[0].CastsShadows)
-          ptSlots
-          spSlots
+        frame.PointShadowSlots <- pointShadowSlots
+        frame.SpotShadowSlots <- spotShadowSlots
+
+        frame.Shadows <-
+          shadowResultOf
+            shadowAtlas
+            atlasCfg
+            hasC
+            (blockLights.DirLights.Count > 0
+             && blockLights.DirLights[0].CastsShadows)
+            pointShadowSlots
+            spotShadowSlots
+      finally
+        ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
+        ArrayPool<InstancedMeshDraw>.Shared.Return(instancedDraws, false)
     finally
-      ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
-      ArrayPool<InstancedMeshDraw>.Shared.Return(instancedDraws, false)
-
-    match sceneRT with
-    | ValueSome rt -> Raylib.BeginTextureMode rt
-    | ValueNone -> ()
+      match sceneRT with
+      | ValueSome rt -> Raylib.BeginTextureMode rt
+      | ValueNone -> ()
 
   // ----------------------------------------------------------------
   // Per-draw shading hook — overridable.
@@ -2598,14 +2669,22 @@ type ForwardPipelineBase
     member this.Execute(gameCtx, gameTime, buffer, rtPool) =
       let frameTime = float32 gameTime.TotalTime.TotalSeconds
 
-      // Pre-scan: gather camera, lights, shadow origin, warm material caches, and — when present —
-      // post-process actions in a single pass over the buffer.
+      // Pre-scan: gather camera, shadow origin, warm material caches, and — when present —
+      // post-process actions in a single pass over the buffer. Lights are gathered here only
+      // for single-camera frames; multi-block frames scope them per camera block in the
+      // forward pass instead.
       clearLights lights
 
-      // The block plan walks the buffer once for the per-camera-block light/shadow scoping;
-      // frames with more than one camera block scope lights and shadows per block.
-      let plan = BlockPlan.build buffer
-      let multiBlock = plan.BlockCount > 1
+      // The block plan walks the buffer once for the per-camera-block light/shadow scoping.
+      // Single-camera frames skip the walk (and its allocations) entirely — the counter is
+      // maintained by the buffer on Add.
+      let multiBlock = buffer.CameraBlockCount > 1
+
+      let plan =
+        if multiBlock then
+          BlockPlan.build buffer
+        else
+          BlockPlan.empty
 
       // Allocated only when the view emits at least one post-process command, so frames with none
       // skip the allocation and the per-command scan entirely.
@@ -2619,6 +2698,7 @@ type ForwardPipelineBase
         preScan(
           buffer,
           lights,
+          not multiBlock,
           &forward,
           &instanced,
           &skinned,
@@ -2672,12 +2752,12 @@ type ForwardPipelineBase
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
 
-      // Multi-camera-block frames: seed the live buffers and the persistent defaults from the
-      // plan's frame defaults. Each block then resets (own light commands) or inherits (none)
-      // at its BeginCamera in the forward pass.
+      // Multi-camera-block frames: start the persistent defaults empty — the forward pass
+      // builds them in-order (between-block commands accumulate; each block resets to the
+      // defaults-so-far or inherits the running set at its BeginCamera), so live shading
+      // matches the block plan by construction.
       if multiBlock then
-        LightScoping.loadSet plan.FrameDefaults defaultLights
-        LightBuffers.copyInto defaultLights lights
+        LightBuffers.clear defaultLights
 
       // Forward pass — dispatch all commands
       let mutable cameraActive = false

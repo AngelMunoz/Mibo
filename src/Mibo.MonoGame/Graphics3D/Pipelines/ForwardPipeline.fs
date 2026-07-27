@@ -149,7 +149,7 @@ module private ForwardHelpers =
 /// loading a materialized light set into a live buffer set, and resetting the live buffers at a
 /// camera block's start.
 /// </summary>
-module private LightScoping =
+module internal LightScoping =
 
   /// <summary>Applies one light command in-order: ambient overwrites; directional/point/spot append.</summary>
   let inline apply (lights: LightBuffers) (cmd: Command3D) =
@@ -205,6 +205,53 @@ module private LightScoping =
       true
     else
       false
+
+  /// <summary>
+  /// Replays the buffer's camera and light commands the way the multi-camera-block forward
+  /// pass does — both buffers start empty, between-block commands accumulate into the
+  /// defaults, and each block resets (own commands) or inherits at its start — returning
+  /// every block's live light set at its close. Test hook pinning that live shading matches
+  /// the <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.BlockPlan"/>; allocates a snapshot per
+  /// block, so it is not for the hot path.
+  /// </summary>
+  let replay
+    (buffer: RenderBuffer3D)
+    (plan: BlockPlan)
+    (lights: LightBuffers)
+    (defaults: LightBuffers)
+    : BlockLightSet[] =
+    let sets = ResizeArray<BlockLightSet>(plan.BlockCount)
+    let mutable blockIndex = -1
+    let mutable inBlock = false
+
+    let closeBlock() =
+      if inBlock then
+        sets.Add {
+          Ambient = lights.Ambient
+          DirLights = lights.DirLights.ToArray()
+          PointLights = lights.PointLights.ToArray()
+          SpotLights = lights.SpotLights.ToArray()
+        }
+
+        inBlock <- false
+
+    for i = 0 to buffer.Count - 1 do
+      match buffer[i] with
+      | Command3D.BeginCamera _
+      | Command3D.BeginCameraConfig _ ->
+        closeBlock()
+        resetForBlock plan defaults lights &blockIndex |> ignore
+        inBlock <- true
+      | Command3D.EndCamera -> closeBlock()
+      | Command3D.SetAmbientLight _
+      | Command3D.AddDirectionalLight _
+      | Command3D.AddPointLight _
+      | Command3D.AddSpotLight _ as cmd ->
+        applyInOrder lights defaults inBlock cmd
+      | _ -> ()
+
+    closeBlock()
+    sets.ToArray()
 
 // ── Where things live ──
 // MaterialKey / materialKey          → PbrShading.fs (PBR handlers own the short-circuit)
@@ -266,8 +313,9 @@ type ForwardPipelineBase
   // pipelines built from it would alias each other's light accumulators.
   let lights: Pipelines.LightBuffers = Pipelines.LightBuffers.create 3 8 4
 
-  // Frame-default light set for multi-camera-block frames: repopulated from the block plan
-  // each frame; a block that issues its own light commands resets the live buffers from this.
+  // Frame-default light set for multi-camera-block frames: rebuilt in-order by the forward
+  // pass each frame (between-block commands accumulate); a block that issues its own light
+  // commands resets the live buffers from this.
   // LightBuffers.create — LightBuffers.defaults is a shared module-level instance.
   let defaultLights: Pipelines.LightBuffers =
     Pipelines.LightBuffers.create 3 8 4
@@ -295,6 +343,13 @@ type ForwardPipelineBase
   // DrawUserIndexedPrimitives. Created on first use against the real device.
   let mutable billboardEffect: BasicEffect voption = ValueNone
   let mutable lineEffect: BasicEffect voption = ValueNone
+
+  // Lazily-created unlit vertex-color effect + triangle for clearing a camera block's
+  // viewport region: gd.Clear ignores the viewport (D3D ClearRenderTargetView semantics),
+  // so a block clear is drawn as an NDC fullscreen triangle, which covers exactly the
+  // active viewport on every backend.
+  let mutable clearEffect: BasicEffect = null
+  let clearVerts = Array.zeroCreate<VertexPositionColor> 3
 
   // Post-process: a fullscreen quad created against the device on the first post-process frame.
   let mutable fullScreenQuad: FullScreenQuad voption = ValueNone
@@ -821,6 +876,45 @@ type ForwardPipelineBase
     scene.SpotShadowSlots <- shadowRes.SpotShadowSlots
     scene.Shadows <- shadowRes.ShadowResult
 
+  /// <summary>
+  /// Draws a solid-color NDC fullscreen triangle, which covers exactly the active viewport.
+  /// Used to clear a camera block's viewport region: <c>gd.Clear</c> ignores the viewport on
+  /// D3D-style backends (<c>ClearRenderTargetView</c> semantics), so an unclipped block clear
+  /// would wipe previously rendered camera blocks (split-screen). Color-only — the caller
+  /// saves/restores device state and leaves depth untouched.
+  /// </summary>
+  member private _.clearViewport (gd: GraphicsDevice) (c: Color) =
+    if obj.ReferenceEquals(clearEffect, null) then
+      clearEffect <-
+        new BasicEffect(
+          gd,
+          VertexColorEnabled = true,
+          LightingEnabled = false,
+          TextureEnabled = false
+        )
+
+    clearVerts[0] <- VertexPositionColor(Vector3(-1.f, -1.f, 0.f), c)
+    clearVerts[1] <- VertexPositionColor(Vector3(3.f, -1.f, 0.f), c)
+    clearVerts[2] <- VertexPositionColor(Vector3(-1.f, 3.f, 0.f), c)
+
+    clearEffect.World <- Matrix.Identity
+    clearEffect.View <- Matrix.Identity
+    clearEffect.Projection <- Matrix.Identity
+
+    gd.DepthStencilState <- DepthStencilState.None
+    gd.BlendState <- BlendState.Opaque
+    gd.RasterizerState <- RasterizerState.CullNone
+
+    for pass in clearEffect.CurrentTechnique.Passes do
+      pass.Apply()
+
+      gd.DrawUserPrimitives<VertexPositionColor>(
+        PrimitiveType.TriangleList,
+        clearVerts,
+        0,
+        1
+      )
+
   // ----------------------------------------------------------------
   // IRenderPipeline3D
   // ----------------------------------------------------------------
@@ -939,12 +1033,18 @@ type ForwardPipelineBase
       // Pre-scan — capture camera, shadow state, and post-process actions in one pass.
       // The block plan walks the buffer once for the per-camera-block light scoping; frames
       // with more than one camera block scope lights per block, single-camera frames gather
-      // lights frame-globally below.
+      // lights frame-globally below and skip the walk (and its allocations) entirely — the
+      // counter is maintained by the buffer on Add.
       Pipelines.LightBuffers.clear lights
       shadowRes.Origin <- ValueNone
 
-      let plan = BlockPlan.build buffer
-      let multiBlock = plan.BlockCount > 1
+      let multiBlock = buffer.CameraBlockCount > 1
+
+      let plan =
+        if multiBlock then
+          BlockPlan.build buffer
+        else
+          BlockPlan.empty
 
       let mutable state: ForwardState = {
         HasCamera = false
@@ -1002,12 +1102,12 @@ type ForwardPipelineBase
           | ValueNone -> ()
         | _ -> ()
 
-      // Multi-camera-block frames: seed the live buffers and the persistent defaults from the
-      // plan's frame defaults. Each block then resets (own light commands) or inherits (none)
-      // at its BeginCamera in the forward pass.
+      // Multi-camera-block frames: start the persistent defaults empty — the forward pass
+      // builds them in-order (between-block commands accumulate; each block resets to the
+      // defaults-so-far or inherits the running set at its BeginCamera), so live shading
+      // matches the block plan by construction.
       if multiBlock then
-        LightScoping.loadSet plan.FrameDefaults defaultLights
-        Pipelines.LightBuffers.copyInto defaultLights lights
+        Pipelines.LightBuffers.clear defaultLights
         // Per-block shadow passes reseat ShadowResult at each block start; don't leak last
         // frame's result into a DrawImmediate before the first block.
         shadowRes.ShadowResult <- ValueNone
@@ -1137,7 +1237,22 @@ type ForwardPipelineBase
               (float32 vp.Height)
 
           match cfg.ClearColor with
-          | ValueSome c -> gd.Clear(ClearOptions.Target, c.ToVector4(), 1.0f, 0)
+          | ValueSome c ->
+            match cfg.Viewport with
+            | ValueSome _ ->
+              // gd.Clear ignores the viewport, so the block clear is drawn: an NDC
+              // fullscreen triangle covers exactly the active viewport. Color-only —
+              // depth is untouched, matching the fullscreen gd.Clear path below.
+              let prevDepth = gd.DepthStencilState
+              let prevBlend = gd.BlendState
+              let prevRaster = gd.RasterizerState
+
+              this.clearViewport gd c
+
+              gd.DepthStencilState <- prevDepth
+              gd.BlendState <- prevBlend
+              gd.RasterizerState <- prevRaster
+            | ValueNone -> gd.Clear(ClearOptions.Target, c.ToVector4(), 1.0f, 0)
           | ValueNone -> ()
 
           // New camera block: scopes don't persist across cameras.
