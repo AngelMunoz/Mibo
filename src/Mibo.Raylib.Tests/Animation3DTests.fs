@@ -530,10 +530,20 @@ let private makeAnimatedMesh
   let lookup = Dictionary<string, int>(names.Length)
   names |> Array.iteri(fun i name -> lookup[name] <- i)
 
+  let bindPose =
+    Array.create
+      names.Length
+      (Transform(
+        Translation = Vector3.Zero,
+        Rotation = Quaternion.Identity,
+        Scale = Vector3.One
+      ))
+
   {
     Mesh = Unchecked.defaultof<Mesh>
     BoneCount = names.Length
     InverseBindPose = invBind
+    BindPose = bindPose
     BoneNames = names
     BoneParents = Array.create names.Length -1
     BoneLookup = lookup
@@ -1092,7 +1102,7 @@ let remapTests =
         Expect.equal
           (Animation3DClips.buildBoneRemap sourceOrder targetOrder)
           (ValueSome [| 0; 1; -1; -1 |])
-          "Unmapped bones should sample as -1 (zeroed pose)"
+          "Unmapped bones should map to -1 (they hold their bind pose)"
       }
     ]
 
@@ -1176,6 +1186,66 @@ let remapTests =
           pose.WorldPoses[1]
           (Raymath.MatrixTranslate(1.0f, 0.0f, 0.0f))
           "right should sample the clip's first (right) pose"
+      }
+
+      test "bones unmapped by the remap hold their bind pose" {
+        // The clip animates only "root"; "extra" must hold its rest position
+        // instead of collapsing to the skeleton origin.
+        let sourcePoses = [|
+          [|
+            Transform(
+              Translation = Vector3(1.0f, 0.0f, 0.0f),
+              Rotation = Quaternion.Identity,
+              Scale = Vector3.One
+            )
+          |]
+        |]
+
+        let clips =
+          Animation3DClips.merge [| "root"; "extra" |] [|
+            [| "root" |], [| makeModelAnimation "partial" 1 1 sourcePoses |]
+          |]
+
+        let bindExtra =
+          Transform(
+            Translation = Vector3(0.0f, 7.0f, 0.0f),
+            Rotation = Quaternion.Identity,
+            Scale = Vector3.One
+          )
+
+        let mesh = {
+          makeAnimatedMesh [| "root"; "extra" |] [|
+            Matrix4x4.Identity
+            Matrix4x4.Identity
+          |] with
+              BindPose = [|
+                Transform(
+                  Translation = Vector3.Zero,
+                  Rotation = Quaternion.Identity,
+                  Scale = Vector3.One
+                )
+                bindExtra
+              |]
+        }
+
+        let state =
+          Animation3DState.create
+            (Unchecked.defaultof<Model>)
+            clips
+            "partial"
+            60.0f
+
+        let pose = Animation3DState.computePose mesh state
+
+        Expect.equal
+          pose.WorldPoses[0]
+          (Raymath.MatrixTranslate(1.0f, 0.0f, 0.0f))
+          "root should sample the clip pose"
+
+        Expect.equal
+          pose.WorldPoses[1]
+          (Raymath.MatrixTranslate(0.0f, 7.0f, 0.0f))
+          "extra should hold its bind pose"
       }
     ]
   ]

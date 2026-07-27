@@ -215,6 +215,10 @@ type AnimatedMesh = {
   /// <summary>Inverse bind pose per bone, in <c>System.Numerics</c> layout — internal
   /// input to pose evaluation; the transposed, upload-ready palette lives on <c>BonePose</c>.</summary>
   InverseBindPose: Matrix4x4[]
+  /// <summary>Model-space bind pose per bone (the rest pose captured at load). Bones a
+  /// clip doesn't animate fall back to this so they hold their rest position instead of
+  /// collapsing to the skeleton origin — same space as raylib's keyframe poses.</summary>
+  BindPose: Transform[]
   /// <summary>Authored bone names, indexed by bone index (for <c>BoneRef.ByName</c> lookups).</summary>
   BoneNames: string[]
   /// <summary>Parent bone index per bone (-1 for roots). Informational — raylib keyframe poses are model-space.</summary>
@@ -551,13 +555,17 @@ module Animation3DState =
   /// Samples the interpolated TRS pose of one bone from <paramref name="clip"/> at
   /// <paramref name="frame"/>. Same keyframe-lerp math as
   /// <c>AnimatedMesh.computeBoneMatrices</c>: floor/ceil frames with wraparound,
-  /// lerp on translation/scale, slerp on rotation. A clip with no keyframes (or a
-  /// bone past the keyframe pose span) yields a zeroed <c>Transform</c>, matching
-  /// <c>computeBoneMatrices</c>. <paramref name="remap"/> translates the target
-  /// skeleton's <paramref name="boneIndex"/> into the clip's own bone order (see
-  /// <c>Animation3DClips.buildBoneRemap</c>); -1 samples as a zeroed pose.
+  /// lerp on translation/scale, slerp on rotation. A bone the clip doesn't animate
+  /// (unmapped by <paramref name="remap"/>, past the keyframe pose span, or a clip
+  /// with no keyframes) falls back to its bind pose from <paramref name="bindPose"/>,
+  /// so unanimated bones hold their rest position instead of collapsing to the
+  /// skeleton origin (matching the MonoGame backend). <paramref name="remap"/>
+  /// translates the target skeleton's <paramref name="boneIndex"/> into the clip's
+  /// own bone order (see <c>Animation3DClips.buildBoneRemap</c>); -1 samples as the
+  /// bind pose.
   let private sampleBoneTrs
     (remap: int[] voption)
+    (bindPose: Transform[])
     (clip: ModelAnimation)
     (frame: float32)
     (boneIndex: int)
@@ -567,9 +575,12 @@ module Animation3DState =
       | ValueSome map when boneIndex < map.Length -> map[boneIndex]
       | _ -> boneIndex
 
+    let bindTrs() =
+      let b = bindPose[boneIndex]
+      struct (b.Translation, b.Rotation, b.Scale)
+
     if clip.KeyFrameCount <= 0 || sourceIndex < 0 then
-      let t = Unchecked.defaultof<Transform>
-      struct (t.Translation, t.Rotation, t.Scale)
+      bindTrs()
     else
       let currentFrame = int frame
       let nextFrame = currentFrame + 1
@@ -605,21 +616,15 @@ module Animation3DState =
         else
           Span<Transform>(NativePtr.toVoidPtr nfPtr, clip.BoneCount)
 
-      let ct =
-        if sourceIndex < cfPoses.Length then
-          cfPoses[sourceIndex]
-        else
-          Unchecked.defaultof<Transform>
+      if sourceIndex < cfPoses.Length && sourceIndex < nfPoses.Length then
+        let ct = cfPoses[sourceIndex]
+        let nt = nfPoses[sourceIndex]
 
-      let nt =
-        if sourceIndex < nfPoses.Length then
-          nfPoses[sourceIndex]
-        else
-          Unchecked.defaultof<Transform>
-
-      Vector3.Lerp(ct.Translation, nt.Translation, blend),
-      Quaternion.Slerp(ct.Rotation, nt.Rotation, blend),
-      Vector3.Lerp(ct.Scale, nt.Scale, blend)
+        Vector3.Lerp(ct.Translation, nt.Translation, blend),
+        Quaternion.Slerp(ct.Rotation, nt.Rotation, blend),
+        Vector3.Lerp(ct.Scale, nt.Scale, blend)
+      else
+        bindTrs()
 
   /// <summary>
   /// Evaluate the current pose of <paramref name="state"/> on
@@ -666,12 +671,12 @@ module Animation3DState =
 
       for i = 0 to boneCount - 1 do
         let struct (ta, ra, sa) =
-          sampleBoneTrs remapA clipA state.CurrentFrame i
+          sampleBoneTrs remapA mesh.BindPose clipA state.CurrentFrame i
 
         let struct (translation, rotation, scale) =
           if blending then
             let struct (tb, rb, sb) =
-              sampleBoneTrs remapB clipB state.BlendTargetFrame i
+              sampleBoneTrs remapB mesh.BindPose clipB state.BlendTargetFrame i
 
             struct (Vector3.Lerp(ta, tb, state.BlendProgress),
                     Quaternion.Slerp(ra, rb, state.BlendProgress),
@@ -738,6 +743,7 @@ module AnimatedMesh =
       let bindPose = model.Skeleton.BindPoseAsSpan()
       let bones = model.Skeleton.BonesAsSpan()
       let invBindPose = Array.zeroCreate<Matrix4x4> boneCount
+      let bindPoseArr = bindPose.ToArray()
       let boneNames = Array.zeroCreate<string> boneCount
       let boneParents = Array.zeroCreate<int> boneCount
       let boneLookup = Dictionary<string, int> boneCount
@@ -767,6 +773,7 @@ module AnimatedMesh =
           Mesh = meshes[0]
           BoneCount = boneCount
           InverseBindPose = invBindPose
+          BindPose = bindPoseArr
           BoneNames = boneNames
           BoneParents = boneParents
           BoneLookup = boneLookup
@@ -831,26 +838,20 @@ module AnimatedMesh =
         if NativePtr.isNullPtr cfPtr then
           Span<Transform>.Empty
         else
-          Span<Transform>(NativePtr.toVoidPtr cfPtr, boneCount)
+          Span<Transform>(NativePtr.toVoidPtr cfPtr, clip.BoneCount)
 
       let nfPoses =
         if NativePtr.isNullPtr nfPtr then
           Span<Transform>.Empty
         else
-          Span<Transform>(NativePtr.toVoidPtr nfPtr, boneCount)
+          Span<Transform>(NativePtr.toVoidPtr nfPtr, clip.BoneCount)
 
       for i = 0 to boneCount - 1 do
-        let ct =
-          if i < cfPoses.Length then
-            cfPoses[i]
-          else
-            Unchecked.defaultof<Transform>
+        // Bones past the clip's pose span hold their bind pose (a zeroed
+        // Transform would collapse them to the skeleton origin).
+        let ct = if i < cfPoses.Length then cfPoses[i] else mesh.BindPose[i]
 
-        let nt =
-          if i < nfPoses.Length then
-            nfPoses[i]
-          else
-            Unchecked.defaultof<Transform>
+        let nt = if i < nfPoses.Length then nfPoses[i] else mesh.BindPose[i]
 
         let translation = Vector3.Lerp(ct.Translation, nt.Translation, blend)
 

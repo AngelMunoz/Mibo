@@ -120,9 +120,10 @@ buffer
 >
 > On the GPU path the `transform` argument is the full world transform (raylib's
 > internal `model.Transform` is not composed in, matching every other mesh draw).
-> The per-mesh material resolver (`animatedModelWithPerMesh`) exists only on the
-> legacy path. MonoGame's `.animatedModel(...)` never mutates — it always works
-> like the GPU path.
+> The GPU path supports all three material forms — `animatedModel`,
+> `animatedModelWith` (whole-model override), and `animatedModelWithPerMesh`
+> (per-mesh resolver). MonoGame's `.animatedModel(...)` never mutates — it
+> always works like the GPU path.
 
 ### When to Use Which
 
@@ -174,7 +175,7 @@ let clips =
     |]
 ```
 
-Clips whose file already follows the target order are sampled directly; the remap costs nothing at runtime. Bones a clip doesn't animate sample as a zeroed pose. The legacy mutating path (`UpdateModelAnimation` via a bare `Animation3DState`) cannot remap — it requires clips from the same file as the model.
+Clips whose file already follows the target order are sampled directly; the remap costs nothing at runtime. Bones a clip doesn't animate hold their bind pose (matching the MonoGame backend). The legacy mutating path (`UpdateModelAnimation` via a bare `Animation3DState`) cannot remap — it requires clips from the same file as the model.
 
 MonoGame is unaffected: its clip channels are keyed by bone name, so clips from differently-ordered files resolve correctly without a remap.
 

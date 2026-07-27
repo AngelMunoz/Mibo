@@ -281,6 +281,30 @@ type RenderBuffer3D with
       )
 
   /// <summary>
+  /// GPU skinning path with a per-mesh material resolver — see the
+  /// <c>AnimatedModel</c> <c>AddAnimatedModel</c> overload. The resolver receives
+  /// the sub-mesh index.
+  /// </summary>
+  member inline b.AddAnimatedModelWithPerMesh
+    (
+      am: AnimatedModel,
+      transform: Matrix4x4,
+      [<InlineIfLambda>] resolver: int -> Material3D,
+      pose: BonePose voption
+    ) =
+    let p =
+      match pose with
+      | ValueSome p -> p
+      | ValueNone -> Animation3DState.computePose am.Mesh am.State
+
+    let meshes = am.State.Model.MeshesAsSpan()
+
+    for i = 0 to meshes.Length - 1 do
+      b.Add(
+        Command3D.DrawSkinnedMesh(meshes[i], transform, resolver i, p.Palette)
+      )
+
+  /// <summary>
   /// Draws a static <paramref name="mesh"/> parented to <paramref name="bone"/>
   /// of the animated model <paramref name="am"/>. The attachment's world
   /// transform is <c>localTransform * boneWorld * transform</c> (applied
