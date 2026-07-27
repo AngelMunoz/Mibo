@@ -13,7 +13,10 @@ Mibo provides a three-tier 3D skeletal animation system in `Mibo.Animation`. It 
 > `AnimatedMesh`) mirror across backends, but the skinning path differs:
 > - **raylib**: CPU skinning via `Raylib.UpdateModelAnimation` / `UpdateModelAnimationEx`
 >   (mutates the model's bone matrices); render with `.model(...)` (per-entity model copy)
->   or `.skinnedMesh(...)` (shared mesh + bone matrices).
+>   or `.skinnedMesh(...)` (shared mesh + bone matrices). Wrapping the state in an
+>   `AnimatedModel` record and rendering with `.animatedModel(...)` selects the opt-in
+>   GPU path instead — no model mutation, several poses per model per frame (see
+>   [Tier 3](#tier-3--per-model-cpu-skinning-animation3dstate)).
 > - **MonoGame**: clips load from the raw model file via Assimp (`assets.ModelAnimations` →
 > `Animation3DClips`); render with `.animatedModel(animModel, transform)` (the bone
 > palette is derived internally from an `AnimatedModel` state value — the caller never handles
@@ -26,6 +29,8 @@ Mibo provides a three-tier 3D skeletal animation system in `Mibo.Animation`. It 
 | `Animation3DClips` | Shared clip set loaded from `ModelAnimation[]` — name/index lookup |
 | `Animation3DState` | Per-entity playback state (current frame, blend, speed, loop) |
 | `AnimatedMesh` | Shared mesh + inverse bind pose for GPU skinning |
+| `BoneRef` | Addresses a bone by name (`ByName`) or index (`ByIndex`) for queries/attachments |
+| `BonePose` | One evaluated pose: per-bone world transforms + shader skinning palette |
 
 ## Quick Start
 
@@ -69,15 +74,17 @@ let idx = Animation3DClips.tryGetClipIndex "walk" clips  // ValueSome 1
 Share one mesh across many entities. Each entity computes its own bone matrices.
 
 ```fsharp
-let mesh = AnimatedMesh.fromModel model  // load once, share
+// load once, share — ValueNone when the model has no bones
+match AnimatedMesh.fromModel model with
+| ValueNone -> ()
+| ValueSome mesh ->
+    // Per-entity (lightweight — just matrix math)
+    let bones = AnimatedMesh.computeBoneMatrices clip frame mesh
 
-// Per-entity (lightweight — just matrix math)
-let bones = AnimatedMesh.computeBoneMatrices clip frame mesh
-
-// Render — GPU does the skinning (raylib)
-buffer
-  .skinnedMesh(mesh.Mesh, transform, material, bones)
-  .drop()
+    // Render — GPU does the skinning (raylib)
+    buffer
+      .skinnedMesh(mesh.Mesh, transform, material, bones)
+      .drop()
 ```
 
 ### Tier 3 — Per-Model CPU Skinning (`Animation3DState`)
@@ -93,13 +100,38 @@ buffer
   .drop()
 ```
 
+> _**NOTE — raylib has two Tier-3 paths.**_ Passing a bare `Animation3DState` to
+> `.animatedModel(...)` is the **legacy mutating path**: it applies the pose to the
+> embedded model via `UpdateModelAnimation`, so the model holds one pose at a time
+> (last writer wins), and any `pose` argument is ignored. Wrapping shared mesh data
+> plus the state in the `AnimatedModel` record selects the **opt-in GPU path**:
+> drawing emits one skinned-mesh command per sub-mesh carrying a per-instance bone
+> palette — no model mutation, so the same model can be drawn with several
+> different poses in one frame, and the `pose` parameter is honored (see
+> [Bone Poses, Queries, and Attachments](#bone-poses-queries-and-attachments)).
+>
+> ```fsharp
+> match AnimatedMesh.fromModel model with
+> | ValueSome mesh ->
+>     let am = AnimatedModel.create mesh anim   // anim: Animation3DState
+>     buffer.animatedModel(am, transform).drop()
+> | ValueNone -> ()
+> ```
+>
+> On the GPU path the `transform` argument is the full world transform (raylib's
+> internal `model.Transform` is not composed in, matching every other mesh draw).
+> The per-mesh material resolver (`animatedModelWithPerMesh`) exists only on the
+> legacy path. MonoGame's `.animatedModel(...)` never mutates — it always works
+> like the GPU path.
+
 ### When to Use Which
 
 | Scenario | Tier | Why |
 |----------|------|-----|
 | 1–5 animated characters | Tier 3 | Simple, no shader changes |
+| Several poses of the same model per frame | Tier 3, raylib `AnimatedModel` | GPU path — no mutation, per-instance palettes |
 | 10+ animated enemies | Tier 2 | Share mesh, GPU skinning |
-| Hundreds of units (RTS) | Tier 2 + instancing | instanced skinned draws |
+| Hundreds of units (RTS) | — | Skinned + instanced draws are not supported (no per-instance bone palette) |
 
 ## Animation3DClips API
 
@@ -120,6 +152,31 @@ let count = Animation3DClips.count clips           // 3
 let empty = Animation3DClips.isEmpty clips         // false
 let idx = Animation3DClips.tryGetClipIndex "walk" clips  // ValueSome 1
 ```
+
+### Loading clips from multiple files (raylib)
+
+Asset packs sometimes split a skeleton's clips across files — for example KayKit ships movement clips in `Rig_Medium_MovementBasic.glb` and general clips in `Rig_Medium_General.glb`. Concatenating two `ModelAnimation[]` arrays by hand is **not safe** on raylib: keyframe poses are index-based and clips carry no bone names, so a clip from a file whose skeleton orders the same bones differently (right-side joints first vs left-side first) drives the wrong bones — typically seen as mirrored limbs.
+
+Use `Animation3DClips.merge`, which pairs each file's clips with that file's skeleton bone order and remaps by bone name:
+
+```fsharp
+let movementAnims = assets.ModelAnimations "Rig_Medium_MovementBasic.glb"
+let generalAnims = assets.ModelAnimations "Rig_Medium_General.glb"
+
+// Bone orders come from each file's model skeleton
+let movementBones = Animation3DClips.boneNamesOf movementModel
+let generalBones = Animation3DClips.boneNamesOf generalModel
+
+let clips =
+    Animation3DClips.merge movementBones [|
+        movementBones, movementAnims   // first entry = the skeleton being animated
+        generalBones, generalAnims
+    |]
+```
+
+Clips whose file already follows the target order are sampled directly; the remap costs nothing at runtime. Bones a clip doesn't animate sample as a zeroed pose. The legacy mutating path (`UpdateModelAnimation` via a bare `Animation3DState`) cannot remap — it requires clips from the same file as the model.
+
+MonoGame is unaffected: its clip channels are keyed by bone name, so clips from differently-ordered files resolve correctly without a remap.
 
 ## Animation3DState API
 
@@ -229,6 +286,103 @@ buffer
 
 The shader receives bone matrices as a `boneMatrices[128]` uniform and applies skinning on the GPU via `vertexBoneIndices` / `vertexBoneWeights` vertex attributes.
 
+> _**NOTE — works with the stock raylib native library.**_ raylib uploads those
+> bone vertex attributes only when natively compiled with `SUPPORT_GPU_SKINNING`,
+> which is off by default — including the builds shipped by the raylib-cs NuGet
+> package — leaving skinned meshes stuck in bind pose. Mibo detects the missing
+> buffers and uploads them from managed code when you call
+> `AnimatedMesh.fromModel` or `Animation3DState.create`, so GPU skinning works
+> out of the box regardless of how the native library was built.
+
+## Bone Poses, Queries, and Attachments
+
+Both backends can evaluate an animated model's pose **once per instance per frame** and share the result between the skinned draw, bone queries, and attachment draws. The shared value is a `BonePose`:
+
+| Field | Contents |
+| ----- | -------- |
+| `WorldPoses` | Model-space bone transform for the current frame, per bone — the query/attachment data |
+| `Palette` | Shader skinning palette: `InverseBindPose[i] * WorldPoses[i]`, per bone |
+
+### Evaluating a pose
+
+```fsharp
+// MonoGame — ValueNone when the model has no skeleton
+let pose: BonePose voption = AnimatedModel.computePose animModel
+
+// raylib (AnimatedModel path) — the record's Mesh is non-optional,
+// so this returns a plain BonePose
+let pose: BonePose = AnimatedModel.computePose animModel
+
+// Lower level, both backends
+let pose = Animation3DState.computePose mesh state
+```
+
+The caller owns the value — there is no per-frame caching on the animation state. Compute it once and pass it to everything that needs the pose this frame via the optional `pose` parameter:
+
+```fsharp
+match AnimatedModel.computePose model.PlayerAnim with
+| ValueSome pose ->
+    buffer
+      .animatedModel(model.PlayerAnim, playerTransform, pose = pose)
+      .attachedMesh(
+          model.PlayerAnim, BoneRef.ByName "Hand_R", gripOffset,
+          swordMesh, swordMaterial, playerTransform, pose = pose)
+      .drop()
+| ValueNone -> ()
+```
+
+When `pose` is omitted, the witness computes the pose internally exactly as before. On raylib, `pose` is honored by the `AnimatedModel` (GPU path) witnesses and ignored by the legacy `Animation3DState` (mutating path) witnesses.
+
+> _**NOTE — MonoGame example above.**_ On raylib the same chain works when
+> `model.PlayerAnim` is the `AnimatedModel` record — skip the `match` and bind
+> the pose directly, since raylib's `AnimatedModel.computePose` returns a plain
+> `BonePose` (the record's mesh is non-optional).
+
+### Bone queries
+
+`BoneRef` addresses a bone — `ByName` is the authoring-friendly path (resolved through the mesh's name→index lookup, retained on `AnimatedMesh` at load time), `ByIndex` is the fast path (no lookup):
+
+```fsharp
+// One-off query — recomputes the pose on every call
+let hand: Matrix voption =
+    AnimatedModel.tryGetBoneWorld (BoneRef.ByName "Hand_R") animModel
+
+// Shared pose — query as many bones as you like from one evaluation
+let hand = BonePose.tryGetWorld "Hand_R" mesh pose   // by name
+let root = BonePose.worldAt 0 pose                   // by index, bounds-checked
+```
+
+For hot loops, resolve the name once with `AnimatedMesh.tryFindBoneIndex` and switch to `ByIndex`.
+
+All query results are **model-space** world transforms — row-vector convention on both backends, consumed as-is (no transpose or inverse-bind recovery anywhere in the query path). Compose with the instance transform yourself when you need world space — on raylib use `Raymath.*` ops (`Raymath.MatrixMultiply`), the same as every other transform on that backend.
+
+### Attachment draws
+
+`Draw.attachedMesh` draws a static mesh parented to a bone of an animated model — swords in hands, hats on heads, muzzle-flash anchors:
+
+```fsharp
+buffer.attachedMesh(animModel, bone, localTransform, mesh, material, transform, pose = pose)
+```
+
+The attachment's world transform is **`localTransform * boneWorld * transform`** (row-vector composition): it inherits the instance's full world transform including scale, and `localTransform` is your grip offset/rotation/scale relative to the bone. The draw lowers to the existing plain-mesh command (`DrawPrimitive` on MonoGame, `DrawMesh` on raylib) — no new command types, so attachments get the same lighting/shadow treatment as any other mesh.
+
+> _**MonoGame vertex-space caveat.**_ The attachment mesh's vertices must be in model-root space. Mesh parts extracted from a content-pipeline `Model` are **bone-local** — bake the part's absolute bone transform (`model.CopyAbsoluteBoneTransformsTo` / the part's entry in `mesh.AbsoluteBoneTransforms`) into `localTransform`, or the prop renders offset from the bone. The Platformer3D sample shows the pattern.
+>
+> _**Tip.**_ An unknown bone name is a silent no-op (below), so a typo fails invisibly. Validate attachment bone names once at load time with `AnimatedMesh.tryFindBoneIndex`.
+
+### Missing bones are never an error
+
+- Queries (`AnimatedModel.tryGetBoneWorld`, `BonePose.worldAt`/`tryGetWorld`) return `ValueNone` for an unknown name or out-of-range index.
+- Attachment draws emit **no command** (a silent no-op) for a missing bone.
+
+### One evaluation per frame
+
+A pose evaluation allocates the bone-length arrays and walks every bone — cheap, but not free. When a frame needs the pose in more than one place (the skinned draw plus attachments, or several bone queries), compute it once with `computePose` and pass the value around. `AnimatedModel.tryGetBoneWorld` recomputes the pose on every call — fine for a one-off query, the wrong shape for multi-query frames.
+
+### Attachments are per-instance draws
+
+Skinned + instanced draws are not supported (there is no per-instance bone palette), so an animated model with attachments costs one skinned draw plus one plain-mesh draw per attachment, per instance.
+
 ## Integration with MVU
 
 Animation state lives in your Elmish model. Update in a system, draw in the view:
@@ -262,6 +416,7 @@ Animations are loaded from the model file via `assets.ModelAnimations`. The anim
 2. **Share Animation3DClips**: Create clips once, reuse across all entities using the same model
 3. **Tier 2 for many entities**: Share a single mesh and avoid per-entity model copies — use `AnimatedMesh` + `computeBoneMatrices` + `.skinnedMesh(...)` (raylib), or the shared-mesh path with `.animatedModel(...)` (MonoGame)
 4. **Blend duration**: Keep blend durations short (0.1–0.3s) to minimize double-animation overhead
+5. **One pose evaluation per frame**: When drawing attachments or querying bones, compute the `BonePose` once and pass it as `pose` to `animatedModel`/`attachedMesh` instead of letting each witness re-evaluate it
 
 ## See Also
 

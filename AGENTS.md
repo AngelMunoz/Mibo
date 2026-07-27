@@ -151,6 +151,14 @@ When capturing the View-Projection matrix for shadow mapping:
 - This matches what the batch computes for `mvp` (for identity model transforms)
 - Precomputing VP outside `BeginMode3D` or using `Matrix4x4.CreateLookAt * CreatePerspectiveFieldOfView` may produce different results due to raylib's internal matrix adjustments
 
+#### GPU skinning bone attributes
+
+raylib uploads the `vertexBoneIndices` (location 7) / `vertexBoneWeights` (location 8) vertex buffers only when natively compiled with `SUPPORT_GPU_SKINNING` — off by default in `config.h`, and off in the raylib-cs NuGet native builds. Without them every vertex falls back to bone 0 and skinned meshes render in bind pose. `Mibo.Raylib`'s `Animation3DState.create`/`createByIndex` and `AnimatedMesh.fromModel` detect the empty VBO slots and upload the buffers from managed code via `Rlgl.*` (mirroring `UploadMesh`'s bone branch), writing the ids back into `vboId[7]/[8]` so `UnloadMesh` still owns them. It is a no-op against a natively skinning-enabled build. Keep any new skinned-model entry point routing through that upload.
+
+#### Bone order across animation files
+
+raylib 6 `ModelAnimation` carries no bone names — keyframe poses follow the bone order of the file they were loaded from. Clips from a differently-ordered skeleton file (e.g. KayKit's MovementBasic vs General rigs) drive the wrong bones (mirrored limbs). `Animation3DClips.merge` remaps by bone name at load; `computePose` consults the remap when sampling. The legacy `UpdateModelAnimation` path cannot remap — same-file clips only. MonoGame clips are name-keyed and immune.
+
 ## Instancing opt-in for `beginEffect` shaders
 
 Instanced draws inside a `Draw3D.beginEffect`/`endEffect` scope are shaded by the user shader only when the shader opts in. The opt-in convention is backend-specific (each engine feeds per-instance data differently); the data is the same — a per-instance 4×4 world matrix.

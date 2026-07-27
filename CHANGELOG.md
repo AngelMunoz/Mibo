@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Core, MonoGame 3D, Raylib 3D:** bone pose queries and attachment draws for animated models. The new `BoneRef` type (`ByName` / `ByIndex`) addresses a bone; `Animation3DState.computePose` and `AnimatedModel.computePose` evaluate the pose once per frame into a `BonePose` (per-bone world transforms plus the skinning palette) that bone queries (`AnimatedModel.tryGetBoneWorld`, `BonePose.worldAt`/`tryGetWorld`) and the new `buffer.attachedMesh(animModel, bone, localTransform, mesh, material, transform, ?pose)` member share with the skinned draw. Attachments compose as `localTransform * boneWorld * transform` and inherit the instance's full world transform including scale; missing bones are never an error — queries return `ValueNone` and attachment draws emit nothing. `AnimatedMesh` now retains a bone name→index lookup (plus bone names/parents on raylib) for `ByName` resolution. See `docs/animation3d.md`.
+- **Core, MonoGame 3D, Raylib 3D:** `buffer.animatedModel`/`animatedModelWith`/`animatedModelWithPerMesh` take an optional `pose` parameter so one pose evaluation per frame serves the draw plus any bone queries and attachment draws; omitting it keeps the previous behavior. **Breaking (binary):** adding an optional parameter changes the compiled (IL) signature of these members — existing source compiles unchanged, but assemblies compiled against a previous Mibo version must be recompiled.
+- **Raylib 3D:** the new `AnimatedModel` record (shared mesh + per-entity state) is an opt-in GPU skinning path for `animatedModel`: it draws through the GPU-skinned path with a per-instance palette instead of mutating the model via `UpdateModelAnimation`, so the same model can be drawn with several different poses in one frame, and the `pose` parameter is honored. Passing a bare `Animation3DState` keeps the legacy mutating path unchanged (and ignores `pose`).
+- **Raylib 3D:** `Animation3DClips.merge` combines animation clips loaded from several files into one clip set, remapping each clip's keyframe poses by bone name when a source file's skeleton orders bones differently than the model being animated (e.g. KayKit's MovementBasic vs General rigs, where left/right sides are swapped — without the remap those clips play mirrored). Companion helpers `Animation3DClips.boneNamesOf` and `Animation3DClips.buildBoneRemap` expose the pieces. MonoGame needs no equivalent — its clip channels are keyed by bone name. See `docs/animation3d.md` → "Loading clips from multiple files".
+
+### Fixed
+
+- **Raylib 3D:** GPU skinning now works with the stock raylib native library. raylib uploads the bone index/weight vertex buffers only when natively compiled with `SUPPORT_GPU_SKINNING` (off by default, including the raylib-cs NuGet builds), so skinned meshes previously rendered frozen in bind pose; `Animation3DState.create`/`AnimatedMesh.fromModel` now detect the missing buffers and upload them from managed code. `AnimatedMesh.computeBoneMatrices` also returns the bone palette in the layout the skinning shader actually expects — the two bugs masked each other, since the path could never render animated output before.
+
 ## [3.3.0] - 2026-07-25
 
 ### Added

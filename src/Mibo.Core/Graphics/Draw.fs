@@ -27,6 +27,7 @@ namespace Mibo.Elmish.Graphics
 open System.Numerics
 open System.Runtime.CompilerServices
 open Mibo
+open Mibo.Animation
 open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics3D
 open Mibo.Layout3D
@@ -1180,41 +1181,61 @@ type Draw =
   /// Draws an animated (skinned) model from the backend's animation state
   /// record. The witness derives the bone palette (MonoGame: from the state;
   /// raylib: applies it to the model).
+  /// <paramref name="pose"/> lets the caller share one pose evaluation between
+  /// this draw and any number of bone queries / attachment draws
+  /// (see <c>attachedMesh</c>). On raylib it is honored by the
+  /// <c>AnimatedModel</c> witness (GPU skinning path) and ignored by the legacy
+  /// <c>Animation3DState</c> witness (mutating path). When omitted, the witness
+  /// computes the pose internally exactly as before.
   /// </summary>
   [<Extension>]
-  static member inline animatedModel<'B, 'A, 'X
-    when 'B: (member AddAnimatedModel: 'A * 'X -> unit)>
-    (buffer: 'B, animModel: 'A, transform: 'X)
+  static member inline animatedModel<'B, 'A, 'X, 'Pose
+    when 'B: (member AddAnimatedModel: 'A * 'X * 'Pose voption -> unit)>
+    (buffer: 'B, animModel: 'A, transform: 'X, [<Struct>] ?pose: 'Pose)
     : 'B =
-    buffer.AddAnimatedModel(animModel, transform)
+    buffer.AddAnimatedModel(animModel, transform, pose)
     buffer
 
-  /// <summary>Draws an animated model with a whole-model material override.</summary>
+  /// <summary>Draws an animated model with a whole-model material override.
+  /// <paramref name="pose"/> shares one pose evaluation with bone queries and
+  /// attachment draws — see <c>animatedModel</c>.</summary>
   [<Extension>]
-  static member inline animatedModelWith<'B, 'A, 'X, 'Mat
-    when 'B: (member AddAnimatedModelWith: 'A * 'X * 'Mat -> unit)>
-    (buffer: 'B, animModel: 'A, transform: 'X, material: 'Mat)
-    : 'B =
-    buffer.AddAnimatedModelWith(animModel, transform, material)
-    buffer
-
-  /// <summary>Draws an animated model with a per-sub-mesh material resolver.</summary>
-  [<Extension>]
-  static member inline animatedModelWithPerMesh<'B, 'A, 'X, 'Mat
-    when 'B: (member AddAnimatedModelWithPerMesh:
-      'A * 'X * (int -> 'Mat) -> unit)>
+  static member inline animatedModelWith<'B, 'A, 'X, 'Mat, 'Pose
+    when 'B: (member AddAnimatedModelWith:
+      'A * 'X * 'Mat * 'Pose voption -> unit)>
     (
       buffer: 'B,
       animModel: 'A,
       transform: 'X,
-      [<InlineIfLambda>] resolver: int -> 'Mat
+      material: 'Mat,
+      [<Struct>] ?pose: 'Pose
     ) : 'B =
-    buffer.AddAnimatedModelWithPerMesh(animModel, transform, resolver)
+    buffer.AddAnimatedModelWith(animModel, transform, material, pose)
+
+    buffer
+
+  /// <summary>Draws an animated model with a per-sub-mesh material resolver.
+  /// <paramref name="pose"/> shares one pose evaluation with bone queries and
+  /// attachment draws — see <c>animatedModel</c>.</summary>
+  [<Extension>]
+  static member inline animatedModelWithPerMesh<'B, 'A, 'X, 'Mat, 'Pose
+    when 'B: (member AddAnimatedModelWithPerMesh:
+      'A * 'X * (int -> 'Mat) * 'Pose voption -> unit)>
+    (
+      buffer: 'B,
+      animModel: 'A,
+      transform: 'X,
+      [<InlineIfLambda>] resolver: int -> 'Mat,
+      [<Struct>] ?pose: 'Pose
+    ) : 'B =
+    buffer.AddAnimatedModelWithPerMesh(animModel, transform, resolver, pose)
+
     buffer
 
   /// <summary>
   /// Draws a skinned mesh with an explicit bone palette and material.
-  /// <b>raylib only</b> — MonoGame's skinned path goes through AnimatedModel.
+  /// <b>raylib only</b> — MonoGame's skinned path goes through AnimatedModel;
+  /// use <c>animatedModel(..., pose)</c> for the MonoGame explicit-palette path.
   /// </summary>
   [<Extension>]
   static member inline skinnedMesh<'B, 'M, 'X, 'Mat, 'Bones
@@ -1222,6 +1243,48 @@ type Draw =
     (buffer: 'B, mesh: 'M, transform: 'X, material: 'Mat, bones: 'Bones)
     : 'B =
     buffer.AddSkinnedMesh(mesh, transform, material, bones)
+    buffer
+
+  /// <summary>
+  /// Draws a static <paramref name="mesh"/> parented to <paramref name="bone"/>
+  /// of the animated model <paramref name="animModel"/>. The attachment's world
+  /// transform is <c>localTransform * boneWorld * transform</c> (row-vector
+  /// convention): it inherits the instance's full world transform including
+  /// scale, and <paramref name="localTransform"/> is the caller's grip
+  /// offset/rotation/scale relative to the bone. An unknown bone is a no-op —
+  /// no command is emitted. Pass the same <paramref name="pose"/> given to
+  /// <c>animatedModel</c> to avoid a second pose evaluation this frame.
+  /// </summary>
+  /// <remarks>
+  /// The attachment mesh's vertices must be in model-root space. On MonoGame,
+  /// mesh parts extracted from a content-pipeline <c>Model</c> are bone-local —
+  /// bake the part's absolute bone transform (<c>CopyAbsoluteBoneTransformsTo</c>)
+  /// into <paramref name="localTransform"/> or the prop renders offset.
+  /// </remarks>
+  [<Extension>]
+  static member inline attachedMesh<'B, 'A, 'X, 'M, 'Mat, 'Pose
+    when 'B: (member AddAttachedMesh:
+      'A * BoneRef * 'X * 'M * 'Mat * 'X * 'Pose voption -> unit)>
+    (
+      buffer: 'B,
+      animModel: 'A,
+      bone: BoneRef,
+      localTransform: 'X,
+      mesh: 'M,
+      material: 'Mat,
+      transform: 'X,
+      [<Struct>] ?pose: 'Pose
+    ) : 'B =
+    buffer.AddAttachedMesh(
+      animModel,
+      bone,
+      localTransform,
+      mesh,
+      material,
+      transform,
+      pose
+    )
+
     buffer
 
   /// <summary>Draws a billboard (camera-facing quad) with a texture.

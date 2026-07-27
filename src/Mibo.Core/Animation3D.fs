@@ -80,6 +80,20 @@ module Animation3DClipsInfo =
     clips.KeyFrameCounts.Length = 0
 
 /// <summary>
+/// Addresses a bone of an animated model for pose queries and attachment draws.
+/// <c>ByName</c> is the authoring-friendly path (resolved through the mesh's
+/// name→index lookup); <c>ByIndex</c> is the fast path (no lookup).
+/// A missing bone is never an error: queries return <c>ValueNone</c> and
+/// attachment draws emit no command.
+/// </summary>
+[<RequireQualifiedAccess; Struct>]
+type BoneRef =
+  /// <summary>Look the bone up by its authored name (e.g. "Hand_R").</summary>
+  | ByName of name: string
+  /// <summary>Address the bone directly by index (zero lookup cost).</summary>
+  | ByIndex of index: int
+
+/// <summary>
 /// Runtime state for a playing 3D skeletal animation. Pure value — no backend
 /// types. Each entity that needs independent animation must have its own copy.
 /// </summary>

@@ -1,3 +1,5 @@
+#nowarn "9"
+
 namespace Mibo.Elmish.Graphics3D
 
 open System
@@ -116,6 +118,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
 // ─────────────────────────────────────────────────────────────────────────────
 
 open System.Numerics
+open FSharp.NativeInterop
 open Raylib_cs
 open Mibo.Animation
 open Mibo.Elmish
@@ -177,17 +180,26 @@ type RenderBuffer3D with
       )
     )
 
-  /// raylib animated draw: applies the state's bone pose to its embedded model
-  /// (raylib's UpdateModelAnimation path), then draws the model.
+  /// raylib animated draw (legacy mutating path): applies the state's bone pose
+  /// to its embedded model (raylib's UpdateModelAnimation path), then draws the
+  /// model. The <paramref name="pose"/> argument is ignored — the mutating path
+  /// derives nothing from a palette; use the <c>AnimatedModel</c> overload for
+  /// the GPU skinning path.
   member inline b.AddAnimatedModel
-    (state: Animation3DState, transform: Matrix4x4)
+    (state: Animation3DState, transform: Matrix4x4, _pose: BonePose voption)
     =
     Animation3DState.applyToModel state
     b.Add(Command3D.DrawModel(state.Model, transform))
 
+  /// Legacy mutating path — <paramref name="_pose"/> is ignored; see the
+  /// <c>Animation3DState</c> <c>AddAnimatedModel</c> overload.
   member inline b.AddAnimatedModelWith
-    (state: Animation3DState, transform: Matrix4x4, material: Material3D)
-    =
+    (
+      state: Animation3DState,
+      transform: Matrix4x4,
+      material: Material3D,
+      _pose: BonePose voption
+    ) =
     Animation3DState.applyToModel state
 
     b.Add(
@@ -198,11 +210,14 @@ type RenderBuffer3D with
       )
     )
 
+  /// Legacy mutating path — <paramref name="_pose"/> is ignored; see the
+  /// <c>Animation3DState</c> <c>AddAnimatedModel</c> overload.
   member inline b.AddAnimatedModelWithPerMesh
     (
       state: Animation3DState,
       transform: Matrix4x4,
-      [<InlineIfLambda>] resolver: int -> Material3D
+      [<InlineIfLambda>] resolver: int -> Material3D,
+      _pose: BonePose voption
     ) =
     Animation3DState.applyToModel state
 
@@ -213,6 +228,100 @@ type RenderBuffer3D with
         MaterialOverride.PerMesh resolver
       )
     )
+
+  /// <summary>
+  /// raylib animated draw (GPU skinning path): emits one <c>DrawSkinnedMesh</c>
+  /// per sub-mesh carrying the shared bone palette — no model mutation, so the
+  /// same model can be drawn with several different poses in one frame.
+  /// When <paramref name="pose"/> is <c>ValueNone</c>, the pose is computed from
+  /// the model's state. <paramref name="transform"/> is the full world transform
+  /// (the pipeline applies it directly, like every other mesh draw —
+  /// <c>model.Transform</c> is not composed in).
+  /// </summary>
+  member inline b.AddAnimatedModel
+    (am: AnimatedModel, transform: Matrix4x4, pose: BonePose voption)
+    =
+    let p =
+      match pose with
+      | ValueSome p -> p
+      | ValueNone -> Animation3DState.computePose am.Mesh am.State
+
+    let model = am.State.Model
+    let meshes = model.MeshesAsSpan()
+
+    for i = 0 to meshes.Length - 1 do
+      // NOTE: MeshMaterialAsSpan() is MaterialCount-long in raylib-cs — index
+      // the MeshMaterial pointer per mesh directly, like the pipeline does.
+      let matIdx = NativePtr.get model.MeshMaterial i
+      let raylibMat = NativePtr.get model.Materials matIdx
+      let mat = Material3D.fromRaylibMaterial raylibMat
+      b.Add(Command3D.DrawSkinnedMesh(meshes[i], transform, mat, p.Palette))
+
+  /// <summary>
+  /// GPU skinning path with a whole-model material override — see the
+  /// <c>AnimatedModel</c> <c>AddAnimatedModel</c> overload.
+  /// </summary>
+  member inline b.AddAnimatedModelWith
+    (
+      am: AnimatedModel,
+      transform: Matrix4x4,
+      material: Material3D,
+      pose: BonePose voption
+    ) =
+    let p =
+      match pose with
+      | ValueSome p -> p
+      | ValueNone -> Animation3DState.computePose am.Mesh am.State
+
+    let meshes = am.State.Model.MeshesAsSpan()
+
+    for i = 0 to meshes.Length - 1 do
+      b.Add(
+        Command3D.DrawSkinnedMesh(meshes[i], transform, material, p.Palette)
+      )
+
+  /// <summary>
+  /// Draws a static <paramref name="mesh"/> parented to <paramref name="bone"/>
+  /// of the animated model <paramref name="am"/>. The attachment's world
+  /// transform is <c>localTransform * boneWorld * transform</c> (applied
+  /// left-to-right). All three matrices must be in raylib's native matrix
+  /// layout — build them with <c>Raymath.*</c> ops (<c>boneWorld</c> already
+  /// is, coming from <c>BonePose.WorldPoses</c>); never mix in
+  /// <c>System.Numerics.Matrix4x4.*</c> results, which are the transpose of
+  /// the native layout. An unknown bone is a no-op — no command
+  /// is emitted. When <paramref name="pose"/> is <c>ValueNone</c>, the pose is
+  /// computed from the model's state; pass the same pose given to
+  /// <c>animatedModel</c> to avoid a second evaluation this frame.
+  /// </summary>
+  member inline b.AddAttachedMesh
+    (
+      am: AnimatedModel,
+      bone: BoneRef,
+      localTransform: Matrix4x4,
+      mesh: Mesh,
+      material: Material3D,
+      transform: Matrix4x4,
+      pose: BonePose voption
+    ) =
+    let p =
+      match pose with
+      | ValueSome p -> p
+      | ValueNone -> Animation3DState.computePose am.Mesh am.State
+
+    (match bone with
+     | BoneRef.ByIndex i -> BonePose.worldAt i p
+     | BoneRef.ByName name -> BonePose.tryGetWorld name am.Mesh p)
+    |> ValueOption.iter(fun boneWorld ->
+      b.Add(
+        Command3D.DrawMesh(
+          mesh,
+          Raymath.MatrixMultiply(
+            Raymath.MatrixMultiply(localTransform, boneWorld),
+            transform
+          ),
+          material
+        )
+      ))
 
   member inline b.AddSkinnedMesh
     (mesh: Mesh, transform: Matrix4x4, material: Material3D, bones: Matrix4x4[])

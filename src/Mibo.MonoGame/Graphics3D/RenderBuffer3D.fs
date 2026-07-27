@@ -182,22 +182,35 @@ type RenderBuffer3D with
       )
     )
 
-  /// MonoGame animated draw: derives the bone palette from the state.
-  member inline b.AddAnimatedModel(am: AnimatedModel, transform: Matrix) =
+  /// MonoGame animated draw: derives the bone palette from the state, or reuses
+  /// a caller-evaluated pose shared with bone queries and attachment draws.
+  member inline b.AddAnimatedModel
+    (am: AnimatedModel, transform: Matrix, pose: BonePose voption)
+    =
     let bones =
-      match am.Mesh with
-      | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
-      | ValueNone -> [||]
+      match pose with
+      | ValueSome p -> p.Palette
+      | ValueNone ->
+        match am.Mesh with
+        | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
+        | ValueNone -> [||]
 
     b.Add(Command3D.DrawAnimatedModel(am.Model, transform, bones))
 
   member inline b.AddAnimatedModelWith
-    (am: AnimatedModel, transform: Matrix, material: Material3D)
-    =
+    (
+      am: AnimatedModel,
+      transform: Matrix,
+      material: Material3D,
+      pose: BonePose voption
+    ) =
     let bones =
-      match am.Mesh with
-      | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
-      | ValueNone -> [||]
+      match pose with
+      | ValueSome p -> p.Palette
+      | ValueNone ->
+        match am.Mesh with
+        | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
+        | ValueNone -> [||]
 
     b.Add(
       Command3D.DrawAnimatedModelWith(
@@ -212,12 +225,16 @@ type RenderBuffer3D with
     (
       am: AnimatedModel,
       transform: Matrix,
-      [<InlineIfLambda>] resolver: int -> Material3D
+      [<InlineIfLambda>] resolver: int -> Material3D,
+      pose: BonePose voption
     ) =
     let bones =
-      match am.Mesh with
-      | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
-      | ValueNone -> [||]
+      match pose with
+      | ValueSome p -> p.Palette
+      | ValueNone ->
+        match am.Mesh with
+        | ValueSome mesh -> Animation3DState.computeBonePalette mesh am.State
+        | ValueNone -> [||]
 
     b.Add(
       Command3D.DrawAnimatedModelWith(
@@ -227,6 +244,42 @@ type RenderBuffer3D with
         MaterialOverride.PerMesh resolver
       )
     )
+
+  /// Draws a static mesh parented to a bone of an animated model. World =
+  /// localTransform * boneWorld * transform (row-vector composition — the
+  /// attachment inherits the instance's full world transform). An unknown bone
+  /// is a no-op: no command is emitted. Pass the same pose given to
+  /// AddAnimatedModel to avoid a second pose evaluation this frame.
+  member inline b.AddAttachedMesh
+    (
+      am: AnimatedModel,
+      bone: BoneRef,
+      localTransform: Matrix,
+      mesh: PrimitiveMesh,
+      material: Material3D,
+      transform: Matrix,
+      pose: BonePose voption
+    ) =
+    am.Mesh
+    |> ValueOption.bind(fun animMesh ->
+      let pose' =
+        match pose with
+        | ValueSome p -> p
+        | ValueNone -> Animation3DState.computePose animMesh am.State
+
+      match bone with
+      | BoneRef.ByIndex i -> BonePose.worldAt i pose'
+      | BoneRef.ByName name ->
+        AnimatedMesh.tryFindBoneIndex name animMesh
+        |> ValueOption.bind(fun i -> BonePose.worldAt i pose'))
+    |> ValueOption.iter(fun boneWorld ->
+      b.Add(
+        Command3D.DrawPrimitive(
+          mesh,
+          localTransform * boneWorld * transform,
+          material
+        )
+      ))
 
   // ── Billboards & Lines ──
 
