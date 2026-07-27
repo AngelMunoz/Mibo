@@ -41,6 +41,7 @@
     <Compile Include="Graphics3D/RenderPipeline3D.fs" />
     <Compile Include="Graphics3D/Renderer3D.fs" />
     <Compile Include="Graphics3D/Draw3D.fs" />
+    <Compile Include="Graphics3D/Pipelines/BlockPlan.fs" />
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
     <Compile Include="Graphics3D/Pipelines/Shaders.fs" />
     <Compile Include="Graphics3D/Pipelines/SceneUpload.fs" />

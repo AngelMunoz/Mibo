@@ -6,15 +6,14 @@ open Mibo.Elmish
 open Mibo.Elmish.Graphics3D
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Early-defined scene types (LightBuffers, ShadowResult, SceneContext).
+// Early-defined scene types (LightBuffers, ShadowResult, SceneContext, ForwardState).
 //
 // These live in their own file, compiled BEFORE Command3D.fs, because the
 // DrawImmediate command's callback carries a SceneContext — and SceneContext
-// references LightBuffers + ShadowResult. The rest of the scene gather (the
-// SceneData record, SceneData.gather, ForwardState) stays in Pipelines/SceneData.fs;
-// only the types a public callback signature needs are hoisted here.
+// references LightBuffers + ShadowResult. ForwardState shares the file so the
+// pipeline files (compiled later) can thread it byref.
 //
-// Same namespace as SceneData.fs (Mibo.Elmish.Graphics3D.Pipelines) so existing
+// Same namespace as the pipelines (Mibo.Elmish.Graphics3D.Pipelines) so existing
 // references resolve unchanged — a namespace can span multiple files.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -24,18 +23,25 @@ open Mibo.Elmish.Graphics3D
 /// </summary>
 /// <remarks>
 /// Public so custom pipelines and the shadow pass can read the gathered lights.
+/// <para>
+/// In single-camera frames the accumulator holds every light command in the buffer,
+/// frame-globally. In frames with more than one camera block the lights are scoped per
+/// block: a block that issues its own light commands resets the accumulator to the frame
+/// defaults (the light commands issued outside any camera block) and applies its own
+/// commands in-order; a block that issues none inherits the previous block's set.
+/// </para>
 /// </remarks>
 type LightBuffers = {
-  /// <summary>Ambient light for the frame (single slot).</summary>
+  /// <summary>Ambient light for the active camera block (single slot).</summary>
   mutable Ambient: AmbientLight3D voption
 
-  /// <summary>Directional lights accumulated this frame.</summary>
+  /// <summary>Directional lights accumulated for the active camera block.</summary>
   DirLights: ResizeArray<DirectionalLight3D>
 
-  /// <summary>Point lights accumulated this frame.</summary>
+  /// <summary>Point lights accumulated for the active camera block.</summary>
   PointLights: ResizeArray<PointLight3D>
 
-  /// <summary>Spot lights accumulated this frame.</summary>
+  /// <summary>Spot lights accumulated for the active camera block.</summary>
   SpotLights: ResizeArray<SpotLight3D>
 }
 
@@ -64,6 +70,16 @@ module LightBuffers =
     lights.DirLights.Clear()
     lights.PointLights.Clear()
     lights.SpotLights.Clear()
+
+  /// <summary>Copies the contents of <paramref name="source"/> into <paramref name="target"/>, replacing whatever target held.</summary>
+  let inline copyInto (source: LightBuffers) (target: LightBuffers) =
+    target.Ambient <- source.Ambient
+    target.DirLights.Clear()
+    target.DirLights.AddRange(source.DirLights)
+    target.PointLights.Clear()
+    target.PointLights.AddRange(source.PointLights)
+    target.SpotLights.Clear()
+    target.SpotLights.AddRange(source.SpotLights)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowResult — the shadow pass output, threaded to both Shade overrides and
@@ -146,7 +162,8 @@ type SceneContext = {
   /// <summary>The active camera config.</summary>
   Camera: Camera3D
 
-  /// <summary>The frame's accumulated lights (ambient + directional + point + spot).</summary>
+  /// <summary>The active light set (ambient + directional + point + spot). Frame-global in
+  /// single-camera frames; scoped to the current camera block in multi-camera-block frames.</summary>
   Lights: LightBuffers
 
   /// <summary>The frame's shadow pass output — ValueNone when no shadow-casting light / missing DepthShadow.fx.</summary>
@@ -154,4 +171,26 @@ type SceneContext = {
 
   /// <summary>Total elapsed game time, in seconds — the animation clock.</summary>
   Time: float32
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ForwardState — per-frame forward-rendering state, threaded byref through dispatch.
+//
+// Mirrors the RendererState pattern from Renderer2D.fs: a mutable struct threaded by reference so
+// dispatch avoids heap allocation on the hot path. Public because the staged base's virtual Shade
+// exposes it (byref) to subclass / object-expression overrides — a shading strategy needs the
+// active camera's view/projection. Repopulated each frame by the gather + forward-pass; overrides
+// read it, they should not mutate it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>Per-frame forward-rendering state, threaded byref through dispatch.</summary>
+/// <remarks>Mutable struct (hot path, no allocation); repopulated each frame by the forward pass.</remarks>
+[<Struct>]
+type ForwardState = {
+  mutable HasCamera: bool
+  mutable View: Matrix
+  mutable Projection: Matrix
+  mutable CurrentCamera: Camera3D
+  mutable CurrentConfig: Camera3DConfig voption
+  mutable SavedViewport: Viewport
 }

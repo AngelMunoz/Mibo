@@ -69,6 +69,16 @@ module LightBuffers =
     lights.PointLights.Clear()
     lights.SpotLights.Clear()
 
+  /// <summary>Copies the contents of <paramref name="source"/> into <paramref name="target"/>, replacing whatever target held.</summary>
+  let inline copyInto (source: LightBuffers) (target: LightBuffers) =
+    target.Ambient <- source.Ambient
+    target.DirLights.Clear()
+    target.DirLights.AddRange(source.DirLights)
+    target.PointLights.Clear()
+    target.PointLights.AddRange(source.PointLights)
+    target.SpotLights.Clear()
+    target.SpotLights.AddRange(source.SpotLights)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowResult — the shadow pass output, threaded to SceneUpload and SceneContext
 // so a custom/user shader can opt into shadow sampling by name.

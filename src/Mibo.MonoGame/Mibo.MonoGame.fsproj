@@ -40,7 +40,7 @@
     <Compile Include="Graphics3D/RenderTargetPool3D.fs" />
     <Compile Include="Graphics3D/RenderPipeline3D.fs" />
     <Compile Include="Graphics3D/Renderer3D.fs" />
-    <Compile Include="Graphics3D/Pipelines/SceneData.fs" />
+    <Compile Include="Graphics3D/Pipelines/BlockPlan.fs" />
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
     <Compile Include="Graphics3D/Pipelines/PbrUniforms.fs" />
     <Compile Include="Graphics3D/Pipelines/SceneUpload.fs" />
