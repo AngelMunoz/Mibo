@@ -243,6 +243,12 @@ buffer
 > produce backend-appropriate rectangles; for a picture-in-picture view, compose
 > `render` + `withViewport` + `withClear` yourself and emit that camera after the main one.
 
+> _**NOTE — lights and shadows are scoped per camera block.**_ A view that sets no
+> lights (like the minimap above) inherits the running set, so same-world multi-view
+> works with no extra setup. A view that sets its own lights starts from the frame
+> defaults instead — useful when the views show different worlds. See
+> [Buffers & Commands → Light scoping](buffer-and-commands.html#light-scoping-across-camera-blocks).
+
 See [Camera](../camera.html) for the full `Camera3DConfig` API.
 
 ## 2D overlay on 3D

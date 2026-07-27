@@ -157,7 +157,31 @@ let pipeline = ForwardPbrPipeline(
 `MAX_SPOT_LIGHTS` constants in `ForwardPbr.fx`). The `ForwardPipeline` constructor takes no
 light-count argument; to change them you recompile the `.fx` with different `#define`s.
 
-Exceeding the limit silently drops extra lights on both backends.
+Budgets apply **per camera block**: in buffers with more than one camera block, each block
+gets its own ambient slot and light arrays (see
+[Lights across camera blocks](#lights-across-camera-blocks)); in single-camera buffers they
+apply to the whole frame.
+
+Exceeding the limit silently drops extra lights on both backends. For directional lights
+specifically, only the **first** directional light in the active set is shaded, and only it
+can cast shadows — later directional lights in the same set are ignored entirely.
+
+## Lights across camera blocks
+
+In single-camera buffers, lights are frame-global. In buffers with more than one camera
+block, lights are scoped per camera block: a block that issues its own light commands starts
+from the frame defaults (lights emitted before the first camera block or between blocks) and
+applies its own commands in order; a block that issues none inherits the previous block's set
+plus any lights emitted in between. A block can add lights but cannot remove inherited ones,
+and lights emitted after the last block affect nothing. See
+[Buffers & Commands → Light scoping](buffer-and-commands.html#light-scoping-across-camera-blocks)
+for the full placement rules.
+
+Shadows follow the same scoping. Each camera block with shadow-casting lights renders its own
+shadow map, so a multi-block buffer costs one shadow pass per block. `.setShadowOrigin(...)`
+applies only to the block it appears in; the `.enableShadows()`/`.disableShadows()` toggle
+carries into later blocks' initial state. Single-camera buffers behave exactly as single-pass
+frames — one shadow map for the whole frame, no per-block cost.
 
 ## Shadow configuration
 

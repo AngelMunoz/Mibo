@@ -251,6 +251,13 @@ buffer
   .drop()
 ```
 
+Each split-screen half is its own camera block, so lights and shadows can differ per
+view: a block that sets no lights inherits the scene's running set, while a block that
+sets its own lights (an indoor and an outdoor world, day and night sides) starts from
+the frame defaults and renders its own shadow map. See
+[Buffers & Commands → Light scoping](graphics3d/buffer-and-commands.html#light-scoping-across-camera-blocks)
+and [3D Lighting → Lights across camera blocks](graphics3d/lighting.html#lights-across-camera-blocks).
+
 ### Mouse picking
 
 Cast a ray from a screen position into the 3D scene with `Camera3D.screenPointToRay` (both backends):

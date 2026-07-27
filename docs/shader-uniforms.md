@@ -95,7 +95,9 @@ on MonoGame).
 
 ### Shadows (opt-in by declaration)
 
-Only uploaded when the frame produced a shadow atlas. A shader that declares
+Only uploaded when the active camera block produced a shadow atlas — in buffers with
+more than one camera block these are re-uploaded at each block's start and always
+describe the block being drawn. A shader that declares
 none of these renders unshadowed at no cost.
 
 | Uniform | Type | Source |
@@ -241,8 +243,8 @@ fields (as F# values, not shader uniforms):
 | `View` | camera view matrix | |
 | `Projection` | camera projection matrix | |
 | `Camera` | active `Camera3D` | position, target, up, fov, planes |
-| `Lights` | `LightBuffers` | ambient + directional + point + spot accumulators |
-| `Shadows` | `ShadowResult voption` | `ValueNone` when no shadow-casting light |
+| `Lights` | `LightBuffers` | ambient + directional + point + spot accumulators (in multi-block buffers, the current camera block's set) |
+| `Shadows` | `ShadowResult voption` | `ValueNone` when no shadow-casting light (in multi-block buffers, the current camera block's shadow pass output) |
 | `Time` | `float32` | Total elapsed game time, seconds |
 
 Set whatever uniforms your own shader needs directly from these values.

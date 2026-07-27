@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **MonoGame 3D:** **Breaking (behavioral):** in frames with more than one camera block, lights (ambient, directional, point, spot), the shadow origin, and shadow casting are now scoped per camera block. A block that sets its own lights starts from the frame defaults (lights emitted before the first camera block or between blocks) and applies them in order; a block that sets none inherits the running set. Each camera block renders its own shadow map, so multi-block frames cost one shadow pass per block. Single-camera frames are unchanged.
+- **Raylib 3D:** **Breaking (behavioral):** the same per-camera-block scoping: lights no longer accumulate across blocks that set their own lights, and the shadow pass runs per camera block instead of once per frame. Single-camera frames are unchanged.
+- **3D:** **Breaking (behavioral):** only the first directional light is shaded, and only it can cast shadows, on both backends. Previously a frame whose first directional light didn't cast could still be shadowed by a later casting light's shadow map, and a casting directional light could render a shadow map nothing sampled.
+
+### Deprecated
+
+- **3D:** `LightBuffers.defaults` is obsolete on both backends: it is a single shared mutable accumulator, so every consumer aliases the same light buffers. Use `LightBuffers.create` for per-instance state instead.
+
+### Fixed
+
+- **MonoGame 3D:** two live 3D pipelines no longer bleed lights into each other; each pipeline now accumulates lights in its own buffers.
+
 ## [3.3.0] - 2026-07-25
 
 ### Added
