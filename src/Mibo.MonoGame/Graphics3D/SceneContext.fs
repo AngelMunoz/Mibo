@@ -62,6 +62,7 @@ module LightBuffers =
     }
 
   /// <summary>Default-capacity empty accumulator (3 dir / 8 point / 4 spot).</summary>
+  [<System.Obsolete("Shared mutable accumulator: all consumers alias the same buffers. Use LightBuffers.create for per-instance state.")>]
   let defaults: LightBuffers = create 3 8 4
 
   /// <summary>Resets all light accumulators to empty.</summary>
