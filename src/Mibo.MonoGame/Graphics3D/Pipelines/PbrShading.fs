@@ -44,20 +44,29 @@ type internal MaterialKey = {
 }
 
 /// <summary>Per-frame scene state the PBR handlers read (passed byref, no allocation).</summary>
+/// <remarks>
+/// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.ForwardFrame.Lights"/> is frame-global in
+/// single-camera frames; in frames with more than one camera block it is scoped to the block
+/// currently being drawn (reset-with-inheritance — see
+/// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.LightBuffers"/>).
+/// </remarks>
 [<Struct>]
 type ForwardFrame = {
-  /// <summary>The frame's accumulated lights.</summary>
+  /// <summary>The active light set (see type remarks).</summary>
   Lights: LightBuffers
   /// <summary>The pooled bone-palette scratch (shared with the shadow pass) for skinned draws.</summary>
   BonePaletteScratch: Matrix[]
-  /// <summary>Per-light shadow atlas slots (-1 = no shadow), indexed by PointLights position.</summary>
-  PointShadowSlots: int[]
-  /// <summary>Per-light shadow atlas slots (-1 = no shadow), indexed by SpotLights position.</summary>
-  SpotShadowSlots: int[]
-  /// <summary>The frame's shadow pass output — ValueNone when no shadow-casting light / missing DepthShadow.fx.
+  /// <summary>Per-light shadow atlas slots (-1 = no shadow), indexed by PointLights position.
+  /// Reseated from the shadow pass output at each camera block's start.</summary>
+  mutable PointShadowSlots: int[]
+  /// <summary>Per-light shadow atlas slots (-1 = no shadow), indexed by SpotLights position.
+  /// Reseated from the shadow pass output at each camera block's start.</summary>
+  mutable SpotShadowSlots: int[]
+  /// <summary>The active shadow pass output — ValueNone when no shadow-casting light / missing DepthShadow.fx.
+  /// Reseated from the shadow pass output at each camera block's start.
   /// The user-effect scope (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PbrShading.shadeWithEffect"/>)
   /// uploads these uniforms by name so a custom effect can opt into shadow sampling.</summary>
-  Shadows: ShadowResult voption
+  mutable Shadows: ShadowResult voption
   /// <summary>The total elapsed game time, in seconds (<c>Game.TotalGameTime.TotalSeconds</c>). Uploaded
   /// as the <c>time</c> uniform so an animated shader (water ripples, flowing textures, pulsing emissive)
   /// has a clock to read — the only animation input the scene-data contract provides.</summary>
