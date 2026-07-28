@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.0.0-beta-001] - 2026-07-28
+
 ### Added
 
 - **3D:** `RenderBuffer3D.CameraBlockCount` counts `BeginCamera`/`BeginCameraConfig` commands added since the last `Clear`, on both backends. The pipelines use it to skip the per-camera-block plan walk (and its per-frame allocations) for single-camera frames.
