@@ -1233,6 +1233,43 @@ type Draw =
     buffer
 
   /// <summary>
+  /// Skinned + instanced: draws <c>min(transforms.Length, poses.Length)</c>
+  /// instances of the same animated model in one draw call (per sub-mesh),
+  /// each instance with its own world transform and pose.
+  /// <paramref name="poses"/> carries one caller-evaluated <c>BonePose</c> per
+  /// instance — compute the poses once per frame and share them with bone
+  /// queries / attachment draws (see <c>animatedModel</c>).
+  /// <paramref name="material"/> overrides the authored materials
+  /// (<c>MaterialOverride.All</c> for a whole-model override,
+  /// <c>MaterialOverride.PerMesh</c> for a per-sub-mesh resolver);
+  /// <paramref name="colors"/> tints each instance (<b>MonoGame only</b> — the
+  /// raylib backend raises <see cref="T:System.NotSupportedException"/>).
+  /// On the MonoGame OpenGL backend the draw falls back to per-instance
+  /// skinned draws (no vertex texture fetch on that shader profile).
+  /// </summary>
+  [<Extension>]
+  static member inline animatedModelInstanced<'B, 'A, 'X, 'Pose, 'O, 'C
+    when 'B: (member AddAnimatedModelInstanced:
+      'A * 'X[] * 'Pose[] * 'O voption * 'C[] voption -> unit)>
+    (
+      buffer: 'B,
+      animModel: 'A,
+      transforms: 'X[],
+      poses: 'Pose[],
+      [<Struct>] ?material: 'O,
+      [<Struct>] ?colors: 'C[]
+    ) : 'B =
+    buffer.AddAnimatedModelInstanced(
+      animModel,
+      transforms,
+      poses,
+      material,
+      colors
+    )
+
+    buffer
+
+  /// <summary>
   /// Draws a skinned mesh with an explicit bone palette and material.
   /// <b>raylib only</b> — MonoGame's skinned path goes through AnimatedModel;
   /// use <c>animatedModel(..., pose)</c> for the MonoGame explicit-palette path.

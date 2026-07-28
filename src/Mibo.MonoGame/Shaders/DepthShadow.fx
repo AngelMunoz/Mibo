@@ -92,6 +92,98 @@ VS_OUTPUT VS_Instanced(VS_INPUT_INSTANCED input) {
   return output;
 }
 
+// ── Skinned + instanced: bone palettes arrive in an RGBA32F palette texture (same
+// layout as ForwardPbr.fx — width = boneCount*4 texels, height = chunk instance
+// count, 4 consecutive texels per bone matrix, row r at texel boneIndex*4+r). Sampler
+// slot 6 for consistency with the forward effect (this file binds no other texture).
+// Excluded on OpenGL (vs_3_0 has no vertex texture fetch): the pipeline falls back
+// to per-instance DepthSkinned draws there.
+#if !OPENGL
+Texture2D paletteTex : register(t6);
+SamplerState paletteTexSampler : register(s6);
+float2 paletteTexSize;
+
+float4 paletteBoneRow(int boneIndex, int row, float instance) {
+  float2 uv = float2(
+    (float(boneIndex * 4 + row) + 0.5) / paletteTexSize.x,
+    (instance + 0.5) / paletteTexSize.y);
+  return paletteTex.SampleLevel(paletteTexSampler, uv, 0);
+}
+
+float4x4 paletteBoneMatrix(int boneIndex, float instance) {
+  return float4x4(
+    paletteBoneRow(boneIndex, 0, instance),
+    paletteBoneRow(boneIndex, 1, instance),
+    paletteBoneRow(boneIndex, 2, instance),
+    paletteBoneRow(boneIndex, 3, instance));
+}
+
+struct VS_INPUT_SKINNED_INSTANCED {
+  float3 Position    : POSITION0;
+  float4 BoneWeights : BLENDWEIGHT0;
+  int4   BoneIndices : BLENDINDICES0;
+  float4 Row0        : TEXCOORD1;
+  float4 Row1        : TEXCOORD2;
+  float4 Row2        : TEXCOORD3;
+  float4 Row3        : TEXCOORD4;
+  float PaletteOffset : TEXCOORD6;
+};
+
+VS_OUTPUT VS_SkinnedInstanced(VS_INPUT_SKINNED_INSTANCED input) {
+  VS_OUTPUT output;
+  float inst = input.PaletteOffset;
+
+  float4x4 skin =
+    input.BoneWeights.x * paletteBoneMatrix(input.BoneIndices.x, inst) +
+    input.BoneWeights.y * paletteBoneMatrix(input.BoneIndices.y, inst) +
+    input.BoneWeights.z * paletteBoneMatrix(input.BoneIndices.z, inst) +
+    input.BoneWeights.w * paletteBoneMatrix(input.BoneIndices.w, inst);
+
+  // matModel is Identity (same convention as VS_Instanced: the per-instance world
+  // IS the model transform).
+  float4 skinnedPos = mul(float4(input.Position, 1.0), skin);
+  float4x4 instanceWorld = float4x4(input.Row0, input.Row1, input.Row2, input.Row3);
+  float4 world = mul(mul(skinnedPos, matModel), instanceWorld);
+  float4 clip = mul(world, viewProj);
+  output.Position = clip;
+  output.Depth = clip.zw;
+  return output;
+}
+
+// ── Grouped-uniform variant (DX12 fallback): the native DX12 runtime never
+// delivers vertex-stage textures to the VS, so palettes ride a constant array
+// (one GROUP of instances, groupBoneCount matrices each, indexed by the
+// group-local PaletteOffset). Same vertex layout as VS_SkinnedInstanced; the
+// pipeline chunks draws to 320/boneCount instances per group. 320 matrices =
+// 20KB: mgfx packs all globals into one shared $Globals CB with a signed
+// Int16 size (32,767 cap — ~8KB is already used by boneMatrices & co) and
+// the Vulkan profile rejects multi-CB effects. Mirrors ForwardPbr.fx's
+// SkinnedInstancedGrouped.
+#define MAX_GROUP_PALETTES 128
+float4x4 bonePaletteGroup[MAX_GROUP_PALETTES];
+int groupBoneCount;
+
+VS_OUTPUT VS_SkinnedInstancedGrouped(VS_INPUT_SKINNED_INSTANCED input) {
+  VS_OUTPUT output;
+
+  int base = (int)input.PaletteOffset * groupBoneCount;
+
+  float4x4 skin =
+    input.BoneWeights.x * bonePaletteGroup[base + input.BoneIndices.x] +
+    input.BoneWeights.y * bonePaletteGroup[base + input.BoneIndices.y] +
+    input.BoneWeights.z * bonePaletteGroup[base + input.BoneIndices.z] +
+    input.BoneWeights.w * bonePaletteGroup[base + input.BoneIndices.w];
+
+  float4 skinnedPos = mul(float4(input.Position, 1.0), skin);
+  float4x4 instanceWorld = float4x4(input.Row0, input.Row1, input.Row2, input.Row3);
+  float4 world = mul(mul(skinnedPos, matModel), instanceWorld);
+  float4 clip = mul(world, viewProj);
+  output.Position = clip;
+  output.Depth = clip.zw;
+  return output;
+}
+#endif // !OPENGL
+
 float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
   // Depth in [0,1] on both backends (matches the forward shader's raw ndc.z).
   // The projection matrix already maps view z to [0,1] on both DX and OpenGL, so
@@ -121,3 +213,23 @@ technique DepthInstanced {
     PixelShader = compile PS_SHADERMODEL PS_Main();
   }
 };
+
+// Excluded on OpenGL (no vertex texture fetch in vs_3_0) — GL falls back to
+// per-instance DepthSkinned draws.
+#if !OPENGL
+technique DepthSkinnedInstanced {
+  pass P0 {
+    VertexShader = compile VS_SHADERMODEL VS_SkinnedInstanced();
+    PixelShader = compile PS_SHADERMODEL PS_Main();
+  }
+};
+
+// Grouped-uniform variant — the DX12 backend's skinned + instanced depth path
+// (no working vertex texture fetch there); unused on DX11/Vulkan.
+technique DepthSkinnedInstancedGrouped {
+  pass P0 {
+    VertexShader = compile VS_SHADERMODEL VS_SkinnedInstancedGrouped();
+    PixelShader = compile PS_SHADERMODEL PS_Main();
+  }
+};
+#endif // !OPENGL

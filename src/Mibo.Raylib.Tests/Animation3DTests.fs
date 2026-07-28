@@ -1070,6 +1070,180 @@ let animatedWitnessTests =
   ]
 
 // ──────────────────────────────────────────────
+// RenderBuffer3D instanced witness tests (AnimatedModel GPU path)
+// ──────────────────────────────────────────────
+
+let animatedInstancedWitnessTests =
+  let clips = Animation3DClips.fromModelAnimations(makePoseClips())
+
+  let makeAnimatedModel(meshCount: int) =
+    let model = makeSkinnableModel meshCount
+    let state = Animation3DState.create model clips "slide" 60.0f
+    let mesh = makeAnimatedMesh [| "root" |] [| Matrix4x4.Identity |]
+    AnimatedModel.create mesh state
+
+  let poseA = {
+    WorldPoses = [||]
+    Palette = [| Raymath.MatrixTranslate(1.0f, 0.0f, 0.0f) |]
+  }
+
+  let poseB = {
+    WorldPoses = [||]
+    Palette = [| Raymath.MatrixTranslate(2.0f, 0.0f, 0.0f) |]
+  }
+
+  let transforms = [|
+    Matrix4x4.Identity
+    Raymath.MatrixTranslate(5.0f, 0.0f, 0.0f)
+  |]
+
+  testList "RenderBuffer3D animated model instanced witness" [
+    test "emits one DrawSkinnedMeshInstanced per mesh with a flattened palette" {
+      let am = makeAnimatedModel 2
+      use buffer = new RenderBuffer3D()
+
+      buffer.AddAnimatedModelInstanced(
+        am,
+        transforms,
+        [| poseA; poseB |],
+        ValueNone,
+        ValueNone
+      )
+
+      Expect.equal buffer.Count 2 "Should emit one command per mesh"
+
+      for i = 0 to buffer.Count - 1 do
+        match buffer[i] with
+        | Command3D.DrawSkinnedMeshInstanced(_, t, palettes, _, count) ->
+          Expect.equal count 2 "Two instances"
+
+          Expect.isTrue
+            (Object.ReferenceEquals(t, transforms))
+            "Transforms array should be forwarded untouched"
+
+          Expect.equal
+            palettes.Length
+            2
+            "One palette matrix per instance (1 bone)"
+
+          Expect.equal palettes[0] poseA.Palette[0] "Instance 0 palette first"
+          Expect.equal palettes[1] poseB.Palette[0] "Instance 1 palette second"
+        | _ -> Tests.failtest "Expected DrawSkinnedMeshInstanced"
+    }
+
+    test "instance count clamps to the shorter array" {
+      let am = makeAnimatedModel 1
+      use buffer = new RenderBuffer3D()
+
+      buffer.AddAnimatedModelInstanced(
+        am,
+        transforms,
+        [| poseA |],
+        ValueNone,
+        ValueNone
+      )
+
+      match buffer[0] with
+      | Command3D.DrawSkinnedMeshInstanced(_, _, palettes, _, count) ->
+        Expect.equal count 1 "Clamped to the single pose"
+        Expect.equal palettes.Length 1 "One palette"
+      | _ -> Tests.failtest "Expected DrawSkinnedMeshInstanced"
+    }
+
+    test "zero instances emits nothing" {
+      let am = makeAnimatedModel 1
+      use buffer = new RenderBuffer3D()
+
+      buffer.AddAnimatedModelInstanced(am, [||], [||], ValueNone, ValueNone)
+
+      Expect.equal buffer.Count 0 "No commands expected"
+    }
+
+    test "MaterialOverride.All applies the material to every mesh" {
+      let am = makeAnimatedModel 2
+      let material = Material3D.colored Color.Red
+      use buffer = new RenderBuffer3D()
+
+      buffer.AddAnimatedModelInstanced(
+        am,
+        transforms,
+        [| poseA; poseB |],
+        ValueSome(MaterialOverride.All material),
+        ValueNone
+      )
+
+      Expect.equal buffer.Count 2 "Should emit one command per mesh"
+
+      for i = 0 to buffer.Count - 1 do
+        match buffer[i] with
+        | Command3D.DrawSkinnedMeshInstanced(_, _, _, mat, _) ->
+          Expect.equal mat.AlbedoColor Color.Red "Material should match"
+        | _ -> Tests.failtest "Expected DrawSkinnedMeshInstanced"
+    }
+
+    test "MaterialOverride.PerMesh resolves the material by mesh index" {
+      let am = makeAnimatedModel 2
+
+      let materials = [|
+        Material3D.colored Color.Red
+        Material3D.colored Color.Blue
+      |]
+
+      use buffer = new RenderBuffer3D()
+
+      buffer.AddAnimatedModelInstanced(
+        am,
+        transforms,
+        [| poseA; poseB |],
+        ValueSome(MaterialOverride.PerMesh(fun i -> materials[i])),
+        ValueNone
+      )
+
+      Expect.equal buffer.Count 2 "Should emit one command per mesh"
+
+      for i = 0 to buffer.Count - 1 do
+        match buffer[i] with
+        | Command3D.DrawSkinnedMeshInstanced(_, _, _, mat, _) ->
+          Expect.equal
+            mat.AlbedoColor
+            materials[i].AlbedoColor
+            $"Mesh {i} should get its resolver material"
+        | _ -> Tests.failtest "Expected DrawSkinnedMeshInstanced"
+    }
+
+    test "colors raise NotSupportedException" {
+      let am = makeAnimatedModel 1
+      use buffer = new RenderBuffer3D()
+
+      Expect.throwsT<System.NotSupportedException>
+        (fun () ->
+          buffer.AddAnimatedModelInstanced(
+            am,
+            transforms,
+            [| poseA |],
+            ValueNone,
+            ValueSome [| Color.Red |]
+          ))
+        "Per-instance colors are MonoGame-only"
+    }
+
+    test "DSL animatedModelInstanced emits the instanced command" {
+      let am = makeAnimatedModel 1
+      use buffer = new RenderBuffer3D()
+
+      buffer.animatedModelInstanced(am, transforms, [| poseA; poseB |])
+      |> ignore
+
+      Expect.equal buffer.Count 1 "Should emit one command"
+
+      match buffer[0] with
+      | Command3D.DrawSkinnedMeshInstanced(_, _, _, _, count) ->
+        Expect.equal count 2 "Two instances"
+      | _ -> Tests.failtest "Expected DrawSkinnedMeshInstanced"
+    }
+  ]
+
+// ──────────────────────────────────────────────
 // Bone remap (cross-file clip merge) tests
 // ──────────────────────────────────────────────
 
@@ -1263,5 +1437,6 @@ let tests =
     computePoseTests
     animatedModelTests
     animatedWitnessTests
+    animatedInstancedWitnessTests
     remapTests
   ]

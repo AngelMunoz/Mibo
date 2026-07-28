@@ -205,10 +205,64 @@ The declaration is optional — an effect that omits it still works; the built-i
 fallback shades colored draws instead. Instances beyond the `colors` array
 length receive white.
 
-> **Skinned + instanced is not supported.** There is no per-instance bone
-> palette; an animated crowd requires a separate scheme (e.g. a texture or
-> buffer of bone matrices indexed per instance). Until such a path exists, keep
-> animated models on non-instanced draws.
+**Skinned + instanced.** An `animatedModelInstanced` draw inside a
+`.beginEffect(...)` scope is shaded by your shader when it opts in; otherwise it
+falls back to the built-in PBR skinned-instanced path. Per-instance bone
+palettes ride a **palette texture** — RGBA32F, width = `boneCount * 4` texels,
+height = instance count, four consecutive texels per bone matrix — instead of
+the `boneMatrices` uniform array.
+
+**raylib (GLSL `#version 330`):** declare the instancing attribute, the bone
+attributes, and the palette sampler. The instance row is `gl_InstanceID`;
+texel `boneIndex*4+c` is column `c` of the bone's matrix (same raw layout the
+`boneMatrices` uniform path uploads).
+
+```glsl
+in mat4 instanceTransform;
+in vec4 vertexBoneIndices;
+in vec4 vertexBoneWeights;
+
+uniform sampler2D bonePalette;   // bound on texture unit 14
+uniform ivec2 bonePaletteSize;   // (boneCount * 4, instanceCount)
+
+mat4 getBoneMatrix(int boneIndex) {
+  mat4 m;
+  m[0] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 0, gl_InstanceID), 0);
+  m[1] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 1, gl_InstanceID), 0);
+  m[2] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 2, gl_InstanceID), 0);
+  m[3] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 3, gl_InstanceID), 0);
+  return m;
+}
+```
+
+**MonoGame (HLSL):** expose a technique named **`SkinnedInstanced`** whose
+vertex shader combines the skinned input (`BLENDWEIGHT0`/`BLENDINDICES0`), the
+instance rows (`TEXCOORD1..4`), and a per-instance palette row index
+(`PaletteOffset : TEXCOORD6`), sampling the palette texture with
+`SAMPLE_TEX_LOD`. Texel `boneIndex*4+r` is row `r` of the bone's matrix.
+
+```hlsl
+sampler2D paletteTex : register(s6);
+float2 paletteTexSize;   // (boneCount * 4, instanceCount)
+
+struct VS_INPUT_SKINNED_INSTANCED {
+  float3 Position    : POSITION0;
+  float2 TexCoord    : TEXCOORD0;
+  float3 Normal      : NORMAL0;
+  float4 BoneWeights : BLENDWEIGHT0;
+  int4   BoneIndices : BLENDINDICES0;
+  float4 Row0 : TEXCOORD1;
+  float4 Row1 : TEXCOORD2;
+  float4 Row2 : TEXCOORD3;
+  float4 Row3 : TEXCOORD4;
+  float  PaletteOffset : TEXCOORD6;   // instance row in the palette texture
+};
+```
+
+> The OpenGL shader profile has no vertex texture fetch, so
+> `SkinnedInstanced` does not exist there — the `SkinnedInstanced` technique
+> probe is skipped on that backend and the framework draws per-instance
+> through the `Skinned` path (your `Skinned` technique, if declared, applies).
 
 ## `drawMeshEffect` (MonoGame only)
 

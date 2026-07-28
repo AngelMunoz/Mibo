@@ -181,6 +181,76 @@ void main()
 }
 """
 
+  /// <summary>
+  /// Skinned + instanced variant of the forward vertex shader — a merge of
+  /// <c>forwardVertexInstanced</c> and <c>forwardVertexSkinned</c>. Per-instance
+  /// model transforms come from the <c>instanceTransform</c> attribute (declaring
+  /// it makes raylib wire the instance VBO) and the <c>mvp</c> uniform is
+  /// view-projection only. Bone matrices come from the <c>bonePalette</c> texture
+  /// instead of the <c>boneMatrices[128]</c> uniform array: the texture stores
+  /// the same raw bytes the uniform path hands to <c>glUniformMatrix4fv</c>
+  /// (transpose=GL_FALSE), so texel <c>(boneIndex*4+c, instance)</c> holds
+  /// column <c>c</c> of the instance's bone matrix. <c>gl_InstanceID</c> indexes
+  /// the instance row. <c>bonePaletteSize</c> is <c>(boneCount*4, instanceCount)</c>
+  /// — declared for user shaders that want bounds checks; the built-in path
+  /// keeps indices in range by construction.
+  /// </summary>
+  let forwardVertexSkinnedInstanced =
+    """#version 330
+
+in vec3 vertexPosition;
+in vec2 vertexTexCoord;
+in vec3 vertexNormal;
+in vec4 vertexColor;
+in vec4 vertexBoneIndices;
+in vec4 vertexBoneWeights;
+in mat4 instanceTransform;
+
+out vec2 fragTexCoord;
+out vec4 fragColor;
+out vec3 fragNormal;
+out vec3 fragWorldPos;
+
+uniform mat4 mvp;
+uniform sampler2D bonePalette;
+uniform ivec2 bonePaletteSize;
+
+mat4 getBoneMatrix(int boneIndex)
+{
+    mat4 m;
+    m[0] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 0, gl_InstanceID), 0);
+    m[1] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 1, gl_InstanceID), 0);
+    m[2] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 2, gl_InstanceID), 0);
+    m[3] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 3, gl_InstanceID), 0);
+    return m;
+}
+
+void main()
+{
+    int ids0 = int(vertexBoneIndices.x);
+    int ids1 = int(vertexBoneIndices.y);
+    int ids2 = int(vertexBoneIndices.z);
+    int ids3 = int(vertexBoneIndices.w);
+
+    mat4 skinMatrix =
+        vertexBoneWeights.x * getBoneMatrix(ids0) +
+        vertexBoneWeights.y * getBoneMatrix(ids1) +
+        vertexBoneWeights.z * getBoneMatrix(ids2) +
+        vertexBoneWeights.w * getBoneMatrix(ids3);
+
+    vec4 skinnedPos = skinMatrix * vec4(vertexPosition, 1.0);
+    vec3 skinnedNormal = mat3(skinMatrix) * vertexNormal;
+
+    mat3 nMat = transpose(inverse(mat3(instanceTransform)));
+
+    fragTexCoord = vertexTexCoord;
+    fragColor = vertexColor;
+    fragNormal = normalize(nMat * skinnedNormal);
+    fragWorldPos = (instanceTransform * skinnedPos).xyz;
+    gl_Position = mvp * instanceTransform * skinnedPos;
+}
+"""
+
   let depthShadowVertexSkinned =
     """#version 330
 
@@ -222,6 +292,54 @@ void main()
     fragColor    = vertexColor;
     fragNormal   = normalize(mat3(normalMatrix) * skinnedNormal);
     gl_Position  = mvp * skinnedPos;
+}
+"""
+
+  /// <summary>
+  /// Skinned + instanced variant of the depth-only shadow pass vertex shader —
+  /// <c>depthShadowVertexSkinned</c> with the bone palette read from the
+  /// <c>bonePalette</c> texture (same layout as
+  /// <c>forwardVertexSkinnedInstanced</c>) and the per-instance world transform
+  /// from the <c>instanceTransform</c> attribute. <c>mvp</c> is view-projection
+  /// only, like <c>depthShadowVertexInstanced</c>.
+  /// </summary>
+  let depthShadowVertexSkinnedInstanced =
+    """#version 330
+
+in vec3 vertexPosition;
+in vec4 vertexBoneIndices;
+in vec4 vertexBoneWeights;
+in mat4 instanceTransform;
+
+uniform mat4 mvp;
+uniform sampler2D bonePalette;
+uniform ivec2 bonePaletteSize;
+
+mat4 getBoneMatrix(int boneIndex)
+{
+    mat4 m;
+    m[0] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 0, gl_InstanceID), 0);
+    m[1] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 1, gl_InstanceID), 0);
+    m[2] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 2, gl_InstanceID), 0);
+    m[3] = texelFetch(bonePalette, ivec2(boneIndex * 4 + 3, gl_InstanceID), 0);
+    return m;
+}
+
+void main()
+{
+    int ids0 = int(vertexBoneIndices.x);
+    int ids1 = int(vertexBoneIndices.y);
+    int ids2 = int(vertexBoneIndices.z);
+    int ids3 = int(vertexBoneIndices.w);
+
+    mat4 skinMatrix =
+        vertexBoneWeights.x * getBoneMatrix(ids0) +
+        vertexBoneWeights.y * getBoneMatrix(ids1) +
+        vertexBoneWeights.z * getBoneMatrix(ids2) +
+        vertexBoneWeights.w * getBoneMatrix(ids3);
+
+    vec4 skinnedPos = skinMatrix * vec4(vertexPosition, 1.0);
+    gl_Position = mvp * instanceTransform * skinnedPos;
 }
 """
 
@@ -670,6 +788,30 @@ void main()
   /// <summary>Loads the skinned depth-only shadow pass vertex + fragment shader.</summary>
   let loadDepthShadowSkinnedShader() : Shader =
     Raylib.LoadShaderFromMemory(depthShadowVertexSkinned, depthShadowFragment)
+
+  /// <summary>Loads the skinned + instanced forward PBR vertex + fragment shader.</summary>
+  /// <remarks>
+  /// Per-instance transforms come from the <c>instanceTransform</c> attribute and
+  /// per-instance bone palettes from the <c>bonePalette</c> texture — see
+  /// <c>forwardVertexSkinnedInstanced</c>. The <c>mvp</c> uniform must be
+  /// view-projection only (without model).
+  /// </remarks>
+  let loadForwardSkinnedInstancedShader
+    (maxPointLights: int)
+    (maxSpotLights: int)
+    (maxShadowCasters: int)
+    : Shader =
+    Raylib.LoadShaderFromMemory(
+      forwardVertexSkinnedInstanced,
+      forwardFragmentFmt maxPointLights maxSpotLights maxShadowCasters
+    )
+
+  /// <summary>Loads the skinned + instanced depth-only shadow pass vertex + fragment shader.</summary>
+  let loadDepthShadowSkinnedInstancedShader() : Shader =
+    Raylib.LoadShaderFromMemory(
+      depthShadowVertexSkinnedInstanced,
+      depthShadowFragment
+    )
 
   /// <summary>Loads the built-in fullscreen post-process vertex + fragment shader.</summary>
   let loadPostProcessShader() : Shader =

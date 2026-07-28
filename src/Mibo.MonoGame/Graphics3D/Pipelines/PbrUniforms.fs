@@ -33,6 +33,16 @@ type internal MatrixUniforms = {
   // Skinning (B12 Skinned technique): bone palette. null on the non-skinned
   // techniques is harmless — the animated-model path uploads only when present.
   Bones: EffectParameter
+  // Skinned + instanced (SkinnedInstanced techniques): the RGBA32F bone-palette
+  // texture + its texel dimensions. null on the OpenGL effect (the techniques are
+  // compiled out there) — the null-safe setters no-op.
+  PaletteTex: EffectParameter
+  PaletteTexSize: EffectParameter
+  // Grouped-uniform skinned + instanced (SkinnedInstancedGrouped techniques — the
+  // DX12 fallback): one group of bone palettes as a constant array + the bone
+  // count per instance. null on the OpenGL effect; unused on DX11/Vulkan.
+  BonePaletteGroup: EffectParameter
+  GroupBoneCount: EffectParameter
 }
 
 /// <summary>Material uniforms: scalar/color PBR factors + the 5 sampler textures.
@@ -142,6 +152,10 @@ module internal PbrUniforms =
     NormalMatrix = param e "normalMatrix"
     CameraPos = param e "cameraPos"
     Bones = param e "boneMatrices"
+    PaletteTex = param e "paletteTex"
+    PaletteTexSize = param e "paletteTexSize"
+    BonePaletteGroup = param e "bonePaletteGroup"
+    GroupBoneCount = param e "groupBoneCount"
   }
 
   let private buildMaterial(e: Effect) : MaterialUniforms = {
@@ -240,6 +254,10 @@ module internal PbrUniforms =
   let inline setMatrix (p: EffectParameter) (m: Matrix) =
     if not(obj.ReferenceEquals(p, null)) then
       p.SetValue m
+
+  let inline setTexture (p: EffectParameter) (t: Texture2D) =
+    if not(obj.ReferenceEquals(p, null)) then
+      p.SetValue t
 
   let inline setVec3Array (p: EffectParameter) (v: Vector3[]) =
     if not(obj.ReferenceEquals(p, null)) then

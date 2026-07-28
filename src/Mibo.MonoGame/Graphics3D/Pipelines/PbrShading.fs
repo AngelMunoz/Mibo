@@ -3,6 +3,7 @@ namespace Mibo.Elmish.Graphics3D.Pipelines
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open MonoGame.Framework.Utilities
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics3D
@@ -104,6 +105,34 @@ type internal PbrResources() =
   member val InstanceColorStaging =
     Array.zeroCreate<VertexInstanceWorldColor> 64 with get, set
 
+  /// <summary>Growable per-instance vertex buffer (VertexInstanceWorldPalette rows) for skinned +
+  /// instanced draws. Grown on demand; stays a DynamicVertexBuffer (see stageInstanceData).</summary>
+  member val InstancePaletteVertexBuffer: VertexBuffer voption =
+    ValueNone with get, set
+
+  /// <summary>CPU staging array — packed VertexInstanceWorldPalette rows per chunk. Grows as needed.</summary>
+  member val InstancePaletteStaging =
+    Array.zeroCreate<VertexInstanceWorldPalette> 64 with get, set
+
+  /// <summary>Growable per-instance vertex buffer (VertexInstanceWorldPaletteColor rows) for colored
+  /// skinned + instanced draws. Grown on demand; stays a DynamicVertexBuffer (see stageInstanceData).</summary>
+  member val InstancePaletteColorVertexBuffer: VertexBuffer voption =
+    ValueNone with get, set
+
+  /// <summary>CPU staging array — packed VertexInstanceWorldPaletteColor rows per chunk. Grows as needed.</summary>
+  member val InstancePaletteColorStaging =
+    Array.zeroCreate<VertexInstanceWorldPaletteColor> 64 with get, set
+
+  /// <summary>Shared per-frame palette-chunk cache for skinned + instanced draws (aliased
+  /// with the shadow pass by ForwardPipeline so each frame's palettes are staged + uploaded
+  /// once, not per pass — see <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>).</summary>
+  member val PaletteChunks = new PaletteChunkCache() with get, set
+
+  /// <summary>Pooled bone-palette scratch for the grouped-uniform skinned + instanced path
+  /// (the DX12 fallback — SkinnedInstancedGrouped techniques). Sized to
+  /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatrices"/>; grown on demand.</summary>
+  member val GroupPaletteScratch: Matrix[] = [||] with get, set
+
   /// <summary>MaterialKey short-circuit: whether the last draw's material is still current.</summary>
   member val HasLastMaterial = false with get, set
 
@@ -143,8 +172,51 @@ type internal PbrResources() =
       this.InstancedTechniques[effect] <- tech
       tech
 
+  /// <summary>Per-effect memoization of the <c>SkinnedInstanced</c>-technique probe (the
+  /// skinned-instanced opt-in for user effects inside a <c>beginEffect</c> scope), following
+  /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PbrResources.InstancedTechniques"/>. An effect
+  /// without the technique falls back to the framework PBR skinned-instanced path.</summary>
+  member val SkinnedInstancedTechniques: System.Collections.Generic.Dictionary<
+    Effect,
+    EffectTechnique
+   > =
+    System.Collections.Generic.Dictionary<Effect, EffectTechnique>() with get, set
+
+  /// <summary>The effect's <c>SkinnedInstanced</c> technique when it opts into skinned
+  /// instancing; null otherwise. Probes + memoizes on first lookup (both outcomes).</summary>
+  member this.TrySkinnedInstancedTechnique(effect: Effect) : EffectTechnique =
+    match this.SkinnedInstancedTechniques.TryGetValue(effect) with
+    | true, tech -> tech
+    | false, _ ->
+      let tech = effect.Techniques["SkinnedInstanced"]
+      this.SkinnedInstancedTechniques[effect] <- tech
+      tech
+
+/// <summary>
+/// Which effect shades a skinned + instanced draw: the framework PBR effect
+/// (<c>SkinnedInstanced</c>/<c>SkinnedInstancedColor</c> techniques) or a user effect inside a
+/// <c>beginEffect</c> scope that opted in by declaring a <c>SkinnedInstanced</c> technique
+/// (the memoized probe on <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PbrResources"/>).
+/// </summary>
+[<Struct>]
+type internal SkinnedInstancedTarget =
+  | PbrTarget
+  | UserEffectTarget of effect: Effect * technique: EffectTechnique
+
 /// <summary>The extracted PBR draw handlers + the user-effect scope shading path.</summary>
 module internal PbrShading =
+
+  /// <summary>True on the OpenGL backend, which has no vertex texture fetch — skinned +
+  /// instanced draws fall back to per-instance skinned draws there.</summary>
+  let inline isOpenGLBackend() =
+    PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL
+
+  /// <summary>True on the DirectX 12 backend: the native runtime never delivers
+  /// vertex-stage textures to the VS (the palette SRV samples zeros regardless of slot
+  /// or content — the PS reads the same SRV fine), so skinned + instanced draws use the
+  /// grouped-uniform <c>SkinnedInstancedGrouped</c> techniques there instead.</summary>
+  let inline isDirectX12Backend() =
+    PlatformInfo.GraphicsBackend = GraphicsBackend.DirectX12
 
   /// <summary>
   /// Applies accumulated lighting to any <see cref="T:Microsoft.Xna.Framework.Graphics.IEffectLights"/>
@@ -354,8 +426,12 @@ module internal PbrShading =
       | _ -> ()
 
   /// <summary>Handles <c>DrawAnimatedModel</c>: Skinned technique for SkinnedEffect parts,
-  /// Standard for the rest; bone palette uploaded once per draw, tail zero-filled to identity.</summary>
-  let drawAnimatedModel
+  /// Standard for the rest; bone palette uploaded once per draw, tail zero-filled to identity.
+  /// <paramref name="tint"/> modulates the resolved material's albedo color and opacity per
+  /// draw (mirrors <c>shadePBR</c>'s per-instance color application) — the OpenGL fallback of
+  /// skinned + instanced draws uses it for per-instance colors; the regular path passes
+  /// <c>ValueNone</c>.</summary>
+  let private drawAnimatedModelCore
     (
       gd: GraphicsDevice,
       state: byref<ForwardState>,
@@ -364,7 +440,8 @@ module internal PbrShading =
       model: Model,
       transform: Matrix,
       bones: Matrix[],
-      matOverride: MaterialOverride voption
+      matOverride: MaterialOverride voption,
+      tint: Color voption
     ) =
     if ensureEffect(gd, res) then
       match res.Effect, res.Params with
@@ -430,6 +507,19 @@ module internal PbrShading =
               | ValueSome(MaterialOverride.PerMesh f) -> f partIndex
 
             partIndex <- partIndex + 1
+
+            let mat =
+              match tint with
+              | ValueNone -> mat
+              | ValueSome c ->
+                let tintVec = c.ToVector4()
+
+                {
+                  mat with
+                      AlbedoColor = Color(mat.AlbedoColor.ToVector4() * tintVec)
+                      Opacity = mat.Opacity * tintVec.W
+                }
+
             let key = materialKey &mat
 
             if not res.HasLastMaterial || key <> res.LastKey then
@@ -446,6 +536,31 @@ module internal PbrShading =
             finally
               part.Effect <- saved
       | _ -> ()
+
+  /// <summary>Handles <c>DrawAnimatedModel</c>: Skinned technique for SkinnedEffect parts,
+  /// Standard for the rest; bone palette uploaded once per draw, tail zero-filled to identity.</summary>
+  let drawAnimatedModel
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      frame: byref<ForwardFrame>,
+      res: PbrResources,
+      model: Model,
+      transform: Matrix,
+      bones: Matrix[],
+      matOverride: MaterialOverride voption
+    ) =
+    drawAnimatedModelCore(
+      gd,
+      &state,
+      &frame,
+      res,
+      model,
+      transform,
+      bones,
+      matOverride,
+      ValueNone
+    )
 
   /// <summary>
   /// Handles <c>DrawPrimitive</c>: PBR Standard technique with a MaterialKey short-circuit. Falls
@@ -838,6 +953,459 @@ module internal PbrShading =
               instanceCount
             )
 
+  /// <summary>
+  /// Stages one chunk (or group) of a skinned + instanced draw: packs the chunk's
+  /// per-instance rows (world matrix + chunk-local palette index, plus color when
+  /// <paramref name="colors"/> is <c>ValueSome</c>) into the matching growable instance
+  /// vertex buffer. The palette data itself does NOT flow through here — it rides the
+  /// shared <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/> textures
+  /// (SkinnedInstanced) or the <c>bonePaletteGroup</c> constant array (SkinnedInstancedGrouped,
+  /// the DX12 path). Does NOT bind — the caller binds stream 0 per mesh part. Instances
+  /// past <paramref name="colors"/>' length are clamped to <c>Color.White</c> (identity
+  /// multiplier), matching
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PbrShading.stageInstanceColorData"/>.
+  /// </summary>
+  let private stagePaletteInstanceVB
+    (
+      gd: GraphicsDevice,
+      res: PbrResources,
+      transforms: Matrix[],
+      colors: Color[] voption,
+      chunkStart: int,
+      chunkCount: int
+    ) : VertexBuffer =
+    match colors with
+    | ValueSome cs ->
+      if res.InstancePaletteColorStaging.Length < chunkCount then
+        res.InstancePaletteColorStaging <-
+          Array.zeroCreate<VertexInstanceWorldPaletteColor> chunkCount
+
+      let colorCount = if isNull cs then 0 else cs.Length
+
+      for i = 0 to chunkCount - 1 do
+        let gi = chunkStart + i
+        let color = if gi < colorCount then cs[gi] else Color.White
+
+        // PaletteOffset is chunk-local: palette storage (texture chunk or uniform
+        // group on the DX12 path) holds this chunk only.
+        res.InstancePaletteColorStaging[i] <-
+          VertexInstanceWorldPaletteColor.Create(
+            transforms[gi],
+            color,
+            float32 i
+          )
+
+      // Must stay a DynamicVertexBuffer for the same reason as stageInstanceData:
+      // the native DX12 backend needs the discard-rename path for intra-frame re-uploads.
+      match res.InstancePaletteColorVertexBuffer with
+      | ValueNone ->
+        let vb =
+          new DynamicVertexBuffer(
+            gd,
+            typeof<VertexInstanceWorldPaletteColor>,
+            chunkCount,
+            BufferUsage.WriteOnly
+          )
+
+        res.InstancePaletteColorVertexBuffer <- ValueSome vb
+      | ValueSome vb when vb.VertexCount < chunkCount ->
+        vb.Dispose()
+
+        let vb' =
+          new DynamicVertexBuffer(
+            gd,
+            typeof<VertexInstanceWorldPaletteColor>,
+            chunkCount,
+            BufferUsage.WriteOnly
+          )
+
+        res.InstancePaletteColorVertexBuffer <- ValueSome vb'
+      | _ -> ()
+
+      let instVB =
+        match res.InstancePaletteColorVertexBuffer with
+        | ValueSome vb -> vb
+        | ValueNone -> Unchecked.defaultof<DynamicVertexBuffer> // unreachable (created above)
+
+      instVB.SetData(res.InstancePaletteColorStaging, 0, chunkCount)
+      instVB
+    | ValueNone ->
+      if res.InstancePaletteStaging.Length < chunkCount then
+        res.InstancePaletteStaging <-
+          Array.zeroCreate<VertexInstanceWorldPalette> chunkCount
+
+      for i = 0 to chunkCount - 1 do
+        // PaletteOffset is chunk-local (see the colored branch above).
+        res.InstancePaletteStaging[i] <-
+          VertexInstanceWorldPalette.Create(
+            transforms[chunkStart + i],
+            float32 i
+          )
+
+      // Must stay a DynamicVertexBuffer (see the colored branch above).
+      match res.InstancePaletteVertexBuffer with
+      | ValueNone ->
+        let vb =
+          new DynamicVertexBuffer(
+            gd,
+            typeof<VertexInstanceWorldPalette>,
+            chunkCount,
+            BufferUsage.WriteOnly
+          )
+
+        res.InstancePaletteVertexBuffer <- ValueSome vb
+      | ValueSome vb when vb.VertexCount < chunkCount ->
+        vb.Dispose()
+
+        let vb' =
+          new DynamicVertexBuffer(
+            gd,
+            typeof<VertexInstanceWorldPalette>,
+            chunkCount,
+            BufferUsage.WriteOnly
+          )
+
+        res.InstancePaletteVertexBuffer <- ValueSome vb'
+      | _ -> ()
+
+      let instVB =
+        match res.InstancePaletteVertexBuffer with
+        | ValueSome vb -> vb
+        | ValueNone -> Unchecked.defaultof<DynamicVertexBuffer> // unreachable (created above)
+
+      instVB.SetData(res.InstancePaletteStaging, 0, chunkCount)
+      instVB
+
+  /// <summary>
+  /// Handles <c>DrawAnimatedModelInstanced</c>: one instanced draw per mesh part per chunk for
+  /// N posed instances of the same animated model. On DX11/Vulkan bone palettes ride RGBA32F
+  /// palette textures (one per chunk, ≤ <c>PaletteTexture.MaxHeight</c> instances per chunk —
+  /// staged + uploaded once per frame via the shared
+  /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>) sampled by the
+  /// <c>SkinnedInstanced</c>/<c>SkinnedInstancedColor</c> techniques; on DX12 (no working
+  /// vertex texture fetch) palettes ride the <c>bonePaletteGroup</c> constant array via the
+  /// <c>SkinnedInstancedGrouped</c>/<c>SkinnedInstancedGroupedColor</c> techniques, chunked
+  /// to <c>PaletteGroup.MaxMatrices / boneCount</c> instances per group. <c>matModel</c>
+  /// carries each mesh's parent-bone world and the per-instance world arrives on stream 1.
+  /// Non-skinned parts (no bone channels on stream 0) draw through the plain
+  /// <c>Instanced</c>/<c>InstancedColor</c> techniques — the extra stream-1 elements go unread.
+  /// Materials resolve per part via <paramref name="matOverride"/> like
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PbrShading.drawAnimatedModel"/>.
+  /// With a <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SkinnedInstancedTarget.UserEffectTarget"/>
+  /// the skinned parts shade through the user effect (scene data uploaded by name, palette
+  /// texture via <c>paletteTex</c>/<c>paletteTexSize</c>); non-skinned parts still use the
+  /// framework PBR effect. Falls back to per-instance draws through the existing
+  /// <c>Skinned</c> path on OpenGL (no vertex texture fetch) and for user effects on DX12
+  /// (the grouped-uniform contract is framework-PBR-only) — per-instance colors then
+  /// modulate the resolved material's albedo/opacity.
+  /// </summary>
+  let drawAnimatedModelInstanced
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      frame: byref<ForwardFrame>,
+      res: PbrResources,
+      target: SkinnedInstancedTarget,
+      model: Model,
+      transforms: Matrix[],
+      palettes: Matrix[],
+      matOverride: MaterialOverride voption,
+      colors: Color[] voption,
+      instanceCount: int
+    ) =
+    // Clamp to the transforms array: an instanceCount larger than the buffer would index
+    // out of range when staging per-instance rows.
+    let transformCount = if isNull transforms then 0 else transforms.Length
+    let paletteLen = if isNull palettes then 0 else palettes.Length
+    let count = min instanceCount transformCount
+
+    if count > 0 && paletteLen > 0 then
+      let boneCount = paletteLen / instanceCount
+
+      if boneCount > 0 then
+        // Per-instance fallback: OpenGL (no vertex texture fetch), and user effects on
+        // DX12 (a user effect's SkinnedInstanced technique expects the VS-texture
+        // contract — broken on DX12; the grouped-uniform path is framework-PBR-only).
+        let perInstanceFallback = isOpenGLBackend() || isDirectX12Backend()
+
+        if perInstanceFallback then
+          // ── Per-instance draws through the existing Skinned path, slicing each
+          // instance's palette out of the flat array. Per-instance colors modulate
+          // the material (this path has no per-instance color channel).
+          let slice = Array.zeroCreate<Matrix> boneCount
+
+          for i = 0 to count - 1 do
+            Array.Copy(palettes, i * boneCount, slice, 0, boneCount)
+
+            let tint =
+              match colors with
+              | ValueSome cs when not(isNull cs) && i < cs.Length ->
+                ValueSome cs[i]
+              | _ -> ValueNone
+
+            drawAnimatedModelCore(
+              gd,
+              &state,
+              &frame,
+              res,
+              model,
+              transforms[i],
+              slice,
+              matOverride,
+              tint
+            )
+        else
+          // Bone transforms give each mesh its parent-bone world (the matModel the
+          // SkinnedInstanced VS composes with the per-instance world on stream 1).
+          let modelBoneCount = model.Bones.Count
+
+          if res.BoneTransforms.Length < modelBoneCount then
+            res.BoneTransforms <- Array.zeroCreate<Matrix> modelBoneCount
+
+          model.CopyAbsoluteBoneTransformsTo(res.BoneTransforms)
+          let viewProj = state.View * state.Projection
+
+          // The framework PBR effect is always prepared: it shades the PbrTarget path and
+          // the non-skinned parts under a user effect. Frame-global uniforms don't depend
+          // on the mesh — set once per draw, not per mesh.
+          if ensureEffect(gd, res) then
+            match res.Effect, res.Params with
+            | ValueSome e, ValueSome p ->
+              PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
+
+              PbrUniforms.setVec3
+                p.Matrix.CameraPos
+                state.CurrentCamera.Position
+
+              if res.LightsDirty then
+                PbrUniforms.uploadLights(
+                  &p,
+                  frame.Lights,
+                  frame.PointShadowSlots,
+                  frame.SpotShadowSlots
+                )
+
+                res.LightsDirty <- false
+            | _ -> ()
+
+          // A user-effect target selects its SkinnedInstanced technique once around the
+          // whole draw (restored afterwards, so it can't leak into subsequent draws in
+          // the same scope).
+          let savedUserTechnique =
+            match target with
+            | UserEffectTarget(effect, technique) ->
+              let saved = effect.CurrentTechnique
+              effect.CurrentTechnique <- technique
+              saved
+            | PbrTarget -> null
+
+          try
+            // Chunk driver for both instanced paths: (chunkStart, chunkCount,
+            // paletteTex) triples. DX11/Vulkan: real palette-texture chunks from the
+            // shared per-frame cache (staged + uploaded once across both passes).
+            // DX12: uniform GROUPS of PaletteGroup.MaxMatrices / boneCount instances
+            // with a null paletteTex — palettes ride the bonePaletteGroup constant
+            // array (no working vertex texture fetch on DX12).
+            let chunks =
+              if isDirectX12Backend() then
+                let groupSize = max 1 (PaletteGroup.MaxMatrices / boneCount)
+
+                Array.init ((count + groupSize - 1) / groupSize) (fun i ->
+                  let start = i * groupSize
+                  struct (start, min groupSize (count - start), null))
+              else
+                res.PaletteChunks.Obtain(gd, palettes, boneCount, count)
+
+            let mutable chunkIdx = 0
+
+            while chunkIdx < chunks.Length do
+              let struct (chunkStart, chunkCount, paletteTex) = chunks[chunkIdx]
+
+              let instVB =
+                stagePaletteInstanceVB(
+                  gd,
+                  res,
+                  transforms,
+                  colors,
+                  chunkStart,
+                  chunkCount
+                )
+
+              // Per-chunk palette storage (effect params are effect-global — set
+              // once per chunk, not per part): the cached texture on DX11/Vulkan,
+              // the bonePaletteGroup constant array on DX12.
+              match res.Params with
+              | ValueSome p ->
+                if isNull paletteTex then
+                  if
+                    res.GroupPaletteScratch.Length < PaletteGroup.MaxMatrices
+                  then
+                    res.GroupPaletteScratch <-
+                      Array.zeroCreate PaletteGroup.MaxMatrices
+
+                  Array.Copy(
+                    palettes,
+                    chunkStart * boneCount,
+                    res.GroupPaletteScratch,
+                    0,
+                    chunkCount * boneCount
+                  )
+
+                  PbrUniforms.setMatrixArray
+                    p.Matrix.BonePaletteGroup
+                    res.GroupPaletteScratch
+
+                  PbrUniforms.setInt p.Matrix.GroupBoneCount boneCount
+                else
+                  PbrUniforms.setTexture p.Matrix.PaletteTex paletteTex
+
+                  PbrUniforms.setVec2
+                    p.Matrix.PaletteTexSize
+                    (Vector2(float32(boneCount * 4), float32 chunkCount))
+              | ValueNone -> ()
+
+              // PerMesh material resolvers index the model's parts in pipeline iteration
+              // order — restart the counter for each chunk (the same parts re-iterate).
+              let mutable partIndex = 0
+
+              for mesh in model.Meshes do
+                let world = res.BoneTransforms[mesh.ParentBone.Index]
+
+                for part in mesh.MeshParts do
+                  let isSkinned =
+                    match part.Effect with
+                    | :? SkinnedEffect -> true
+                    | _ -> false
+
+                  let mat =
+                    match matOverride with
+                    | ValueNone -> Material3D.fromModelMeshPart part
+                    | ValueSome(MaterialOverride.All m) -> m
+                    | ValueSome(MaterialOverride.PerMesh f) -> f partIndex
+
+                  partIndex <- partIndex + 1
+
+                  if part.PrimitiveCount > 0 then
+                    match target with
+                    | UserEffectTarget(effect, _) when isSkinned ->
+                      // User effect opted in: it inherits scene DATA by name (not the PBR
+                      // shader). matModel carries the mesh parent-bone world; the instance
+                      // world arrives on stream 1 and the bone palette via
+                      // paletteTex/paletteTexSize — the contract the built-in
+                      // SkinnedInstanced VS implements.
+                      let mutable t = world
+                      let mutable inv = Matrix.Identity
+                      Matrix.Invert(&t, &inv) |> ignore
+
+                      SceneUpload.uploadToEffect(
+                        gd,
+                        effect,
+                        state.View,
+                        state.Projection,
+                        state.CurrentCamera.Position,
+                        world,
+                        Matrix.Transpose inv,
+                        frame.Lights,
+                        frame.Shadows,
+                        ValueNone,
+                        mat,
+                        frame.Time
+                      )
+
+                      match effect.Parameters["paletteTex"] with
+                      | null -> ()
+                      | pp -> pp.SetValue paletteTex
+
+                      match effect.Parameters["paletteTexSize"] with
+                      | null -> ()
+                      | pp ->
+                        pp.SetValue(
+                          Vector2(float32(boneCount * 4), float32 chunkCount)
+                        )
+
+                      gd.SetVertexBuffers(
+                        VertexBufferBinding(part.VertexBuffer, 0, 0),
+                        VertexBufferBinding(instVB, 0, 1)
+                      )
+
+                      gd.Indices <- part.IndexBuffer
+
+                      for pass in effect.CurrentTechnique.Passes do
+                        pass.Apply()
+
+                        gd.DrawInstancedPrimitives(
+                          PrimitiveType.TriangleList,
+                          part.VertexOffset,
+                          part.StartIndex,
+                          part.PrimitiveCount,
+                          chunkCount
+                        )
+                    | _ ->
+                      // Framework PBR effect: SkinnedInstanced(+Color) — or the
+                      // grouped-uniform SkinnedInstancedGrouped(+Color) on DX12 —
+                      // for skinned parts; Instanced(+Color) for the rest (their
+                      // stream 0 has no bone channels; the extra stream-1 elements
+                      // are simply unread).
+                      match res.Effect, res.Params with
+                      | ValueSome e, ValueSome p ->
+                        e.CurrentTechnique <-
+                          e.Techniques[match
+                                         isSkinned, colors, isNull paletteTex
+                                       with
+                                       | true, ValueSome _, true ->
+                                         "SkinnedInstancedGroupedColor"
+                                       | true, ValueNone, true ->
+                                         "SkinnedInstancedGrouped"
+                                       | true, ValueSome _, false ->
+                                         "SkinnedInstancedColor"
+                                       | true, ValueNone, false ->
+                                         "SkinnedInstanced"
+                                       | false, ValueSome _, _ ->
+                                         "InstancedColor"
+                                       | false, ValueNone, _ -> "Instanced"]
+
+                        PbrUniforms.setMatrix p.Matrix.MatModel world
+
+                        let key = materialKey &mat
+
+                        if not res.HasLastMaterial || key <> res.LastKey then
+                          PbrUniforms.uploadMaterial(&p, &mat)
+                          PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                          res.LastKey <- key
+                          res.HasLastMaterial <- true
+
+                        gd.SetVertexBuffers(
+                          VertexBufferBinding(part.VertexBuffer, 0, 0),
+                          VertexBufferBinding(instVB, 0, 1)
+                        )
+
+                        gd.Indices <- part.IndexBuffer
+
+                        let saved = part.Effect
+                        part.Effect <- e
+
+                        try
+                          for pass in e.CurrentTechnique.Passes do
+                            pass.Apply()
+
+                            gd.DrawInstancedPrimitives(
+                              PrimitiveType.TriangleList,
+                              part.VertexOffset,
+                              part.StartIndex,
+                              part.PrimitiveCount,
+                              chunkCount
+                            )
+                        finally
+                          part.Effect <- saved
+                      | _ -> ()
+
+              chunkIdx <- chunkIdx + 1
+          finally
+            match target with
+            | UserEffectTarget(effect, _) ->
+              effect.CurrentTechnique <- savedUserTechnique
+            | PbrTarget -> ()
+
   // ── User-effect scope shading: uploads scene data to an arbitrary effect via SceneUpload. ──
 
   /// <summary>
@@ -1189,5 +1757,40 @@ module internal PbrShading =
               )
           finally
             effect.CurrentTechnique <- savedTechnique
+
+    | Command3D.DrawAnimatedModelInstanced(model,
+                                           transforms,
+                                           palettes,
+                                           matOverride,
+                                           colors,
+                                           count) ->
+      // Does the user effect opt into skinned instancing? An effect exposing a
+      // `SkinnedInstanced` technique (the convention ForwardPbr.fx uses) shades the skinned
+      // parts directly — the bone palette reaches it via the paletteTex/paletteTexSize
+      // uniforms (name-resolved, absent = skipped) and the per-instance rows on stream 1.
+      // The probe result is memoized per effect. Effects without the technique — and the
+      // OpenGL backend, where vertex texture fetch doesn't exist — fall back to the
+      // framework PBR skinned-instanced path.
+      let target =
+        if isOpenGLBackend() then
+          PbrTarget
+        else
+          match res.TrySkinnedInstancedTechnique(effect) with
+          | null -> PbrTarget
+          | tech -> UserEffectTarget(effect, tech)
+
+      drawAnimatedModelInstanced(
+        gd,
+        &state,
+        &frame,
+        res,
+        target,
+        model,
+        transforms,
+        palettes,
+        matOverride,
+        colors,
+        count
+      )
 
     | _ -> ()

@@ -207,6 +207,12 @@ type ForwardPipelineBase
   // alias it from the shadow resources. (Read/written in place — never reassigned by either path.)
   let bonePaletteScratch = shadowRes.BonePaletteScratch
 
+  // The palette-chunk cache is shared between the shadow pass and the forward pass: both
+  // passes stage the same skinned-instanced palettes each frame, so the first pass to run
+  // stages + uploads and the second reuses the same chunk textures (PaletteChunkCache).
+  let paletteChunks = pbrRes.PaletteChunks
+  do shadowRes.PaletteChunks <- paletteChunks
+
   // B8 billboards + lines: lazily-created unlit BasicEffects (one textured+alpha for
   // billboards, one vertex-color for lines) and a pooled CPU vertex staging array for
   // DrawUserIndexedPrimitives. Created on first use against the real device.
@@ -322,6 +328,25 @@ type ForwardPipelineBase
           transforms,
           colors,
           material,
+          instanceCount
+        )
+      | Command3D.DrawAnimatedModelInstanced(model,
+                                             transforms,
+                                             palettes,
+                                             matOverride,
+                                             colors,
+                                             instanceCount) ->
+        PbrShading.drawAnimatedModelInstanced(
+          gd,
+          &state,
+          &frame,
+          pbrRes,
+          SkinnedInstancedTarget.PbrTarget,
+          model,
+          transforms,
+          palettes,
+          matOverride,
+          colors,
           instanceCount
         )
       | _ -> ()
@@ -744,6 +769,20 @@ type ForwardPipelineBase
         pbrRes.InstanceColorVertexBuffer <- ValueNone
       | ValueNone -> ()
 
+      match pbrRes.InstancePaletteVertexBuffer with
+      | ValueSome vb ->
+        vb.Dispose()
+        pbrRes.InstancePaletteVertexBuffer <- ValueNone
+      | ValueNone -> ()
+
+      match pbrRes.InstancePaletteColorVertexBuffer with
+      | ValueSome vb ->
+        vb.Dispose()
+        pbrRes.InstancePaletteColorVertexBuffer <- ValueNone
+      | ValueNone -> ()
+
+      (paletteChunks :> IDisposable).Dispose()
+
       match billboardEffect with
       | ValueSome e ->
         e.Dispose()
@@ -773,6 +812,12 @@ type ForwardPipelineBase
       | ValueSome vb ->
         vb.Dispose()
         shadowRes.InstanceVertexBuffer <- ValueNone
+      | ValueNone -> ()
+
+      match shadowRes.SkinnedInstancedVertexBuffer with
+      | ValueSome vb ->
+        vb.Dispose()
+        shadowRes.SkinnedInstancedVertexBuffer <- ValueNone
       | ValueNone -> ()
 
       match fullScreenQuad with
@@ -808,6 +853,13 @@ type ForwardPipelineBase
       // s5 (shadow atlas) is bound per-shadow-pass to PointClamp by ShadowPass.fs
       // (point-sampled depth for the manual 3×3 PCF); set a safe default here.
       gd.SamplerStates[5] <- SamplerState.PointClamp
+      // s6 (bone-palette texture for skinned + instanced draws): point-sampled — the
+      // palette texels are exact matrix rows, filtering would blend unrelated bones.
+      gd.SamplerStates[6] <- SamplerState.PointClamp
+
+      // Return last frame's bone-palette chunk textures to the shared pool before any
+      // draw of this frame re-acquires them (per-frame lifetime — see PaletteChunkCache).
+      paletteChunks.ReleaseAll()
 
       // Pre-scan — capture camera, lights, shadow state, and post-process actions in one pass
       Pipelines.LightBuffers.clear lights
@@ -993,6 +1045,7 @@ type ForwardPipelineBase
         | Command3D.DrawModelWith _
         | Command3D.DrawAnimatedModel _
         | Command3D.DrawAnimatedModelWith _
+        | Command3D.DrawAnimatedModelInstanced _
         | Command3D.DrawPrimitive _
         | Command3D.DrawInstanced _ ->
           if state.HasCamera then

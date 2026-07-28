@@ -800,6 +800,11 @@ module AnimatedMesh =
   /// matrix layout — it equals raylib's own
   /// <c>MatrixMultiply(MatrixInvert(bind), current)</c> per bone, ready for the
   /// shader upload.
+  /// <c>clip</c> is sampled by raw bone index — this path does NOT apply the
+  /// bone-order remaps built by <c>Animation3DClips.merge</c>. Clips from a
+  /// merged clip set must be played through <c>Animation3DState.computePose</c>
+  /// (or <c>AnimatedModel</c>), the only remap-aware path; feeding a merged
+  /// clip here drives the wrong bones (typically seen as mirrored limbs).
   /// </remarks>
   let computeBoneMatrices
     (clip: ModelAnimation)

@@ -96,6 +96,19 @@ type Command3D =
     transforms: Matrix4x4[] *
     material: Material3D *
     instanceCount: int
+  /// <summary>
+  /// Skinned + instanced: one draw call for <paramref name="instanceCount"/> instances
+  /// of the same skinned mesh, each with its own pose. <paramref name="palettes"/> is
+  /// the flat per-instance bone palettes (<c>instanceCount * boneCount</c>,
+  /// instance-major); the shader indexes it by <c>gl_InstanceID</c> on the palette
+  /// texture.
+  /// </summary>
+  | DrawSkinnedMeshInstanced of
+    mesh: Mesh *
+    transforms: Matrix4x4[] *
+    palettes: Matrix4x4[] *
+    material: Material3D *
+    instanceCount: int
   | DrawBillboardBatch of batch: BillboardBatch3D
   | BeginCamera of camera: Camera3D
   | BeginCameraConfig of config: Camera3DConfig

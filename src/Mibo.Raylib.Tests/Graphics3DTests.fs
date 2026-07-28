@@ -1747,6 +1747,7 @@ let preScanTests =
       let mutable fwd = Unchecked.defaultof<ShaderVariant>
       let mutable inst = Unchecked.defaultof<ShaderVariant>
       let mutable sk = Unchecked.defaultof<ShaderVariant>
+      let mutable skInst = Unchecked.defaultof<ShaderVariant>
 
       let fs =
         preScan(
@@ -1755,6 +1756,8 @@ let preScanTests =
           &fwd,
           &inst,
           &sk,
+          &skInst,
+          Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
@@ -1777,6 +1780,7 @@ let preScanTests =
       let mutable fwd = Unchecked.defaultof<ShaderVariant>
       let mutable inst = Unchecked.defaultof<ShaderVariant>
       let mutable sk = Unchecked.defaultof<ShaderVariant>
+      let mutable skInst = Unchecked.defaultof<ShaderVariant>
 
       let fs =
         preScan(
@@ -1785,6 +1789,8 @@ let preScanTests =
           &fwd,
           &inst,
           &sk,
+          &skInst,
+          Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
@@ -1803,6 +1809,7 @@ let preScanTests =
       let mutable fwd = Unchecked.defaultof<ShaderVariant>
       let mutable inst = Unchecked.defaultof<ShaderVariant>
       let mutable sk = Unchecked.defaultof<ShaderVariant>
+      let mutable skInst = Unchecked.defaultof<ShaderVariant>
 
       let fs =
         preScan(
@@ -1811,6 +1818,8 @@ let preScanTests =
           &fwd,
           &inst,
           &sk,
+          &skInst,
+          Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
@@ -1836,6 +1845,7 @@ let preScanTests =
       let mutable fwd = Unchecked.defaultof<ShaderVariant>
       let mutable inst = Unchecked.defaultof<ShaderVariant>
       let mutable sk = Unchecked.defaultof<ShaderVariant>
+      let mutable skInst = Unchecked.defaultof<ShaderVariant>
 
       let _fs =
         preScan(
@@ -1844,6 +1854,8 @@ let preScanTests =
           &fwd,
           &inst,
           &sk,
+          &skInst,
+          Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
@@ -1862,6 +1874,7 @@ let preScanTests =
       let mutable fwd = Unchecked.defaultof<ShaderVariant>
       let mutable inst = Unchecked.defaultof<ShaderVariant>
       let mutable sk = Unchecked.defaultof<ShaderVariant>
+      let mutable skInst = Unchecked.defaultof<ShaderVariant>
 
       let fs =
         preScan(
@@ -1870,6 +1883,8 @@ let preScanTests =
           &fwd,
           &inst,
           &sk,
+          &skInst,
+          Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,
           Unchecked.defaultof<_>,

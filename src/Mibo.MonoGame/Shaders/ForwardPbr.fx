@@ -338,6 +338,189 @@ VS_OUTPUT VS_Skinned(VS_INPUT_SKINNED input) {
 }
 
 // ------------------------------------------------------------------
+// Skinned + instanced vertex shaders (bone palettes from a texture).
+// The palette texture is RGBA32F, width = boneCount*4 texels, height = the chunk's
+// instance count; a bone's 4x4 matrix occupies 4 consecutive texels. XNA Matrix is
+// row-major, so texel r holds row r and float4x4(r0,r1,r2,r3) rebuilds it for the
+// file's mul(position, matrix) vector-LEFT convention. Sampler slot 6 (slots 0-4 are
+// the material maps, 5 the shadow atlas). The OpenGL profile (vs_3_0) has no vertex
+// texture fetch, so these shaders and their techniques are excluded there — the
+// pipeline falls back to per-instance Skinned draws.
+// ------------------------------------------------------------------
+#if !OPENGL
+DECLARE_TEX(paletteTex, 6);
+float2 paletteTexSize;
+
+float4 paletteBoneRow(int boneIndex, int row, float instance) {
+  float2 uv = float2(
+    (float(boneIndex * 4 + row) + 0.5) / paletteTexSize.x,
+    (instance + 0.5) / paletteTexSize.y);
+  return SAMPLE_TEX_LOD(paletteTex, uv, 0);
+}
+
+float4x4 paletteBoneMatrix(int boneIndex, float instance) {
+  return float4x4(
+    paletteBoneRow(boneIndex, 0, instance),
+    paletteBoneRow(boneIndex, 1, instance),
+    paletteBoneRow(boneIndex, 2, instance),
+    paletteBoneRow(boneIndex, 3, instance));
+}
+
+struct VS_INPUT_SKINNED_INSTANCED {
+  // Stream 0 (per-vertex skinned mesh)
+  float3 Position   : POSITION0;
+  float2 TexCoord   : TEXCOORD0;
+  float3 Normal     : NORMAL0;
+  float4 BoneWeights: BLENDWEIGHT0;
+  int4   BoneIndices: BLENDINDICES0;
+  // Stream 1 (per-instance) — 4 rows composing a 4x4 world matrix + the palette row.
+  float4 Row0         : TEXCOORD1;
+  float4 Row1         : TEXCOORD2;
+  float4 Row2         : TEXCOORD3;
+  float4 Row3         : TEXCOORD4;
+  float PaletteOffset : TEXCOORD6;
+};
+
+VS_OUTPUT VS_SkinnedInstanced(VS_INPUT_SKINNED_INSTANCED input) {
+  VS_OUTPUT output;
+  float inst = input.PaletteOffset;
+
+  float4x4 skin =
+    input.BoneWeights.x * paletteBoneMatrix(input.BoneIndices.x, inst) +
+    input.BoneWeights.y * paletteBoneMatrix(input.BoneIndices.y, inst) +
+    input.BoneWeights.z * paletteBoneMatrix(input.BoneIndices.z, inst) +
+    input.BoneWeights.w * paletteBoneMatrix(input.BoneIndices.w, inst);
+
+  float4 skinnedPos = mul(float4(input.Position, 1.0), skin);
+  float3 skinnedN = mul(input.Normal, (float3x3) skin);
+
+  // matModel carries the mesh's parent-bone world (as in VS_Skinned, minus the draw
+  // transform); the per-instance world arrives on stream 1. Normals use the raw 3x3
+  // (uniform-scale assumption, same as VS_Instanced) — a per-instance
+  // inverse-transpose would defeat the point of instancing.
+  float4x4 instanceWorld = float4x4(input.Row0, input.Row1, input.Row2, input.Row3);
+  float4 world = mul(mul(skinnedPos, matModel), instanceWorld);
+  output.Position = mul(world, viewProj);
+  output.TexCoord = input.TexCoord;
+  output.Normal = mul(mul(skinnedN, (float3x3) matModel), (float3x3) instanceWorld);
+  output.WorldPos = world.xyz;
+  return output;
+}
+
+struct VS_INPUT_SKINNED_INSTANCED_COLOR {
+  // Stream 0 (per-vertex skinned mesh)
+  float3 Position   : POSITION0;
+  float2 TexCoord   : TEXCOORD0;
+  float3 Normal     : NORMAL0;
+  float4 BoneWeights: BLENDWEIGHT0;
+  int4   BoneIndices: BLENDINDICES0;
+  // Stream 1 (per-instance) — 4 world rows + a color + the palette row.
+  float4 Row0         : TEXCOORD1;
+  float4 Row1         : TEXCOORD2;
+  float4 Row2         : TEXCOORD3;
+  float4 Row3         : TEXCOORD4;
+  float4 InstanceColor : TEXCOORD5;
+  float PaletteOffset : TEXCOORD6;
+};
+
+VS_OUTPUT_COLOR VS_SkinnedInstancedColor(VS_INPUT_SKINNED_INSTANCED_COLOR input) {
+  VS_OUTPUT_COLOR output;
+  float inst = input.PaletteOffset;
+
+  float4x4 skin =
+    input.BoneWeights.x * paletteBoneMatrix(input.BoneIndices.x, inst) +
+    input.BoneWeights.y * paletteBoneMatrix(input.BoneIndices.y, inst) +
+    input.BoneWeights.z * paletteBoneMatrix(input.BoneIndices.z, inst) +
+    input.BoneWeights.w * paletteBoneMatrix(input.BoneIndices.w, inst);
+
+  float4 skinnedPos = mul(float4(input.Position, 1.0), skin);
+  float3 skinnedN = mul(input.Normal, (float3x3) skin);
+
+  // Same matModel / uniform-scale conventions as VS_SkinnedInstanced.
+  float4x4 instanceWorld = float4x4(input.Row0, input.Row1, input.Row2, input.Row3);
+  float4 world = mul(mul(skinnedPos, matModel), instanceWorld);
+  output.Position = mul(world, viewProj);
+  output.TexCoord = input.TexCoord;
+  output.Normal = mul(mul(skinnedN, (float3x3) matModel), (float3x3) instanceWorld);
+  output.WorldPos = world.xyz;
+  output.InstanceColor = input.InstanceColor;
+  return output;
+}
+
+// ------------------------------------------------------------------
+// Grouped-uniform skinned + instanced variant (DX12 fallback). The native
+// DX12 runtime never delivers vertex-stage textures to the VS (the palette
+// SRV samples zeros there regardless of slot or content — the PS reads the
+// same SRV fine), so on DX12 bone palettes ride a constant array instead:
+// bonePaletteGroup holds ONE GROUP of instances (groupBoneCount matrices
+// each), indexed by the group-local PaletteOffset from stream 1. The pipeline
+// chunks draws to 320/boneCount instances per group (see the sizing note at
+// the declaration). The vertex layout is the same
+// VS_INPUT_SKINNED_INSTANCED(+COLOR) — only the palette source differs.
+// ------------------------------------------------------------------
+#define MAX_GROUP_PALETTES 128
+// Declared as plain globals (NOT an explicit cbuffer block): mgfx packs all
+// globals into one shared $Globals CB whose size is stored as a signed Int16
+// (32,767 cap) — the effect's other uniforms take ~11KB there, so 320
+// matrices (20KB) is the group-array budget (total ~32KB). A named cbuffer
+// would dodge the cap on DX12 but the Vulkan mgfx profile rejects multi-CB
+// effects outright.
+float4x4 bonePaletteGroup[MAX_GROUP_PALETTES];
+int groupBoneCount;
+
+float4x4 groupBoneMatrix(int boneIndex, float instance) {
+  return bonePaletteGroup[(int)instance * groupBoneCount + boneIndex];
+}
+
+VS_OUTPUT VS_SkinnedInstancedGrouped(VS_INPUT_SKINNED_INSTANCED input) {
+  VS_OUTPUT output;
+  float inst = input.PaletteOffset;
+
+  float4x4 skin =
+    input.BoneWeights.x * groupBoneMatrix(input.BoneIndices.x, inst) +
+    input.BoneWeights.y * groupBoneMatrix(input.BoneIndices.y, inst) +
+    input.BoneWeights.z * groupBoneMatrix(input.BoneIndices.z, inst) +
+    input.BoneWeights.w * groupBoneMatrix(input.BoneIndices.w, inst);
+
+  float4 skinnedPos = mul(float4(input.Position, 1.0), skin);
+  float3 skinnedN = mul(input.Normal, (float3x3) skin);
+
+  // Same matModel / instance-world / uniform-scale conventions as
+  // VS_SkinnedInstanced.
+  float4x4 instanceWorld = float4x4(input.Row0, input.Row1, input.Row2, input.Row3);
+  float4 world = mul(mul(skinnedPos, matModel), instanceWorld);
+  output.Position = mul(world, viewProj);
+  output.TexCoord = input.TexCoord;
+  output.Normal = mul(mul(skinnedN, (float3x3) matModel), (float3x3) instanceWorld);
+  output.WorldPos = world.xyz;
+  return output;
+}
+
+VS_OUTPUT_COLOR VS_SkinnedInstancedGroupedColor(VS_INPUT_SKINNED_INSTANCED_COLOR input) {
+  VS_OUTPUT_COLOR output;
+  float inst = input.PaletteOffset;
+
+  float4x4 skin =
+    input.BoneWeights.x * groupBoneMatrix(input.BoneIndices.x, inst) +
+    input.BoneWeights.y * groupBoneMatrix(input.BoneIndices.y, inst) +
+    input.BoneWeights.z * groupBoneMatrix(input.BoneIndices.z, inst) +
+    input.BoneWeights.w * groupBoneMatrix(input.BoneIndices.w, inst);
+
+  float4 skinnedPos = mul(float4(input.Position, 1.0), skin);
+  float3 skinnedN = mul(input.Normal, (float3x3) skin);
+
+  float4x4 instanceWorld = float4x4(input.Row0, input.Row1, input.Row2, input.Row3);
+  float4 world = mul(mul(skinnedPos, matModel), instanceWorld);
+  output.Position = mul(world, viewProj);
+  output.TexCoord = input.TexCoord;
+  output.Normal = mul(mul(skinnedN, (float3x3) matModel), (float3x3) instanceWorld);
+  output.WorldPos = world.xyz;
+  output.InstanceColor = input.InstanceColor;
+  return output;
+}
+#endif // !OPENGL
+
+// ------------------------------------------------------------------
 // Fragment shader (shared by all three techniques)
 // ------------------------------------------------------------------
 
@@ -505,3 +688,37 @@ technique Skinned {
     PixelShader = compile PS_SHADERMODEL PS_Main();
   }
 };
+
+// Skinned + instanced relies on vertex texture fetch — unavailable on the OpenGL
+// (vs_3_0) profile, so the GL .mgfx must not contain these techniques.
+#if !OPENGL
+technique SkinnedInstanced {
+  pass P0 {
+    VertexShader = compile VS_SHADERMODEL VS_SkinnedInstanced();
+    PixelShader = compile PS_SHADERMODEL PS_Main();
+  }
+};
+
+technique SkinnedInstancedColor {
+  pass P0 {
+    VertexShader = compile VS_SHADERMODEL VS_SkinnedInstancedColor();
+    PixelShader = compile PS_SHADERMODEL PS_MainColor();
+  }
+};
+
+// Grouped-uniform variants — the DX12 backend's skinned + instanced path (no
+// working vertex texture fetch there); unused on DX11/Vulkan.
+technique SkinnedInstancedGrouped {
+  pass P0 {
+    VertexShader = compile VS_SHADERMODEL VS_SkinnedInstancedGrouped();
+    PixelShader = compile PS_SHADERMODEL PS_Main();
+  }
+};
+
+technique SkinnedInstancedGroupedColor {
+  pass P0 {
+    VertexShader = compile VS_SHADERMODEL VS_SkinnedInstancedGroupedColor();
+    PixelShader = compile PS_SHADERMODEL PS_MainColor();
+  }
+};
+#endif // !OPENGL

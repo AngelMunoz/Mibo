@@ -87,6 +87,13 @@ match AnimatedMesh.fromModel model with
       .drop()
 ```
 
+> **Merged clips need the pose path.** `computeBoneMatrices` samples a raw
+> `ModelAnimation` by bone index and does not apply the bone-order remaps from
+> `Animation3DClips.merge` — playing a merged cross-file clip through this
+> Tier-2 path drives the wrong bones (mirrored limbs). When clips come from
+> several files, use `Animation3DState.computePose` / `AnimatedModel` (the
+> remap-aware path) instead.
+
 ### Tier 3 — Per-Model CPU Skinning (`Animation3DState`)
 
 Simplest API. Each entity owns its own model state. `.animatedModel(...)` applies the pose for you:
@@ -132,7 +139,40 @@ buffer
 | 1–5 animated characters | Tier 3 | Simple, no shader changes |
 | Several poses of the same model per frame | Tier 3, raylib `AnimatedModel` | GPU path — no mutation, per-instance palettes |
 | 10+ animated enemies | Tier 2 | Share mesh, GPU skinning |
-| Hundreds of units (RTS) | — | Skinned + instanced draws are not supported (no per-instance bone palette) |
+| Hundreds of units (RTS) | Tier 2 + `animatedModelInstanced` | Skinned + instanced draws: one draw call per sub-mesh for N instances, each with its own pose |
+
+## Skinned + Instanced Draws
+
+`animatedModelInstanced` draws many instances of the same animated model in one
+draw call (per sub-mesh), each instance with its own world transform **and its
+own pose**. It exists on both backends and mirrors the `instanced` member's
+shape, with poses taking the place of a single shared skeleton state:
+
+```fsharp
+// Per frame: one transform + one pose per instance
+let transforms = units |> Array.map (fun u -> u.Transform)
+let poses = units |> Array.map (fun u -> AnimatedModel.computePose u.Model)
+
+buffer
+  .animatedModelInstanced(sharedModel, transforms, poses)
+  .drop()
+```
+
+- `poses` carries one caller-evaluated `BonePose` per instance — compute each
+  unit's pose once and share it with bone queries / attachment draws for that
+  unit (see above). The instance count is `min(transforms.Length, poses.Length)`.
+- `?material` takes a `MaterialOverride` (`All` for a whole-model override,
+  `PerMesh` for a per-sub-mesh resolver), like the model draw members.
+- `?colors` tints each instance — **MonoGame only**, like `instanced`.
+- Per-instance bone palettes ride a texture the vertex shader samples (raylib
+  indexes it by `gl_InstanceID`), so draws are chunked at 2048 instances.
+
+> **OpenGL backend note:** MonoGame's OpenGL profile cannot sample textures in
+> the vertex shader, so there `animatedModelInstanced` falls back to
+> per-instance skinned draws — identical output, but no batching win. This
+> includes Android, whose MonoGame backend is GL-based. DesktopGL remains fully
+> supported for moderate counts; plan crowd-heavy scenes for the DX12/Vulkan or
+> raylib backends.
 
 ## Animation3DClips API
 
@@ -175,7 +215,7 @@ let clips =
     |]
 ```
 
-Clips whose file already follows the target order are sampled directly; the remap costs nothing at runtime. Bones a clip doesn't animate hold their bind pose (matching the MonoGame backend). The legacy mutating path (`UpdateModelAnimation` via a bare `Animation3DState`) cannot remap — it requires clips from the same file as the model.
+Clips whose file already follows the target order are sampled directly; the remap costs nothing at runtime. Bones a clip doesn't animate hold their bind pose (matching the MonoGame backend). The remap is honored only by the pose path (`Animation3DState.computePose` / `AnimatedModel`) — the legacy mutating path (`UpdateModelAnimation` via a bare `Animation3DState`) and the Tier-2 path (`AnimatedMesh.computeBoneMatrices` + `skinnedMesh`) sample by raw bone index and cannot remap; they require clips from the same file as the model.
 
 MonoGame is unaffected: its clip channels are keyed by bone name, so clips from differently-ordered files resolve correctly without a remap.
 

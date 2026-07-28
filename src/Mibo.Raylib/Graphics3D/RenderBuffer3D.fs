@@ -305,6 +305,71 @@ type RenderBuffer3D with
       )
 
   /// <summary>
+  /// GPU skinning path, instanced: one <c>DrawSkinnedMeshInstanced</c> per
+  /// sub-mesh carrying the shared flat per-instance palettes — N instances,
+  /// each with its own pose, in one draw call per sub-mesh.
+  /// <paramref name="poses"/> carries one caller-evaluated <c>BonePose</c> per
+  /// instance (share them with bone queries / attachment draws). The instance
+  /// count is <c>min(transforms.Length, poses.Length)</c>; 0 emits nothing.
+  /// <paramref name="material"/> overrides the authored materials
+  /// (<c>MaterialOverride.All</c> / <c>MaterialOverride.PerMesh</c>).
+  /// <paramref name="colors"/> is MonoGame-only — <c>ValueSome</c> raises
+  /// <see cref="T:System.NotSupportedException"/>.
+  /// </summary>
+  member inline b.AddAnimatedModelInstanced
+    (
+      am: AnimatedModel,
+      transforms: Matrix4x4[],
+      poses: BonePose[],
+      material: MaterialOverride voption,
+      colors: Raylib_cs.Color[] voption
+    ) =
+    match colors with
+    | ValueSome _ ->
+      raise(
+        System.NotSupportedException(
+          "Per-instance colors are only supported on the MonoGame backend"
+        )
+      )
+    | ValueNone ->
+      let count = min transforms.Length poses.Length
+
+      if count > 0 then
+        let boneCount = am.Mesh.BoneCount
+        let palettes = Array.zeroCreate<Matrix4x4>(count * boneCount)
+
+        for i = 0 to count - 1 do
+          poses[i].Palette.CopyTo(palettes, i * boneCount)
+
+        let model = am.State.Model
+        let meshes = model.MeshesAsSpan()
+
+        for i = 0 to meshes.Length - 1 do
+          let mat =
+            match material with
+            | ValueSome(MaterialOverride.All m) -> m
+            | ValueSome(MaterialOverride.PerMesh resolver) -> resolver i
+            | ValueNone ->
+              // NOTE: MeshMaterialAsSpan() is MaterialCount-long in raylib-cs —
+              // index the MeshMaterial pointer per mesh directly, like the
+              // pipeline does.
+              let matIdx = NativePtr.get model.MeshMaterial i
+
+              Material3D.fromRaylibMaterial(
+                NativePtr.get model.Materials matIdx
+              )
+
+          b.Add(
+            Command3D.DrawSkinnedMeshInstanced(
+              meshes[i],
+              transforms,
+              palettes,
+              mat,
+              count
+            )
+          )
+
+  /// <summary>
   /// Draws a static <paramref name="mesh"/> parented to <paramref name="bone"/>
   /// of the animated model <paramref name="am"/>. The attachment's world
   /// transform is <c>localTransform * boneWorld * transform</c> (applied

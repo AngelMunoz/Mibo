@@ -245,6 +245,46 @@ type RenderBuffer3D with
       )
     )
 
+  /// <summary>
+  /// Skinned + instanced draw: one draw call for N instances of the same
+  /// animated model, each with its own pose. <paramref name="poses"/> carries
+  /// one caller-evaluated <c>BonePose</c> per instance (share them with bone
+  /// queries / attachment draws); the witness flattens the per-instance
+  /// palettes into the command's instance-major array. The instance count is
+  /// <c>min(transforms.Length, poses.Length)</c>; 0 (or a boneless model —
+  /// use <c>instanced</c> for those) emits nothing. On the OpenGL backend the
+  /// pipeline falls back to per-instance skinned draws.
+  /// </summary>
+  member inline b.AddAnimatedModelInstanced
+    (
+      am: AnimatedModel,
+      transforms: Matrix[],
+      poses: BonePose[],
+      material: MaterialOverride voption,
+      colors: Microsoft.Xna.Framework.Color[] voption
+    ) =
+    let count = min transforms.Length poses.Length
+
+    match am.Mesh with
+    | ValueSome mesh when count > 0 ->
+      let boneCount = mesh.BoneCount
+      let palettes = Array.zeroCreate<Matrix>(count * boneCount)
+
+      for i = 0 to count - 1 do
+        poses[i].Palette.CopyTo(palettes, i * boneCount)
+
+      b.Add(
+        Command3D.DrawAnimatedModelInstanced(
+          am.Model,
+          transforms,
+          palettes,
+          material,
+          colors,
+          count
+        )
+      )
+    | _ -> ()
+
   /// Draws a static mesh parented to a bone of an animated model. World =
   /// localTransform * boneWorld * transform (row-vector composition — the
   /// attachment inherits the instance's full world transform). An unknown bone

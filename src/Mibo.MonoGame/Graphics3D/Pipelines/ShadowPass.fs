@@ -3,6 +3,7 @@ namespace Mibo.Elmish.Graphics3D.Pipelines
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open MonoGame.Framework.Utilities
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics3D
@@ -83,6 +84,26 @@ type ShadowInstancedDraw = {
   CastsShadow: bool
 }
 
+/// <summary>A skinned + instanced caster draw collected for the shadow pass.</summary>
+/// <remarks>
+/// One entry per skinned <c>ModelMeshPart</c> of a <c>DrawAnimatedModelInstanced</c> command,
+/// sharing the command's per-instance transforms + flat bone palettes
+/// (<c>InstanceCount * boneCount</c>, instance-major). Rendered via the depth effect's
+/// <c>DepthSkinnedInstanced</c> technique (palette texture + two-stream bind); on the OpenGL
+/// backend (no vertex texture fetch) the pass falls back to per-instance <c>DepthSkinned</c>
+/// draws. Colors/material overrides are irrelevant to depth and not carried. Like the other
+/// part-based casters, no world-space bounds — drawn unconditionally.
+/// </remarks>
+[<Struct>]
+type ShadowSkinnedInstancedDraw = {
+  Part: ModelMeshPart
+  Transforms: Matrix[]
+  Palettes: Matrix[]
+  InstanceCount: int
+  /// Whether this draw was emitted while shadows were enabled (see ShadowMeshDraw).
+  CastsShadow: bool
+}
+
 /// <summary>
 /// Cached <see cref="T:Microsoft.Xna.Framework.Graphics.EffectParameter"/> handles for the
 /// depth-only shadow pass effect (<c>DepthShadow.fx</c>).
@@ -94,6 +115,16 @@ type ShadowEffectParams = {
   // Skinning (B12 DepthSkinned technique): bone palette. null on the plain Depth technique —
   // the skinned-caster path uploads only when present.
   Bones: EffectParameter
+  // Skinned + instanced (DepthSkinnedInstanced technique): the RGBA32F bone-palette
+  // texture + its texel dimensions. null on the OpenGL effect (the technique is
+  // compiled out there) — the null-safe setters no-op.
+  PaletteTex: EffectParameter
+  PaletteTexSize: EffectParameter
+  // Grouped-uniform skinned + instanced (DepthSkinnedInstancedGrouped technique — the
+  // DX12 fallback): one group of bone palettes as a constant array + the bone count
+  // per instance. null on the OpenGL effect; unused on DX11/Vulkan.
+  BonePaletteGroup: EffectParameter
+  GroupBoneCount: EffectParameter
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -141,6 +172,31 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   member val InstancedDraws =
     Array.zeroCreate<ShadowInstancedDraw> 32 with get, set
 
+  /// <summary>Pooled skinned + instanced caster draws (DrawAnimatedModelInstanced). Grows on demand.</summary>
+  member val SkinnedInstancedDraws =
+    Array.zeroCreate<ShadowSkinnedInstancedDraw> 8 with get, set
+
+  /// <summary>CPU staging array for the per-instance <c>VertexInstanceWorldPalette</c> rows of
+  /// skinned + instanced casters. Grows to the largest chunk seen. Reused across frames.</summary>
+  member val SkinnedInstancedStaging =
+    Array.zeroCreate<VertexInstanceWorldPalette> 64 with get, set
+
+  /// <summary>Growable per-instance vertex buffer for skinned + instanced shadow casters. Owned
+  /// by the shadow pass (not shared with the forward-pass PBR buffers) so the two passes never
+  /// race on it. Disposed at shutdown; recreated when a chunk exceeds the current capacity.</summary>
+  member val SkinnedInstancedVertexBuffer: VertexBuffer voption =
+    ValueNone with get, set
+
+  /// <summary>Shared per-frame palette-chunk cache for skinned + instanced casters (aliased
+  /// with the forward pass by ForwardPipeline so each frame's palettes are staged + uploaded
+  /// once, not per pass — see <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>).</summary>
+  member val PaletteChunks = new PaletteChunkCache() with get, set
+
+  /// <summary>Pooled bone-palette scratch for the grouped-uniform skinned + instanced depth
+  /// path (the DX12 fallback — DepthSkinnedInstancedGrouped). Sized to
+  /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatrices"/>; grown on demand.</summary>
+  member val GroupPaletteScratch: Matrix[] = [||] with get, set
+
   /// <summary>CPU staging array for the per-instance <c>VertexInstanceWorld</c> rows. Grows to the
   /// largest instanceCount seen across collected instanced casters. Reused across frames.</summary>
   member val InstanceStaging =
@@ -186,6 +242,7 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   member val CollectedSkinnedCount = 0 with get, set
   member val CollectedModelPartCount = 0 with get, set
   member val CollectedInstancedCount = 0 with get, set
+  member val CollectedSkinnedInstancedCount = 0 with get, set
 
 /// <summary>The extracted shadow pass: caster geometry types, per-light ViewProj builders, and the pass body.</summary>
 module internal ShadowPass =
@@ -195,6 +252,10 @@ module internal ShadowPass =
     MatModel = e.Parameters["matModel"]
     ViewProj = e.Parameters["viewProj"]
     Bones = e.Parameters["boneMatrices"]
+    PaletteTex = e.Parameters["paletteTex"]
+    PaletteTexSize = e.Parameters["paletteTexSize"]
+    BonePaletteGroup = e.Parameters["bonePaletteGroup"]
+    GroupBoneCount = e.Parameters["groupBoneCount"]
   }
 
   /// <summary>
@@ -393,10 +454,12 @@ module internal ShadowPass =
     let mutable skinnedCount = 0
     let mutable instancedCount = 0
     let mutable modelPartCount = 0
+    let mutable skinnedInstancedCount = 0
     let mutable shadowDraws = res.Draws
     let mutable shadowSkinnedDraws = res.SkinnedDraws
     let mutable shadowInstancedDraws = res.InstancedDraws
     let mutable shadowModelPartDraws = res.ModelPartDraws
+    let mutable shadowSkinnedInstancedDraws = res.SkinnedInstancedDraws
 
     for i = 0 to buffer.Count - 1 do
       match buffer[i] with
@@ -541,12 +604,47 @@ module internal ShadowPass =
         }
 
         instancedCount <- instancedCount + 1
+      | Command3D.DrawAnimatedModelInstanced(model,
+                                             transforms,
+                                             palettes,
+                                             _,
+                                             _,
+                                             instanceCount) when
+        instanceCount > 0
+        ->
+        // Skinned + instanced casters: one entry per SkinnedEffect part, sharing the
+        // command's transforms + flat palettes. Material/colors are irrelevant to depth.
+        for mesh in model.Meshes do
+          for part in mesh.MeshParts do
+            match part.Effect with
+            | :? SkinnedEffect ->
+              if
+                skinnedInstancedCount >= shadowSkinnedInstancedDraws.Length
+              then
+                Array.Resize(
+                  &shadowSkinnedInstancedDraws,
+                  shadowSkinnedInstancedDraws.Length * 2
+                )
+
+                res.SkinnedInstancedDraws <- shadowSkinnedInstancedDraws
+
+              shadowSkinnedInstancedDraws[skinnedInstancedCount] <- {
+                Part = part
+                Transforms = transforms
+                Palettes = palettes
+                InstanceCount = instanceCount
+                CastsShadow = castEnabled
+              }
+
+              skinnedInstancedCount <- skinnedInstancedCount + 1
+            | _ -> ()
       | _ -> ()
 
     res.CollectedDrawCount <- drawCount
     res.CollectedSkinnedCount <- skinnedCount
     res.CollectedModelPartCount <- modelPartCount
     res.CollectedInstancedCount <- instancedCount
+    res.CollectedSkinnedInstancedCount <- skinnedInstancedCount
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Per-draw-type render helpers
@@ -721,6 +819,227 @@ module internal ShadowPass =
 
     effect.CurrentTechnique <- effect.Techniques["Depth"]
 
+  /// <summary>
+  /// Renders skinned + instanced casters through the depth effect's
+  /// <c>DepthSkinnedInstanced</c> technique: per chunk (≤ <c>PaletteTexture.MaxHeight</c>
+  /// instances) the chunk's bone matrices arrive via the shared
+  /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/> palette textures
+  /// (staged + uploaded once per frame across both passes) and the instance stream
+  /// carries each instance's palette row. On DX12 (no working vertex texture fetch)
+  /// the <c>DepthSkinnedInstancedGrouped</c> technique reads the
+  /// <c>bonePaletteGroup</c> constant array instead, chunked to
+  /// <c>PaletteGroup.MaxMatrices / boneCount</c> instances per group. On the OpenGL
+  /// backend (no vertex texture fetch) falls back to per-instance <c>DepthSkinned</c>
+  /// draws with the bone palette uploaded as a uniform array. matModel is Identity in
+  /// the instanced path — the per-instance world matrix on stream 1 IS the model
+  /// transform (same convention as DepthInstanced).
+  /// </summary>
+  let renderSkinnedInstancedSpan
+    (gd: GraphicsDevice)
+    (effect: Effect)
+    (shadowParams: ShadowEffectParams)
+    (viewProj: Matrix)
+    (res: ShadowResources)
+    (draws: ShadowSkinnedInstancedDraw[])
+    (count: int)
+    (shouldRender: int -> bool)
+    =
+    if count > 0 then
+      if PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL then
+        // ── GL fallback: per-instance DepthSkinned draws (uniform bone palette). ──
+        effect.CurrentTechnique <- effect.Techniques["DepthSkinned"]
+        let boneScratch = res.BonePaletteScratch
+
+        for d = 0 to count - 1 do
+          if shouldRender d then
+            let draw = draws[d]
+            let instanceCount = min draw.InstanceCount draw.Transforms.Length
+
+            let boneCount =
+              if instanceCount > 0 then
+                draw.Palettes.Length / draw.InstanceCount
+              else
+                0
+
+            if boneCount > 0 then
+              for i = 0 to instanceCount - 1 do
+                PbrUniforms.setMatrix shadowParams.MatModel draw.Transforms[i]
+                PbrUniforms.setMatrix shadowParams.ViewProj viewProj
+
+                let palCount = min boneCount boneScratch.Length
+
+                for b = 0 to palCount - 1 do
+                  boneScratch[b] <- draw.Palettes[i * boneCount + b]
+
+                for b = palCount to boneScratch.Length - 1 do
+                  boneScratch[b] <- Matrix.Identity
+
+                PbrUniforms.setMatrixArray shadowParams.Bones boneScratch
+
+                let saved = draw.Part.Effect
+                draw.Part.Effect <- effect
+
+                try
+                  drawPart(gd, draw.Part)
+                finally
+                  draw.Part.Effect <- saved
+
+        effect.CurrentTechnique <- effect.Techniques["Depth"]
+      else
+        // DX12 uses the grouped-uniform depth technique (no working vertex texture
+        // fetch there — palettes ride the bonePaletteGroup constant array);
+        // DX11/Vulkan sample the palette texture.
+        let isDX12 = PlatformInfo.GraphicsBackend = GraphicsBackend.DirectX12
+
+        match
+          effect.Techniques[if isDX12 then
+                              "DepthSkinnedInstancedGrouped"
+                            else
+                              "DepthSkinnedInstanced"]
+        with
+        | null -> () // technique absent (unexpected off GL) — skip rather than crash
+        | tech ->
+          effect.CurrentTechnique <- tech
+          PbrUniforms.setMatrix shadowParams.MatModel Matrix.Identity
+          PbrUniforms.setMatrix shadowParams.ViewProj viewProj
+
+          for d = 0 to count - 1 do
+            if shouldRender d then
+              let draw = draws[d]
+              let instanceCount = min draw.InstanceCount draw.Transforms.Length
+
+              let boneCount =
+                if instanceCount > 0 then
+                  draw.Palettes.Length / draw.InstanceCount
+                else
+                  0
+
+              if boneCount > 0 then
+                // Chunk driver (mirrors the forward pass): palette-texture chunks
+                // from the shared per-frame cache on DX11/Vulkan; uniform groups
+                // with a null paletteTex on DX12.
+                let chunks =
+                  if isDX12 then
+                    let groupSize = max 1 (PaletteGroup.MaxMatrices / boneCount)
+
+                    Array.init
+                      ((instanceCount + groupSize - 1) / groupSize)
+                      (fun i ->
+                        let start = i * groupSize
+
+                        struct (start,
+                                min groupSize (instanceCount - start),
+                                null))
+                  else
+                    res.PaletteChunks.Obtain(
+                      gd,
+                      draw.Palettes,
+                      boneCount,
+                      instanceCount
+                    )
+
+                let mutable chunkIdx = 0
+
+                while chunkIdx < chunks.Length do
+                  let struct (chunkStart, chunkCount, paletteTex) =
+                    chunks[chunkIdx]
+
+                  if res.SkinnedInstancedStaging.Length < chunkCount then
+                    res.SkinnedInstancedStaging <-
+                      Array.zeroCreate<VertexInstanceWorldPalette> chunkCount
+
+                  for i = 0 to chunkCount - 1 do
+                    res.SkinnedInstancedStaging[i] <-
+                      VertexInstanceWorldPalette.Create(
+                        draw.Transforms[chunkStart + i],
+                        float32 i // palette row is chunk-local (texture holds this chunk only)
+                      )
+
+                  // Must stay a DynamicVertexBuffer — same DX12 upload-ordering hazard
+                  // as the other instanced paths (see renderInstancedSpan).
+                  match res.SkinnedInstancedVertexBuffer with
+                  | ValueNone ->
+                    let vb =
+                      new DynamicVertexBuffer(
+                        gd,
+                        typeof<VertexInstanceWorldPalette>,
+                        chunkCount,
+                        BufferUsage.WriteOnly
+                      )
+
+                    res.SkinnedInstancedVertexBuffer <- ValueSome vb
+                  | ValueSome vb when vb.VertexCount < chunkCount ->
+                    vb.Dispose()
+
+                    let vb' =
+                      new DynamicVertexBuffer(
+                        gd,
+                        typeof<VertexInstanceWorldPalette>,
+                        chunkCount,
+                        BufferUsage.WriteOnly
+                      )
+
+                    res.SkinnedInstancedVertexBuffer <- ValueSome vb'
+                  | _ -> ()
+
+                  let instVB =
+                    match res.SkinnedInstancedVertexBuffer with
+                    | ValueSome vb -> vb
+                    | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
+
+                  instVB.SetData(res.SkinnedInstancedStaging, 0, chunkCount)
+
+                  // Per-chunk palette storage: the cached texture on DX11/Vulkan,
+                  // the bonePaletteGroup constant array on DX12 (null paletteTex).
+                  if isNull paletteTex then
+                    if
+                      res.GroupPaletteScratch.Length < PaletteGroup.MaxMatrices
+                    then
+                      res.GroupPaletteScratch <-
+                        Array.zeroCreate PaletteGroup.MaxMatrices
+
+                    Array.Copy(
+                      draw.Palettes,
+                      chunkStart * boneCount,
+                      res.GroupPaletteScratch,
+                      0,
+                      chunkCount * boneCount
+                    )
+
+                    PbrUniforms.setMatrixArray
+                      shadowParams.BonePaletteGroup
+                      res.GroupPaletteScratch
+
+                    PbrUniforms.setInt shadowParams.GroupBoneCount boneCount
+                  else
+                    PbrUniforms.setTexture shadowParams.PaletteTex paletteTex
+
+                    PbrUniforms.setVec2
+                      shadowParams.PaletteTexSize
+                      (Vector2(float32(boneCount * 4), float32 chunkCount))
+
+                  gd.SetVertexBuffers(
+                    VertexBufferBinding(draw.Part.VertexBuffer, 0, 0),
+                    VertexBufferBinding(instVB, 0, 1)
+                  )
+
+                  gd.Indices <- draw.Part.IndexBuffer
+
+                  for pass in effect.CurrentTechnique.Passes do
+                    pass.Apply()
+
+                    gd.DrawInstancedPrimitives(
+                      PrimitiveType.TriangleList,
+                      draw.Part.VertexOffset,
+                      draw.Part.StartIndex,
+                      draw.Part.PrimitiveCount,
+                      chunkCount
+                    )
+
+                  chunkIdx <- chunkIdx + 1
+
+          effect.CurrentTechnique <- effect.Techniques["Depth"]
+
   // ─────────────────────────────────────────────────────────────────────────────
   // High-level passes
   // ─────────────────────────────────────────────────────────────────────────────
@@ -741,16 +1060,19 @@ module internal ShadowPass =
     let skinnedDraws = res.SkinnedDraws
     let instancedDraws = res.InstancedDraws
     let modelPartDraws = res.ModelPartDraws
+    let skinnedInstancedDraws = res.SkinnedInstancedDraws
     let drawCount = res.CollectedDrawCount
     let skinnedCount = res.CollectedSkinnedCount
     let modelPartCount = res.CollectedModelPartCount
     let instancedCount = res.CollectedInstancedCount
+    let skinnedInstancedCount = res.CollectedSkinnedInstancedCount
 
     if
       drawCount = 0
       && skinnedCount = 0
       && instancedCount = 0
       && modelPartCount = 0
+      && skinnedInstancedCount = 0
     then
       ()
     else
@@ -827,6 +1149,16 @@ module internal ShadowPass =
             instancedDraws
             instancedCount
             (fun d -> instancedDraws[d].CastsShadow)
+
+          renderSkinnedInstancedSpan
+            gd
+            depthEffect
+            depthParams
+            casterVP
+            res
+            skinnedInstancedDraws
+            skinnedInstancedCount
+            (fun d -> skinnedInstancedDraws[d].CastsShadow)
 
       gd.SetRenderTarget null
       gd.Viewport <- prevViewport
@@ -905,6 +1237,16 @@ module internal ShadowPass =
       res
       res.InstancedDraws
       res.CollectedInstancedCount
+      (fun _ -> true)
+
+    renderSkinnedInstancedSpan
+      gd
+      depthEffect
+      depthParams
+      viewProj
+      res
+      res.SkinnedInstancedDraws
+      res.CollectedSkinnedInstancedCount
       (fun _ -> true)
 
     gd.SetRenderTarget null

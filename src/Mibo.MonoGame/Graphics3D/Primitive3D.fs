@@ -243,6 +243,214 @@ type VertexInstanceWorldColor = {
 
 
 /// <summary>
+/// Per-instance vertex data for skinned hardware instancing: a 4×4 world matrix packed as four
+/// <see cref="T:Microsoft.Xna.Framework.Vector4"/> rows plus the instance's row offset into the
+/// bone-palette texture (stream 1, instanceFrequency = 1).
+/// </summary>
+/// <remarks>
+/// Matches the <c>SkinnedInstanced</c> techniques in <c>Shaders/ForwardPbr.fx</c> and
+/// <c>Shaders/DepthShadow.fx</c>: the world rows arrive on <c>TEXCOORD1..4</c> (the same
+/// <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/> contract) and the palette row on
+/// <c>TEXCOORD6</c> (<see cref="T:Microsoft.Xna.Framework.Graphics.VertexElementFormat.Single"/>
+/// at byte offset 64). Usage indices 1–4 and 6 avoid <c>TEXCOORD0</c> (owned by the mesh's own
+/// texture coords on stream 0) and <c>TEXCOORD5</c> (the per-instance color slot, used by
+/// <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorldPaletteColor"/>). The OpenGL backend
+/// has no vertex texture fetch — there the pipeline falls back to per-instance skinned draws.
+/// </remarks>
+[<Struct>]
+type VertexInstanceWorldPalette = {
+
+  /// <summary>Row 0 of the per-instance world matrix (M11, M12, M13, M14).</summary>
+  Row0: Vector4
+
+  /// <summary>Row 1 of the per-instance world matrix (M21, M22, M23, M24).</summary>
+  Row1: Vector4
+
+  /// <summary>Row 2 of the per-instance world matrix (M31, M32, M33, M34).</summary>
+  Row2: Vector4
+
+  /// <summary>Row 3 of the per-instance world matrix (M41, M42, M43, M44).</summary>
+  Row3: Vector4
+
+  /// <summary>The instance's row in the bone-palette texture (TEXCOORD6).</summary>
+  PaletteOffset: float32
+} with
+
+
+  /// <summary>Constructs a per-instance vertex from a world <see cref="T:Microsoft.Xna.Framework.Matrix"/>
+  /// and the instance's bone-palette texture row.</summary>
+  static member Create
+    (world: Matrix, paletteOffset: float32)
+    : VertexInstanceWorldPalette =
+    {
+      // MonoGame Matrix is row-major; each row is exposed as a Vector4.
+      Row0 = Vector4(world.M11, world.M12, world.M13, world.M14)
+      Row1 = Vector4(world.M21, world.M22, world.M23, world.M24)
+      Row2 = Vector4(world.M31, world.M32, world.M33, world.M34)
+      Row3 = Vector4(world.M41, world.M42, world.M43, world.M44)
+      PaletteOffset = paletteOffset
+    }
+
+  interface IVertexType with
+
+    member this.VertexDeclaration =
+      // Lazily-initialized static declaration. usageIndex 1–4 + 6 to avoid TEXCOORD0
+      // (owned by the mesh's own texture coords on stream 0) and TEXCOORD5 (the
+      // per-instance color slot on the colored layout).
+      match VertexInstanceWorldPalette.s_declaration with
+      | null ->
+        let decl =
+          new VertexDeclaration(
+            sizeof<VertexInstanceWorldPalette>,
+            VertexElement(
+              0,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              1
+            ),
+            VertexElement(
+              16,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              2
+            ),
+            VertexElement(
+              32,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              3
+            ),
+            VertexElement(
+              48,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              4
+            ),
+            VertexElement(
+              64,
+              VertexElementFormat.Single,
+              VertexElementUsage.TextureCoordinate,
+              6
+            )
+          )
+
+        VertexInstanceWorldPalette.s_declaration <- decl
+        decl
+      | decl -> decl
+
+  /// <summary>Static backing field for the lazily-initialized <see cref="T:Microsoft.Xna.Framework.Graphics.VertexDeclaration"/>.</summary>
+  static member val private s_declaration: VertexDeclaration =
+    null with get, set
+
+
+/// <summary>
+/// Per-instance vertex data for colored skinned hardware instancing: a 4×4 world matrix
+/// packed as four <see cref="T:Microsoft.Xna.Framework.Vector4"/> rows, a per-instance color,
+/// and the instance's row offset into the bone-palette texture (stream 1, instanceFrequency = 1).
+/// </summary>
+/// <remarks>
+/// Matches the <c>SkinnedInstancedColor</c> technique in <c>Shaders/ForwardPbr.fx</c>: the
+/// world rows arrive on <c>TEXCOORD1..4</c>, the color on <c>TEXCOORD5</c> (byte offset 64, the
+/// same slot <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorldColor"/> uses), and the
+/// palette row on <c>TEXCOORD6</c> (byte offset 80,
+/// <see cref="T:Microsoft.Xna.Framework.Graphics.VertexElementFormat.Single"/>).
+/// </remarks>
+[<Struct>]
+type VertexInstanceWorldPaletteColor = {
+
+  /// <summary>Row 0 of the per-instance world matrix (M11, M12, M13, M14).</summary>
+  Row0: Vector4
+
+  /// <summary>Row 1 of the per-instance world matrix (M21, M22, M23, M24).</summary>
+  Row1: Vector4
+
+  /// <summary>Row 2 of the per-instance world matrix (M31, M32, M33, M34).</summary>
+  Row2: Vector4
+
+  /// <summary>Row 3 of the per-instance world matrix (M41, M42, M43, M44).</summary>
+  Row3: Vector4
+
+  /// <summary>Per-instance color multiplier (normalized RGBA, TEXCOORD5).</summary>
+  Color: Vector4
+
+  /// <summary>The instance's row in the bone-palette texture (TEXCOORD6).</summary>
+  PaletteOffset: float32
+} with
+
+
+  /// <summary>Constructs a per-instance vertex from a world <see cref="T:Microsoft.Xna.Framework.Matrix"/>,
+  /// a tint <see cref="T:Microsoft.Xna.Framework.Color"/>, and the instance's bone-palette texture row.</summary>
+  static member Create
+    (world: Matrix, color: Color, paletteOffset: float32)
+    : VertexInstanceWorldPaletteColor =
+    {
+      // MonoGame Matrix is row-major; each row is exposed as a Vector4.
+      Row0 = Vector4(world.M11, world.M12, world.M13, world.M14)
+      Row1 = Vector4(world.M21, world.M22, world.M23, world.M24)
+      Row2 = Vector4(world.M31, world.M32, world.M33, world.M34)
+      Row3 = Vector4(world.M41, world.M42, world.M43, world.M44)
+      Color = color.ToVector4()
+      PaletteOffset = paletteOffset
+    }
+
+  interface IVertexType with
+
+    member this.VertexDeclaration =
+      // Lazily-initialized static declaration. usageIndex 1–6 to avoid TEXCOORD0
+      // (owned by the mesh's own texture coords on stream 0).
+      match VertexInstanceWorldPaletteColor.s_declaration with
+      | null ->
+        let decl =
+          new VertexDeclaration(
+            sizeof<VertexInstanceWorldPaletteColor>,
+            VertexElement(
+              0,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              1
+            ),
+            VertexElement(
+              16,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              2
+            ),
+            VertexElement(
+              32,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              3
+            ),
+            VertexElement(
+              48,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              4
+            ),
+            VertexElement(
+              64,
+              VertexElementFormat.Vector4,
+              VertexElementUsage.TextureCoordinate,
+              5
+            ),
+            VertexElement(
+              80,
+              VertexElementFormat.Single,
+              VertexElementUsage.TextureCoordinate,
+              6
+            )
+          )
+
+        VertexInstanceWorldPaletteColor.s_declaration <- decl
+        decl
+      | decl -> decl
+
+  /// <summary>Static backing field for the lazily-initialized <see cref="T:Microsoft.Xna.Framework.Graphics.VertexDeclaration"/>.</summary>
+  static member val private s_declaration: VertexDeclaration =
+    null with get, set
+
+
+/// <summary>
 /// Pre-generated primitive meshes for 3D rendering. The MonoGame analog of raylib's
 /// <c>GenMeshCube</c>/<c>GenMeshSphere</c>/etc. — there is no native generator, so these
 /// are built once from <see cref="T:Microsoft.Xna.Framework.Graphics.VertexPositionNormalTexture"/>

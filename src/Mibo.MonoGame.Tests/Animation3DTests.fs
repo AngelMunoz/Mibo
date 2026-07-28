@@ -320,6 +320,136 @@ let tests =
       }
     ]
 
+    testList "AddAnimatedModelInstanced witness" [
+      test "flattens per-instance palettes instance-major" {
+        use buffer = new RenderBuffer3D()
+
+        let poseA: BonePose = {
+          WorldPoses = [||]
+          Palette = [|
+            Matrix.CreateTranslation(1.0f, 0.0f, 0.0f)
+            Matrix.CreateTranslation(2.0f, 0.0f, 0.0f)
+            Matrix.CreateTranslation(3.0f, 0.0f, 0.0f)
+          |]
+        }
+
+        let poseB: BonePose = {
+          WorldPoses = [||]
+          Palette = [|
+            Matrix.CreateTranslation(4.0f, 0.0f, 0.0f)
+            Matrix.CreateTranslation(5.0f, 0.0f, 0.0f)
+            Matrix.CreateTranslation(6.0f, 0.0f, 0.0f)
+          |]
+        }
+
+        let transforms = [|
+          Matrix.Identity
+          Matrix.CreateTranslation(10.0f, 0.0f, 0.0f)
+        |]
+
+        let colors = [| Color.Red; Color.Blue |]
+
+        buffer.AddAnimatedModelInstanced(
+          testModel,
+          transforms,
+          [| poseA; poseB |],
+          ValueSome(MaterialOverride.All Material3D.defaults),
+          ValueSome colors
+        )
+
+        Expect.equal buffer.Count 1 "expected exactly one command"
+
+        match buffer[0] with
+        | Command3D.DrawAnimatedModelInstanced(_,
+                                               t,
+                                               palettes,
+                                               matOverride,
+                                               c,
+                                               count) ->
+          Expect.equal count 2 "two instances"
+
+          Expect.isTrue
+            (System.Object.ReferenceEquals(t, transforms))
+            "transforms array forwarded untouched"
+
+          Expect.equal palettes.Length 6 "count * boneCount"
+
+          Expect.equal
+            palettes[0].Translation
+            (Vector3(1.0f, 0.0f, 0.0f))
+            "instance 0, bone 0"
+
+          Expect.equal
+            palettes[3].Translation
+            (Vector3(4.0f, 0.0f, 0.0f))
+            "instance 1, bone 0"
+
+          match matOverride with
+          | ValueSome(MaterialOverride.All _) -> ()
+          | _ -> failtest "material override not forwarded"
+
+          Expect.equal c (ValueSome colors) "colors forwarded"
+        | other ->
+          failtest $"expected DrawAnimatedModelInstanced, got %A{other}"
+      }
+
+      test "instance count clamps to the shorter array" {
+        use buffer = new RenderBuffer3D()
+
+        let pose: BonePose = {
+          WorldPoses = [||]
+          Palette = Array.create 3 Matrix.Identity
+        }
+
+        buffer.AddAnimatedModelInstanced(
+          testModel,
+          [| Matrix.Identity; Matrix.Identity |],
+          [| pose |],
+          ValueNone,
+          ValueNone
+        )
+
+        Expect.equal buffer.Count 1 "expected exactly one command"
+
+        match buffer[0] with
+        | Command3D.DrawAnimatedModelInstanced(_, _, palettes, _, _, count) ->
+          Expect.equal count 1 "clamped to the single pose"
+          Expect.equal palettes.Length 3 "one palette"
+        | other ->
+          failtest $"expected DrawAnimatedModelInstanced, got %A{other}"
+      }
+
+      test "zero instances and boneless models emit nothing" {
+        use buffer = new RenderBuffer3D()
+
+        let pose: BonePose = { WorldPoses = [||]; Palette = [||] }
+
+        buffer.AddAnimatedModelInstanced(
+          testModel,
+          [||],
+          [||],
+          ValueNone,
+          ValueNone
+        )
+
+        let boneless: AnimatedModel = {
+          Model = null
+          Mesh = ValueNone
+          State = testState
+        }
+
+        buffer.AddAnimatedModelInstanced(
+          boneless,
+          [| Matrix.Identity |],
+          [| pose |],
+          ValueNone,
+          ValueNone
+        )
+
+        Expect.equal buffer.Count 0 "no commands expected"
+      }
+    ]
+
     testList "AnimatedModel pose helpers" [
       test "computePose returns ValueNone for a boneless model" {
         let boneless: AnimatedModel = {
