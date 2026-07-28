@@ -60,6 +60,7 @@ module LightBuffers =
     }
 
   /// <summary>Default-capacity empty accumulator (3 dir / 8 point / 4 spot).</summary>
+  [<System.Obsolete("Shared mutable accumulator: all consumers alias the same buffers. Use LightBuffers.create for per-instance state.")>]
   let defaults: LightBuffers = create 3 8 4
 
   /// <summary>Resets all light accumulators to empty.</summary>
@@ -68,6 +69,16 @@ module LightBuffers =
     lights.DirLights.Clear()
     lights.PointLights.Clear()
     lights.SpotLights.Clear()
+
+  /// <summary>Copies the contents of <paramref name="source"/> into <paramref name="target"/>, replacing whatever target held.</summary>
+  let inline copyInto (source: LightBuffers) (target: LightBuffers) =
+    target.Ambient <- source.Ambient
+    target.DirLights.Clear()
+    target.DirLights.AddRange(source.DirLights)
+    target.PointLights.Clear()
+    target.PointLights.AddRange(source.PointLights)
+    target.SpotLights.Clear()
+    target.SpotLights.AddRange(source.SpotLights)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowResult — the shadow pass output, threaded to SceneUpload and SceneContext

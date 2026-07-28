@@ -204,4 +204,18 @@ let tests =
         (cmdSequence buf)
         [| "begin"; "draw"; "end" |]
         "key scope via fluent"
+
+    testCase "CameraBlockCount tracks camera-block commands and resets on Clear"
+    <| fun _ ->
+      use buf = new RenderBuffer3D()
+      Expect.equal buf.CameraBlockCount 0 "Fresh buffer has no camera blocks"
+
+      buf.Add(Command3D.BeginCamera(Unchecked.defaultof<Mibo.Elmish.Camera3D>))
+      buf.Add Command3D.EndCamera
+      buf.Add(Command3D.BeginCamera(Unchecked.defaultof<Mibo.Elmish.Camera3D>))
+
+      Expect.equal buf.CameraBlockCount 2 "Counts only Begin camera commands"
+
+      buf.Clear()
+      Expect.equal buf.CameraBlockCount 0 "Clear should reset CameraBlockCount"
   ]

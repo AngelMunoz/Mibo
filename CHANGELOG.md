@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **3D:** `RenderBuffer3D.CameraBlockCount` counts `BeginCamera`/`BeginCameraConfig` commands added since the last `Clear`, on both backends. The pipelines use it to skip the per-camera-block plan walk (and its per-frame allocations) for single-camera frames.
+
+### Changed
+
+- **MonoGame 3D:** **Breaking (behavioral):** in frames with more than one camera block, lights (ambient, directional, point, spot), the shadow origin, and shadow casting are now scoped per camera block. A block that sets its own lights starts from the frame defaults (lights emitted before the first camera block or between blocks) and applies them in order; a block that sets none inherits the running set. Each camera block renders its own shadow map, so multi-block frames cost one shadow pass per block. Single-camera frames are unchanged.
+- **Raylib 3D:** **Breaking (behavioral):** the same per-camera-block scoping: lights no longer accumulate across blocks that set their own lights, and the shadow pass runs per camera block instead of once per frame. Single-camera frames are unchanged.
+- **3D:** **Breaking (behavioral):** only the first directional light is shaded, and only it can cast shadows, on both backends. Previously a frame whose first directional light didn't cast could still be shadowed by a later casting light's shadow map, and a casting directional light could render a shadow map nothing sampled.
+- **Raylib 3D:** the per-shadow-pass point/spot shadow-slot arrays are now grow-only pipeline scratch (matching the MonoGame backend) instead of fresh arrays per pass, and the pre-scan no longer gathers lights frame-globally in multi-camera-block frames (the per-block forward pass builds them).
+- **MonoGame 3D:** the shadow/depth passes no longer allocate a `RenderTargetBinding[]` per pass to save the caller's render-target bindings; the bindings are saved into pooled scratch resized only when the bound count changes.
+
+### Deprecated
+
+- **3D:** `LightBuffers.defaults` is obsolete on both backends: it is a single shared mutable accumulator, so every consumer aliases the same light buffers. Use `LightBuffers.create` for per-instance state instead.
+
+### Fixed
+
+- **3D:** in multi-camera-block frames, live shading no longer diverges from the block plan: between-block lights were applied twice to blocks that set their own lights, blocks that set no lights were shaded by between-block and after-last-block lights the plan (and their shadow pass) didn't include, and after-last-block lights leaked into blocks that reset. The live light sets and frame defaults are now built in-order during the forward pass instead of seeded from the plan's frame defaults.
+- **MonoGame 3D:** a camera block's `ClearColor` combined with a custom `Viewport` no longer clears the whole frame. The block clear is drawn as a viewport-covering triangle instead of `gd.Clear`, which ignores the viewport (D3D `ClearRenderTargetView` semantics) and wiped every previously rendered camera block (split-screen).
+- **MonoGame:** the backbuffer is now created with `RenderTargetUsage.PreserveContents`. On the DX12-native backend, rebinding the backbuffer after a mid-frame render-target switch (the shadow atlas, the post-process scene RT) discarded everything drawn before the switch — in multi-camera-block frames, earlier camera blocks and the frame clear were wiped. Games can still override via a device-config callback.
+- **MonoGame 3D:** two live 3D pipelines no longer bleed lights into each other; each pipeline now accumulates lights in its own buffers.
+- **Raylib 3D:** a throw during a per-camera-block shadow pass no longer leaves the pipeline outside the scene render target's texture mode; the caller's texture mode is re-wrapped in a `finally`.
+
 ## [3.3.0] - 2026-07-25
 
 ### Added

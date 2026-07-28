@@ -158,6 +158,12 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   /// <summary>Per-light shadow slot mapping for spot lights; -1 = no shadow.</summary>
   member val SpotShadowSlots: int[] = [||] with get, set
 
+  /// <summary>Grow-only scratch for save/restore of the caller's render-target bindings around
+  /// a shadow/depth pass — avoids a <c>GetRenderTargets()</c> array allocation per pass.
+  /// Resized only when the bound count changes; used sequentially (atlas pass, then depth
+  /// pre-pass), never re-entrantly.</summary>
+  member val RenderTargetScratch: RenderTargetBinding[] = [||] with get, set
+
   /// <summary>Pooled scratch for the multi-caster shadowViewProjs upload.</summary>
   member val ViewProjsScratch = Array.zeroCreate<Matrix> 16 with get, set
 
@@ -381,14 +387,21 @@ module internal ShadowPass =
         )
 
   /// <summary>
-  /// Scans the command buffer once and collects every opaque draw into the pooled arrays on
-  /// <paramref name="res"/>, recording a <c>CastsShadow</c> flag per entry (snapshot of the
-  /// <c>EnableShadows</c>/<c>DisableShadows</c> state when the draw was emitted). Shared by the
-  /// shadow render (filters to <c>CastsShadow = true</c>) and the scene-depth render (all entries),
-  /// so shadow + depth never re-scan the buffer. Stashes the four counts on <paramref name="res"/>.
+  /// Scans the buffer range <c>[startIdx, endIdx)</c> and collects every opaque draw into the
+  /// pooled arrays on <paramref name="res"/>, recording a <c>CastsShadow</c> flag per entry
+  /// (snapshot of the <c>EnableShadows</c>/<c>DisableShadows</c> state when the draw was emitted,
+  /// starting from <paramref name="initialCastEnabled"/>). Shared by the shadow render (filters
+  /// to <c>CastsShadow = true</c>) and the scene-depth render (all entries), so shadow + depth
+  /// never re-scan the buffer. Stashes the four counts on <paramref name="res"/>.
   /// </summary>
-  let collectGeometry (buffer: RenderBuffer3D) (res: ShadowResources) =
-    let mutable castEnabled = true
+  let collectGeometry
+    (buffer: RenderBuffer3D)
+    (startIdx: int)
+    (endIdx: int)
+    (initialCastEnabled: bool)
+    (res: ShadowResources)
+    =
+    let mutable castEnabled = initialCastEnabled
     let mutable drawCount = 0
     let mutable skinnedCount = 0
     let mutable instancedCount = 0
@@ -398,7 +411,7 @@ module internal ShadowPass =
     let mutable shadowInstancedDraws = res.InstancedDraws
     let mutable shadowModelPartDraws = res.ModelPartDraws
 
-    for i = 0 to buffer.Count - 1 do
+    for i = startIdx to endIdx - 1 do
       match buffer[i] with
       | Command3D.EnableShadows -> castEnabled <- true
       | Command3D.DisableShadows -> castEnabled <- false
@@ -726,6 +739,24 @@ module internal ShadowPass =
   // ─────────────────────────────────────────────────────────────────────────────
 
   /// <summary>
+  /// Saves the caller's render-target bindings into the pooled scratch (resized only when the
+  /// bound count changes) — avoids <c>GetRenderTargets()</c>'s per-call array allocation, which
+  /// would otherwise happen once per shadow/depth pass (N per multi-camera-block frame).
+  /// Restore with <c>SetRenderTargets</c> on the returned array.
+  /// </summary>
+  let saveRenderTargets
+    (gd: GraphicsDevice)
+    (res: ShadowResources)
+    : RenderTargetBinding[] =
+    let count = gd.RenderTargetCount
+
+    if res.RenderTargetScratch.Length <> count then
+      res.RenderTargetScratch <- Array.zeroCreate count
+
+    gd.GetRenderTargets(res.RenderTargetScratch)
+    res.RenderTargetScratch
+
+  /// <summary>
   /// Renders collected casters into the shadow atlas from each registered light's view-projection.
   /// Filters to <c>CastsShadow = true</c> entries and frustum-culls per caster (primitives only;
   /// skinned/model-part/instanced draw unconditionally as before). Saves/restores device state.
@@ -758,6 +789,9 @@ module internal ShadowPass =
       let prevRaster = gd.RasterizerState
       let prevBlend = gd.BlendState
       let prevDepth = gd.DepthStencilState
+      // Restore the caller's bindings, not the back-buffer: under post-processing this pass
+      // runs interleaved while the scene render target is bound.
+      let prevTargets = saveRenderTargets gd res
 
       gd.SetRenderTarget(res.Atlas.Fbo)
 
@@ -828,7 +862,7 @@ module internal ShadowPass =
             instancedCount
             (fun d -> instancedDraws[d].CastsShadow)
 
-      gd.SetRenderTarget null
+      gd.SetRenderTargets prevTargets
       gd.Viewport <- prevViewport
       gd.RasterizerState <- prevRaster
       gd.BlendState <- prevBlend
@@ -852,6 +886,8 @@ module internal ShadowPass =
     let prevRaster = gd.RasterizerState
     let prevBlend = gd.BlendState
     let prevDepth = gd.DepthStencilState
+    // Restore the caller's bindings, not the back-buffer (see renderAtlasCasters).
+    let prevTargets = saveRenderTargets gd res
 
     gd.SetRenderTarget depthTarget
     // 1.0 = far: uncovered pixels (skybox, gaps) read as far so post-process fog treats them as
@@ -907,7 +943,7 @@ module internal ShadowPass =
       res.CollectedInstancedCount
       (fun _ -> true)
 
-    gd.SetRenderTarget null
+    gd.SetRenderTargets prevTargets
     gd.Viewport <- prevViewport
     gd.RasterizerState <- prevRaster
     gd.BlendState <- prevBlend
@@ -930,23 +966,11 @@ module internal ShadowPass =
     res.Atlas.Clear()
     let mutable casterSlot = 0
 
-    // Directional caster first (slot 0 by convention).
-    let hasDirCaster =
-      let mutable found = false
-
-      for i = 0 to lights.DirLights.Count - 1 do
-        if lights.DirLights[i].CastsShadows then
-          found <- true
-
-      found
-
-    if hasDirCaster then
-      let mutable dirIdx = 0
-
-      while not lights.DirLights[dirIdx].CastsShadows do
-        dirIdx <- dirIdx + 1
-
-      let dirLight = lights.DirLights[dirIdx]
+    // Directional caster first (slot 0 by convention). Only the first directional light is
+    // shaded, so only it can cast — a non-casting DirLights[0] means no directional caster,
+    // even if a later directional light has CastsShadows set.
+    if lights.DirLights.Count > 0 && lights.DirLights[0].CastsShadows then
+      let dirLight = lights.DirLights[0]
       let dir = Conversions.fromNumericsVector3 dirLight.Direction
       let vp = buildDirectionalViewProj atlasCfg res.Origin dir activeCamera
 
@@ -1089,11 +1113,23 @@ module internal ShadowPass =
   // Orchestrator
   // ─────────────────────────────────────────────────────────────────────────────
 
+  /// <summary>Loads the DepthShadow effect on first use (no-op once loaded).</summary>
+  let ensureDepthEffect (gd: GraphicsDevice) (res: ShadowResources) =
+    match res.Effect, res.Params with
+    | ValueSome _, ValueSome _ -> ()
+    | _ ->
+      match ShaderLoader.loadEffect gd "DepthShadow" with
+      | ValueSome e ->
+        res.Params <- ValueSome(buildShadowParams e)
+        res.Effect <- ValueSome e
+      | ValueNone -> ()
+
   /// <summary>
-  /// Runs the shadow pass: scans lights, collects opaque geometry once (shared with scene-depth),
-  /// registers casters into the atlas, renders depth, and uploads shadow uniforms to the PBR
-  /// effect. When <paramref name="needsDepth"/> is true, geometry is collected even without a
-  /// shadow-casting light so <c>renderSceneDepth</c> can reuse it.
+  /// Runs the shadow pass: scans lights, collects opaque geometry from the buffer range
+  /// <c>[startIdx, endIdx)</c> (shared with scene-depth), registers casters into the atlas,
+  /// renders depth, and uploads shadow uniforms to the PBR effect. When <paramref name="needsDepth"/>
+  /// is true, geometry is collected even without a shadow-casting light so <c>renderSceneDepth</c>
+  /// can reuse it. Only the first directional light can cast (it is the one the shader lights with).
   /// </summary>
   let run
     (gd: GraphicsDevice)
@@ -1103,17 +1139,18 @@ module internal ShadowPass =
     (lights: LightBuffers)
     (pbrParams: PbrEffectParams voption)
     (buffer: RenderBuffer3D)
+    (startIdx: int)
+    (endIdx: int)
+    (initialCastEnabled: bool)
     (activeCamera: Camera3D)
     (needsDepth: bool)
     : ShadowResult voption =
     // ── Scan lights for casters ──
-    let mutable hasDirCaster = false
+    let hasDirCaster =
+      lights.DirLights.Count > 0 && lights.DirLights[0].CastsShadows
+
     let mutable hasPointCaster = false
     let mutable hasSpotCaster = false
-
-    for i = 0 to lights.DirLights.Count - 1 do
-      if lights.DirLights[i].CastsShadows then
-        hasDirCaster <- true
 
     for i = 0 to lights.PointLights.Count - 1 do
       if lights.PointLights[i].CastsShadows then
@@ -1138,7 +1175,7 @@ module internal ShadowPass =
 
     // ── Collect opaque geometry ONCE (shared by shadow render + scene-depth render) ──
     if hasAnyCaster || needsDepth then
-      collectGeometry buffer res
+      collectGeometry buffer startIdx endIdx initialCastEnabled res
 
     // ── Shadow pass (only when a shadow-casting light exists) ──
     if not hasAnyCaster then
@@ -1150,28 +1187,13 @@ module internal ShadowPass =
       // renderSceneDepth can run (fog/DoF/SSOA in a shadowless scene). Without this the effect
       // is never loaded and every postProcessWithDepth action silently receives Depth = None.
       if needsDepth then
-        match res.Effect, res.Params with
-        | ValueSome _, ValueSome _ -> ()
-        | _ ->
-          match ShaderLoader.loadEffect gd "DepthShadow" with
-          | ValueSome e ->
-            res.Params <- ValueSome(buildShadowParams e)
-            res.Effect <- ValueSome e
-          | ValueNone -> ()
+        ensureDepthEffect gd res
 
       ValueNone
     else
       res.Atlas.EnsureResources gd
 
-      // Load DepthShadow effect on first use.
-      match res.Effect, res.Params with
-      | ValueSome _, ValueSome _ -> ()
-      | _ ->
-        match ShaderLoader.loadEffect gd "DepthShadow" with
-        | ValueSome e ->
-          res.Params <- ValueSome(buildShadowParams e)
-          res.Effect <- ValueSome e
-        | ValueNone -> ()
+      ensureDepthEffect gd res
 
       match res.Effect, res.Params with
       | ValueSome depthEffect, ValueSome depthParams ->
