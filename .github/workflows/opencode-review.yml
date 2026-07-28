@@ -24,7 +24,7 @@ jobs:
         env:
           KIMI_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode-go/kimi-k3
+          model: kimi-k3
           prompt: |
             Review this pull request:
             - Ensure AGENTS.md rules are respected
