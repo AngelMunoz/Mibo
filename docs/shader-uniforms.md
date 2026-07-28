@@ -71,6 +71,13 @@ on MonoGame).
 
 ### Lights
 
+In single-camera frames these reflect every light command in the buffer,
+frame-globally. In frames with more than one camera block they describe the
+active camera block's light set: a block that issues its own light commands
+resets to the frame defaults (lights emitted outside any camera block) and
+applies them in order; a block that issues none inherits the running set.
+Only the first directional light is shaded, and only it can cast shadows.
+
 | Uniform | Type | Source |
 |---|---|---|
 | `ambientColor` | `vec3` / `float3` | Ambient color |
