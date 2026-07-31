@@ -190,12 +190,14 @@ module internal PaletteGroup =
   /// <summary>Bone matrices per group — the shaders' <c>bonePaletteGroup[320]</c>.
   /// 320 × 64B = 20KB: mgfx packs ALL of an effect's globals into one shared
   /// <c>$Globals</c> constant buffer whose size is stored as a signed Int16 (32767
-  /// cap — ForwardPbr.fx's other uniforms already take ~11KB), and the Vulkan mgfx
-  /// profile rejects effects with an explicit second cbuffer. 320 keeps every
-  /// profile's <c>$Globals</c> under the cap. Instances per group are
-  /// <c>MaxMatrices / boneCount</c>; draws with more instances are split into groups.</summary>
+  /// cap). The DX12-only ForwardPbrGrouped.fx / DepthShadowGrouped.fx have ~11KB of
+  /// other uniforms, so 320 matrices (20KB) is the budget that keeps $Globals under
+  /// the cap. A named cbuffer at register(b1) was tried and rejected: the MonoGame
+  /// native DX12 backend only wires b0 ($Globals), so b1 is never bound.
+  /// Instances per group are <c>MaxMatrices / boneCount</c>; draws with more
+  /// instances are split into groups.</summary>
   [<Literal>]
-  let MaxMatrices = 128
+  let MaxMatrices = 320
 
 /// <summary>
 /// Pools <see cref="T:Microsoft.Xna.Framework.Graphics.Texture2D"/> bone-palette textures

@@ -154,8 +154,12 @@ each engine feeds per-instance data differently:
   (matching `ForwardPbr.fx`'s instanced input, or the minimal `Instanced.fx`).
 
 A shader that doesn't declare the opt-in is unaffected — its instanced draws
-fall back to the PBR instanced path. Skinned + instanced draws are not
-supported (no per-instance bone palette).
+fall back to the PBR instanced path. Skinned + instanced draws are supported
+on all backends: raylib uses a palette texture indexed by `gl_InstanceID`;
+MonoGame DX11/Vulkan use vertex texture fetch (VTF); MonoGame DX12 uses a
+grouped-uniform constant array (the DX12 mgfx reflection parser drops the
+params from the main effect, so an isolated `ForwardPbrGrouped.fx` is loaded);
+MonoGame OpenGL falls back to per-instance skinned draws (no VTF in `vs_3_0`).
 
 See [Shader Uniform Reference](../shader-uniforms.html#instancing-opt-in) for
 the full per-backend input contract and minimal example shaders.

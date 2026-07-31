@@ -318,7 +318,9 @@ module Draw3D =
   /// <para>
   /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.drawInstanced"/> inside a scope is shaded by the user
   /// effect when it exposes an <c>Instanced</c> technique (the instancing opt-in); an effect that
-  /// doesn't falls back to the PBR instanced path. Skinned + instanced draws are not supported. See
+  /// doesn't falls back to the PBR instanced path. Skinned + instanced draws are supported
+  /// on all backends (palette texture on raylib/DX11/Vulkan, grouped-uniform constant array
+  /// on DX12, per-instance fallback on OpenGL). See
   /// <c>docs/graphics3d/instancing.md</c>.
   /// </para>
   /// </remarks>

@@ -77,6 +77,8 @@
     <EmbeddedResource Include="Shaders\DepthShadow.ogl.mgfx" />
     <EmbeddedResource Include="Shaders\DepthShadow.dx12.mgfx" />
     <EmbeddedResource Include="Shaders\DepthShadow.vk.mgfx" />
+    <EmbeddedResource Include="Shaders\ForwardPbrGrouped.dx12.mgfx" />
+    <EmbeddedResource Include="Shaders\DepthShadowGrouped.dx12.mgfx" />
     <None Include="Shaders\*.fx" CopyToOutputDirectory="Never" />
   </ItemGroup>
 

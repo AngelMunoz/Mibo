@@ -77,6 +77,16 @@ type internal PbrResources() =
   /// <summary>Cached PBR effect uniform handles (built when the effect loads).</summary>
   member val Params: PbrEffectParams voption = ValueNone with get, set
 
+  /// <summary>The isolated grouped-uniform PBR effect (ForwardPbrGrouped.fx), loaded lazily
+  /// on DX12 only. On DX11/Vulkan/OpenGL this stays ValueNone — those backends use VTF
+  /// through the main effect's SkinnedInstanced techniques. On DX12 the main effect's
+  /// grouped techniques are dropped by the mgfx reflection parser, so this isolated effect
+  /// carries the grouped-uniform params that survive reflection.</summary>
+  member val GroupedEffect: Effect voption = ValueNone with get, set
+
+  /// <summary>Cached grouped-effect uniform handles (built when the grouped effect loads).</summary>
+  member val GroupedParams: PbrEffectParams voption = ValueNone with get, set
+
   /// <summary>BasicEffect fallback for DrawPrimitive when the PBR effect can't load (B5/B6 floor).</summary>
   member val FallbackEffect: BasicEffect voption = ValueNone with get, set
 
@@ -323,6 +333,26 @@ module internal PbrShading =
 
         true
       | ValueNone -> false
+
+  /// <summary>
+  /// Lazily loads the isolated grouped-uniform PBR effect (ForwardPbrGrouped.fx) on DX12.
+  /// On other backends this is a no-op (ValueNone stays). On DX12 the main ForwardPbr.fx's
+  /// grouped-uniform params are dropped by the mgfx reflection parser; this isolated effect
+  /// carries them. Returns true when the grouped effect is usable.
+  /// </summary>
+  let ensureGroupedEffect(gd: GraphicsDevice, res: PbrResources) : bool =
+    match res.GroupedEffect with
+    | ValueSome _ -> true
+    | ValueNone ->
+      if isDirectX12Backend() then
+        match ShaderLoader.loadEffect gd "ForwardPbrGrouped" with
+        | ValueSome e ->
+          res.GroupedParams <- ValueSome(PbrUniforms.build e)
+          res.GroupedEffect <- ValueSome e
+          true
+        | ValueNone -> false
+      else
+        false
 
   /// <summary>Extracts the cached white fallback texture (created by ensureEffect); null before load.</summary>
   let inline whiteTex(res: PbrResources) : Texture2D =
@@ -1123,10 +1153,18 @@ module internal PbrShading =
       let boneCount = paletteLen / instanceCount
 
       if boneCount > 0 then
-        // Per-instance fallback: OpenGL (no vertex texture fetch), and user effects on
-        // DX12 (a user effect's SkinnedInstanced technique expects the VS-texture
-        // contract — broken on DX12; the grouped-uniform path is framework-PBR-only).
-        let perInstanceFallback = isOpenGLBackend() || isDirectX12Backend()
+        // Per-instance fallback: OpenGL (no vertex texture fetch). DX12 uses the
+        // grouped-uniform path (SkinnedInstancedGrouped via the isolated ForwardPbrGrouped
+        // effect — the main effect's grouped params are dropped by DX12 mgfx reflection).
+        // User effects on DX12 still fall back to per-instance (a user effect's
+        // SkinnedInstanced technique expects the VS-texture contract — broken on DX12;
+        // the grouped-uniform path is framework-PBR-only).
+        let perInstanceFallback =
+          isOpenGLBackend()
+          || (isDirectX12Backend()
+              && (match target with
+                  | UserEffectTarget _ -> true
+                  | PbrTarget -> false))
 
         if perInstanceFallback then
           // ── Per-instance draws through the existing Skinned path, slicing each
@@ -1188,6 +1226,47 @@ module internal PbrShading =
                 res.LightsDirty <- false
             | _ -> ()
 
+          // DX12: prepare the isolated grouped effect (ForwardPbrGrouped.fx) with the
+          // same frame-global uniforms. The grouped effect has its own uniform handles
+          // — the main effect's bonePaletteGroup params are null on DX12 (dropped by
+          // mgfx reflection), so the grouped effect is the only one that can receive
+          // bone palette data. Lights are uploaded unconditionally (once per draw call,
+          // not per part — negligible cost vs. the per-instance fallback it replaces).
+          if isDirectX12Backend() && ensureGroupedEffect(gd, res) then
+            match res.GroupedParams with
+            | ValueSome gp ->
+              PbrUniforms.setMatrix gp.Matrix.ViewProj viewProj
+
+              PbrUniforms.setVec3
+                gp.Matrix.CameraPos
+                state.CurrentCamera.Position
+
+              PbrUniforms.uploadLights(
+                &gp,
+                frame.Lights,
+                frame.PointShadowSlots,
+                frame.SpotShadowSlots
+              )
+
+              match frame.Shadows with
+              | ValueSome s ->
+                PbrUniforms.setInt
+                  gp.Shadow.DirLightCastsShadows
+                  (if s.DirLightCastsShadows then 1 else 0)
+
+                PbrUniforms.setMatrixArray gp.Shadow.ShadowViewProjs s.ViewProjs
+                PbrUniforms.setVec4Array gp.Shadow.ShadowUVOffsets s.UVOffsets
+                PbrUniforms.setFloatArray gp.Shadow.ShadowBiases s.Biases
+
+                PbrUniforms.setVec2
+                  gp.Shadow.ShadowTexelSize
+                  (Vector2(s.TexelSize, s.TexelSize))
+
+                if not(obj.ReferenceEquals(gp.Shadow.ShadowAtlasTex, null)) then
+                  gp.Shadow.ShadowAtlasTex.SetValue(s.Atlas)
+              | ValueNone -> PbrUniforms.setInt gp.Shadow.DirLightCastsShadows 0
+            | ValueNone -> ()
+
           // A user-effect target selects its SkinnedInstanced technique once around the
           // whole draw (restored afterwards, so it can't leak into subsequent draws in
           // the same scope).
@@ -1232,11 +1311,13 @@ module internal PbrShading =
                 )
 
               // Per-chunk palette storage (effect params are effect-global — set
-              // once per chunk, not per part): the cached texture on DX11/Vulkan,
-              // the bonePaletteGroup constant array on DX12.
-              match res.Params with
-              | ValueSome p ->
-                if isNull paletteTex then
+              // once per chunk, not per part). On DX11/Vulkan the palette texture
+              // uploads to the main effect; on DX12 the bone palette array uploads
+              // to the isolated grouped effect (the main effect's grouped params
+              // are null on DX12 — dropped by mgfx reflection).
+              if isNull paletteTex then
+                match res.GroupedParams with
+                | ValueSome gp ->
                   if
                     res.GroupPaletteScratch.Length < PaletteGroup.MaxMatrices
                   then
@@ -1252,17 +1333,20 @@ module internal PbrShading =
                   )
 
                   PbrUniforms.setMatrixArray
-                    p.Matrix.BonePaletteGroup
+                    gp.Matrix.BonePaletteGroup
                     res.GroupPaletteScratch
 
-                  PbrUniforms.setInt p.Matrix.GroupBoneCount boneCount
-                else
+                  PbrUniforms.setInt gp.Matrix.GroupBoneCount boneCount
+                | ValueNone -> ()
+              else
+                match res.Params with
+                | ValueSome p ->
                   PbrUniforms.setTexture p.Matrix.PaletteTex paletteTex
 
                   PbrUniforms.setVec2
                     p.Matrix.PaletteTexSize
                     (Vector2(float32(boneCount * 4), float32 chunkCount))
-              | ValueNone -> ()
+                | ValueNone -> ()
 
               // PerMesh material resolvers index the model's parts in pipeline iteration
               // order — restart the counter for each chunk (the same parts re-iterate).
@@ -1345,8 +1429,19 @@ module internal PbrShading =
                       // grouped-uniform SkinnedInstancedGrouped(+Color) on DX12 —
                       // for skinned parts; Instanced(+Color) for the rest (their
                       // stream 0 has no bone channels; the extra stream-1 elements
-                      // are simply unread).
-                      match res.Effect, res.Params with
+                      // are simply unread). On DX12 the grouped-uniform skinned path
+                      // uses the isolated ForwardPbrGrouped effect (the main effect's
+                      // bonePaletteGroup params are null on DX12).
+                      let useGrouped =
+                        isSkinned && isNull paletteTex && isDirectX12Backend()
+
+                      let drawEffect, drawParams =
+                        if useGrouped then
+                          res.GroupedEffect, res.GroupedParams
+                        else
+                          res.Effect, res.Params
+
+                      match drawEffect, drawParams with
                       | ValueSome e, ValueSome p ->
                         e.CurrentTechnique <-
                           e.Techniques[match
@@ -1366,13 +1461,21 @@ module internal PbrShading =
 
                         PbrUniforms.setMatrix p.Matrix.MatModel world
 
-                        let key = materialKey &mat
-
-                        if not res.HasLastMaterial || key <> res.LastKey then
+                        // The grouped effect has separate uniform handles from the
+                        // main effect, so the HasLastMaterial short-circuit (keyed
+                        // on the main effect's uploads) doesn't apply — always upload
+                        // material + textures on the grouped path.
+                        if useGrouped then
                           PbrUniforms.uploadMaterial(&p, &mat)
                           PbrUniforms.bindTextures(&p, &mat, whiteTex res)
-                          res.LastKey <- key
-                          res.HasLastMaterial <- true
+                        else
+                          let key = materialKey &mat
+
+                          if not res.HasLastMaterial || key <> res.LastKey then
+                            PbrUniforms.uploadMaterial(&p, &mat)
+                            PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                            res.LastKey <- key
+                            res.HasLastMaterial <- true
 
                         gd.SetVertexBuffers(
                           VertexBufferBinding(part.VertexBuffer, 0, 0),

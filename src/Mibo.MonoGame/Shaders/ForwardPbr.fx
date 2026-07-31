@@ -458,12 +458,12 @@ VS_OUTPUT_COLOR VS_SkinnedInstancedColor(VS_INPUT_SKINNED_INSTANCED_COLOR input)
 // the declaration). The vertex layout is the same
 // VS_INPUT_SKINNED_INSTANCED(+COLOR) — only the palette source differs.
 // ------------------------------------------------------------------
-#define MAX_GROUP_PALETTES 128
+#define MAX_GROUP_PALETTES 320
 // Declared as plain globals (NOT an explicit cbuffer block): mgfx packs all
 // globals into one shared $Globals CB whose size is stored as a signed Int16
-// (32,767 cap) — the effect's other uniforms take ~11KB there, so 320
-// matrices (20KB) is the group-array budget (total ~32KB). A named cbuffer
-// would dodge the cap on DX12 but the Vulkan mgfx profile rejects multi-CB
+// (32,767 cap). The effect's other uniforms take ~11KB, so 320 matrices
+// (20KB) is the group-array budget (total ~32KB). A named cbuffer would
+// dodge the cap on DX12 but the Vulkan mgfx profile rejects multi-CB
 // effects outright.
 float4x4 bonePaletteGroup[MAX_GROUP_PALETTES];
 int groupBoneCount;

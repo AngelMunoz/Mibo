@@ -159,7 +159,7 @@ VS_OUTPUT VS_SkinnedInstanced(VS_INPUT_SKINNED_INSTANCED input) {
 // Int16 size (32,767 cap — ~8KB is already used by boneMatrices & co) and
 // the Vulkan profile rejects multi-CB effects. Mirrors ForwardPbr.fx's
 // SkinnedInstancedGrouped.
-#define MAX_GROUP_PALETTES 128
+#define MAX_GROUP_PALETTES 320
 float4x4 bonePaletteGroup[MAX_GROUP_PALETTES];
 int groupBoneCount;
 

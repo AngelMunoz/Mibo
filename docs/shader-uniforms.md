@@ -264,6 +264,18 @@ struct VS_INPUT_SKINNED_INSTANCED {
 > probe is skipped on that backend and the framework draws per-instance
 > through the `Skinned` path (your `Skinned` technique, if declared, applies).
 
+> **DX12 note:** the MonoGame DX12 backend does not support vertex texture
+> fetch (`NotSupportedException`), so VTF is unavailable. Instead, the
+> framework loads an isolated `ForwardPbrGrouped.fx` (DX12-only) whose
+> `SkinnedInstancedGrouped` / `SkinnedInstancedGroupedColor` techniques read
+> bone palettes from a `bonePaletteGroup[320]` constant array in `$Globals`,
+> indexed by the per-instance `PaletteOffset`. The main `ForwardPbr.fx` cannot
+> serve these techniques on DX12 because the mgfx reflection parser drops the
+> `bonePaletteGroup` / `groupBoneCount` params when all 8 techniques are
+> present in one file. User effects that declare a `SkinnedInstanced`
+> technique fall back to per-instance `Skinned` draws on DX12 (the grouped
+> path is framework-PBR-only).
+
 ## `drawMeshEffect` (MonoGame only)
 
 A fully user-owned `Effect`. The pipeline sets only the camera + transform

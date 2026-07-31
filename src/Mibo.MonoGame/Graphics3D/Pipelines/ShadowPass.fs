@@ -149,6 +149,14 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   /// <summary>Cached depth-effect parameter handles (built when the effect loads).</summary>
   member val Params: ShadowEffectParams voption = ValueNone with get, set
 
+  /// <summary>The isolated grouped-uniform depth effect (DepthShadowGrouped.fx), loaded lazily
+  /// on DX12 only. On DX12 the main DepthShadow.fx's bonePaletteGroup params are dropped by
+  /// mgfx reflection; this isolated effect carries them.</summary>
+  member val GroupedEffect: Effect voption = ValueNone with get, set
+
+  /// <summary>Cached grouped depth-effect parameter handles (built when the grouped effect loads).</summary>
+  member val GroupedParams: ShadowEffectParams voption = ValueNone with get, set
+
   /// <summary>The frame's shadow-origin override (SetShadowOrigin); ValueNone = use the atlas strategy.</summary>
   member val Origin: Vector3 voption = ValueNone with get, set
 
@@ -886,22 +894,32 @@ module internal ShadowPass =
 
         effect.CurrentTechnique <- effect.Techniques["Depth"]
       else
-        // DX12 uses the grouped-uniform depth technique (no working vertex texture
-        // fetch there — palettes ride the bonePaletteGroup constant array);
-        // DX11/Vulkan sample the palette texture.
+        // DX12 uses the grouped-uniform depth technique via the isolated
+        // DepthShadowGrouped effect (the main effect's bonePaletteGroup params
+        // are null on DX12 — dropped by mgfx reflection). DX11/Vulkan sample
+        // the palette texture through the main DepthShadow effect.
         let isDX12 = PlatformInfo.GraphicsBackend = GraphicsBackend.DirectX12
 
+        // Select the effect + params: grouped on DX12, main on DX11/Vulkan.
+        let shadowEffect, shadowEffectParams =
+          if isDX12 then
+            match res.GroupedEffect, res.GroupedParams with
+            | ValueSome ge, ValueSome gp -> (ge, gp)
+            | _ -> (effect, shadowParams) // fallback (grouped effect missing)
+          else
+            (effect, shadowParams)
+
         match
-          effect.Techniques[if isDX12 then
-                              "DepthSkinnedInstancedGrouped"
-                            else
-                              "DepthSkinnedInstanced"]
+          shadowEffect.Techniques[if isDX12 then
+                                    "DepthSkinnedInstancedGrouped"
+                                  else
+                                    "DepthSkinnedInstanced"]
         with
         | null -> () // technique absent (unexpected off GL) — skip rather than crash
         | tech ->
-          effect.CurrentTechnique <- tech
-          PbrUniforms.setMatrix shadowParams.MatModel Matrix.Identity
-          PbrUniforms.setMatrix shadowParams.ViewProj viewProj
+          shadowEffect.CurrentTechnique <- tech
+          PbrUniforms.setMatrix shadowEffectParams.MatModel Matrix.Identity
+          PbrUniforms.setMatrix shadowEffectParams.ViewProj viewProj
 
           for d = 0 to count - 1 do
             if shouldRender d then
@@ -1007,15 +1025,19 @@ module internal ShadowPass =
                     )
 
                     PbrUniforms.setMatrixArray
-                      shadowParams.BonePaletteGroup
+                      shadowEffectParams.BonePaletteGroup
                       res.GroupPaletteScratch
 
-                    PbrUniforms.setInt shadowParams.GroupBoneCount boneCount
+                    PbrUniforms.setInt
+                      shadowEffectParams.GroupBoneCount
+                      boneCount
                   else
-                    PbrUniforms.setTexture shadowParams.PaletteTex paletteTex
+                    PbrUniforms.setTexture
+                      shadowEffectParams.PaletteTex
+                      paletteTex
 
                     PbrUniforms.setVec2
-                      shadowParams.PaletteTexSize
+                      shadowEffectParams.PaletteTexSize
                       (Vector2(float32(boneCount * 4), float32 chunkCount))
 
                   gd.SetVertexBuffers(
@@ -1025,7 +1047,7 @@ module internal ShadowPass =
 
                   gd.Indices <- draw.Part.IndexBuffer
 
-                  for pass in effect.CurrentTechnique.Passes do
+                  for pass in shadowEffect.CurrentTechnique.Passes do
                     pass.Apply()
 
                     gd.DrawInstancedPrimitives(
@@ -1038,7 +1060,7 @@ module internal ShadowPass =
 
                   chunkIdx <- chunkIdx + 1
 
-          effect.CurrentTechnique <- effect.Techniques["Depth"]
+          shadowEffect.CurrentTechnique <- shadowEffect.Techniques["Depth"]
 
   // ─────────────────────────────────────────────────────────────────────────────
   // High-level passes
@@ -1501,6 +1523,17 @@ module internal ShadowPass =
             res.Effect <- ValueSome e
           | ValueNone -> ()
 
+        // DX12: load the isolated grouped depth effect alongside the main one.
+        if PlatformInfo.GraphicsBackend = GraphicsBackend.DirectX12 then
+          match res.GroupedEffect with
+          | ValueSome _ -> ()
+          | ValueNone ->
+            match ShaderLoader.loadEffect gd "DepthShadowGrouped" with
+            | ValueSome e ->
+              res.GroupedParams <- ValueSome(buildShadowParams e)
+              res.GroupedEffect <- ValueSome e
+            | ValueNone -> ()
+
       ValueNone
     else
       res.Atlas.EnsureResources gd
@@ -1514,6 +1547,17 @@ module internal ShadowPass =
           res.Params <- ValueSome(buildShadowParams e)
           res.Effect <- ValueSome e
         | ValueNone -> ()
+
+      // DX12: load the isolated grouped depth effect alongside the main one.
+      if PlatformInfo.GraphicsBackend = GraphicsBackend.DirectX12 then
+        match res.GroupedEffect with
+        | ValueSome _ -> ()
+        | ValueNone ->
+          match ShaderLoader.loadEffect gd "DepthShadowGrouped" with
+          | ValueSome e ->
+            res.GroupedParams <- ValueSome(buildShadowParams e)
+            res.GroupedEffect <- ValueSome e
+          | ValueNone -> ()
 
       match res.Effect, res.Params with
       | ValueSome depthEffect, ValueSome depthParams ->

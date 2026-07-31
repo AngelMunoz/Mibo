@@ -28,6 +28,7 @@ module MGFXC =
     mgfxc.WithArguments [ "mgfxc"; input; output; "/Profile:Vulkan" ]
 
 
+// Cross-backend shaders — compiled for all 4 backends.
 let ShaderList = [
   "LitSprite.fx"
   "LitSpriteNormalMap.fx"
@@ -35,6 +36,10 @@ let ShaderList = [
   "ForwardPbr.fx"
   "DepthShadow.fx"
 ]
+
+// DX12-only shaders — use a named cbuffer (register b1) which other backends reject.
+// ForwardPbrGrouped.fx and DepthShadowGrouped.fx are loaded only on DX12 at runtime.
+let Dx12OnlyShaderList = [ "ForwardPbrGrouped.fx"; "DepthShadowGrouped.fx" ]
 
 let commandsToExecute = [
   for shader in ShaderList do
@@ -95,3 +100,24 @@ let commandsToExecute = [
 ]
 
 Async.Sequential commandsToExecute |> Async.Ignore |> Async.RunSynchronously
+
+// DX12-only shaders: compile just for DirectX_12 profile.
+let dx12OnlyCommands = [
+  for shader in Dx12OnlyShaderList do
+    let shaderPath = Path.Combine(__SOURCE_DIRECTORY__, shader)
+    let dx12Path = shaderPath.Replace(".fx", ".dx12.mgfx")
+
+    async {
+      printfn $"Compiling DirectX 12 For: {shader}"
+      let cmd = MGFXC.DirectX12 shaderPath dx12Path
+      let! result = cmd.ExecuteBufferedAsync().Task |> Async.AwaitTask
+      printfn $"{result.StandardOutput}"
+
+      if result.ExitCode <> 0 || not result.IsSuccess then
+        eprintfn $"{result.StandardError}"
+
+      printfn $"Finished with Exit Code: {result.ExitCode}"
+    }
+]
+
+Async.Sequential dx12OnlyCommands |> Async.Ignore |> Async.RunSynchronously
