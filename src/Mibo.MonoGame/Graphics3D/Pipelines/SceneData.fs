@@ -72,30 +72,41 @@ module internal PaletteTexture =
 /// DepthSkinnedInstancedGrouped).</summary>
 module internal PaletteGroup =
 
-  /// <summary>Bone matrices per group — the shaders' <c>bonePaletteGroup[320]</c>.
-  /// 320 × 64B = 20KB: mgfx packs ALL of an effect's globals into one shared
-  /// <c>$Globals</c> constant buffer whose size is stored as a signed Int16 (32767
-  /// cap). The DX12-only ForwardPbrGrouped.fx / DepthShadowGrouped.fx have ~11KB of
-  /// other uniforms, so 320 matrices (20KB) is the budget that keeps $Globals under
-  /// the cap. A named cbuffer at register(b1) was tried and rejected: the MonoGame
-  /// native DX12 backend only wires b0 ($Globals), so b1 is never bound.
-  /// Instances per group are <c>MaxMatrices / boneCount</c>; draws with more
-  /// instances are split into groups.</summary>
+  /// <summary>Bone matrices per group for the FORWARD grouped effect — the shader's
+  /// <c>bonePaletteGroup[448]</c>. mgfx packs ALL of an effect's globals into one shared
+  /// <c>$Globals</c> constant buffer whose size is stored as a signed Int16 (32767 cap —
+  /// Effect.cs ReadEffect reads it as Int16). Measured non-palette $Globals cost
+  /// (cb-size probe, 2026-08-01): ForwardPbrGrouped 3156B, so 448×64+3156 = 31828B —
+  /// under the cap with headroom for small shader edits. A named cbuffer at register(b1)
+  /// was tried and rejected: the MonoGame native DX12 backend only wires b0 ($Globals).
+  /// Instances per group are <c>maxMatrices / boneCount</c>; draws with more instances
+  /// are split into groups.</summary>
   [<Literal>]
-  let MaxMatrices = 320
+  let MaxMatrices = 448
+
+  /// <summary>Bone matrices per group for the DEPTH grouped effect — the shader's
+  /// <c>bonePaletteGroup[500]</c>. The depth effect's non-palette $Globals cost is only
+  /// 132B (matModel + viewProj + groupBoneCount), so 500×64+132 = 32132B fits the Int16
+  /// cap. Larger depth groups mean fewer shadow-pass draws per frame.</summary>
+  [<Literal>]
+  let MaxMatricesDepth = 500
 
   /// <summary>Instances per group for boneCount; 0 when boneCount exceeds
-  /// MaxMatrices (the caller must fall back to per-instance draws).</summary>
-  let groupSizeFor(boneCount: int) : int =
-    if boneCount > MaxMatrices then
+  /// maxMatrices (the caller must fall back to per-instance draws).</summary>
+  let groupSizeFor (maxMatrices: int) (boneCount: int) : int =
+    if boneCount > maxMatrices then
       0
     else
-      max 1 (MaxMatrices / boneCount)
+      max 1 (maxMatrices / boneCount)
 
   /// <summary>Number of groups for instanceCount at boneCount; 0 when boneCount
-  /// exceeds MaxMatrices.</summary>
-  let groupCountFor (instanceCount: int) (boneCount: int) : int =
-    let groupSize = groupSizeFor boneCount
+  /// exceeds maxMatrices.</summary>
+  let groupCountFor
+    (maxMatrices: int)
+    (instanceCount: int)
+    (boneCount: int)
+    : int =
+    let groupSize = groupSizeFor maxMatrices boneCount
 
     if groupSize = 0 then
       0
@@ -104,18 +115,19 @@ module internal PaletteGroup =
 
   /// <summary>Fill scratch with (start, count, null-texture) group descriptors
   /// for the DX12 grouped-uniform skinned-instanced path; returns the group
-  /// count, or -1 when boneCount exceeds MaxMatrices (scratch contents are then
+  /// count, or -1 when boneCount exceeds maxMatrices (scratch contents are then
   /// undefined). scratch must hold at least groupCountFor entries.</summary>
   let planGroups
+    (maxMatrices: int)
     (instanceCount: int)
     (boneCount: int)
     (scratch: struct (int * int * Texture2D)[])
     : int =
-    if boneCount > MaxMatrices then
+    if boneCount > maxMatrices then
       -1
     else
-      let groupSize = groupSizeFor boneCount
-      let total = groupCountFor instanceCount boneCount
+      let groupSize = groupSizeFor maxMatrices boneCount
+      let total = groupCountFor maxMatrices instanceCount boneCount
 
       for i = 0 to total - 1 do
         let start = i * groupSize

@@ -220,7 +220,7 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
 
   /// <summary>Pooled bone-palette scratch for the grouped-uniform skinned + instanced depth
   /// path (the DX12 fallback — DepthSkinnedInstancedGrouped). Sized to
-  /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatrices"/>; grown on demand.</summary>
+  /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatricesDepth"/>; grown on demand.</summary>
   member val GroupPaletteScratch: Matrix[] = [||] with get, set
 
   /// <summary>Pooled DX12 group descriptors ((start, count, null-texture) triples)
@@ -937,10 +937,13 @@ module internal ShadowPass =
   /// carries each instance's palette row. On DX12 (no working vertex texture fetch)
   /// the <c>DepthSkinnedInstancedGrouped</c> technique reads the
   /// <c>bonePaletteGroup</c> constant array instead, chunked to
-  /// <c>PaletteGroup.MaxMatrices / boneCount</c> instances per group. On the OpenGL
-  /// backend (no vertex texture fetch) — and on DX12 when a skeleton exceeds
-  /// <c>PaletteGroup.MaxMatrices</c> — falls back to per-instance <c>DepthSkinned</c>
-  /// draws with the bone palette uploaded as a uniform array. matModel is Identity in
+  /// <c>PaletteGroup.MaxMatricesDepth / boneCount</c> instances per group (the depth
+  /// effect's $Globals budget is larger than the forward effect's). On the OpenGL
+  /// backend (no vertex texture fetch) — and on DX12 when a skeleton exceeds the
+  /// forward budget <c>PaletteGroup.MaxMatrices</c> — falls back to per-instance
+  /// <c>DepthSkinned</c> draws with the bone palette uploaded as a uniform array
+  /// (the threshold follows the forward pass so both passes take the same path).
+  /// matModel is Identity in
   /// the instanced path — the per-instance world matrix on stream 1 IS the model
   /// transform (same convention as DepthInstanced).
   /// </summary>
@@ -1055,13 +1058,17 @@ module internal ShadowPass =
                     // boneCount <= MaxMatrices here — larger skeletons took the
                     // per-instance fallback at the top of the span.
                     let needed =
-                      PaletteGroup.groupCountFor instanceCount boneCount
+                      PaletteGroup.groupCountFor
+                        PaletteGroup.MaxMatricesDepth
+                        instanceCount
+                        boneCount
 
                     if res.GroupChunkScratch.Length < needed then
                       res.GroupChunkScratch <- Array.zeroCreate needed
 
                     (res.GroupChunkScratch,
                      PaletteGroup.planGroups
+                       PaletteGroup.MaxMatricesDepth
                        instanceCount
                        boneCount
                        res.GroupChunkScratch)
@@ -1075,6 +1082,11 @@ module internal ShadowPass =
                       )
 
                     (obtained, obtained.Length)
+
+                // Command-invariant on DX12: the group's bone stride never
+                // changes across this draw's chunks.
+                if isDX12 then
+                  PbrUniforms.setInt shadowEffectParams.GroupBoneCount boneCount
 
                 let mutable chunkIdx = 0
 
@@ -1131,10 +1143,10 @@ module internal ShadowPass =
                   // the bonePaletteGroup constant array on DX12 (null paletteTex).
                   if isNull paletteTex then
                     if
-                      res.GroupPaletteScratch.Length < PaletteGroup.MaxMatrices
+                      res.GroupPaletteScratch.Length < PaletteGroup.MaxMatricesDepth
                     then
                       res.GroupPaletteScratch <-
-                        Array.zeroCreate PaletteGroup.MaxMatrices
+                        Array.zeroCreate PaletteGroup.MaxMatricesDepth
 
                     Array.Copy(
                       draw.Palettes,
@@ -1147,10 +1159,6 @@ module internal ShadowPass =
                     PbrUniforms.setMatrixArray
                       shadowEffectParams.BonePaletteGroup
                       res.GroupPaletteScratch
-
-                    PbrUniforms.setInt
-                      shadowEffectParams.GroupBoneCount
-                      boneCount
                   else
                     PbrUniforms.setTexture
                       shadowEffectParams.PaletteTex

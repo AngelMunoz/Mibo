@@ -903,6 +903,10 @@ type ForwardPipelineBase
     scene.SpotShadowSlots <- shadowRes.SpotShadowSlots
     scene.Shadows <- shadowRes.ShadowResult
 
+    // The block refreshed both the light set and the shadow state — the DX12
+    // grouped effect must re-upload its frame constants before its next draw.
+    pbrRes.GroupedUniformsDirty <- true
+
   /// <summary>
   /// Draws a solid-color NDC fullscreen triangle, which covers exactly the active viewport.
   /// Used to clear a camera block's viewport region: <c>gd.Clear</c> ignores the viewport on
@@ -966,6 +970,7 @@ type ForwardPipelineBase
         pbrRes.Effect <- ValueNone
         pbrRes.Params <- ValueNone
         pbrRes.HasLastMaterial <- false
+        pbrRes.HasLastGroupedMaterial <- false
       | ValueNone -> ()
 
       match pbrRes.FallbackEffect with
@@ -1193,6 +1198,7 @@ type ForwardPipelineBase
       // persist across cameras — a new camera block (BeginCamera/BeginCameraConfig) and EndCamera
       // both reset it, so a forgotten endEffect can't leak a user effect into the next view.
       pbrRes.LightsDirty <- true
+      pbrRes.GroupedUniformsDirty <- true
       let mutable activeEffect: Effect voption = ValueNone
 
       // Build the per-frame scene bundle once (lights, shared bone palette, per-light shadow slots,
@@ -1383,6 +1389,7 @@ type ForwardPipelineBase
           if multiBlock then
             LightScoping.applyInOrder lights defaultLights state.HasCamera cmd
             pbrRes.LightsDirty <- true
+            pbrRes.GroupedUniformsDirty <- true
 
         // ── Shadow state (consumed in the shadow pass; no-op here) ──
         | Command3D.SetShadowOrigin _

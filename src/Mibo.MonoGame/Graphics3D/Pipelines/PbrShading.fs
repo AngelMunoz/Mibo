@@ -231,8 +231,26 @@ type internal PbrResources() =
   /// (lights are stable within a frame — gathered once in the pre-scan).</summary>
   member val LightsDirty = true with get, set
 
+  /// <summary>Same gate as LightsDirty but for the isolated DX12 grouped effect
+  /// (ForwardPbrGrouped.fx). That effect is a separate instance with its own uniform
+  /// state, so it needs its own flag. Covers light uniforms AND the shadow-atlas
+  /// block: both are frame/block constants, and the shadow pass always completes
+  /// before any grouped draw in the same scope. Set at the same points as
+  /// LightsDirty; cleared after the first grouped draw that uploads them.</summary>
+  member val GroupedUniformsDirty = true with get, set
+
   /// <summary>The last draw's MaterialKey (valid when HasLastMaterial).</summary>
   member val LastKey: MaterialKey =
+    Unchecked.defaultof<MaterialKey> with get, set
+
+  /// <summary>MaterialKey short-circuit for the DX12 grouped effect (ForwardPbrGrouped.fx).
+  /// The grouped effect has its own uniform handles and is only driven by the
+  /// skinned-instanced grouped path, so it needs a dedicated tracker — the main
+  /// effect's HasLastMaterial/LastKey don't describe its state.</summary>
+  member val HasLastGroupedMaterial = false with get, set
+
+  /// <summary>The last grouped draw's MaterialKey (valid when HasLastGroupedMaterial).</summary>
+  member val LastGroupedKey: MaterialKey =
     Unchecked.defaultof<MaterialKey> with get, set
 
   // Reused each frame to avoid per-frame allocation. Sized generously; grows if a larger model is
@@ -1314,8 +1332,10 @@ module internal PbrShading =
         // same frame-global uniforms. The grouped effect has its own uniform handles
         // — the main effect's bonePaletteGroup params are null on DX12 (dropped by
         // mgfx reflection), so the grouped effect is the only one that can receive
-        // bone palette data. Lights are uploaded unconditionally (once per draw call,
-        // not per part — negligible cost vs. the per-instance fallback it replaces).
+        // bone palette data. Lights + the shadow block are frame/block constants and
+        // the shadow pass always completes before any grouped draw in the same scope,
+        // so both upload once per scope change (GroupedUniformsDirty), not per command.
+        // ViewProj/CameraPos stay per command: two small writes, always correct.
         if isDirectX12Backend() && ensureGroupedEffect(gd, res) then
           match res.GroupedParams with
           | ValueSome gp ->
@@ -1323,30 +1343,36 @@ module internal PbrShading =
 
             PbrUniforms.setVec3 gp.Matrix.CameraPos state.CurrentCamera.Position
 
-            PbrUniforms.uploadLights(
-              &gp,
-              frame.Lights,
-              frame.PointShadowSlots,
-              frame.SpotShadowSlots
-            )
+            if res.GroupedUniformsDirty then
+              PbrUniforms.uploadLights(
+                &gp,
+                frame.Lights,
+                frame.PointShadowSlots,
+                frame.SpotShadowSlots
+              )
 
-            match frame.Shadows with
-            | ValueSome s ->
-              PbrUniforms.setInt
-                gp.Shadow.DirLightCastsShadows
-                (if s.DirLightCastsShadows then 1 else 0)
+              match frame.Shadows with
+              | ValueSome s ->
+                PbrUniforms.setInt
+                  gp.Shadow.DirLightCastsShadows
+                  (if s.DirLightCastsShadows then 1 else 0)
 
-              PbrUniforms.setMatrixArray gp.Shadow.ShadowViewProjs s.ViewProjs
-              PbrUniforms.setVec4Array gp.Shadow.ShadowUVOffsets s.UVOffsets
-              PbrUniforms.setFloatArray gp.Shadow.ShadowBiases s.Biases
+                PbrUniforms.setMatrixArray gp.Shadow.ShadowViewProjs s.ViewProjs
+                PbrUniforms.setVec4Array gp.Shadow.ShadowUVOffsets s.UVOffsets
+                PbrUniforms.setFloatArray gp.Shadow.ShadowBiases s.Biases
 
-              PbrUniforms.setVec2
-                gp.Shadow.ShadowTexelSize
-                (Vector2(s.TexelSize, s.TexelSize))
+                PbrUniforms.setVec2
+                  gp.Shadow.ShadowTexelSize
+                  (Vector2(s.TexelSize, s.TexelSize))
 
-              if not(obj.ReferenceEquals(gp.Shadow.ShadowAtlasTex, null)) then
-                gp.Shadow.ShadowAtlasTex.SetValue(s.Atlas)
-            | ValueNone -> PbrUniforms.setInt gp.Shadow.DirLightCastsShadows 0
+                if not(obj.ReferenceEquals(gp.Shadow.ShadowAtlasTex, null)) then
+                  gp.Shadow.ShadowAtlasTex.SetValue(s.Atlas)
+              | ValueNone -> PbrUniforms.setInt gp.Shadow.DirLightCastsShadows 0
+
+              res.GroupedUniformsDirty <- false
+
+            // Command-invariant: the group's bone stride never changes across chunks.
+            PbrUniforms.setInt gp.Matrix.GroupBoneCount boneCount
           | ValueNone -> ()
 
         // A user-effect target selects its SkinnedInstanced technique once around the
@@ -1371,13 +1397,21 @@ module internal PbrShading =
             if isDirectX12Backend() then
               // boneCount <= MaxMatrices here — larger skeletons took the
               // per-instance fallback above.
-              let needed = PaletteGroup.groupCountFor count boneCount
+              let needed =
+                PaletteGroup.groupCountFor
+                  PaletteGroup.MaxMatrices
+                  count
+                  boneCount
 
               if res.GroupChunkScratch.Length < needed then
                 res.GroupChunkScratch <- Array.zeroCreate needed
 
               (res.GroupChunkScratch,
-               PaletteGroup.planGroups count boneCount res.GroupChunkScratch)
+               PaletteGroup.planGroups
+                 PaletteGroup.MaxMatrices
+                 count
+                 boneCount
+                 res.GroupChunkScratch)
             else
               let obtained =
                 res.PaletteChunks.Obtain(gd, palettes, boneCount, count)
@@ -1570,8 +1604,6 @@ module internal PbrShading =
                 PbrUniforms.setMatrixArray
                   gp.Matrix.BonePaletteGroup
                   res.GroupPaletteScratch
-
-                PbrUniforms.setInt gp.Matrix.GroupBoneCount boneCount
               | ValueNone -> ()
             else
               match res.Params with
@@ -1659,14 +1691,20 @@ module internal PbrShading =
                   PbrUniforms.setMatrix p.Matrix.MatModel info.World
 
                   // The grouped effect has separate uniform handles from the
-                  // main effect, so the HasLastMaterial short-circuit (keyed
-                  // on the main effect's uploads) doesn't apply — always upload
-                  // material + textures on the grouped path.
+                  // main effect, so it gets its own MaterialKey short-circuit
+                  // (HasLastGroupedMaterial/LastGroupedKey) — same pattern, keyed
+                  // on the grouped effect's uploads.
                   let mat = info.Mat
 
                   if info.UseGrouped then
-                    PbrUniforms.uploadMaterial(&p, &mat)
-                    PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                    if
+                      not res.HasLastGroupedMaterial
+                      || info.MatKey <> res.LastGroupedKey
+                    then
+                      PbrUniforms.uploadMaterial(&p, &mat)
+                      PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                      res.LastGroupedKey <- info.MatKey
+                      res.HasLastGroupedMaterial <- true
                   else if
                     not res.HasLastMaterial || info.MatKey <> res.LastKey
                   then
