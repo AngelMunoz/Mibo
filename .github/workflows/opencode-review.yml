@@ -22,9 +22,9 @@ jobs:
           persist-credentials: false
       - uses: anomalyco/opencode/github@latest
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          KIMI_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode-go/deepseek-v4-pro
+          model: kimi-for-coding/k3-256k
           prompt: |
             Review this pull request:
             - Ensure AGENTS.md rules are respected
