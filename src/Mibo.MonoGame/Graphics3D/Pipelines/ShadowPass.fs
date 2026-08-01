@@ -218,6 +218,11 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   /// once, not per pass — see <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>).</summary>
   member val PaletteChunks = new PaletteChunkCache() with get, set
 
+  /// <summary>Shared per-frame instance-world staging cache for skinned + instanced casters
+  /// (aliased with the forward pass by ForwardPipeline — DX11/Vulkan only, see
+  /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.InstanceWorldCache"/>).</summary>
+  member val InstanceWorlds = new InstanceWorldCache() with get, set
+
   /// <summary>Pooled bone-palette scratch for the grouped-uniform skinned + instanced depth
   /// path (the DX12 fallback — DepthSkinnedInstancedGrouped). Sized to
   /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatricesDepth"/>; grown on demand.</summary>
@@ -1094,15 +1099,31 @@ module internal ShadowPass =
                   let struct (chunkStart, chunkCount, paletteTex) =
                     chunks[chunkIdx]
 
-                  if res.SkinnedInstancedStaging.Length < chunkCount then
-                    res.SkinnedInstancedStaging <-
-                      Array.zeroCreate<VertexInstanceWorldPalette> chunkCount
+                  // DX11/Vulkan: shared per-frame staging (InstanceWorldCache) —
+                  // the chunk plan is shared with the forward pass, so one staging
+                  // pass per frame serves both passes' VB uploads. DX12 stages per
+                  // pass (its forward/depth group budgets differ).
+                  let staged =
+                    if isDX12 then
+                      if res.SkinnedInstancedStaging.Length < chunkCount then
+                        res.SkinnedInstancedStaging <-
+                          Array.zeroCreate<VertexInstanceWorldPalette>
+                            chunkCount
 
-                  for i = 0 to chunkCount - 1 do
-                    res.SkinnedInstancedStaging[i] <-
-                      VertexInstanceWorldPalette.Create(
-                        draw.Transforms[chunkStart + i],
-                        float32 i // palette row is chunk-local (texture holds this chunk only)
+                      for i = 0 to chunkCount - 1 do
+                        res.SkinnedInstancedStaging[i] <-
+                          VertexInstanceWorldPalette.Create(
+                            draw.Transforms[chunkStart + i],
+                            float32 i // palette row is chunk-local (texture holds this chunk only)
+                          )
+
+                      res.SkinnedInstancedStaging
+                    else
+                      res.InstanceWorlds.Obtain(
+                        draw.Transforms,
+                        instanceCount,
+                        chunks,
+                        chunkTotal
                       )
 
                   // Must stay a DynamicVertexBuffer — same DX12 upload-ordering hazard
@@ -1137,7 +1158,13 @@ module internal ShadowPass =
                     | ValueSome vb -> vb
                     | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
 
-                  instVB.SetData(res.SkinnedInstancedStaging, 0, chunkCount)
+                  // Cached rows are command-global: this chunk's rows start at
+                  // chunkStart (DX12's per-pass staging starts at 0).
+                  instVB.SetData(
+                    staged,
+                    (if isDX12 then 0 else chunkStart),
+                    chunkCount
+                  )
 
                   // Per-chunk palette storage: the cached texture on DX11/Vulkan,
                   // the bonePaletteGroup constant array on DX12 (null paletteTex).

@@ -189,6 +189,13 @@ type internal PbrResources() =
   /// once, not per pass — see <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>).</summary>
   member val PaletteChunks = new PaletteChunkCache() with get, set
 
+  /// <summary>Shared per-frame instance-world staging cache for skinned + instanced draws
+  /// (aliased with the shadow pass by ForwardPipeline so each frame's instance rows are
+  /// staged once, not per pass — DX11/Vulkan only; the DX12 grouped path stages per pass
+  /// because its forward/depth chunk plans differ — see
+  /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.InstanceWorldCache"/>).</summary>
+  member val InstanceWorlds = new InstanceWorldCache() with get, set
+
   /// <summary>Pooled bone-palette scratch for the grouped-uniform skinned + instanced path
   /// (the DX12 fallback — SkinnedInstancedGrouped techniques). Sized to
   /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatrices"/>; grown on demand.</summary>
@@ -1100,6 +1107,9 @@ module internal PbrShading =
       res: PbrResources,
       transforms: Matrix[],
       colors: Color[] voption,
+      count: int,
+      chunks: struct (int * int * Texture2D)[],
+      chunkTotal: int,
       chunkStart: int,
       chunkCount: int
     ) : VertexBuffer =
@@ -1159,17 +1169,29 @@ module internal PbrShading =
       instVB.SetData(res.InstancePaletteColorStaging, 0, chunkCount)
       instVB
     | ValueNone ->
-      if res.InstancePaletteStaging.Length < chunkCount then
-        res.InstancePaletteStaging <-
-          Array.zeroCreate<VertexInstanceWorldPalette> chunkCount
+      let dx12 = isDirectX12Backend()
 
-      for i = 0 to chunkCount - 1 do
-        // PaletteOffset is chunk-local (see the colored branch above).
-        res.InstancePaletteStaging[i] <-
-          VertexInstanceWorldPalette.Create(
-            transforms[chunkStart + i],
-            float32 i
-          )
+      // DX11/Vulkan: one staging pass per frame serves both passes — the chunk plan
+      // is shared (PaletteChunkCache), so the shadow pass and this pass read the same
+      // staged rows (InstanceWorldCache). DX12 stages per pass instead: its
+      // forward/depth group budgets differ, so chunk-local offsets differ per pass.
+      let staged =
+        if dx12 then
+          if res.InstancePaletteStaging.Length < chunkCount then
+            res.InstancePaletteStaging <-
+              Array.zeroCreate<VertexInstanceWorldPalette> chunkCount
+
+          for i = 0 to chunkCount - 1 do
+            // PaletteOffset is chunk-local (see the colored branch above).
+            res.InstancePaletteStaging[i] <-
+              VertexInstanceWorldPalette.Create(
+                transforms[chunkStart + i],
+                float32 i
+              )
+
+          res.InstancePaletteStaging
+        else
+          res.InstanceWorlds.Obtain(transforms, count, chunks, chunkTotal)
 
       // Must stay a DynamicVertexBuffer (see the colored branch above).
       match res.InstancePaletteVertexBuffer with
@@ -1202,7 +1224,8 @@ module internal PbrShading =
         | ValueSome vb -> vb
         | ValueNone -> Unchecked.defaultof<DynamicVertexBuffer> // unreachable (created above)
 
-      instVB.SetData(res.InstancePaletteStaging, 0, chunkCount)
+      // Cached rows are command-global: this chunk's rows start at chunkStart.
+      instVB.SetData(staged, (if dx12 then 0 else chunkStart), chunkCount)
       instVB
 
   /// <summary>
@@ -1575,6 +1598,9 @@ module internal PbrShading =
                 res,
                 transforms,
                 colors,
+                count,
+                chunks,
+                chunkTotal,
                 chunkStart,
                 chunkCount
               )

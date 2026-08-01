@@ -4,6 +4,7 @@ open System
 open System.Runtime.InteropServices
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open Mibo.Elmish.Graphics3D
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PaletteTexturePool — per-frame pool of RGBA32F bone-palette textures for
@@ -286,6 +287,84 @@ type PaletteChunkCache() =
     memo.Clear()
 
   interface System.IDisposable with
-    member this.Dispose() =
-      (pool :> System.IDisposable).Dispose()
-      memo.Clear()
+    member this.Dispose() = (pool :> System.IDisposable).Dispose()
+
+/// <summary>
+/// Per-frame cache of staged per-instance world rows (<c>VertexInstanceWorldPalette</c>:
+/// world matrix + chunk-local palette row) for skinned + instanced draws, SHARED by the
+/// shadow pass and the forward PBR pass on the palette-texture backends (DX11/Vulkan).
+/// Both passes stage the same rows every frame — the chunk plan is already shared via
+/// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>, so chunk-local
+/// offsets match and one staging pass can serve both passes' vertex-buffer uploads
+/// (each pass still uploads into its OWN DynamicVertexBuffer — the two passes never
+/// share a buffer, preserving the no-race DX12 upload-ordering design).
+/// </summary>
+/// <remarks>
+/// Memo validity is per frame, same as <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>:
+/// transforms arrays are game-owned and stable for the duration of the render flush, and
+/// <c>ReleaseAll</c> — called once per frame alongside the palette cache's — drops every
+/// memo. Keyed by array reference + count. The DX12 grouped path does NOT use this cache:
+/// its forward/depth group budgets differ (PaletteGroup.MaxMatrices vs MaxMatricesDepth),
+/// so chunk-local offsets differ per pass and staging stays per pass there.
+/// </remarks>
+type InstanceWorldCache() =
+  // Pooled per-command staging arrays: slot per command, grow-only, kept across
+  // frames (memo alone clears per frame). Zero steady-state allocation.
+  let pool = ResizeArray<VertexInstanceWorldPalette[]>()
+  let mutable used = 0
+
+  // transforms array → (count, pool slot), keyed by reference identity.
+  let memo =
+    System.Collections.Generic.Dictionary<Matrix[], int * int>(
+      { new System.Collections.Generic.IEqualityComparer<Matrix[]> with
+          member _.Equals(a, b) = obj.ReferenceEquals(a, b)
+
+          member _.GetHashCode(a) =
+            System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(a)
+      }
+    )
+
+  /// <summary>Returns the staged rows covering <paramref name="count"/> instances under
+  /// the given chunk plan ((chunkStart, chunkCount, _) triples), staging them on first
+  /// request this frame. Row j of a chunk carries PaletteOffset j — chunk-local, matching
+  /// the palette texture that holds only that chunk.</summary>
+  member this.Obtain
+    (
+      transforms: Matrix[],
+      count: int,
+      chunks: struct (int * int * 'T)[],
+      chunkTotal: int
+    ) : VertexInstanceWorldPalette[] =
+    match memo.TryGetValue(transforms) with
+    | true, (c, slot) when c = count -> pool[slot]
+    | _ ->
+      let slot = used
+      used <- used + 1
+
+      if pool.Count <= slot then
+        pool.Add([||])
+
+      if pool[slot].Length < count then
+        pool[slot] <- Array.zeroCreate count
+
+      let rows = pool[slot]
+
+      for k = 0 to chunkTotal - 1 do
+        let struct (chunkStart, chunkCount, _) = chunks[k]
+
+        for i = 0 to chunkCount - 1 do
+          // PaletteOffset is chunk-local: palette storage (texture chunk or uniform
+          // group on the DX12 path) holds this chunk only.
+          rows[chunkStart + i] <-
+            VertexInstanceWorldPalette.Create(
+              transforms[chunkStart + i],
+              float32 i
+            )
+
+      memo[transforms] <- (count, slot)
+      rows
+
+  /// <summary>Drops every memo (per-frame lifetime); pool arrays are kept (grow-only).</summary>
+  member this.ReleaseAll() =
+    memo.Clear()
+    used <- 0

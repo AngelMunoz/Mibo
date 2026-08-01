@@ -344,6 +344,11 @@ type ForwardPipelineBase
   let paletteChunks = pbrRes.PaletteChunks
   do shadowRes.PaletteChunks <- paletteChunks
 
+  // Same sharing for the per-instance world-row staging (InstanceWorldCache): the chunk
+  // plan is shared, so one staging pass per frame serves both passes' VB uploads.
+  let instanceWorlds = pbrRes.InstanceWorlds
+  do shadowRes.InstanceWorlds <- instanceWorlds
+
   // B8 billboards + lines: lazily-created unlit BasicEffects (one textured+alpha for
   // billboards, one vertex-color for lines) and a pooled CPU vertex staging array for
   // DrawUserIndexedPrimitives. Created on first use against the real device.
@@ -1088,6 +1093,7 @@ type ForwardPipelineBase
       // Return last frame's bone-palette chunk textures to the shared pool before any
       // draw of this frame re-acquires them (per-frame lifetime — see PaletteChunkCache).
       paletteChunks.ReleaseAll()
+      instanceWorlds.ReleaseAll()
 
       // Pre-scan — capture camera, shadow state, and post-process actions in one pass.
       // The block plan walks the buffer once for the per-camera-block light scoping; frames
