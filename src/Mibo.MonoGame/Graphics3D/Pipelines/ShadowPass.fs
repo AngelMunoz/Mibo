@@ -213,6 +213,11 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   member val SkinnedInstancedVertexBuffer: VertexBuffer voption =
     ValueNone with get, set
 
+  /// <summary>Cached 2-slot binding array for SetVertexBuffers on the instanced paths
+  /// (avoids the params-array allocation per call — thousands per frame on DX12).
+  /// Contents are rewritten per call and consumed immediately.</summary>
+  member val InstanceBindings = Array.zeroCreate<VertexBufferBinding> 2 with get
+
   /// <summary>Shared per-frame palette-chunk cache for skinned + instanced casters (aliased
   /// with the forward pass by ForwardPipeline so each frame's palettes are staged + uploaded
   /// once, not per pass — see <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>).</summary>
@@ -912,10 +917,10 @@ module internal ShadowPass =
 
           instVB.SetData(res.InstanceStaging, 0, instanceCount)
 
-          gd.SetVertexBuffers(
-            VertexBufferBinding(draw.Mesh.Vertices, 0, 0),
-            VertexBufferBinding(instVB, 0, 1)
-          )
+          let bindings = res.InstanceBindings
+          bindings[0] <- VertexBufferBinding(draw.Mesh.Vertices, 0, 0)
+          bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+          gd.SetVertexBuffers(bindings)
 
           gd.Indices <- draw.Mesh.Indices
           PbrUniforms.setMatrix shadowParams.ViewProj viewProj
@@ -1027,13 +1032,13 @@ module internal ShadowPass =
         let isDX12 = PlatformInfo.GraphicsBackend = GraphicsBackend.DirectX12
 
         // Select the effect + params: grouped on DX12, main on DX11/Vulkan.
-        let shadowEffect, shadowEffectParams =
+        let struct (shadowEffect, shadowEffectParams) =
           if isDX12 then
-            match res.GroupedEffect, res.GroupedParams with
-            | ValueSome ge, ValueSome gp -> (ge, gp)
-            | _ -> (effect, shadowParams) // fallback (grouped effect missing)
+            match struct (res.GroupedEffect, res.GroupedParams) with
+            | struct (ValueSome ge, ValueSome gp) -> struct (ge, gp)
+            | _ -> struct (effect, shadowParams) // fallback (grouped effect missing)
           else
-            (effect, shadowParams)
+            struct (effect, shadowParams)
 
         match
           shadowEffect.Techniques[if isDX12 then
@@ -1195,10 +1200,10 @@ module internal ShadowPass =
                       shadowEffectParams.PaletteTexSize
                       (Vector2(float32(boneCount * 4), float32 chunkCount))
 
-                  gd.SetVertexBuffers(
-                    VertexBufferBinding(draw.VertexBuffer, 0, 0),
-                    VertexBufferBinding(instVB, 0, 1)
-                  )
+                  let bindings = res.InstanceBindings
+                  bindings[0] <- VertexBufferBinding(draw.VertexBuffer, 0, 0)
+                  bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+                  gd.SetVertexBuffers(bindings)
 
                   gd.Indices <- draw.IndexBuffer
 
@@ -1302,6 +1307,19 @@ module internal ShadowPass =
 
       let shadowFrustum = res.Frustum
 
+      // Span predicates are caster-invariant: they capture the span arrays (and the
+      // frustum, read at call time — the per-caster Matrix assign below stays visible
+      // through the shared reference). Create them once per pass, not per caster.
+      let primitiveShouldRender d =
+        shadowDraws[d].CastsShadow
+        && Culling.isVisible shadowFrustum shadowDraws[d].WorldBounds
+
+      let modelPartShouldRender d = modelPartDraws[d].CastsShadow
+      let skinnedShouldRender d = skinnedDraws[d].CastsShadow
+      let instancedShouldRender d = instancedDraws[d].CastsShadow
+
+      let skinnedInstancedShouldRender d = skinnedInstancedDraws[d].CastsShadow
+
       for caster in res.Atlas.Casters do
         if caster.Enabled then
           let casterVP = res.Atlas.GetRegionViewProj caster.AtlasRegion
@@ -1315,9 +1333,7 @@ module internal ShadowPass =
             casterVP
             shadowDraws
             drawCount
-            (fun d ->
-              shadowDraws[d].CastsShadow
-              && Culling.isVisible shadowFrustum shadowDraws[d].WorldBounds)
+            primitiveShouldRender
 
           renderModelPartSpan
             gd
@@ -1326,7 +1342,7 @@ module internal ShadowPass =
             casterVP
             modelPartDraws
             modelPartCount
-            (fun d -> modelPartDraws[d].CastsShadow)
+            modelPartShouldRender
 
           renderSkinnedSpan
             gd
@@ -1336,7 +1352,7 @@ module internal ShadowPass =
             res.BonePaletteScratch
             skinnedDraws
             skinnedCount
-            (fun d -> skinnedDraws[d].CastsShadow)
+            skinnedShouldRender
 
           renderInstancedSpan
             gd
@@ -1346,7 +1362,7 @@ module internal ShadowPass =
             res
             instancedDraws
             instancedCount
-            (fun d -> instancedDraws[d].CastsShadow)
+            instancedShouldRender
 
           renderSkinnedInstancedSpan
             gd
@@ -1356,7 +1372,7 @@ module internal ShadowPass =
             res
             skinnedInstancedDraws
             skinnedInstancedCount
-            (fun d -> skinnedInstancedDraws[d].CastsShadow)
+            skinnedInstancedShouldRender
 
       gd.SetRenderTargets prevTargets
       gd.Viewport <- prevViewport
@@ -1621,8 +1637,8 @@ module internal ShadowPass =
 
   /// <summary>Loads the DepthShadow effect on first use (no-op once loaded).</summary>
   let ensureDepthEffect (gd: GraphicsDevice) (res: ShadowResources) =
-    match res.Effect, res.Params with
-    | ValueSome _, ValueSome _ -> ()
+    match struct (res.Effect, res.Params) with
+    | struct (ValueSome _, ValueSome _) -> ()
     | _ ->
       match ShaderLoader.loadEffect gd "DepthShadow" with
       | ValueSome e ->
@@ -1723,8 +1739,8 @@ module internal ShadowPass =
             res.GroupedEffect <- ValueSome e
           | ValueNone -> ()
 
-      match res.Effect, res.Params with
-      | ValueSome depthEffect, ValueSome depthParams ->
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome depthEffect, ValueSome depthParams) ->
         let casterSlot = registerCasters atlasCfg res lights activeCamera
 
         if casterSlot = 0 then

@@ -164,10 +164,21 @@ type PaletteTexturePool(?maxIdlePerSize: int) =
 
   let inUse = ResizeArray<Texture2D>()
 
+  // Textures checked out this frame per size. ReleaseAll keeps up to this many idle
+  // per size (never less than maxIdle): steady frames create and dispose nothing once
+  // demand stabilizes — a flat cap churns creates + disposes every frame whenever the
+  // frame's chunk count exceeds it.
+  let usedThisFrame =
+    System.Collections.Generic.Dictionary<struct (int * int), int>()
+
   /// <summary>Acquires a palette texture of the given size, reusing a released one when
   /// available. The texture stays checked out until the next <c>ReleaseAll</c>.</summary>
   member _.Acquire(gd: GraphicsDevice, width: int, height: int) : Texture2D =
     let key = struct (width, height)
+
+    match usedThisFrame.TryGetValue(key) with
+    | true, n -> usedThisFrame[key] <- n + 1
+    | _ -> usedThisFrame[key] <- 1
 
     match pool.TryGetValue(key) with
     | true, queue when queue.Count > 0 ->
@@ -182,20 +193,38 @@ type PaletteTexturePool(?maxIdlePerSize: int) =
 
   /// <summary>Returns all checked-out textures to the pool. Call once per frame, before the
   /// frame's first skinned-instanced draw (the previous frame's draws were already submitted).
-  /// Idle textures kept per size are capped; extras are disposed.</summary>
+  /// Idle textures kept per size track this frame's demand (floor: the cap); extras are
+  /// disposed.</summary>
   member _.ReleaseAll() =
     for tex in inUse do
       let key = struct (tex.Width, tex.Height)
 
+      let keep =
+        match usedThisFrame.TryGetValue(key) with
+        | true, n -> max maxIdle n
+        | _ -> maxIdle
+
       match pool.TryGetValue(key) with
-      | true, queue when queue.Count < maxIdle -> queue.Enqueue(tex)
+      | true, queue when queue.Count < keep -> queue.Enqueue(tex)
       | true, _ -> tex.Dispose()
       | false, _ ->
         let queue = System.Collections.Generic.Queue<Texture2D>()
         queue.Enqueue(tex)
         pool[key] <- queue
 
+    // Trim idle overflow back toward this frame's demand, so a one-frame spike
+    // doesn't pin the pool at spike size forever.
+    for KeyValue(key, queue) in pool do
+      let keep =
+        match usedThisFrame.TryGetValue(key) with
+        | true, n -> max maxIdle n
+        | _ -> maxIdle
+
+      while queue.Count > keep do
+        queue.Dequeue().Dispose()
+
     inUse.Clear()
+    usedThisFrame.Clear()
 
   interface System.IDisposable with
     member _.Dispose() =

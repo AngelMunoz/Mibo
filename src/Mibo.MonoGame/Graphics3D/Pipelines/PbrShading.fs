@@ -180,6 +180,11 @@ type internal PbrResources() =
   member val InstancePaletteColorStaging =
     Array.zeroCreate<VertexInstanceWorldPaletteColor> 64 with get, set
 
+  /// <summary>Cached 2-slot binding array for SetVertexBuffers on the instanced paths
+  /// (avoids the params-array allocation per call — thousands per frame on DX12).
+  /// Contents are rewritten per call and consumed immediately.</summary>
+  member val InstanceBindings = Array.zeroCreate<VertexBufferBinding> 2 with get
+
   /// <summary>Reusable bone-palette slice for the OpenGL / DX12-user-effect per-instance
   /// fallback of skinned + instanced draws. Grown on demand, reused across frames.</summary>
   member val BoneSliceScratch = Array.empty<Matrix> with get, set
@@ -498,8 +503,8 @@ module internal PbrShading =
       matOverride: MaterialOverride voption
     ) =
     if ensureEffect(gd, res) then
-      match res.Effect, res.Params with
-      | ValueSome e, ValueSome p ->
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome e, ValueSome p) ->
         let boneCount = model.Bones.Count
 
         if res.BoneTransforms.Length < boneCount then
@@ -580,8 +585,8 @@ module internal PbrShading =
       tint: Color voption
     ) =
     if ensureEffect(gd, res) then
-      match res.Effect, res.Params with
-      | ValueSome e, ValueSome p ->
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome e, ValueSome p) ->
         let boneCount = model.Bones.Count
 
         if res.BoneTransforms.Length < boneCount then
@@ -713,8 +718,8 @@ module internal PbrShading =
       material: Material3D
     ) =
     if ensureEffect(gd, res) then
-      match res.Effect, res.Params with
-      | ValueSome e, ValueSome p ->
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome e, ValueSome p) ->
         e.CurrentTechnique <- e.Techniques["Standard"]
         let mutable t = transform
         let mutable inv = Matrix.Identity
@@ -846,10 +851,10 @@ module internal PbrShading =
 
       instVB.SetData(res.InstanceStaging, 0, instanceCount)
 
-      gd.SetVertexBuffers(
-        VertexBufferBinding(mesh.Vertices, 0, 0),
-        VertexBufferBinding(instVB, 0, 1)
-      )
+      let bindings = res.InstanceBindings
+      bindings[0] <- VertexBufferBinding(mesh.Vertices, 0, 0)
+      bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+      gd.SetVertexBuffers(bindings)
 
       struct (instanceCount, instVB)
 
@@ -928,10 +933,10 @@ module internal PbrShading =
 
       instVB.SetData(res.InstanceColorStaging, 0, instanceCount)
 
-      gd.SetVertexBuffers(
-        VertexBufferBinding(mesh.Vertices, 0, 0),
-        VertexBufferBinding(instVB, 0, 1)
-      )
+      let bindings = res.InstanceBindings
+      bindings[0] <- VertexBufferBinding(mesh.Vertices, 0, 0)
+      bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+      gd.SetVertexBuffers(bindings)
 
       struct (instanceCount, instVB)
 
@@ -967,8 +972,8 @@ module internal PbrShading =
       let viewProj = state.View * state.Projection
 
       if ensureEffect(gd, res) then
-        match res.Effect, res.Params with
-        | ValueSome e, ValueSome p ->
+        match struct (res.Effect, res.Params) with
+        | struct (ValueSome e, ValueSome p) ->
           e.CurrentTechnique <-
             e.Techniques[match colors with
                          | ValueSome _ -> "InstancedColor"
@@ -1334,8 +1339,8 @@ module internal PbrShading =
         // the non-skinned parts under a user effect. Frame-global uniforms don't depend
         // on the mesh — set once per draw, not per mesh.
         if ensureEffect(gd, res) then
-          match res.Effect, res.Params with
-          | ValueSome e, ValueSome p ->
+          match struct (res.Effect, res.Params) with
+          | struct (ValueSome e, ValueSome p) ->
             PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
 
             PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
@@ -1679,10 +1684,10 @@ module internal PbrShading =
                     Vector2(float32(boneCount * 4), float32 chunkCount)
                   )
 
-                gd.SetVertexBuffers(
-                  VertexBufferBinding(unit.VB, 0, 0),
-                  VertexBufferBinding(instVB, 0, 1)
-                )
+                let bindings = res.InstanceBindings
+                bindings[0] <- VertexBufferBinding(unit.VB, 0, 0)
+                bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+                gd.SetVertexBuffers(bindings)
 
                 gd.Indices <- unit.IB
 
@@ -1704,14 +1709,14 @@ module internal PbrShading =
                 // are simply unread). On DX12 the grouped-uniform skinned path
                 // uses the isolated ForwardPbrGrouped effect (the main effect's
                 // bonePaletteGroup params are null on DX12).
-                let drawEffect, drawParams =
+                let struct (drawEffect, drawParams) =
                   if info.UseGrouped then
-                    res.GroupedEffect, res.GroupedParams
+                    struct (res.GroupedEffect, res.GroupedParams)
                   else
-                    res.Effect, res.Params
+                    struct (res.Effect, res.Params)
 
-                match drawEffect, drawParams with
-                | ValueSome e, ValueSome p ->
+                match struct (drawEffect, drawParams) with
+                | struct (ValueSome e, ValueSome p) ->
                   e.CurrentTechnique <- info.Technique
 
                   PbrUniforms.setMatrix p.Matrix.MatModel info.World
@@ -1739,10 +1744,10 @@ module internal PbrShading =
                     res.LastKey <- info.MatKey
                     res.HasLastMaterial <- true
 
-                  gd.SetVertexBuffers(
-                    VertexBufferBinding(unit.VB, 0, 0),
-                    VertexBufferBinding(instVB, 0, 1)
-                  )
+                  let bindings = res.InstanceBindings
+                  bindings[0] <- VertexBufferBinding(unit.VB, 0, 0)
+                  bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+                  gd.SetVertexBuffers(bindings)
 
                   gd.Indices <- unit.IB
 
