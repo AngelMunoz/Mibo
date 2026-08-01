@@ -13,6 +13,7 @@ General setup and usage instructions can be found in the [README.md](README.md) 
 3. **Always run `dotnet fantomas .` before committing code.** Format all F# files before staging.
 4. **Never use `Option.get` or `ValueOption.get`.** Always pattern match (`match`, `function`, `if ... then`) or use safe alternatives (`Option.defaultValue`, `Option.map`, `Array.choose`, etc.) to handle option values. Unchecked `.get` calls crash at runtime on `None`.
 5. Pull requests made with the `gh` command should use a markdown file as the PR body, not inline escaped markdown strings.
+6. Only report to me in ASD-STE100 Simplified Technical English
 
 ## Project Structure
 
@@ -163,7 +164,7 @@ raylib 6 `ModelAnimation` carries no bone names — keyframe poses follow the bo
 
 Instanced draws inside a `Draw3D.beginEffect`/`endEffect` scope are shaded by the user shader only when the shader opts in. The opt-in convention is backend-specific (each engine feeds per-instance data differently); the data is the same — a per-instance 4×4 world matrix.
 
-- **raylib:** the shader declares `in mat4 instanceTransform;` — that declaration *is* the opt-in. On raylib 6.0, `DrawMeshInstanced` binds the per-instance VBO through the dedicated `SHADER_LOC_VERTEX_INSTANCETRANSFORM` slot, which raylib auto-resolves from the `instanceTransform` attribute at shader load (no manual `Locs` wiring). `matModel` is unused for instanced draws; `viewProj` is view-projection only.
+- **raylib:** the shader declares `in mat4 instanceTransform;` — that declaration _is_ the opt-in. On raylib 6.0, `DrawMeshInstanced` binds the per-instance VBO through the dedicated `SHADER_LOC_VERTEX_INSTANCETRANSFORM` slot, which raylib auto-resolves from the `instanceTransform` attribute at shader load (no manual `Locs` wiring). `matModel` is unused for instanced draws; `viewProj` is view-projection only.
 - **MonoGame:** the effect exposes a technique named `Instanced` whose vertex shader reads the per-instance matrix as four `float4` rows on `TEXCOORD1..4` (the `VertexInstanceWorld` layout, usage indices 1-4 to avoid the mesh's `TEXCOORD0` on stream 0). The pipeline binds the two-stream vertex layout (mesh on stream 0, instance rows on stream 1) and calls `DrawInstancedPrimitives` through the user effect.
 - **MonoGame:** colored instanced draws (`.instanced(..., colors = ...)`) additionally feed a `float4` per-instance color on `TEXCOORD5` (the `VertexInstanceWorldColor` layout, offset 64). An effect may declare `float4 InstanceColor : TEXCOORD5` to receive it; effects that don't declare it still work — the built-in fallback shades colored draws. Instances beyond the `colors` array length get white.
 
