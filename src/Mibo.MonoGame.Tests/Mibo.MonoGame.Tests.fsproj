@@ -13,6 +13,8 @@
     <Compile Include="Layout3DTests.fs" />
     <Compile Include="LitBatchTests.fs" />
     <Compile Include="Animation3DTests.fs" />
+    <Compile Include="BlockPlanTests.fs" />
+    <Compile Include="ShadowPassTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 

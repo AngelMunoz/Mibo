@@ -71,6 +71,13 @@ on MonoGame).
 
 ### Lights
 
+In single-camera frames these reflect every light command in the buffer,
+frame-globally. In frames with more than one camera block they describe the
+active camera block's light set: a block that issues its own light commands
+resets to the frame defaults (lights emitted outside any camera block) and
+applies them in order; a block that issues none inherits the running set.
+Only the first directional light is shaded, and only it can cast shadows.
+
 | Uniform | Type | Source |
 |---|---|---|
 | `ambientColor` | `vec3` / `float3` | Ambient color |
@@ -95,7 +102,9 @@ on MonoGame).
 
 ### Shadows (opt-in by declaration)
 
-Only uploaded when the frame produced a shadow atlas. A shader that declares
+Only uploaded when the active camera block produced a shadow atlas — in buffers with
+more than one camera block these are re-uploaded at each block's start and always
+describe the block being drawn. A shader that declares
 none of these renders unshadowed at no cost.
 
 | Uniform | Type | Source |
@@ -307,8 +316,8 @@ fields (as F# values, not shader uniforms):
 | `View` | camera view matrix | |
 | `Projection` | camera projection matrix | |
 | `Camera` | active `Camera3D` | position, target, up, fov, planes |
-| `Lights` | `LightBuffers` | ambient + directional + point + spot accumulators |
-| `Shadows` | `ShadowResult voption` | `ValueNone` when no shadow-casting light |
+| `Lights` | `LightBuffers` | ambient + directional + point + spot accumulators (in multi-block buffers, the current camera block's set) |
+| `Shadows` | `ShadowResult voption` | `ValueNone` when no shadow-casting light (in multi-block buffers, the current camera block's shadow pass output) |
 | `Time` | `float32` | Total elapsed game time, seconds |
 
 Set whatever uniforms your own shader needs directly from these values.

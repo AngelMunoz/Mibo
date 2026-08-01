@@ -18,6 +18,8 @@
     <Compile Include="Animation3DTests.fs" />
     <Compile Include="MatrixConventionTests.fs" />
     <Compile Include="MathTests.fs" />
+    <Compile Include="BlockPlanTests.fs" />
+    <Compile Include="ShadowPassTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 

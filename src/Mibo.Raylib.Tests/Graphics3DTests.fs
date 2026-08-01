@@ -728,6 +728,25 @@ let renderBuffer3DTests =
       Expect.equal buf.PostProcessCount 0 "Clear should reset PostProcessCount"
     }
 
+    test "CameraBlockCount tracks camera-block commands and resets on Clear" {
+      use buf = new RenderBuffer3D()
+
+      Expect.equal buf.CameraBlockCount 0 "Fresh buffer has no camera blocks"
+
+      buf.Add(Command3D.beginCamera(Unchecked.defaultof<Camera3D>))
+      buf.Add Command3D.EndCamera
+      buf.Add(Command3D.beginCamera(Unchecked.defaultof<Camera3D>))
+      buf.Add(Command3D.drawLine3D v3a v3b Color.White)
+
+      Expect.equal
+        buf.CameraBlockCount
+        2
+        "Should count only Begin camera commands"
+
+      buf.Clear()
+      Expect.equal buf.CameraBlockCount 0 "Clear should reset CameraBlockCount"
+    }
+
     test "Sort with custom comparer reorders commands" {
       use buf = new RenderBuffer3D()
       buf.Add(Command3D.drawLine3D v3a v3b (Color(50uy, 0uy, 255uy, 255uy))) // R=50
@@ -1753,6 +1772,7 @@ let preScanTests =
         preScan(
           buffer,
           lights,
+          true,
           &fwd,
           &inst,
           &sk,
@@ -1786,6 +1806,7 @@ let preScanTests =
         preScan(
           buffer,
           lights,
+          true,
           &fwd,
           &inst,
           &sk,
@@ -1815,6 +1836,7 @@ let preScanTests =
         preScan(
           buffer,
           lights,
+          true,
           &fwd,
           &inst,
           &sk,
@@ -1851,6 +1873,7 @@ let preScanTests =
         preScan(
           buffer,
           lights,
+          true,
           &fwd,
           &inst,
           &sk,
@@ -1868,6 +1891,36 @@ let preScanTests =
       Expect.equal lights.SpotLights.Count 1 "Should have 1 spot light"
     }
 
+    test "skips light gathering when gatherLights is false" {
+      use buffer = new RenderBuffer3D()
+      buffer.Add(Command3D.addDirectionalLight(DirectionalLight3D.create v3a))
+      buffer.Add(Command3D.addPointLight(PointLight3D.create(v3b, 10.0f)))
+      let lights = createLightBuffers(8, 4)
+      let mutable fwd = Unchecked.defaultof<ShaderVariant>
+      let mutable inst = Unchecked.defaultof<ShaderVariant>
+      let mutable sk = Unchecked.defaultof<ShaderVariant>
+      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+
+      let _fs =
+        preScan(
+          buffer,
+          lights,
+          false,
+          &fwd,
+          &inst,
+          &sk,
+          &skInst,
+          Unchecked.defaultof<_>,
+          Unchecked.defaultof<_>,
+          Unchecked.defaultof<_>,
+          Unchecked.defaultof<_>,
+          ValueNone
+        )
+
+      Expect.equal lights.DirLights.Count 0 "No dir lights gathered"
+      Expect.equal lights.PointLights.Count 0 "No point lights gathered"
+    }
+
     test "empty buffer returns empty frame state" {
       use buffer = new RenderBuffer3D()
       let lights = createLightBuffers(8, 4)
@@ -1880,6 +1933,7 @@ let preScanTests =
         preScan(
           buffer,
           lights,
+          true,
           &fwd,
           &inst,
           &sk,

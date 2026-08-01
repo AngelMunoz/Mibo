@@ -59,6 +59,16 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
     graphics.PreferredBackBufferWidth <- config.Width
     graphics.PreferredBackBufferHeight <- config.Height
 
+    // Keep backbuffer contents across mid-frame render-target switches. The 3D
+    // pipelines rebind the backbuffer after offscreen passes (shadow atlas, scene
+    // RT for post-processing); on backends that honor DiscardContents at rebind
+    // (DX12-native), everything drawn before the switch — the frame clear, earlier
+    // camera blocks — is wiped. Registered before DeviceConfig callbacks so a game
+    // can still override.
+    graphics.PreparingDeviceSettings.AddHandler(fun _ args ->
+      args.GraphicsDeviceInformation.PresentationParameters.RenderTargetUsage <-
+        RenderTargetUsage.PreserveContents)
+
     this.Window.Title <- config.Title
     this.IsMouseVisible <- true
 

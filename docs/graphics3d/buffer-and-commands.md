@@ -125,7 +125,7 @@ buffer
 
 ## Lighting setup
 
-Add lights before geometry. Lights affect all subsequent draws:
+Add lights before geometry. Within a camera block, lights affect all subsequent draws in that block:
 
 ```fsharp
 buffer
@@ -151,6 +151,17 @@ buffer
 ```
 
 > _**TIP**_: You can call `.addPointLight(...)` in a loop for dynamic lights.
+
+### Light scoping across camera blocks
+
+In a single-camera buffer, lights are frame-global: every light command applies to every draw. In a buffer with more than one camera block, lights are scoped **per camera block**:
+
+- **Frame defaults** — light commands emitted outside any camera block (before the first one, or between two) accumulate into the frame defaults.
+- **Reset** — a block that issues its own light commands starts from the frame defaults, then applies its own commands in order (a later ambient overwrites the earlier one; directional, point, and spot lights append).
+- **Inherit** — a block that issues no light commands inherits the running set: the previous block's lights plus any light commands emitted between the two blocks.
+- **After the last block** — light commands emitted after the final `.endCamera()` affect nothing.
+
+Light state is tracked per light type, and a block can only add to the set it inherits — it cannot remove an inherited light. Shadows follow the same scoping: `.setShadowOrigin(...)` applies only to the block it appears in, and each block with shadow-casting lights renders its own shadow map.
 
 ## See also
 

@@ -14,7 +14,7 @@ open Mibo.Elmish.Graphics3D
 [<AutoOpen>]
 module private ForwardHelpers =
 
-  // LightBuffers + clearLights live in SceneData.fs; referenced here as Pipelines.LightBuffers.
+  // LightBuffers lives in SceneContext.fs; referenced here as Pipelines.LightBuffers.
 
   /// <summary>Maps a <see cref="T:Mibo.Elmish.Graphics2D.BlendMode"/> to the corresponding
   /// MonoGame <see cref="T:Microsoft.Xna.Framework.Graphics.BlendState"/> (mirrors
@@ -140,6 +140,119 @@ module private ForwardHelpers =
           part.PrimitiveCount
         )
 
+// ------------------------------------------------------------------
+// Per-camera-block light scoping
+// ------------------------------------------------------------------
+
+/// <summary>
+/// Light-state transitions for multi-camera-block frames: applying one light command in-order,
+/// loading a materialized light set into a live buffer set, and resetting the live buffers at a
+/// camera block's start.
+/// </summary>
+module internal LightScoping =
+
+  /// <summary>Applies one light command in-order: ambient overwrites; directional/point/spot append.</summary>
+  let inline apply (lights: LightBuffers) (cmd: Command3D) =
+    match cmd with
+    | Command3D.SetAmbientLight a -> lights.Ambient <- ValueSome a
+    | Command3D.AddDirectionalLight d -> lights.DirLights.Add d
+    | Command3D.AddPointLight p -> lights.PointLights.Add p
+    | Command3D.AddSpotLight s -> lights.SpotLights.Add s
+    | _ -> ()
+
+  /// <summary>Loads a materialized light set into a live buffer set, replacing its contents.</summary>
+  let inline loadSet (set: BlockLightSet) (lights: LightBuffers) =
+    lights.Ambient <- set.Ambient
+    lights.DirLights.Clear()
+    lights.DirLights.AddRange(set.DirLights)
+    lights.PointLights.Clear()
+    lights.PointLights.AddRange(set.PointLights)
+    lights.SpotLights.Clear()
+    lights.SpotLights.AddRange(set.SpotLights)
+
+  /// <summary>
+  /// Applies one light command during the forward pass: to the live buffers always, and to the
+  /// frame defaults when no camera block is open — between-block commands update the defaults,
+  /// so a later block that resets sees them.
+  /// </summary>
+  let inline applyInOrder
+    (lights: LightBuffers)
+    (defaults: LightBuffers)
+    (inBlock: bool)
+    (cmd: Command3D)
+    =
+    apply lights cmd
+
+    if not inBlock then
+      apply defaults cmd
+
+  /// <summary>
+  /// Advances to the next camera block and, when that block carries its own light commands,
+  /// resets the live buffers to the frame defaults — the block's commands are applied in-order
+  /// as the forward loop reaches them. A block without light commands leaves the live buffers
+  /// untouched (inheritance). Returns whether the buffers were reset.
+  /// </summary>
+  let inline resetForBlock
+    (plan: BlockPlan)
+    (defaults: LightBuffers)
+    (lights: LightBuffers)
+    (blockIndex: byref<int>)
+    : bool =
+    blockIndex <- blockIndex + 1
+
+    if plan.Blocks[blockIndex].HasLightCommands then
+      LightBuffers.copyInto defaults lights
+      true
+    else
+      false
+
+  /// <summary>
+  /// Replays the buffer's camera and light commands the way the multi-camera-block forward
+  /// pass does — both buffers start empty, between-block commands accumulate into the
+  /// defaults, and each block resets (own commands) or inherits at its start — returning
+  /// every block's live light set at its close. Test hook pinning that live shading matches
+  /// the <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.BlockPlan"/>; allocates a snapshot per
+  /// block, so it is not for the hot path.
+  /// </summary>
+  let replay
+    (buffer: RenderBuffer3D)
+    (plan: BlockPlan)
+    (lights: LightBuffers)
+    (defaults: LightBuffers)
+    : BlockLightSet[] =
+    let sets = ResizeArray<BlockLightSet>(plan.BlockCount)
+    let mutable blockIndex = -1
+    let mutable inBlock = false
+
+    let closeBlock() =
+      if inBlock then
+        sets.Add {
+          Ambient = lights.Ambient
+          DirLights = lights.DirLights.ToArray()
+          PointLights = lights.PointLights.ToArray()
+          SpotLights = lights.SpotLights.ToArray()
+        }
+
+        inBlock <- false
+
+    for i = 0 to buffer.Count - 1 do
+      match buffer[i] with
+      | Command3D.BeginCamera _
+      | Command3D.BeginCameraConfig _ ->
+        closeBlock()
+        resetForBlock plan defaults lights &blockIndex |> ignore
+        inBlock <- true
+      | Command3D.EndCamera -> closeBlock()
+      | Command3D.SetAmbientLight _
+      | Command3D.AddDirectionalLight _
+      | Command3D.AddPointLight _
+      | Command3D.AddSpotLight _ as cmd ->
+        applyInOrder lights defaults inBlock cmd
+      | _ -> ()
+
+    closeBlock()
+    sets.ToArray()
+
 // ── Where things live ──
 // MaterialKey / materialKey          → PbrShading.fs (PBR handlers own the short-circuit)
 // PbrEffectParams + upload helpers (uploadLights/uploadMaterial/bindTextures)
@@ -176,7 +289,11 @@ module private ForwardHelpers =
 /// <para>
 /// Lighting budget: 1 ambient + 1 directional + up to 8 point + up to 4 spot lights, all bound
 /// to the PBR effect. Directional/point/spot shadows render to an <c>R32F</c> atlas
-/// (<c>DepthShadow.fx</c>) and are sampled with manual 3×3 PCF.
+/// (<c>DepthShadow.fx</c>) and are sampled with manual 3×3 PCF. In frames with more than one
+/// camera block, lights are scoped per block: a block that issues light commands resets to the
+/// frame defaults (light commands issued outside any camera block) plus its own commands,
+/// applied in-order; a block without light commands inherits the previous block's set.
+/// Single-camera frames gather lights frame-globally.
 /// </para>
 /// <para>
 /// Register via:
@@ -192,7 +309,21 @@ type ForwardPipelineBase
   let atlasCfg = defaultArg shadowAtlas ShadowAtlasConfig.defaults
   let biasCfg = defaultArg shadowBias ShadowBiasConfig.defaults
 
-  let lights: Pipelines.LightBuffers = Pipelines.LightBuffers.defaults
+  // LightBuffers.create — LightBuffers.defaults is a shared module-level instance; two
+  // pipelines built from it would alias each other's light accumulators.
+  let lights: Pipelines.LightBuffers = Pipelines.LightBuffers.create 3 8 4
+
+  // Frame-default light set for multi-camera-block frames: rebuilt in-order by the forward
+  // pass each frame (between-block commands accumulate); a block that issues its own light
+  // commands resets the live buffers from this.
+  // LightBuffers.create — LightBuffers.defaults is a shared module-level instance.
+  let defaultLights: Pipelines.LightBuffers =
+    Pipelines.LightBuffers.create 3 8 4
+
+  // Scratch for a block's final light set (loaded from the block plan) when running that
+  // block's shadow pass — the live buffers trail the block's own in-order commands at block
+  // start, so the pass can't read them.
+  let blockLights: Pipelines.LightBuffers = Pipelines.LightBuffers.create 3 8 4
 
   // PBR shading: the lazily-loaded PBR effect + params, the BasicEffect fallback, the instancing
   // effect + growable instance vertex buffer + staging, the MaterialKey short-circuit cache, and the
@@ -218,6 +349,13 @@ type ForwardPipelineBase
   // DrawUserIndexedPrimitives. Created on first use against the real device.
   let mutable billboardEffect: BasicEffect voption = ValueNone
   let mutable lineEffect: BasicEffect voption = ValueNone
+
+  // Lazily-created unlit vertex-color effect + triangle for clearing a camera block's
+  // viewport region: gd.Clear ignores the viewport (D3D ClearRenderTargetView semantics),
+  // so a block clear is drawn as an NDC fullscreen triangle, which covers exactly the
+  // active viewport on every backend.
+  let mutable clearEffect: BasicEffect = null
+  let clearVerts = Array.zeroCreate<VertexPositionColor> 3
 
   // Post-process: a fullscreen quad created against the device on the first post-process frame.
   let mutable fullScreenQuad: FullScreenQuad voption = ValueNone
@@ -692,16 +830,20 @@ type ForwardPipelineBase
   // ----------------------------------------------------------------
 
   /// <summary>
-  /// Runs the shadow pass: collects dir + point + spot casters, renders depth to the atlas, then
-  /// uploads shadow uniforms to the PBR effect. The body lives in <c>ShadowPass.run</c>; this
-  /// member just forwards the pipeline's resources + config. Ensures the PBR effect is loaded
-  /// first (shadow uniforms upload to it).
+  /// Runs one shadow pass over a buffer slice: collects casters from <c>[startIdx, endIdx)</c>,
+  /// renders depth to the atlas, then uploads shadow uniforms to the PBR effect. The body lives
+  /// in <c>ShadowPass.run</c>; this member just forwards the pipeline's resources + config.
+  /// Ensures the PBR effect is loaded first (shadow uniforms upload to it).
   /// </summary>
   member private this.runShadowPass
     (
       gd: GraphicsDevice,
-      state: byref<ForwardState>,
       buffer: RenderBuffer3D,
+      startIdx: int,
+      endIdx: int,
+      initialCastEnabled: bool,
+      passLights: Pipelines.LightBuffers,
+      camera: Camera3D,
       needsDepth: bool
     ) =
     // Ensure the PBR effect is loaded BEFORE the pass uploads shadow uniforms to it.
@@ -712,12 +854,91 @@ type ForwardPipelineBase
       atlasCfg
       biasCfg
       shadowRes
-      lights
+      passLights
       pbrRes.Params
       buffer
-      state.CurrentCamera
+      startIdx
+      endIdx
+      initialCastEnabled
+      camera
       needsDepth
     |> fun r -> shadowRes.ShadowResult <- r // stash for the forward pass (Shade / user-effect scopes)
+
+  /// <summary>
+  /// Multi-camera-block block start: resets the live light buffers when the block carries its
+  /// own light commands (a block without any inherits them untouched), then renders this
+  /// block's shadow map — from the block's final light set, shadow origin, and buffer slice —
+  /// before any of its draws, and reseats the scene bundle's shadow state from the pass.
+  /// </summary>
+  member private this.beginShadowedBlock
+    (
+      gd: GraphicsDevice,
+      buffer: RenderBuffer3D,
+      plan: BlockPlan,
+      blockIndex: byref<int>,
+      camera: Camera3D,
+      scene: byref<ForwardFrame>
+    ) =
+    if LightScoping.resetForBlock plan defaultLights lights &blockIndex then
+      pbrRes.LightsDirty <- true
+
+    let block = plan.Blocks[blockIndex]
+    LightScoping.loadSet block.Lights blockLights
+    shadowRes.Origin <- block.ShadowOrigin
+
+    this.runShadowPass(
+      gd,
+      buffer,
+      block.StartIndex,
+      block.EndIndex,
+      block.InitialCastEnabled,
+      blockLights,
+      camera,
+      false
+    )
+
+    scene.PointShadowSlots <- shadowRes.PointShadowSlots
+    scene.SpotShadowSlots <- shadowRes.SpotShadowSlots
+    scene.Shadows <- shadowRes.ShadowResult
+
+  /// <summary>
+  /// Draws a solid-color NDC fullscreen triangle, which covers exactly the active viewport.
+  /// Used to clear a camera block's viewport region: <c>gd.Clear</c> ignores the viewport on
+  /// D3D-style backends (<c>ClearRenderTargetView</c> semantics), so an unclipped block clear
+  /// would wipe previously rendered camera blocks (split-screen). Color-only — the caller
+  /// saves/restores device state and leaves depth untouched.
+  /// </summary>
+  member private _.clearViewport (gd: GraphicsDevice) (c: Color) =
+    if obj.ReferenceEquals(clearEffect, null) then
+      clearEffect <-
+        new BasicEffect(
+          gd,
+          VertexColorEnabled = true,
+          LightingEnabled = false,
+          TextureEnabled = false
+        )
+
+    clearVerts[0] <- VertexPositionColor(Vector3(-1.f, -1.f, 0.f), c)
+    clearVerts[1] <- VertexPositionColor(Vector3(3.f, -1.f, 0.f), c)
+    clearVerts[2] <- VertexPositionColor(Vector3(-1.f, 3.f, 0.f), c)
+
+    clearEffect.World <- Matrix.Identity
+    clearEffect.View <- Matrix.Identity
+    clearEffect.Projection <- Matrix.Identity
+
+    gd.DepthStencilState <- DepthStencilState.None
+    gd.BlendState <- BlendState.Opaque
+    gd.RasterizerState <- RasterizerState.CullNone
+
+    for pass in clearEffect.CurrentTechnique.Passes do
+      pass.Apply()
+
+      gd.DrawUserPrimitives<VertexPositionColor>(
+        PrimitiveType.TriangleList,
+        clearVerts,
+        0,
+        1
+      )
 
   // ----------------------------------------------------------------
   // IRenderPipeline3D
@@ -861,9 +1082,21 @@ type ForwardPipelineBase
       // draw of this frame re-acquires them (per-frame lifetime — see PaletteChunkCache).
       paletteChunks.ReleaseAll()
 
-      // Pre-scan — capture camera, lights, shadow state, and post-process actions in one pass
+      // Pre-scan — capture camera, shadow state, and post-process actions in one pass.
+      // The block plan walks the buffer once for the per-camera-block light scoping; frames
+      // with more than one camera block scope lights per block, single-camera frames gather
+      // lights frame-globally below and skip the walk (and its allocations) entirely — the
+      // counter is maintained by the buffer on Add.
       Pipelines.LightBuffers.clear lights
       shadowRes.Origin <- ValueNone
+
+      let multiBlock = buffer.CameraBlockCount > 1
+
+      let plan =
+        if multiBlock then
+          BlockPlan.build buffer
+        else
+          BlockPlan.empty
 
       let mutable state: ForwardState = {
         HasCamera = false
@@ -884,8 +1117,10 @@ type ForwardPipelineBase
         else
           ValueNone
 
-      // Pre-scan: lights, camera, and shadow commands (shadow origin / toggle) need to be
-      // known before the shadow pass runs. Draw commands are handled in the forward pass.
+      // Pre-scan: camera and shadow commands (shadow origin / toggle) need to be known before
+      // the shadow pass runs. Single-camera frames also gather lights frame-globally here —
+      // multi-block frames scope lights per camera block in the forward pass instead.
+      // Draw commands are handled in the forward pass.
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
         | Command3D.BeginCamera cam ->
@@ -904,10 +1139,12 @@ type ForwardPipelineBase
           state.CurrentCamera <- cfg.Camera
           state.CurrentConfig <- ValueSome cfg
 
-        | Command3D.SetAmbientLight a -> lights.Ambient <- ValueSome a
-        | Command3D.AddDirectionalLight d -> lights.DirLights.Add d
-        | Command3D.AddPointLight p -> lights.PointLights.Add p
-        | Command3D.AddSpotLight s -> lights.SpotLights.Add s
+        | Command3D.SetAmbientLight _
+        | Command3D.AddDirectionalLight _
+        | Command3D.AddPointLight _
+        | Command3D.AddSpotLight _ as cmd ->
+          if not multiBlock then
+            LightScoping.apply lights cmd
         | Command3D.SetShadowOrigin origin ->
           shadowRes.Origin <- ValueSome origin
         | Command3D.PostProcess action
@@ -917,17 +1154,39 @@ type ForwardPipelineBase
           | ValueNone -> ()
         | _ -> ()
 
+      // Multi-camera-block frames: start the persistent defaults empty — the forward pass
+      // builds them in-order (between-block commands accumulate; each block resets to the
+      // defaults-so-far or inherits the running set at its BeginCamera), so live shading
+      // matches the block plan by construction.
+      if multiBlock then
+        Pipelines.LightBuffers.clear defaultLights
+        // Per-block shadow passes reseat ShadowResult at each block start; don't leak last
+        // frame's result into a DrawImmediate before the first block.
+        shadowRes.ShadowResult <- ValueNone
+
       // Scene depth is needed when at least one PostProcessWithDepth action exists. Pass that to
       // the shadow pass so it collects opaque geometry even without a shadow-casting light.
       let needsDepth = buffer.DepthPostProcessCount > 0
 
-      // Shadow pass (also collects geometry for scene-depth when needsDepth is true)
-      if state.HasCamera then
-        this.runShadowPass(gd, &state, buffer, needsDepth)
+      // Shadow pass: single-camera frames run one pass up front (also collects geometry for
+      // scene-depth when needsDepth is true). Multi-block frames run one pass per camera block
+      // at its BeginCamera/BeginCameraConfig in the forward loop instead.
+      if state.HasCamera && not multiBlock then
+        this.runShadowPass(
+          gd,
+          buffer,
+          0,
+          buffer.Count,
+          true,
+          lights,
+          state.CurrentCamera,
+          needsDepth
+        )
 
       // Forward pass
-      // Lights + shadow state are already gathered; the camera is re-established per block
-      // below. activeEffect tracks the per-group shading scope (beginEffect/endEffect):
+      // Lights are seeded (frame-global for single-camera frames, the frame defaults for
+      // multi-block frames) and shadow state is gathered; the camera is re-established per
+      // block below. activeEffect tracks the per-group shading scope (beginEffect/endEffect):
       // ValueNone → default PBR path; ValueSome e → shade with the user effect. Scopes do NOT
       // persist across cameras — a new camera block (BeginCamera/BeginCameraConfig) and EndCamera
       // both reset it, so a forgotten endEffect can't leak a user effect into the next view.
@@ -951,6 +1210,10 @@ type ForwardPipelineBase
       // camera block establishes its own matrices, and draws outside any camera block are
       // skipped. So reset to "no active camera" before the forward loop.
       state.HasCamera <- false
+
+      // Running camera-block index into the block plan; advanced at each
+      // BeginCamera/BeginCameraConfig below (multi-block frames only).
+      let mutable blockIndex = -1
 
       // When post-process commands are present, render the forward pass to an offscreen target
       // so each action can sample the scene texture. Otherwise render direct to the back-buffer.
@@ -990,6 +1253,18 @@ type ForwardPipelineBase
           // New camera block: scopes don't persist across cameras.
           activeEffect <- ValueNone
 
+          // Multi-block frames: reset-or-inherit the lights, then render this block's
+          // shadow map before any of its draws.
+          if multiBlock then
+            this.beginShadowedBlock(
+              gd,
+              buffer,
+              plan,
+              &blockIndex,
+              state.CurrentCamera,
+              &scene
+            )
+
         | Command3D.BeginCameraConfig cfg ->
           // Apply viewport + clear color (deferred from pre-scan so clearing happens here).
           match cfg.Viewport with
@@ -1014,11 +1289,38 @@ type ForwardPipelineBase
               (float32 vp.Height)
 
           match cfg.ClearColor with
-          | ValueSome c -> gd.Clear(ClearOptions.Target, c.ToVector4(), 1.0f, 0)
+          | ValueSome c ->
+            match cfg.Viewport with
+            | ValueSome _ ->
+              // gd.Clear ignores the viewport, so the block clear is drawn: an NDC
+              // fullscreen triangle covers exactly the active viewport. Color-only —
+              // depth is untouched, matching the fullscreen gd.Clear path below.
+              let prevDepth = gd.DepthStencilState
+              let prevBlend = gd.BlendState
+              let prevRaster = gd.RasterizerState
+
+              this.clearViewport gd c
+
+              gd.DepthStencilState <- prevDepth
+              gd.BlendState <- prevBlend
+              gd.RasterizerState <- prevRaster
+            | ValueNone -> gd.Clear(ClearOptions.Target, c.ToVector4(), 1.0f, 0)
           | ValueNone -> ()
 
           // New camera block: scopes don't persist across cameras.
           activeEffect <- ValueNone
+
+          // Multi-block frames: reset-or-inherit the lights, then render this block's
+          // shadow map before any of its draws.
+          if multiBlock then
+            this.beginShadowedBlock(
+              gd,
+              buffer,
+              plan,
+              &blockIndex,
+              state.CurrentCamera,
+              &scene
+            )
 
         | Command3D.EndCamera ->
           if state.HasCamera then
@@ -1068,11 +1370,17 @@ type ForwardPipelineBase
           if state.HasCamera then
             this.handleDrawLine3D(gd, &state, s, f, color)
 
-        // ── Lighting (already consumed in pre-scan; no-op here) ──
+        // ── Lighting ──
+        // Multi-block frames apply light commands in-order (a mid-block command affects only
+        // subsequent draws; between-block commands also update the frame defaults). Single-camera
+        // frames gathered lights frame-globally in the pre-scan — no-op here.
         | Command3D.SetAmbientLight _
         | Command3D.AddDirectionalLight _
         | Command3D.AddPointLight _
-        | Command3D.AddSpotLight _ -> ()
+        | Command3D.AddSpotLight _ as cmd ->
+          if multiBlock then
+            LightScoping.applyInOrder lights defaultLights state.HasCamera cmd
+            pbrRes.LightsDirty <- true
 
         // ── Shadow state (consumed in the shadow pass; no-op here) ──
         | Command3D.SetShadowOrigin _
@@ -1107,8 +1415,9 @@ type ForwardPipelineBase
             state.HasCamera <- savedHasCamera
 
       // ── Scene depth pre-pass (camera-POV, reusing collected geometry) ──
-      // Only runs when PostProcessWithDepth actions exist. The shadow pass already collected the
-      // opaque geometry; renderSceneDepth re-renders it from the camera VP into an R32F target.
+      // Only runs when PostProcessWithDepth actions exist. Single-camera frames reuse the
+      // geometry the up-front shadow pass collected; multi-block frames re-collect the full
+      // buffer below. renderSceneDepth re-renders it from the camera VP into an R32F target.
       let sceneDepth: RenderTarget2D voption =
         if needsDepth && usePostProcess then
           // Ensure the depth target matches the back-buffer size.
@@ -1136,8 +1445,18 @@ type ForwardPipelineBase
                 )
               )
 
+          // Multi-block frames collected geometry per block (each block's shadow pass saw only
+          // its own slice); re-collect the full buffer once so scene depth keeps the
+          // union-of-all-geometry behavior. Safe to overwrite the pooled arrays here — every
+          // per-block shadow pass has already rendered. The depth effect may never have loaded
+          // if no block had casters.
+          if multiBlock then
+            ShadowPass.ensureDepthEffect gd shadowRes
+            ShadowPass.collectGeometry buffer 0 buffer.Count true shadowRes
+
           // Reuse the camera VP the forward pass computed (correct viewport aspect). The forward
-          // pass captured it in state.View * state.Projection during BeginCamera.
+          // pass captured it in state.View * state.Projection during BeginCamera — in multi-block
+          // frames that is the LAST block's camera.
           match shadowRes.Effect, shadowRes.Params, sceneDepthRT with
           | ValueSome eff, ValueSome prms, ValueSome rt ->
             ShadowPass.renderSceneDepth

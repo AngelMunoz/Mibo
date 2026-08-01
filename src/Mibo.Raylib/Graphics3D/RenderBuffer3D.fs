@@ -31,6 +31,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   let mutable clearCounter = 0
   let mutable postProcessCount = 0
   let mutable depthPostProcessCount = 0
+  let mutable cameraBlockCount = 0
 
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
@@ -60,6 +61,13 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   /// </summary>
   member _.DepthPostProcessCount = depthPostProcessCount
 
+  /// <summary>
+  /// Number of <c>BeginCamera</c>/<c>BeginCameraConfig</c> commands added since the last
+  /// <c>Clear</c>. Lets a pipeline skip the per-camera-block plan (and its allocations) for
+  /// single-camera frames.
+  /// </summary>
+  member _.CameraBlockCount = cameraBlockCount
+
   /// <summary>Gets the command at the specified index.</summary>
   member _.Item(i: int) = items[i]
 
@@ -73,6 +81,8 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
     | Command3D.PostProcessWithDepth _ ->
       postProcessCount <- postProcessCount + 1
       depthPostProcessCount <- depthPostProcessCount + 1
+    | Command3D.BeginCamera _
+    | Command3D.BeginCameraConfig _ -> cameraBlockCount <- cameraBlockCount + 1
     | _ -> ()
 
     count <- count + 1
@@ -85,6 +95,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
     count <- 0
     postProcessCount <- 0
     depthPostProcessCount <- 0
+    cameraBlockCount <- 0
     clearCounter <- clearCounter + 1
 
     if clearCounter >= 300 then
