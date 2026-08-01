@@ -166,6 +166,14 @@ buffer
 - `?colors` tints each instance — **MonoGame only**, like `instanced`.
 - Per-instance bone palettes ride a texture the vertex shader samples (raylib
   indexes it by `gl_InstanceID`), so draws are chunked at 2048 instances.
+- **Automatic sub-mesh merging (MonoGame):** mesh parts that share a parent
+  bone, vertex layout, and material draw as one merged part per chunk instead
+  of one draw each — on DX12, where palette groups are small, this is a large
+  draw-count win (a 6-part character merges 6× fewer draws per group). The
+  merged geometry is built lazily on a model's first instanced draw and costs
+  one extra copy of the model's vertex/index data. A command whose materials
+  split a group (e.g. a `PerMesh` resolver returning different materials)
+  falls back to per-part draws for that command, so output is never affected.
 
 > **OpenGL backend note:** MonoGame's OpenGL profile cannot sample textures in
 > the vertex shader, so there `animatedModelInstanced` falls back to

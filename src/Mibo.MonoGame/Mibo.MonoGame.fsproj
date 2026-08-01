@@ -45,6 +45,7 @@
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
     <Compile Include="Graphics3D/Pipelines/PbrUniforms.fs" />
     <Compile Include="Graphics3D/Pipelines/SceneUpload.fs" />
+    <Compile Include="Graphics3D/Pipelines/MergedModelParts.fs" />
     <Compile Include="Graphics3D/Pipelines/ShadowPass.fs" />
     <Compile Include="Graphics3D/Pipelines/PbrShading.fs" />
     <Compile Include="Graphics3D/Pipelines/ForwardPipeline.fs" />

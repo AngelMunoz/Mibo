@@ -1454,7 +1454,7 @@ type ForwardPipelineBase
           // if no block had casters.
           if multiBlock then
             ShadowPass.ensureDepthEffect gd shadowRes
-            ShadowPass.collectGeometry buffer 0 buffer.Count true shadowRes
+            ShadowPass.collectGeometry gd buffer 0 buffer.Count true shadowRes
 
           // Reuse the camera VP the forward pass computed (correct viewport aspect). The forward
           // pass captured it in state.View * state.Projection during BeginCamera — in multi-block

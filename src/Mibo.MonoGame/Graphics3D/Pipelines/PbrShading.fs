@@ -75,6 +75,44 @@ type ForwardFrame = {
 }
 
 /// <summary>
+/// Per-mesh-part draw state for a skinned + instanced command, resolved once per
+/// command: technique, material, and matModel don't vary across chunks — with
+/// DX12's small uniform groups (hundreds of chunks per frame per command) the old
+/// per-chunk re-resolution multiplied string-keyed technique lookups, material
+/// resolver calls, and matrix inversions by the chunk count.
+/// </summary>
+[<Struct>]
+type internal SkinnedInstancedPartInfo = {
+  Part: ModelMeshPart
+  IsSkinned: bool
+  World: Matrix
+  NormalMatrix: Matrix
+  Mat: Material3D
+  MatKey: MaterialKey
+  UseGrouped: bool
+  Technique: EffectTechnique
+}
+
+/// <summary>
+/// One drawable unit of a skinned + instanced command: either an original mesh part
+/// (<see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PbrResources.SkinnedInstancedUnits"/>
+/// entries with <c>SourcePart = ValueSome</c>) or a merged group of parts whose
+/// resolved materials matched for this command (<c>SourcePart = ValueNone</c> — draw
+/// the merged buffers directly, always with VertexOffset/StartIndex = 0). See
+/// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.MergedModelParts.tryGet"/>.
+/// </summary>
+[<Struct>]
+type internal SkinnedInstancedDrawUnit = {
+  VB: VertexBuffer
+  IB: IndexBuffer
+  VertexOffset: int
+  StartIndex: int
+  PrimitiveCount: int
+  Info: SkinnedInstancedPartInfo
+  SourcePart: ModelMeshPart voption
+}
+
+/// <summary>
 /// Owns the lazily-loaded PBR effect + cached params, the BasicEffect fallback, the instancing
 /// effect + growable instance vertex buffer + staging, the MaterialKey short-circuit cache, and
 /// the bone-transforms scratch — all reused across frames. Constructed once by the pipeline.
@@ -155,6 +193,24 @@ type internal PbrResources() =
   /// (the DX12 fallback — SkinnedInstancedGrouped techniques). Sized to
   /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatrices"/>; grown on demand.</summary>
   member val GroupPaletteScratch: Matrix[] = [||] with get, set
+
+  /// <summary>Per-command draw units for skinned + instanced draws (merged groups or
+  /// original parts); cleared and rebuilt per command — see
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.MergedModelParts.tryGet"/>.</summary>
+  member val SkinnedInstancedUnits =
+    ResizeArray<SkinnedInstancedDrawUnit>() with get
+
+  /// <summary>Scratch: original part → its merged group, rebuilt per command.</summary>
+  member val PartMergedMap =
+    System.Collections.Generic.Dictionary<ModelMeshPart, MergedPart>() with get
+
+  /// <summary>Scratch: original part → its partInfo index, rebuilt per command.</summary>
+  member val PartInfoIndex =
+    System.Collections.Generic.Dictionary<ModelMeshPart, int>() with get
+
+  /// <summary>Scratch: handled flags for the merged-group fan-out; grown on demand,
+  /// cleared per command.</summary>
+  member val SkinnedInstancedHandled: bool[] = [||] with get, set
 
   /// <summary>MaterialKey short-circuit: whether the last draw's material is still current.</summary>
   member val HasLastMaterial = false with get, set
@@ -998,23 +1054,6 @@ module internal PbrShading =
             )
 
   /// <summary>
-  /// Per-mesh-part draw state for a skinned + instanced command, resolved once per
-  /// command: technique, material, and matModel don't vary across chunks — with
-  /// DX12's small uniform groups (hundreds of chunks per frame per command) the old
-  /// per-chunk re-resolution multiplied string-keyed technique lookups, material
-  /// resolver calls, and matrix inversions by the chunk count.
-  [<Struct>]
-  type private SkinnedInstancedPartInfo = {
-    Part: ModelMeshPart
-    IsSkinned: bool
-    World: Matrix
-    NormalMatrix: Matrix
-    Mat: Material3D
-    MatKey: MaterialKey
-    UseGrouped: bool
-    Technique: EffectTechnique
-  }
-
   /// Stages one chunk (or group) of a skinned + instanced draw: packs the chunk's
   /// per-instance rows (world matrix + chunk-local palette index, plus color when
   /// <paramref name="colors"/> is <c>ValueSome</c>) into the matching growable instance
@@ -1385,6 +1424,89 @@ module internal PbrShading =
                   }
                 )
 
+          // Draw units: one per original part — or one per MERGED part group when
+          // the model has mergeable parts (MergedModelParts) and every source part
+          // of the group resolved to the same MaterialKey for this command. A
+          // non-uniform group (e.g. a PerMesh override splitting it) falls back to
+          // per-part units for this command. User-effect targets never merge —
+          // per-part scene uploads are their contract.
+          let units = res.SkinnedInstancedUnits
+          units.Clear()
+
+          let addPartUnit(info: SkinnedInstancedPartInfo) =
+            units.Add {
+              VB = info.Part.VertexBuffer
+              IB = info.Part.IndexBuffer
+              VertexOffset = info.Part.VertexOffset
+              StartIndex = info.Part.StartIndex
+              PrimitiveCount = info.Part.PrimitiveCount
+              Info = info
+              SourcePart = ValueSome info.Part
+            }
+
+          match
+            (match target with
+             | PbrTarget -> MergedModelParts.tryGet(gd, model)
+             | UserEffectTarget _ -> ValueNone)
+          with
+          | ValueSome merged ->
+            res.PartMergedMap.Clear()
+            res.PartInfoIndex.Clear()
+
+            for mp in merged do
+              for sp in mp.SourceParts do
+                res.PartMergedMap[sp] <- mp
+
+            for i = 0 to partInfos.Count - 1 do
+              res.PartInfoIndex[partInfos[i].Part] <- i
+
+            if res.SkinnedInstancedHandled.Length < partInfos.Count then
+              res.SkinnedInstancedHandled <- Array.zeroCreate partInfos.Count
+            else
+              Array.Clear(res.SkinnedInstancedHandled, 0, partInfos.Count)
+
+            let handled = res.SkinnedInstancedHandled
+
+            for i = 0 to partInfos.Count - 1 do
+              if not handled[i] then
+                let info = partInfos[i]
+
+                match res.PartMergedMap.TryGetValue info.Part with
+                | true, mp ->
+                  // Group members all share parent bone / declaration / skinned
+                  // flag by construction, so the first member's info (world,
+                  // technique) represents the group; only materials can split it.
+                  let mutable uniform = true
+
+                  for sp in mp.SourceParts do
+                    match res.PartInfoIndex.TryGetValue sp with
+                    | true, memberIdx ->
+                      handled[memberIdx] <- true
+
+                      if partInfos[memberIdx].MatKey <> info.MatKey then
+                        uniform <- false
+                    | _ -> ()
+
+                  if uniform then
+                    units.Add {
+                      VB = mp.VertexBuffer
+                      IB = mp.IndexBuffer
+                      VertexOffset = 0
+                      StartIndex = 0
+                      PrimitiveCount = mp.PrimitiveCount
+                      Info = info
+                      SourcePart = ValueNone
+                    }
+                  else
+                    for sp in mp.SourceParts do
+                      match res.PartInfoIndex.TryGetValue sp with
+                      | true, memberIdx -> addPartUnit partInfos[memberIdx]
+                      | _ -> ()
+                | _ -> addPartUnit info
+          | ValueNone ->
+            for info in partInfos do
+              addPartUnit info
+
           let mutable chunkIdx = 0
 
           while chunkIdx < chunks.Length do
@@ -1440,7 +1562,9 @@ module internal PbrShading =
 
 
 
-            for info in partInfos do
+            for unit in units do
+              let info = unit.Info
+
               match target with
               | UserEffectTarget(effect, _) when info.IsSkinned ->
                 // User effect opted in: it inherits scene DATA by name (not the PBR
@@ -1475,20 +1599,20 @@ module internal PbrShading =
                   )
 
                 gd.SetVertexBuffers(
-                  VertexBufferBinding(info.Part.VertexBuffer, 0, 0),
+                  VertexBufferBinding(unit.VB, 0, 0),
                   VertexBufferBinding(instVB, 0, 1)
                 )
 
-                gd.Indices <- info.Part.IndexBuffer
+                gd.Indices <- unit.IB
 
                 for pass in effect.CurrentTechnique.Passes do
                   pass.Apply()
 
                   gd.DrawInstancedPrimitives(
                     PrimitiveType.TriangleList,
-                    info.Part.VertexOffset,
-                    info.Part.StartIndex,
-                    info.Part.PrimitiveCount,
+                    unit.VertexOffset,
+                    unit.StartIndex,
+                    unit.PrimitiveCount,
                     chunkCount
                   )
               | _ ->
@@ -1529,14 +1653,21 @@ module internal PbrShading =
                     res.HasLastMaterial <- true
 
                   gd.SetVertexBuffers(
-                    VertexBufferBinding(info.Part.VertexBuffer, 0, 0),
+                    VertexBufferBinding(unit.VB, 0, 0),
                     VertexBufferBinding(instVB, 0, 1)
                   )
 
-                  gd.Indices <- info.Part.IndexBuffer
+                  gd.Indices <- unit.IB
 
-                  let saved = info.Part.Effect
-                  info.Part.Effect <- e
+                  // The Effect save/swap only applies to original parts (a merged
+                  // unit has no ModelMeshPart of its own).
+                  let saved =
+                    match unit.SourcePart with
+                    | ValueSome part ->
+                      let s = part.Effect
+                      part.Effect <- e
+                      s
+                    | ValueNone -> null
 
                   try
                     for pass in e.CurrentTechnique.Passes do
@@ -1544,13 +1675,15 @@ module internal PbrShading =
 
                       gd.DrawInstancedPrimitives(
                         PrimitiveType.TriangleList,
-                        info.Part.VertexOffset,
-                        info.Part.StartIndex,
-                        info.Part.PrimitiveCount,
+                        unit.VertexOffset,
+                        unit.StartIndex,
+                        unit.PrimitiveCount,
                         chunkCount
                       )
                   finally
-                    info.Part.Effect <- saved
+                    match unit.SourcePart with
+                    | ValueSome part -> part.Effect <- saved
+                    | ValueNone -> ()
                 | _ -> ()
 
             chunkIdx <- chunkIdx + 1
