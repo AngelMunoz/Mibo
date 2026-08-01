@@ -31,6 +31,8 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   let mutable depthPostProcessCount = 0
   let mutable cameraBlockCount = 0
 
+  let rentedArrays = ResizeArray<Microsoft.Xna.Framework.Matrix[]>()
+
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
       let newSize = max (items.Length * 2) (count + needed)
@@ -89,6 +91,28 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
     count <- count + 1
 
   /// <summary>
+  /// Rents a <c>Matrix[]</c> from the shared <see cref="T:System.Buffers.ArrayPool`1"/>
+  /// and tracks it for automatic return at the end of the frame. Used by instanced
+  /// animated-model witnesses that need a scratch palette array consumed synchronously
+  /// within the same frame.
+  /// </summary>
+  member _.RentMatrixArray(needed: int) =
+    let arr = ArrayPool<Microsoft.Xna.Framework.Matrix>.Shared.Rent(needed)
+    rentedArrays.Add(arr)
+    arr
+
+  /// <summary>
+  /// Returns all rented arrays to the pool. Called automatically from <c>Clear</c>
+  /// and by the renderer after the pipeline has executed for the frame.
+  /// </summary>
+  member _.ReleaseRentedArrays() =
+    for arr in rentedArrays do
+      ArrayPool<Microsoft.Xna.Framework.Matrix>.Shared
+        .Return(arr, clearArray = false)
+
+    rentedArrays.Clear()
+
+  /// <summary>
   /// Clears all commands from the buffer without deallocating the backing array.
   /// Call this at the start of each frame before populating with new commands.
   /// </summary>
@@ -99,7 +123,8 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   /// can't keep unloaded assets alive indefinitely after a scene shrinks. Dispose also
   /// clears. This matches <c>RenderBuffer2D.Clear</c> and the raylib buffers.
   /// </remarks>
-  member _.Clear() =
+  member this.Clear() =
+    this.ReleaseRentedArrays()
     count <- 0
     postProcessCount <- 0
     depthPostProcessCount <- 0
@@ -121,7 +146,8 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
     Array.Sort(items, 0, count, comparer)
 
   interface System.IDisposable with
-    member _.Dispose() =
+    member this.Dispose() =
+      this.ReleaseRentedArrays()
       ArrayPool<Command3D>.Shared.Return(items, clearArray = true)
       items <- Array.empty
       count <- 0
@@ -279,7 +305,7 @@ type RenderBuffer3D with
     match am.Mesh with
     | ValueSome mesh when count > 0 ->
       let boneCount = mesh.BoneCount
-      let palettes = Array.zeroCreate<Matrix>(count * boneCount)
+      let palettes = b.RentMatrixArray(count * boneCount)
 
       for i = 0 to count - 1 do
         poses[i].Palette.CopyTo(palettes, i * boneCount)
@@ -291,7 +317,8 @@ type RenderBuffer3D with
           palettes,
           material,
           colors,
-          count
+          count,
+          boneCount
         )
       )
     | _ -> ()

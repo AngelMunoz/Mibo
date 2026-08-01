@@ -174,6 +174,28 @@ buffer
 > supported for moderate counts; plan crowd-heavy scenes for the DX12/Vulkan or
 > raylib backends.
 
+### Reusing pose buffers (high instance counts)
+
+For 500+ instances, evaluate poses into pre-allocated buffers to avoid
+per-frame garbage. Use `computePoseInto`, which writes into a caller-owned
+`BonePose` (grown on first use, reused every frame after):
+
+```fsharp
+// Init once: poses pre-filled with BonePose.empty
+let poses = Array.init count (fun _ -> BonePose.empty)
+
+// Per frame: zero allocation after the first frame
+for i = 0 to count - 1 do
+    Animation3DState.computePoseInto(animMesh, states[i], &poses[i])
+
+buffer
+  .animatedModelInstanced(sharedModel, transforms, poses)
+  .drop()
+```
+
+For moderate counts (< 500) the simpler `Array.map (fun u -> computePose ...)`
+pattern is fine — the garbage is small and collected cheaply.
+
 ## Animation3DClips API
 
 ### Loading
@@ -458,6 +480,7 @@ Animations are loaded from the model file via `assets.ModelAnimations`. The anim
 3. **Tier 2 for many entities**: Share a single mesh and avoid per-entity model copies — use `AnimatedMesh` + `computeBoneMatrices` + `.skinnedMesh(...)` (raylib), or the shared-mesh path with `.animatedModel(...)` (MonoGame)
 4. **Blend duration**: Keep blend durations short (0.1–0.3s) to minimize double-animation overhead
 5. **One pose evaluation per frame**: When drawing attachments or querying bones, compute the `BonePose` once and pass it as `pose` to `animatedModel`/`attachedMesh` instead of letting each witness re-evaluate it
+6. **`computePoseInto` for crowds**: For 500+ instanced characters, use `computePoseInto` with pre-allocated `BonePose` buffers (see [Reusing pose buffers](#reusing-pose-buffers-high-instance-counts)) — it eliminates per-frame array allocation
 
 ## See Also
 

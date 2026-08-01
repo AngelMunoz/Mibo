@@ -331,6 +331,8 @@ module SceneUpload =
     | ValueNone -> setInt shader (loc shader "dirLightCastsShadows") 0
 
     // ── Bones (only for skinned draws) ──
+    // Palettes arrive in System.Numerics row-major layout; SetShaderValueMatrix
+    // expects the transposed (raylib-native) layout (see uploadBoneMatrices).
     match bones with
     | ValueSome bs ->
       let boneLoc = loc shader "boneMatrices[0]"
@@ -339,5 +341,9 @@ module SceneUpload =
         let count = min bs.Length 128
 
         for i = 0 to count - 1 do
-          Raylib.SetShaderValueMatrix(shader, boneLoc + i, bs[i])
+          Raylib.SetShaderValueMatrix(
+            shader,
+            boneLoc + i,
+            Matrix4x4.Transpose bs[i]
+          )
     | ValueNone -> ()

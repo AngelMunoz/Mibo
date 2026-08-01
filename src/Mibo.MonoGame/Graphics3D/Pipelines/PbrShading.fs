@@ -142,6 +142,10 @@ type internal PbrResources() =
   member val InstancePaletteColorStaging =
     Array.zeroCreate<VertexInstanceWorldPaletteColor> 64 with get, set
 
+  /// <summary>Reusable bone-palette slice for the OpenGL / DX12-user-effect per-instance
+  /// fallback of skinned + instanced draws. Grown on demand, reused across frames.</summary>
+  member val BoneSliceScratch = Array.empty<Matrix> with get, set
+
   /// <summary>Shared per-frame palette-chunk cache for skinned + instanced draws (aliased
   /// with the shadow pass by ForwardPipeline so each frame's palettes are staged + uploaded
   /// once, not per pass — see <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>).</summary>
@@ -230,7 +234,8 @@ module internal PbrShading =
   let inline isOpenGLBackend() =
     PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL
 
-  /// <summary>True on the DirectX 12 backend: the native runtime never delivers
+  /// <summary>
+  /// True on the DirectX 12 backend: the native runtime never delivers
   /// vertex-stage textures to the VS (the palette SRV samples zeros regardless of slot
   /// or content — the PS reads the same SRV fine), so skinned + instanced draws use the
   /// grouped-uniform <c>SkinnedInstancedGrouped</c> techniques there instead.</summary>
@@ -993,6 +998,23 @@ module internal PbrShading =
             )
 
   /// <summary>
+  /// Per-mesh-part draw state for a skinned + instanced command, resolved once per
+  /// command: technique, material, and matModel don't vary across chunks — with
+  /// DX12's small uniform groups (hundreds of chunks per frame per command) the old
+  /// per-chunk re-resolution multiplied string-keyed technique lookups, material
+  /// resolver calls, and matrix inversions by the chunk count.
+  [<Struct>]
+  type private SkinnedInstancedPartInfo = {
+    Part: ModelMeshPart
+    IsSkinned: bool
+    World: Matrix
+    NormalMatrix: Matrix
+    Mat: Material3D
+    MatKey: MaterialKey
+    UseGrouped: bool
+    Technique: EffectTechnique
+  }
+
   /// Stages one chunk (or group) of a skinned + instanced draw: packs the chunk's
   /// per-instance rows (world matrix + chunk-local palette index, plus color when
   /// <paramref name="colors"/> is <c>ValueSome</c>) into the matching growable instance
@@ -1150,7 +1172,8 @@ module internal PbrShading =
       palettes: Matrix[],
       matOverride: MaterialOverride voption,
       colors: Color[] voption,
-      instanceCount: int
+      instanceCount: int,
+      boneCount: int
     ) =
     // Clamp to the transforms array: an instanceCount larger than the buffer would index
     // out of range when staging per-instance rows.
@@ -1158,365 +1181,384 @@ module internal PbrShading =
     let paletteLen = if isNull palettes then 0 else palettes.Length
     let count = min instanceCount transformCount
 
-    if count > 0 && paletteLen > 0 then
-      let boneCount = paletteLen / instanceCount
+    if count > 0 && paletteLen > 0 && boneCount > 0 then
+      // Per-instance fallback: OpenGL (no vertex texture fetch). DX12 uses the
+      // grouped-uniform path (SkinnedInstancedGrouped via the isolated ForwardPbrGrouped
+      // effect — the main effect's grouped params are dropped by DX12 mgfx reflection).
+      // User effects on DX12 still fall back to per-instance (a user effect's
+      // SkinnedInstanced technique expects the VS-texture contract — broken on DX12;
+      // the grouped-uniform path is framework-PBR-only).
+      let perInstanceFallback =
+        isOpenGLBackend()
+        || (isDirectX12Backend()
+            && (match target with
+                | UserEffectTarget _ -> true
+                | PbrTarget -> false))
 
-      if boneCount > 0 then
-        // Per-instance fallback: OpenGL (no vertex texture fetch). DX12 uses the
-        // grouped-uniform path (SkinnedInstancedGrouped via the isolated ForwardPbrGrouped
-        // effect — the main effect's grouped params are dropped by DX12 mgfx reflection).
-        // User effects on DX12 still fall back to per-instance (a user effect's
-        // SkinnedInstanced technique expects the VS-texture contract — broken on DX12;
-        // the grouped-uniform path is framework-PBR-only).
-        let perInstanceFallback =
-          isOpenGLBackend()
-          || (isDirectX12Backend()
-              && (match target with
-                  | UserEffectTarget _ -> true
-                  | PbrTarget -> false))
+      if perInstanceFallback then
+        // ── Per-instance draws through the existing Skinned path, slicing each
+        // instance's palette out of the flat array. Per-instance colors modulate
+        // the material (this path has no per-instance color channel).
+        if res.BoneSliceScratch.Length < boneCount then
+          res.BoneSliceScratch <- Array.zeroCreate<Matrix> boneCount
 
-        if perInstanceFallback then
-          // ── Per-instance draws through the existing Skinned path, slicing each
-          // instance's palette out of the flat array. Per-instance colors modulate
-          // the material (this path has no per-instance color channel).
-          let slice = Array.zeroCreate<Matrix> boneCount
+        let slice = res.BoneSliceScratch
 
-          for i = 0 to count - 1 do
-            Array.Copy(palettes, i * boneCount, slice, 0, boneCount)
+        for i = 0 to count - 1 do
+          Array.Copy(palettes, i * boneCount, slice, 0, boneCount)
 
-            let tint =
-              match colors with
-              | ValueSome cs when not(isNull cs) && i < cs.Length ->
-                ValueSome cs[i]
-              | _ -> ValueNone
+          let tint =
+            match colors with
+            | ValueSome cs when not(isNull cs) && i < cs.Length ->
+              ValueSome cs[i]
+            | _ -> ValueNone
 
-            drawAnimatedModelCore(
-              gd,
-              &state,
-              &frame,
-              res,
-              model,
-              transforms[i],
-              slice,
-              matOverride,
-              tint
-            )
-        else
-          // Bone transforms give each mesh its parent-bone world (the matModel the
-          // SkinnedInstanced VS composes with the per-instance world on stream 1).
-          let modelBoneCount = model.Bones.Count
+          drawAnimatedModelCore(
+            gd,
+            &state,
+            &frame,
+            res,
+            model,
+            transforms[i],
+            slice,
+            matOverride,
+            tint
+          )
+      else
+        // Bone transforms give each mesh its parent-bone world (the matModel the
+        // SkinnedInstanced VS composes with the per-instance world on stream 1).
+        let modelBoneCount = model.Bones.Count
 
-          if res.BoneTransforms.Length < modelBoneCount then
-            res.BoneTransforms <- Array.zeroCreate<Matrix> modelBoneCount
+        if res.BoneTransforms.Length < modelBoneCount then
+          res.BoneTransforms <- Array.zeroCreate<Matrix> modelBoneCount
 
-          model.CopyAbsoluteBoneTransformsTo(res.BoneTransforms)
-          let viewProj = state.View * state.Projection
+        model.CopyAbsoluteBoneTransformsTo(res.BoneTransforms)
+        let viewProj = state.View * state.Projection
 
-          // The framework PBR effect is always prepared: it shades the PbrTarget path and
-          // the non-skinned parts under a user effect. Frame-global uniforms don't depend
-          // on the mesh — set once per draw, not per mesh.
-          if ensureEffect(gd, res) then
-            match res.Effect, res.Params with
-            | ValueSome e, ValueSome p ->
-              PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
+        // The framework PBR effect is always prepared: it shades the PbrTarget path and
+        // the non-skinned parts under a user effect. Frame-global uniforms don't depend
+        // on the mesh — set once per draw, not per mesh.
+        if ensureEffect(gd, res) then
+          match res.Effect, res.Params with
+          | ValueSome e, ValueSome p ->
+            PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
 
-              PbrUniforms.setVec3
-                p.Matrix.CameraPos
-                state.CurrentCamera.Position
+            PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
 
-              if res.LightsDirty then
-                PbrUniforms.uploadLights(
-                  &p,
-                  frame.Lights,
-                  frame.PointShadowSlots,
-                  frame.SpotShadowSlots
-                )
-
-                res.LightsDirty <- false
-            | _ -> ()
-
-          // DX12: prepare the isolated grouped effect (ForwardPbrGrouped.fx) with the
-          // same frame-global uniforms. The grouped effect has its own uniform handles
-          // — the main effect's bonePaletteGroup params are null on DX12 (dropped by
-          // mgfx reflection), so the grouped effect is the only one that can receive
-          // bone palette data. Lights are uploaded unconditionally (once per draw call,
-          // not per part — negligible cost vs. the per-instance fallback it replaces).
-          if isDirectX12Backend() && ensureGroupedEffect(gd, res) then
-            match res.GroupedParams with
-            | ValueSome gp ->
-              PbrUniforms.setMatrix gp.Matrix.ViewProj viewProj
-
-              PbrUniforms.setVec3
-                gp.Matrix.CameraPos
-                state.CurrentCamera.Position
-
+            if res.LightsDirty then
               PbrUniforms.uploadLights(
-                &gp,
+                &p,
                 frame.Lights,
                 frame.PointShadowSlots,
                 frame.SpotShadowSlots
               )
 
-              match frame.Shadows with
-              | ValueSome s ->
-                PbrUniforms.setInt
-                  gp.Shadow.DirLightCastsShadows
-                  (if s.DirLightCastsShadows then 1 else 0)
+              res.LightsDirty <- false
+          | _ -> ()
 
-                PbrUniforms.setMatrixArray gp.Shadow.ShadowViewProjs s.ViewProjs
-                PbrUniforms.setVec4Array gp.Shadow.ShadowUVOffsets s.UVOffsets
-                PbrUniforms.setFloatArray gp.Shadow.ShadowBiases s.Biases
+        // DX12: prepare the isolated grouped effect (ForwardPbrGrouped.fx) with the
+        // same frame-global uniforms. The grouped effect has its own uniform handles
+        // — the main effect's bonePaletteGroup params are null on DX12 (dropped by
+        // mgfx reflection), so the grouped effect is the only one that can receive
+        // bone palette data. Lights are uploaded unconditionally (once per draw call,
+        // not per part — negligible cost vs. the per-instance fallback it replaces).
+        if isDirectX12Backend() && ensureGroupedEffect(gd, res) then
+          match res.GroupedParams with
+          | ValueSome gp ->
+            PbrUniforms.setMatrix gp.Matrix.ViewProj viewProj
 
-                PbrUniforms.setVec2
-                  gp.Shadow.ShadowTexelSize
-                  (Vector2(s.TexelSize, s.TexelSize))
+            PbrUniforms.setVec3 gp.Matrix.CameraPos state.CurrentCamera.Position
 
-                if not(obj.ReferenceEquals(gp.Shadow.ShadowAtlasTex, null)) then
-                  gp.Shadow.ShadowAtlasTex.SetValue(s.Atlas)
-              | ValueNone -> PbrUniforms.setInt gp.Shadow.DirLightCastsShadows 0
-            | ValueNone -> ()
+            PbrUniforms.uploadLights(
+              &gp,
+              frame.Lights,
+              frame.PointShadowSlots,
+              frame.SpotShadowSlots
+            )
 
-          // A user-effect target selects its SkinnedInstanced technique once around the
-          // whole draw (restored afterwards, so it can't leak into subsequent draws in
-          // the same scope).
-          let savedUserTechnique =
-            match target with
-            | UserEffectTarget(effect, technique) ->
-              let saved = effect.CurrentTechnique
-              effect.CurrentTechnique <- technique
-              saved
-            | PbrTarget -> null
+            match frame.Shadows with
+            | ValueSome s ->
+              PbrUniforms.setInt
+                gp.Shadow.DirLightCastsShadows
+                (if s.DirLightCastsShadows then 1 else 0)
 
-          try
-            // Chunk driver for both instanced paths: (chunkStart, chunkCount,
-            // paletteTex) triples. DX11/Vulkan: real palette-texture chunks from the
-            // shared per-frame cache (staged + uploaded once across both passes).
-            // DX12: uniform GROUPS of PaletteGroup.MaxMatrices / boneCount instances
-            // with a null paletteTex — palettes ride the bonePaletteGroup constant
-            // array (no working vertex texture fetch on DX12).
-            let chunks =
-              if isDirectX12Backend() then
-                let groupSize = max 1 (PaletteGroup.MaxMatrices / boneCount)
+              PbrUniforms.setMatrixArray gp.Shadow.ShadowViewProjs s.ViewProjs
+              PbrUniforms.setVec4Array gp.Shadow.ShadowUVOffsets s.UVOffsets
+              PbrUniforms.setFloatArray gp.Shadow.ShadowBiases s.Biases
 
-                Array.init ((count + groupSize - 1) / groupSize) (fun i ->
-                  let start = i * groupSize
-                  struct (start, min groupSize (count - start), null))
-              else
-                res.PaletteChunks.Obtain(gd, palettes, boneCount, count)
+              PbrUniforms.setVec2
+                gp.Shadow.ShadowTexelSize
+                (Vector2(s.TexelSize, s.TexelSize))
 
-            let mutable chunkIdx = 0
+              if not(obj.ReferenceEquals(gp.Shadow.ShadowAtlasTex, null)) then
+                gp.Shadow.ShadowAtlasTex.SetValue(s.Atlas)
+            | ValueNone -> PbrUniforms.setInt gp.Shadow.DirLightCastsShadows 0
+          | ValueNone -> ()
 
-            while chunkIdx < chunks.Length do
-              let struct (chunkStart, chunkCount, paletteTex) = chunks[chunkIdx]
+        // A user-effect target selects its SkinnedInstanced technique once around the
+        // whole draw (restored afterwards, so it can't leak into subsequent draws in
+        // the same scope).
+        let savedUserTechnique =
+          match target with
+          | UserEffectTarget(effect, technique) ->
+            let saved = effect.CurrentTechnique
+            effect.CurrentTechnique <- technique
+            saved
+          | PbrTarget -> null
 
-              let instVB =
-                stagePaletteInstanceVB(
-                  gd,
-                  res,
-                  transforms,
-                  colors,
-                  chunkStart,
-                  chunkCount
+        try
+          // Chunk driver for both instanced paths: (chunkStart, chunkCount,
+          // paletteTex) triples. DX11/Vulkan: real palette-texture chunks from the
+          // shared per-frame cache (staged + uploaded once across both passes).
+          // DX12: uniform GROUPS of PaletteGroup.MaxMatrices / boneCount instances
+          // with a null paletteTex — palettes ride the bonePaletteGroup constant
+          // array (no working vertex texture fetch on DX12).
+          let chunks =
+            if isDirectX12Backend() then
+              let groupSize = max 1 (PaletteGroup.MaxMatrices / boneCount)
+
+              Array.init ((count + groupSize - 1) / groupSize) (fun i ->
+                let start = i * groupSize
+                struct (start, min groupSize (count - start), null))
+            else
+              res.PaletteChunks.Obtain(gd, palettes, boneCount, count)
+
+          // Per-part invariants hoisted out of the chunk loop: technique,
+          // material, and matModel don't vary across chunks. PerMesh material
+          // resolvers index the model's parts in pipeline iteration order — the
+          // resolver now runs once per part per command instead of per chunk.
+          let partInfos = ResizeArray<SkinnedInstancedPartInfo>()
+          let mutable partIndex = 0
+
+          for mesh in model.Meshes do
+            let world = res.BoneTransforms[mesh.ParentBone.Index]
+
+            for part in mesh.MeshParts do
+              let isSkinned =
+                match part.Effect with
+                | :? SkinnedEffect -> true
+                | _ -> false
+
+              let mat =
+                match matOverride with
+                | ValueNone -> Material3D.fromModelMeshPart part
+                | ValueSome(MaterialOverride.All m) -> m
+                | ValueSome(MaterialOverride.PerMesh f) -> f partIndex
+
+              partIndex <- partIndex + 1
+
+              if part.PrimitiveCount > 0 then
+                // The grouped effect exists only on DX12 (paletteTex is null
+                // for every chunk there, non-null everywhere else).
+                let useGrouped = isSkinned && isDirectX12Backend()
+
+                let techniqueName =
+                  match isSkinned, colors, useGrouped with
+                  | true, ValueSome _, true -> "SkinnedInstancedGroupedColor"
+                  | true, ValueNone, true -> "SkinnedInstancedGrouped"
+                  | true, ValueSome _, false -> "SkinnedInstancedColor"
+                  | true, ValueNone, false -> "SkinnedInstanced"
+                  | false, ValueSome _, _ -> "InstancedColor"
+                  | false, ValueNone, _ -> "Instanced"
+
+                let technique =
+                  match
+                    (if useGrouped then res.GroupedEffect else res.Effect)
+                  with
+                  | ValueSome e -> e.Techniques[techniqueName]
+                  | ValueNone -> null
+
+                let mutable t = world
+                let mutable inv = Matrix.Identity
+                Matrix.Invert(&t, &inv) |> ignore
+
+                partInfos.Add(
+                  {
+                    Part = part
+                    IsSkinned = isSkinned
+                    World = world
+                    NormalMatrix = Matrix.Transpose inv
+                    Mat = mat
+                    MatKey = materialKey &mat
+                    UseGrouped = useGrouped
+                    Technique = technique
+                  }
                 )
 
-              // Per-chunk palette storage (effect params are effect-global — set
-              // once per chunk, not per part). On DX11/Vulkan the palette texture
-              // uploads to the main effect; on DX12 the bone palette array uploads
-              // to the isolated grouped effect (the main effect's grouped params
-              // are null on DX12 — dropped by mgfx reflection).
-              if isNull paletteTex then
-                match res.GroupedParams with
-                | ValueSome gp ->
-                  if
-                    res.GroupPaletteScratch.Length < PaletteGroup.MaxMatrices
-                  then
-                    res.GroupPaletteScratch <-
-                      Array.zeroCreate PaletteGroup.MaxMatrices
+          let mutable chunkIdx = 0
 
-                  Array.Copy(
-                    palettes,
-                    chunkStart * boneCount,
-                    res.GroupPaletteScratch,
-                    0,
-                    chunkCount * boneCount
+          while chunkIdx < chunks.Length do
+            let struct (chunkStart, chunkCount, paletteTex) = chunks[chunkIdx]
+
+            let instVB =
+              stagePaletteInstanceVB(
+                gd,
+                res,
+                transforms,
+                colors,
+                chunkStart,
+                chunkCount
+              )
+
+            // Per-chunk palette storage (effect params are effect-global — set
+            // once per chunk, not per part). On DX11/Vulkan the palette texture
+            // uploads to the main effect; on DX12 the bone palette array uploads
+            // to the isolated grouped effect (the main effect's grouped params
+            // are null on DX12 — dropped by mgfx reflection).
+            if isNull paletteTex then
+              match res.GroupedParams with
+              | ValueSome gp ->
+                if
+                  res.GroupPaletteScratch.Length < PaletteGroup.MaxMatrices
+                then
+                  res.GroupPaletteScratch <-
+                    Array.zeroCreate PaletteGroup.MaxMatrices
+
+                Array.Copy(
+                  palettes,
+                  chunkStart * boneCount,
+                  res.GroupPaletteScratch,
+                  0,
+                  chunkCount * boneCount
+                )
+
+                PbrUniforms.setMatrixArray
+                  gp.Matrix.BonePaletteGroup
+                  res.GroupPaletteScratch
+
+                PbrUniforms.setInt gp.Matrix.GroupBoneCount boneCount
+              | ValueNone -> ()
+            else
+              match res.Params with
+              | ValueSome p ->
+                PbrUniforms.setTexture p.Matrix.PaletteTex paletteTex
+
+                PbrUniforms.setVec2
+                  p.Matrix.PaletteTexSize
+                  (Vector2(float32(boneCount * 4), float32 chunkCount))
+              | ValueNone -> ()
+
+
+
+            for info in partInfos do
+              match target with
+              | UserEffectTarget(effect, _) when info.IsSkinned ->
+                // User effect opted in: it inherits scene DATA by name (not the PBR
+                // shader). matModel carries the mesh parent-bone world; the instance
+                // world arrives on stream 1 and the bone palette via
+                // paletteTex/paletteTexSize — the contract the built-in
+                // SkinnedInstanced VS implements.
+                SceneUpload.uploadToEffect(
+                  gd,
+                  effect,
+                  state.View,
+                  state.Projection,
+                  state.CurrentCamera.Position,
+                  info.World,
+                  info.NormalMatrix,
+                  frame.Lights,
+                  frame.Shadows,
+                  ValueNone,
+                  info.Mat,
+                  frame.Time
+                )
+
+                match effect.Parameters["paletteTex"] with
+                | null -> ()
+                | pp -> pp.SetValue paletteTex
+
+                match effect.Parameters["paletteTexSize"] with
+                | null -> ()
+                | pp ->
+                  pp.SetValue(
+                    Vector2(float32(boneCount * 4), float32 chunkCount)
                   )
 
-                  PbrUniforms.setMatrixArray
-                    gp.Matrix.BonePaletteGroup
-                    res.GroupPaletteScratch
+                gd.SetVertexBuffers(
+                  VertexBufferBinding(info.Part.VertexBuffer, 0, 0),
+                  VertexBufferBinding(instVB, 0, 1)
+                )
 
-                  PbrUniforms.setInt gp.Matrix.GroupBoneCount boneCount
-                | ValueNone -> ()
-              else
-                match res.Params with
-                | ValueSome p ->
-                  PbrUniforms.setTexture p.Matrix.PaletteTex paletteTex
+                gd.Indices <- info.Part.IndexBuffer
 
-                  PbrUniforms.setVec2
-                    p.Matrix.PaletteTexSize
-                    (Vector2(float32(boneCount * 4), float32 chunkCount))
-                | ValueNone -> ()
+                for pass in effect.CurrentTechnique.Passes do
+                  pass.Apply()
 
-              // PerMesh material resolvers index the model's parts in pipeline iteration
-              // order — restart the counter for each chunk (the same parts re-iterate).
-              let mutable partIndex = 0
+                  gd.DrawInstancedPrimitives(
+                    PrimitiveType.TriangleList,
+                    info.Part.VertexOffset,
+                    info.Part.StartIndex,
+                    info.Part.PrimitiveCount,
+                    chunkCount
+                  )
+              | _ ->
+                // Framework PBR effect: SkinnedInstanced(+Color) — or the
+                // grouped-uniform SkinnedInstancedGrouped(+Color) on DX12 —
+                // for skinned parts; Instanced(+Color) for the rest (their
+                // stream 0 has no bone channels; the extra stream-1 elements
+                // are simply unread). On DX12 the grouped-uniform skinned path
+                // uses the isolated ForwardPbrGrouped effect (the main effect's
+                // bonePaletteGroup params are null on DX12).
+                let drawEffect, drawParams =
+                  if info.UseGrouped then
+                    res.GroupedEffect, res.GroupedParams
+                  else
+                    res.Effect, res.Params
 
-              for mesh in model.Meshes do
-                let world = res.BoneTransforms[mesh.ParentBone.Index]
+                match drawEffect, drawParams with
+                | ValueSome e, ValueSome p ->
+                  e.CurrentTechnique <- info.Technique
 
-                for part in mesh.MeshParts do
-                  let isSkinned =
-                    match part.Effect with
-                    | :? SkinnedEffect -> true
-                    | _ -> false
+                  PbrUniforms.setMatrix p.Matrix.MatModel info.World
 
-                  let mat =
-                    match matOverride with
-                    | ValueNone -> Material3D.fromModelMeshPart part
-                    | ValueSome(MaterialOverride.All m) -> m
-                    | ValueSome(MaterialOverride.PerMesh f) -> f partIndex
+                  // The grouped effect has separate uniform handles from the
+                  // main effect, so the HasLastMaterial short-circuit (keyed
+                  // on the main effect's uploads) doesn't apply — always upload
+                  // material + textures on the grouped path.
+                  let mat = info.Mat
 
-                  partIndex <- partIndex + 1
+                  if info.UseGrouped then
+                    PbrUniforms.uploadMaterial(&p, &mat)
+                    PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                  else if
+                    not res.HasLastMaterial || info.MatKey <> res.LastKey
+                  then
+                    PbrUniforms.uploadMaterial(&p, &mat)
+                    PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                    res.LastKey <- info.MatKey
+                    res.HasLastMaterial <- true
 
-                  if part.PrimitiveCount > 0 then
-                    match target with
-                    | UserEffectTarget(effect, _) when isSkinned ->
-                      // User effect opted in: it inherits scene DATA by name (not the PBR
-                      // shader). matModel carries the mesh parent-bone world; the instance
-                      // world arrives on stream 1 and the bone palette via
-                      // paletteTex/paletteTexSize — the contract the built-in
-                      // SkinnedInstanced VS implements.
-                      let mutable t = world
-                      let mutable inv = Matrix.Identity
-                      Matrix.Invert(&t, &inv) |> ignore
+                  gd.SetVertexBuffers(
+                    VertexBufferBinding(info.Part.VertexBuffer, 0, 0),
+                    VertexBufferBinding(instVB, 0, 1)
+                  )
 
-                      SceneUpload.uploadToEffect(
-                        gd,
-                        effect,
-                        state.View,
-                        state.Projection,
-                        state.CurrentCamera.Position,
-                        world,
-                        Matrix.Transpose inv,
-                        frame.Lights,
-                        frame.Shadows,
-                        ValueNone,
-                        mat,
-                        frame.Time
+                  gd.Indices <- info.Part.IndexBuffer
+
+                  let saved = info.Part.Effect
+                  info.Part.Effect <- e
+
+                  try
+                    for pass in e.CurrentTechnique.Passes do
+                      pass.Apply()
+
+                      gd.DrawInstancedPrimitives(
+                        PrimitiveType.TriangleList,
+                        info.Part.VertexOffset,
+                        info.Part.StartIndex,
+                        info.Part.PrimitiveCount,
+                        chunkCount
                       )
+                  finally
+                    info.Part.Effect <- saved
+                | _ -> ()
 
-                      match effect.Parameters["paletteTex"] with
-                      | null -> ()
-                      | pp -> pp.SetValue paletteTex
-
-                      match effect.Parameters["paletteTexSize"] with
-                      | null -> ()
-                      | pp ->
-                        pp.SetValue(
-                          Vector2(float32(boneCount * 4), float32 chunkCount)
-                        )
-
-                      gd.SetVertexBuffers(
-                        VertexBufferBinding(part.VertexBuffer, 0, 0),
-                        VertexBufferBinding(instVB, 0, 1)
-                      )
-
-                      gd.Indices <- part.IndexBuffer
-
-                      for pass in effect.CurrentTechnique.Passes do
-                        pass.Apply()
-
-                        gd.DrawInstancedPrimitives(
-                          PrimitiveType.TriangleList,
-                          part.VertexOffset,
-                          part.StartIndex,
-                          part.PrimitiveCount,
-                          chunkCount
-                        )
-                    | _ ->
-                      // Framework PBR effect: SkinnedInstanced(+Color) — or the
-                      // grouped-uniform SkinnedInstancedGrouped(+Color) on DX12 —
-                      // for skinned parts; Instanced(+Color) for the rest (their
-                      // stream 0 has no bone channels; the extra stream-1 elements
-                      // are simply unread). On DX12 the grouped-uniform skinned path
-                      // uses the isolated ForwardPbrGrouped effect (the main effect's
-                      // bonePaletteGroup params are null on DX12).
-                      let useGrouped =
-                        isSkinned && isNull paletteTex && isDirectX12Backend()
-
-                      let drawEffect, drawParams =
-                        if useGrouped then
-                          res.GroupedEffect, res.GroupedParams
-                        else
-                          res.Effect, res.Params
-
-                      match drawEffect, drawParams with
-                      | ValueSome e, ValueSome p ->
-                        e.CurrentTechnique <-
-                          e.Techniques[match
-                                         isSkinned, colors, isNull paletteTex
-                                       with
-                                       | true, ValueSome _, true ->
-                                         "SkinnedInstancedGroupedColor"
-                                       | true, ValueNone, true ->
-                                         "SkinnedInstancedGrouped"
-                                       | true, ValueSome _, false ->
-                                         "SkinnedInstancedColor"
-                                       | true, ValueNone, false ->
-                                         "SkinnedInstanced"
-                                       | false, ValueSome _, _ ->
-                                         "InstancedColor"
-                                       | false, ValueNone, _ -> "Instanced"]
-
-                        PbrUniforms.setMatrix p.Matrix.MatModel world
-
-                        // The grouped effect has separate uniform handles from the
-                        // main effect, so the HasLastMaterial short-circuit (keyed
-                        // on the main effect's uploads) doesn't apply — always upload
-                        // material + textures on the grouped path.
-                        if useGrouped then
-                          PbrUniforms.uploadMaterial(&p, &mat)
-                          PbrUniforms.bindTextures(&p, &mat, whiteTex res)
-                        else
-                          let key = materialKey &mat
-
-                          if not res.HasLastMaterial || key <> res.LastKey then
-                            PbrUniforms.uploadMaterial(&p, &mat)
-                            PbrUniforms.bindTextures(&p, &mat, whiteTex res)
-                            res.LastKey <- key
-                            res.HasLastMaterial <- true
-
-                        gd.SetVertexBuffers(
-                          VertexBufferBinding(part.VertexBuffer, 0, 0),
-                          VertexBufferBinding(instVB, 0, 1)
-                        )
-
-                        gd.Indices <- part.IndexBuffer
-
-                        let saved = part.Effect
-                        part.Effect <- e
-
-                        try
-                          for pass in e.CurrentTechnique.Passes do
-                            pass.Apply()
-
-                            gd.DrawInstancedPrimitives(
-                              PrimitiveType.TriangleList,
-                              part.VertexOffset,
-                              part.StartIndex,
-                              part.PrimitiveCount,
-                              chunkCount
-                            )
-                        finally
-                          part.Effect <- saved
-                      | _ -> ()
-
-              chunkIdx <- chunkIdx + 1
-          finally
-            match target with
-            | UserEffectTarget(effect, _) ->
-              effect.CurrentTechnique <- savedUserTechnique
-            | PbrTarget -> ()
+            chunkIdx <- chunkIdx + 1
+        finally
+          match target with
+          | UserEffectTarget(effect, _) ->
+            effect.CurrentTechnique <- savedUserTechnique
+          | PbrTarget -> ()
 
   // ── User-effect scope shading: uploads scene data to an arbitrary effect via SceneUpload. ──
 
@@ -1875,7 +1917,8 @@ module internal PbrShading =
                                            palettes,
                                            matOverride,
                                            colors,
-                                           count) ->
+                                           count,
+                                           boneCount) ->
       // Does the user effect opt into skinned instancing? An effect exposing a
       // `SkinnedInstanced` technique (the convention ForwardPbr.fx uses) shades the skinned
       // parts directly — the bone palette reaches it via the paletteTex/paletteTexSize
@@ -1902,7 +1945,8 @@ module internal PbrShading =
         palettes,
         matOverride,
         colors,
-        count
+        count,
+        boneCount
       )
 
     | _ -> ()

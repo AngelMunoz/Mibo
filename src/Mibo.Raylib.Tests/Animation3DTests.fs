@@ -728,7 +728,7 @@ let computePoseTests =
         "World pose should be lerped halfway between frames 0 and 1"
     }
 
-    test "palette matches raylib's native inverse-bind-times-pose" {
+    test "palette is inverse-bind-times-pose in System.Numerics layout" {
       // InverseBindPose is System.Numerics layout (see AnimatedMesh.fromModel).
       // A bone sitting at +10 in bind pose has inverse bind T(-10).
       let invBind = Matrix4x4.CreateTranslation(-10.0f, 0.0f, 0.0f)
@@ -741,22 +741,25 @@ let computePoseTests =
 
       let pose = Animation3DState.computePose mesh state
 
-      // The native-layout equivalent of the palette, computed the way
-      // raylib's UpdateModelAnimation does: MatrixMultiply(MatrixInvert(bind), current).
-      // Transpose(invBind) is that inverse bind pose in native layout.
+      // Palette[i] = InverseBindPose[i] * pose[i] in plain System.Numerics
+      // row-major layout (NOT transposed) — the instanced palette-texture
+      // upload copies it verbatim; the non-instanced uniform upload transposes.
       let expected =
-        Raymath.MatrixMultiply(Matrix4x4.Transpose invBind, pose.WorldPoses[0])
+        Matrix4x4.Multiply(
+          invBind,
+          Matrix4x4.CreateTranslation(1.0f, 0.0f, 0.0f)
+        )
 
       Expect.equal
         pose.Palette[0]
         expected
-        "Palette[i] should equal raylib's native MatrixMultiply(MatrixInvert(bind), current)"
+        "Palette[i] should equal InverseBindPose[i] * pose[i] (System.Numerics layout)"
 
       // Concrete value: a vertex at the bone in bind (+10) is unbound to 0,
       // then re-posed to the current bone position (+1) → net T(-9).
       Expect.equal
         pose.Palette[0]
-        (Raymath.MatrixTranslate(-9.0f, 0.0f, 0.0f))
+        (Matrix4x4.CreateTranslation(-9.0f, 0.0f, 0.0f))
         "Palette should carry the -9 net skinning translation"
     }
 
@@ -789,6 +792,114 @@ let computePoseTests =
         pose.WorldPoses[0]
         Unchecked.defaultof<Matrix4x4>
         "World pose should be zeroed"
+    }
+  ]
+
+// ──────────────────────────────────────────────
+// Animation3DState.computePoseInto tests
+// ──────────────────────────────────────────────
+
+let computePoseIntoTests =
+  let clips = Animation3DClips.fromModelAnimations(makePoseClips())
+  let dummyModel = Unchecked.defaultof<Model>
+  let identityMesh = makeAnimatedMesh [| "root" |] [| Matrix4x4.Identity |]
+
+  let slideState frame = {
+    Animation3DState.create dummyModel clips "slide" 60.0f with
+        CurrentFrame = frame
+  }
+
+  testList "Animation3DState.computePoseInto" [
+    test "computePoseInto matches computePose" {
+      let state = slideState 1.0f
+
+      let expected = Animation3DState.computePose identityMesh state
+
+      let target =
+        Animation3DState.computePoseInto identityMesh state BonePose.empty
+
+      Expect.equal
+        target.WorldPoses.Length
+        expected.WorldPoses.Length
+        "WorldPoses length"
+
+      Expect.equal
+        target.Palette.Length
+        expected.Palette.Length
+        "Palette length"
+
+      for i = 0 to expected.WorldPoses.Length - 1 do
+        Expect.equal
+          target.WorldPoses[i]
+          expected.WorldPoses[i]
+          $"WorldPoses[{i}] mismatch"
+
+      for i = 0 to expected.Palette.Length - 1 do
+        Expect.equal
+          target.Palette[i]
+          expected.Palette[i]
+          $"Palette[{i}] mismatch"
+    }
+
+    test "computePoseInto reuses arrays" {
+      let state = slideState 1.0f
+
+      let target =
+        Animation3DState.computePoseInto identityMesh state BonePose.empty
+
+      let worldPosesRef = target.WorldPoses
+      let paletteRef = target.Palette
+
+      let target2 = Animation3DState.computePoseInto identityMesh state target
+
+      Expect.isTrue
+        (Object.ReferenceEquals(target2.WorldPoses, worldPosesRef))
+        "WorldPoses array should be reused on second call"
+
+      Expect.isTrue
+        (Object.ReferenceEquals(target2.Palette, paletteRef))
+        "Palette array should be reused on second call"
+    }
+
+    test "BonePose.empty is valid starting point" {
+      Expect.equal BonePose.empty.WorldPoses.Length 0 "WorldPoses is empty"
+      Expect.equal BonePose.empty.Palette.Length 0 "Palette is empty"
+
+      let target =
+        Animation3DState.computePoseInto
+          identityMesh
+          (slideState 1.0f)
+          BonePose.empty
+
+      Expect.equal
+        target.WorldPoses[0]
+        (Raymath.MatrixTranslate(1.0f, 0.0f, 0.0f))
+        "computePoseInto from BonePose.empty should produce the correct pose"
+    }
+
+    test "computePoseInto allocates nothing after warmup" {
+      let state = slideState 1.0f
+
+      let mutable pose =
+        Animation3DState.computePoseInto identityMesh state BonePose.empty
+
+      for _ = 1 to 1000 do
+        pose <- Animation3DState.computePoseInto identityMesh state pose
+
+      let before = GC.GetAllocatedBytesForCurrentThread()
+
+      for _ = 1 to 1000 do
+        pose <- Animation3DState.computePoseInto identityMesh state pose
+
+      let allocated = GC.GetAllocatedBytesForCurrentThread() - before
+
+      // Budget < 1 byte/call for one-off runtime noise (JIT, GC bookkeeping);
+      // the regression this guards is per-call allocation — previously
+      // 224 bytes/call from closures capturing struct state per call.
+      Expect.isLessThan
+        allocated
+        1024L
+        $"computePoseInto allocated {allocated} bytes over 1000 warmed-up calls"
     }
   ]
 
@@ -1114,17 +1225,17 @@ let animatedInstancedWitnessTests =
 
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
-        | Command3D.DrawSkinnedMeshInstanced(_, t, palettes, _, count) ->
+        | Command3D.DrawSkinnedMeshInstanced(_, t, palettes, _, count, _) ->
           Expect.equal count 2 "Two instances"
 
           Expect.isTrue
             (Object.ReferenceEquals(t, transforms))
             "Transforms array should be forwarded untouched"
 
-          Expect.equal
-            palettes.Length
-            2
-            "One palette matrix per instance (1 bone)"
+          // ArrayPool may return a larger array than requested.
+          Expect.isTrue
+            (palettes.Length >= 2)
+            "At least one palette matrix per instance (1 bone)"
 
           Expect.equal palettes[0] poseA.Palette[0] "Instance 0 palette first"
           Expect.equal palettes[1] poseB.Palette[0] "Instance 1 palette second"
@@ -1144,9 +1255,9 @@ let animatedInstancedWitnessTests =
       )
 
       match buffer[0] with
-      | Command3D.DrawSkinnedMeshInstanced(_, _, palettes, _, count) ->
+      | Command3D.DrawSkinnedMeshInstanced(_, _, palettes, _, count, _) ->
         Expect.equal count 1 "Clamped to the single pose"
-        Expect.equal palettes.Length 1 "One palette"
+        Expect.isTrue (palettes.Length >= 1) "At least one palette"
       | _ -> Tests.failtest "Expected DrawSkinnedMeshInstanced"
     }
 
@@ -1176,7 +1287,7 @@ let animatedInstancedWitnessTests =
 
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
-        | Command3D.DrawSkinnedMeshInstanced(_, _, _, mat, _) ->
+        | Command3D.DrawSkinnedMeshInstanced(_, _, _, mat, _, _) ->
           Expect.equal mat.AlbedoColor Color.Red "Material should match"
         | _ -> Tests.failtest "Expected DrawSkinnedMeshInstanced"
     }
@@ -1203,7 +1314,7 @@ let animatedInstancedWitnessTests =
 
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
-        | Command3D.DrawSkinnedMeshInstanced(_, _, _, mat, _) ->
+        | Command3D.DrawSkinnedMeshInstanced(_, _, _, mat, _, _) ->
           Expect.equal
             mat.AlbedoColor
             materials[i].AlbedoColor
@@ -1237,7 +1348,7 @@ let animatedInstancedWitnessTests =
       Expect.equal buffer.Count 1 "Should emit one command"
 
       match buffer[0] with
-      | Command3D.DrawSkinnedMeshInstanced(_, _, _, _, count) ->
+      | Command3D.DrawSkinnedMeshInstanced(_, _, _, _, count, _) ->
         Expect.equal count 2 "Two instances"
       | _ -> Tests.failtest "Expected DrawSkinnedMeshInstanced"
     }
@@ -1435,6 +1546,7 @@ let tests =
     stateTests
     boneQueryTests
     computePoseTests
+    computePoseIntoTests
     animatedModelTests
     animatedWitnessTests
     animatedInstancedWitnessTests

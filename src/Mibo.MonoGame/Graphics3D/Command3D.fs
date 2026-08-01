@@ -107,7 +107,8 @@ type Command3D =
     palettes: Matrix[] *
     materialOverride: MaterialOverride voption *
     colors: Color[] voption *
-    instanceCount: int
+    instanceCount: int *
+    boneCount: int
   | DrawInstanced of
     mesh: PrimitiveMesh *
     transforms: Matrix[] *

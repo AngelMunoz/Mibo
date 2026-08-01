@@ -107,6 +107,7 @@ type Renderer3D<'Model>
         view ctx model buffer
         pipeline.Execute(ctx, gameTime, buffer, rtPool)
       finally
+        buffer.ReleaseRentedArrays()
         (rtPool :> IRenderTargetPool3D).ReleaseAll()
 
   interface IDisposable with

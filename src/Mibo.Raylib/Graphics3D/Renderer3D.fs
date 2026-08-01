@@ -70,9 +70,13 @@ type Renderer3D<'Model>
       | ValueNone -> ()
 
       buffer.Clear()
-      view ctx model buffer
-      pipeline.Execute(ctx, gameTime, buffer, rtPool)
-      (rtPool :> IRenderTargetPool3D).ReleaseAll()
+
+      try
+        view ctx model buffer
+        pipeline.Execute(ctx, gameTime, buffer, rtPool)
+      finally
+        buffer.ReleaseRentedArrays()
+        (rtPool :> IRenderTargetPool3D).ReleaseAll()
 
   interface IDisposable with
     member _.Dispose() =

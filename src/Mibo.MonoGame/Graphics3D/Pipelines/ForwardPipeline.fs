@@ -473,7 +473,8 @@ type ForwardPipelineBase
                                              palettes,
                                              matOverride,
                                              colors,
-                                             instanceCount) ->
+                                             instanceCount,
+                                             boneCount) ->
         PbrShading.drawAnimatedModelInstanced(
           gd,
           &state,
@@ -485,7 +486,8 @@ type ForwardPipelineBase
           palettes,
           matOverride,
           colors,
-          instanceCount
+          instanceCount,
+          boneCount
         )
       | _ -> ()
     | ValueSome userEffect ->

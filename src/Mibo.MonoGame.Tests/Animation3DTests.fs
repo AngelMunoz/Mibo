@@ -165,6 +165,91 @@ let tests =
       }
     ]
 
+    testList "Animation3DState.computePoseInto" [
+      test "computePoseInto matches computePose" {
+        let expected = Animation3DState.computePose testMesh testState
+
+        let target =
+          Animation3DState.computePoseInto testMesh testState BonePose.empty
+
+        Expect.equal
+          target.WorldPoses.Length
+          expected.WorldPoses.Length
+          "WorldPoses length"
+
+        Expect.equal
+          target.Palette.Length
+          expected.Palette.Length
+          "Palette length"
+
+        for i = 0 to expected.WorldPoses.Length - 1 do
+          Expect.isTrue
+            (matrixApproxEqual target.WorldPoses[i] expected.WorldPoses[i])
+            $"WorldPoses[{i}] mismatch: %A{target.WorldPoses[i].Translation}"
+
+        for i = 0 to expected.Palette.Length - 1 do
+          Expect.isTrue
+            (matrixApproxEqual target.Palette[i] expected.Palette[i])
+            $"Palette[{i}] mismatch"
+      }
+
+      test "computePoseInto reuses arrays" {
+        let target =
+          Animation3DState.computePoseInto testMesh testState BonePose.empty
+
+        let worldPosesRef = target.WorldPoses
+        let paletteRef = target.Palette
+
+        let target2 = Animation3DState.computePoseInto testMesh testState target
+
+        Expect.isTrue
+          (System.Object.ReferenceEquals(target2.WorldPoses, worldPosesRef))
+          "WorldPoses array should be reused on second call"
+
+        Expect.isTrue
+          (System.Object.ReferenceEquals(target2.Palette, paletteRef))
+          "Palette array should be reused on second call"
+      }
+
+      test "BonePose.empty is valid starting point" {
+        Expect.equal BonePose.empty.WorldPoses.Length 0 "WorldPoses is empty"
+        Expect.equal BonePose.empty.Palette.Length 0 "Palette is empty"
+
+        let target =
+          Animation3DState.computePoseInto testMesh testState BonePose.empty
+
+        for i = 0 to 2 do
+          Expect.isTrue
+            (matrixApproxEqual target.WorldPoses[i] expectedWorldPoses[i])
+            $"WorldPoses[{i}] should match after computePoseInto from BonePose.empty"
+      }
+
+      test "computePoseInto allocates nothing after warmup" {
+        // Warmup: grows the pose arrays, builds the (clip, mesh) channel cache,
+        // and flushes any one-time JIT/runtime allocations.
+        let mutable pose =
+          Animation3DState.computePoseInto testMesh testState BonePose.empty
+
+        for _ = 1 to 1000 do
+          pose <- Animation3DState.computePoseInto testMesh testState pose
+
+        let before = System.GC.GetAllocatedBytesForCurrentThread()
+
+        for _ = 1 to 1000 do
+          pose <- Animation3DState.computePoseInto testMesh testState pose
+
+        let allocated = System.GC.GetAllocatedBytesForCurrentThread() - before
+
+        // Budget < 1 byte/call for one-off runtime noise (JIT, GC bookkeeping);
+        // the regression this guards is per-call allocation — previously
+        // 32 bytes/call from the TryGetValue tuple-return over a reference type.
+        Expect.isLessThan
+          allocated
+          1024L
+          $"computePoseInto allocated {allocated} bytes over 1000 warmed-up calls"
+      }
+    ]
+
     testList "AnimatedMesh.tryFindBoneIndex" [
       test "hit returns the bone index" {
         Expect.equal
@@ -365,14 +450,19 @@ let tests =
                                                palettes,
                                                matOverride,
                                                c,
-                                               count) ->
+                                               count,
+                                               _) ->
           Expect.equal count 2 "two instances"
 
           Expect.isTrue
             (System.Object.ReferenceEquals(t, transforms))
             "transforms array forwarded untouched"
 
-          Expect.equal palettes.Length 6 "count * boneCount"
+          // ArrayPool may return a larger array than requested — verify the
+          // logical content (first count * boneCount elements) is correct.
+          Expect.isTrue
+            (palettes.Length >= 6)
+            "palettes array fits count * boneCount"
 
           Expect.equal
             palettes[0].Translation
@@ -412,9 +502,10 @@ let tests =
         Expect.equal buffer.Count 1 "expected exactly one command"
 
         match buffer[0] with
-        | Command3D.DrawAnimatedModelInstanced(_, _, palettes, _, _, count) ->
+        | Command3D.DrawAnimatedModelInstanced(_, _, palettes, _, _, count, _) ->
           Expect.equal count 1 "clamped to the single pose"
-          Expect.equal palettes.Length 3 "one palette"
+          // ArrayPool may return a larger array than requested.
+          Expect.isTrue (palettes.Length >= 3) "palettes array fits one palette"
         | other ->
           failtest $"expected DrawAnimatedModelInstanced, got %A{other}"
       }

@@ -33,6 +33,8 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   let mutable depthPostProcessCount = 0
   let mutable cameraBlockCount = 0
 
+  let rentedArrays = ResizeArray<System.Numerics.Matrix4x4[]>()
+
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
       let newSize = max (items.Length * 2) (count + needed)
@@ -91,7 +93,8 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   /// Clears all commands from the buffer without deallocating the backing array.
   /// Call this at the start of each frame before populating with new commands.
   /// </summary>
-  member _.Clear() =
+  member x.Clear() =
+    x.ReleaseRentedArrays()
     count <- 0
     postProcessCount <- 0
     depthPostProcessCount <- 0
@@ -101,6 +104,31 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
     if clearCounter >= 300 then
       clearCounter <- 0
       Array.Clear(items, 0, items.Length)
+
+  /// <summary>
+  /// Tracks a rented palette array so it can be returned to the
+  /// <see cref="T:System.Buffers.ArrayPool`1"/> after the pipeline consumes the
+  /// commands. Called from <c>AddAnimatedModelInstanced</c> (an inline
+  /// extension member) — it cannot see primary-constructor <c>let</c>
+  /// bindings, so it reaches the field through this public method.
+  /// </summary>
+  member _.RegisterRentedArray(arr: System.Numerics.Matrix4x4[]) =
+    rentedArrays.Add(arr)
+
+  /// <summary>
+  /// Returns all rented palette arrays to the shared
+  /// <see cref="T:System.Buffers.ArrayPool`1"/>. Called from <c>Clear</c> at
+  /// frame start (safety net for arrays left over from a prior frame whose
+  /// <c>finally</c> didn't run) and from the renderer's <c>finally</c> block
+  /// after pipeline execution — the arrays are consumed synchronously within
+  /// the same frame.
+  /// </summary>
+  member _.ReleaseRentedArrays() =
+    for arr in rentedArrays do
+      ArrayPool<System.Numerics.Matrix4x4>.Shared
+        .Return(arr, clearArray = false)
+
+    rentedArrays.Clear()
 
   /// <summary>
   /// Sorts commands using the provided comparer.
@@ -347,7 +375,8 @@ type RenderBuffer3D with
 
       if count > 0 then
         let boneCount = am.Mesh.BoneCount
-        let palettes = Array.zeroCreate<Matrix4x4>(count * boneCount)
+        let palettes = ArrayPool<Matrix4x4>.Shared.Rent(count * boneCount)
+        b.RegisterRentedArray(palettes)
 
         for i = 0 to count - 1 do
           poses[i].Palette.CopyTo(palettes, i * boneCount)
@@ -376,7 +405,8 @@ type RenderBuffer3D with
               transforms,
               palettes,
               mat,
-              count
+              count,
+              boneCount
             )
           )
 

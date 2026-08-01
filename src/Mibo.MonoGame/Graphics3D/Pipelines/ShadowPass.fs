@@ -100,6 +100,7 @@ type ShadowSkinnedInstancedDraw = {
   Transforms: Matrix[]
   Palettes: Matrix[]
   InstanceCount: int
+  BoneCount: int
   /// Whether this draw was emitted while shadows were enabled (see ShadowMeshDraw).
   CastsShadow: bool
 }
@@ -630,9 +631,8 @@ module internal ShadowPass =
                                              palettes,
                                              _,
                                              _,
-                                             instanceCount) when
-        instanceCount > 0
-        ->
+                                             instanceCount,
+                                             boneCount) when instanceCount > 0 ->
         // Skinned + instanced casters: one entry per SkinnedEffect part, sharing the
         // command's transforms + flat palettes. Material/colors are irrelevant to depth.
         for mesh in model.Meshes do
@@ -654,6 +654,7 @@ module internal ShadowPass =
                 Transforms = transforms
                 Palettes = palettes
                 InstanceCount = instanceCount
+                BoneCount = boneCount
                 CastsShadow = castEnabled
               }
 
@@ -876,11 +877,7 @@ module internal ShadowPass =
             let draw = draws[d]
             let instanceCount = min draw.InstanceCount draw.Transforms.Length
 
-            let boneCount =
-              if instanceCount > 0 then
-                draw.Palettes.Length / draw.InstanceCount
-              else
-                0
+            let boneCount = draw.BoneCount
 
             if boneCount > 0 then
               for i = 0 to instanceCount - 1 do
@@ -939,11 +936,7 @@ module internal ShadowPass =
               let draw = draws[d]
               let instanceCount = min draw.InstanceCount draw.Transforms.Length
 
-              let boneCount =
-                if instanceCount > 0 then
-                  draw.Palettes.Length / draw.InstanceCount
-                else
-                  0
+              let boneCount = draw.BoneCount
 
               if boneCount > 0 then
                 // Chunk driver (mirrors the forward pass): palette-texture chunks

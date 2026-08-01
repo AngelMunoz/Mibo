@@ -4,6 +4,7 @@ namespace Mibo.Animation
 
 open System
 open System.Collections.Generic
+open System.Collections.Frozen
 open System.Numerics
 open System.Runtime.InteropServices
 open FSharp.NativeInterop
@@ -78,7 +79,7 @@ module Animation3DClips =
 
     {
       Clips = anims
-      ClipNames = dict
+      ClipNames = FrozenDictionary.ToFrozenDictionary dict
       ClipIndices = anims
       ClipsInfo = Animation3DClipsInfo.create namesAndCounts
       BoneRemaps = [||]
@@ -173,7 +174,7 @@ module Animation3DClips =
 
     {
       Clips = clips
-      ClipNames = dict
+      ClipNames = FrozenDictionary.ToFrozenDictionary dict
       ClipIndices = clips
       ClipsInfo = Animation3DClipsInfo.create namesAndCounts
       BoneRemaps = remaps
@@ -244,11 +245,21 @@ type AnimatedMesh = {
 [<Struct>]
 type BonePose = {
   /// <summary>Model-space bone transforms for the current frame (attachment/query data), raylib-native layout.</summary>
-  WorldPoses: Matrix4x4[]
-  /// <summary>Skinning palette in raylib-native layout — equals raylib's own
-  /// <c>MatrixMultiply(MatrixInvert(bind), current)</c> per bone, upload-ready.</summary>
-  Palette: Matrix4x4[]
-}
+  mutable WorldPoses: Matrix4x4[]
+  /// <summary>Skinning palette in System.Numerics row-major layout:
+  /// <c>Palette[i] = InverseBindPose[i] * pose[i]</c> (NOT transposed). Handed to
+  /// the instanced palette-texture upload verbatim; consumers feeding
+  /// <c>SetShaderValueMatrix</c> transpose at upload time.</summary>
+  mutable Palette: Matrix4x4[]
+} with
+
+  /// <summary>A pose with no bones. Use as the starting point for
+  /// <c>computePoseInto</c> — arrays are grown on first use and reused
+  /// on subsequent calls, so no per-frame allocation after the first frame.</summary>
+  static member empty = {
+    WorldPoses = Array.empty
+    Palette = Array.empty
+  }
 
 module private BoneAttributeUpload =
   // GPU skinning vertex attribute locations (raylib defaults, rlgl.h).
@@ -552,6 +563,27 @@ module Animation3DState =
 
     fromCoreState state core
 
+  /// Bind-pose TRS of one bone — the fallback for bones a clip doesn't
+  /// animate. Module-level (no closure): a local closure would capture its
+  /// environment onto the heap on every call — this runs per bone per instance.
+  let inline private bindTrsOf
+    (bindPose: Transform[])
+    (boneIndex: int)
+    : struct (Vector3 * Quaternion * Vector3) =
+    let b = bindPose[boneIndex]
+    struct (b.Translation, b.Rotation, b.Scale)
+
+  /// Bone remap for a clip index, bounds-checked. Module-level for the same
+  /// no-closure reason as <see cref="bindTrsOf"/>.
+  let inline private remapForIndex
+    (clips: Animation3DClips)
+    (clipIndex: int)
+    : int[] voption =
+    if clipIndex >= 0 && clipIndex < clips.BoneRemaps.Length then
+      clips.BoneRemaps[clipIndex]
+    else
+      ValueNone
+
   /// Samples the interpolated TRS pose of one bone from <paramref name="clip"/> at
   /// <paramref name="frame"/>. Same keyframe-lerp math as
   /// <c>AnimatedMesh.computeBoneMatrices</c>: floor/ceil frames with wraparound,
@@ -575,12 +607,8 @@ module Animation3DState =
       | ValueSome map when boneIndex < map.Length -> map[boneIndex]
       | _ -> boneIndex
 
-    let bindTrs() =
-      let b = bindPose[boneIndex]
-      struct (b.Translation, b.Rotation, b.Scale)
-
     if clip.KeyFrameCount <= 0 || sourceIndex < 0 then
-      bindTrs()
+      bindTrsOf bindPose boneIndex
     else
       let currentFrame = int frame
       let nextFrame = currentFrame + 1
@@ -624,7 +652,7 @@ module Animation3DState =
         Quaternion.Slerp(ct.Rotation, nt.Rotation, blend),
         Vector3.Lerp(ct.Scale, nt.Scale, blend)
       else
-        bindTrs()
+        bindTrsOf bindPose boneIndex
 
   /// <summary>
   /// Evaluate the current pose of <paramref name="state"/> on
@@ -638,15 +666,31 @@ module Animation3DState =
   /// is blending, both clips are sampled and blended by <c>BlendProgress</c>,
   /// mirroring the <c>applyToModel</c> branch. raylib keyframe poses are
   /// model-space, so the world pose is the sampled pose directly (no parent
-  /// walk). Both outputs are transposed into raylib's native matrix layout:
-  /// <c>WorldPoses</c> composes with <c>Raymath.*</c> ops and <c>Palette</c> is
-  /// upload-ready (<c>Palette[i] = Transpose(InverseBindPose[i] * pose[i])</c>,
-  /// which equals raylib's native <c>MatrixMultiply(MatrixInvert(bind), current)</c>).
+  /// walk). <c>WorldPoses</c> is transposed into raylib's native matrix layout
+  /// (composes with <c>Raymath.*</c> ops); <c>Palette</c> is kept in plain
+  /// System.Numerics row-major layout (<c>Palette[i] = InverseBindPose[i] *
+  /// pose[i]</c>) so the instanced palette-texture upload can copy the array
+  /// verbatim — consumers that upload through <c>SetShaderValueMatrix</c>
+  /// transpose at upload time instead.
   /// </remarks>
-  let computePose (mesh: AnimatedMesh) (state: Animation3DState) : BonePose =
+  let computePoseInto
+    (mesh: AnimatedMesh)
+    (state: Animation3DState)
+    (existing: BonePose)
+    : BonePose =
     let boneCount = mesh.BoneCount
-    let worldPoses = Array.zeroCreate<Matrix4x4> boneCount
-    let palette = Array.zeroCreate<Matrix4x4> boneCount
+
+    let worldPoses =
+      if existing.WorldPoses.Length < boneCount then
+        Array.zeroCreate<Matrix4x4> boneCount
+      else
+        existing.WorldPoses
+
+    let palette =
+      if existing.Palette.Length < boneCount then
+        Array.zeroCreate<Matrix4x4> boneCount
+      else
+        existing.Palette
 
     if state.Clips.Clips.Length > 0 && boneCount > 0 then
       let clipA = state.Clips.ClipIndices[state.CurrentClipIndex]
@@ -658,16 +702,10 @@ module Animation3DState =
         else
           clipA
 
-      // Per-clip bone-order remap (clips merged from differently-ordered
-      // skeleton files); ValueNone = the clip follows the target order.
-      let remapFor(clipIndex: int) : int[] voption =
-        if clipIndex >= 0 && clipIndex < state.Clips.BoneRemaps.Length then
-          state.Clips.BoneRemaps[clipIndex]
-        else
-          ValueNone
-
-      let remapA = remapFor state.CurrentClipIndex
-      let remapB = remapFor state.BlendTargetIndex
+      // Module-level (no closure over state — a local closure would heap-copy
+      // the struct it captures on every call; this runs per instance per frame).
+      let remapA = remapForIndex state.Clips state.CurrentClipIndex
+      let remapB = remapForIndex state.Clips state.BlendTargetIndex
 
       for i = 0 to boneCount - 1 do
         let struct (ta, ra, sa) =
@@ -697,21 +735,36 @@ module Animation3DState =
 
           Matrix4x4.Multiply(Matrix4x4.Multiply(s, r), tr)
 
-        // Transpose the System.Numerics results into raylib's native matrix
-        // layout (raylib's Matrix stores fields column-wise — a Raymath.*
-        // matrix is the transpose of the equivalent Matrix4x4.* matrix).
-        // WorldPoses then composes correctly with Raymath.* ops (attachment
-        // draws, DrawMesh), and Palette matches the bone matrices raylib's
-        // own UpdateModelAnimation computes for the shader upload.
         worldPoses[i] <- Matrix4x4.Transpose pose
 
-        palette[i] <-
-          Matrix4x4.Transpose(Matrix4x4.Multiply(mesh.InverseBindPose[i], pose))
+        // Untransposed (System.Numerics row-major layout): the instanced
+        // palette-texture upload copies this array verbatim — no per-matrix
+        // transpose on the upload hot path. Consumers feeding
+        // SetShaderValueMatrix (non-instanced bone uniforms) transpose at
+        // upload time instead (see uploadBoneMatrices).
+        palette[i] <- Matrix4x4.Multiply(mesh.InverseBindPose[i], pose)
 
     {
       WorldPoses = worldPoses
       Palette = palette
     }
+
+  /// <summary>
+  /// Compute the full bone pose for the current animation frame.
+  /// </summary>
+  /// <remarks>
+  /// Keyframe poses are already model-space, so no parent-chain composition is
+  /// needed (unlike the MonoGame backend). <c>WorldPoses</c> is transposed into
+  /// raylib's native matrix layout (composes with <c>Raymath.*</c> ops);
+  /// <c>Palette</c> is kept in plain System.Numerics row-major layout
+  /// (<c>Palette[i] = InverseBindPose[i] * pose[i]</c>) so the instanced
+  /// palette-texture upload can copy the array verbatim.
+  /// </remarks>
+  let inline computePose
+    (mesh: AnimatedMesh)
+    (state: Animation3DState)
+    : BonePose =
+    computePoseInto mesh state BonePose.empty
 
 module AnimatedMesh =
   let private buildMatrix(t: Transform) : Matrix4x4 =
@@ -776,7 +829,7 @@ module AnimatedMesh =
           BindPose = bindPoseArr
           BoneNames = boneNames
           BoneParents = boneParents
-          BoneLookup = boneLookup
+          BoneLookup = FrozenDictionary.ToFrozenDictionary boneLookup
         }
 
   /// <summary>
@@ -796,10 +849,10 @@ module AnimatedMesh =
   /// directly to <c>DrawSkinnedMesh</c> for GPU skinning.
   /// The algorithm matches raylib's <c>UpdateModelAnimation</c>:
   /// interpolates keyframes (lerp/slerp), builds TRS matrices, and multiplies
-  /// by the inverse bind pose. The result is transposed into raylib's native
-  /// matrix layout — it equals raylib's own
-  /// <c>MatrixMultiply(MatrixInvert(bind), current)</c> per bone, ready for the
-  /// shader upload.
+  /// by the inverse bind pose. The result is kept in plain System.Numerics
+  /// row-major layout (<c>InverseBindPose[i] * pose[i]</c>, NOT transposed) so
+  /// the instanced palette-texture upload copies it verbatim; consumers that
+  /// upload through <c>SetShaderValueMatrix</c> transpose at upload time.
   /// <c>clip</c> is sampled by raw bone index — this path does NOT apply the
   /// bone-order remaps built by <c>Animation3DClips.merge</c>. Clips from a
   /// merged clip set must be played through <c>Animation3DState.computePose</c>
@@ -877,12 +930,10 @@ module AnimatedMesh =
 
           Matrix4x4.Multiply(Matrix4x4.Multiply(s, r), tr)
 
-        // Transposed into raylib's native matrix layout for the shader upload
-        // (see computePose).
+        // System.Numerics row-major layout (NOT transposed) — the palette
+        // texture upload copies this array verbatim (see computePose).
         matrices[i] <-
-          Matrix4x4.Transpose(
-            Matrix4x4.Multiply(mesh.InverseBindPose[i], currentPoseMatrix)
-          )
+          Matrix4x4.Multiply(mesh.InverseBindPose[i], currentPoseMatrix)
 
       matrices
 
@@ -946,6 +997,18 @@ module AnimatedModel =
   /// </summary>
   let inline computePose(am: AnimatedModel) : BonePose =
     Animation3DState.computePose am.Mesh am.State
+
+  /// <summary>
+  /// Compute the bone pose into caller-owned arrays (zero per-frame allocation
+  /// after the first call). Pass the previous frame's <c>BonePose</c> (or
+  /// <c>BonePose.empty</c> on the first call) — arrays are grown on demand
+  /// and reused on subsequent calls.
+  /// </summary>
+  let inline computePoseInto
+    (am: AnimatedModel)
+    (existing: BonePose)
+    : BonePose =
+    Animation3DState.computePoseInto am.Mesh am.State existing
 
   /// <summary>
   /// Get the model-space world transform of a bone in the current frame.

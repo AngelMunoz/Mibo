@@ -352,10 +352,21 @@ module internal PaletteTextureHelpers =
 /// single texture across chunks would let a later chunk's upload overwrite texels
 /// an in-flight batched draw still reads.
 /// </summary>
+/// <remarks>
+/// Also carries a per-frame upload cache: the shadow and forward passes render
+/// the same command list, so each chunk's palette slice would otherwise upload
+/// twice per frame. <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PaletteTexturePool.TryGetUploaded"/>
+/// returns the texture a chunk already uploaded this frame (keyed by palettes
+/// array reference + chunk offset — both passes share the same command arrays);
+/// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PaletteTexturePool.RememberUploaded"/>
+/// records it. Cleared by <c>ReleaseAll</c>.
+/// </remarks>
 type internal PaletteTexturePool() =
 
   let pool = Dictionary<struct (int * int), Queue<Texture2D>>()
   let inUse = ResizeArray<Texture2D>()
+  let uploaded = Dictionary<struct (Matrix4x4[] * int), Texture2D>()
+  let mutable transformScratch = Array.zeroCreate<Matrix4x4> 64
 
   member _.Acquire(width: int, height: int) : Texture2D =
     let key = struct (width, height)
@@ -370,6 +381,27 @@ type internal PaletteTexturePool() =
       inUse.Add tex
       tex
 
+  /// Texture a chunk already uploaded this frame, if any.
+  member _.TryGetUploaded
+    (palettes: Matrix4x4[], chunkStart: int)
+    : Texture2D voption =
+    match uploaded.TryGetValue(struct (palettes, chunkStart)) with
+    | true, tex -> ValueSome tex
+    | false, _ -> ValueNone
+
+  /// Record a chunk's freshly uploaded texture for this frame.
+  member _.RememberUploaded
+    (palettes: Matrix4x4[], chunkStart: int, tex: Texture2D)
+    =
+    uploaded[struct (palettes, chunkStart)] <- tex
+
+  /// Growable scratch for slicing per-chunk transform runs without allocating.
+  member _.GetTransformScratch(needed: int) : Matrix4x4[] =
+    if transformScratch.Length < needed then
+      transformScratch <- Array.zeroCreate<Matrix4x4> needed
+
+    transformScratch
+
   member _.ReleaseAll() =
     for tex in inUse do
       let key = struct (tex.Width, tex.Height)
@@ -382,6 +414,7 @@ type internal PaletteTexturePool() =
         pool[key] <- queue
 
     inUse.Clear()
+    uploaded.Clear()
 
   member _.UnloadAll() =
     for tex in inUse do
@@ -436,6 +469,7 @@ module internal ShadowPassHelpers =
     Transforms: Matrix4x4[]
     Palettes: Matrix4x4[] voption
     InstanceCount: int
+    BoneCount: int
   }
 
   let collectMeshDraws
@@ -530,6 +564,7 @@ module internal ShadowPassHelpers =
           Transforms = transforms
           Palettes = ValueNone
           InstanceCount = instanceCount
+          BoneCount = 0
         }
 
         icount <- icount + 1
@@ -537,12 +572,14 @@ module internal ShadowPassHelpers =
                                            transforms,
                                            palettes,
                                            _,
-                                           instanceCount) when shadowsEnabled ->
+                                           instanceCount,
+                                           boneCount) when shadowsEnabled ->
         instArr[icount] <- {
           Mesh = mesh
           Transforms = transforms
           Palettes = ValueSome palettes
           InstanceCount = instanceCount
+          BoneCount = boneCount
         }
 
         icount <- icount + 1
@@ -1284,19 +1321,29 @@ module internal PipelineFunctions =
       )
 
   /// Upload bone matrices to skinned shader — uses ReadOnlySpan for no-copy.
+  /// Palettes arrive in plain System.Numerics row-major layout
+  /// (<c>InverseBindPose[i] * pose[i]</c>); SetShaderValueMatrix expects the
+  /// transposed (raylib-native) layout, so transpose each matrix here. This is
+  /// the non-instanced path — at most 128 bones per draw, so the per-matrix
+  /// transpose stays off the instanced hot path.
   let inline uploadBoneMatrices
     (shader: Shader, boneLoc: int, bones: ReadOnlySpan<Matrix4x4>)
     =
     let count = min bones.Length 128
 
     for i = 0 to count - 1 do
-      Raylib.SetShaderValueMatrix(shader, boneLoc + i, bones[i])
+      Raylib.SetShaderValueMatrix(
+        shader,
+        boneLoc + i,
+        Matrix4x4.Transpose bones[i]
+      )
 
-  /// Upload a palette slice raw into a palette texture: texel (boneIndex*4+c, instance)
-  /// receives floats 4c..4c+3 of the instance's bone matrix — the same raw bytes
-  /// the boneMatrices uniform path hands to glUniformMatrix4fv, so the shader's
-  /// column-wise texelFetch reconstruction matches it exactly. The slice length
-  /// must equal the texture's texel count (UpdateTexture replaces the whole texture).
+  /// Upload a palette slice into a palette texture: texel (boneIndex*4+c, instance)
+  /// receives floats 4c..4c+3 of the instance's bone matrix. The palettes array
+  /// holds <c>InverseBindPose[i] * pose[i]</c> in plain System.Numerics row-major
+  /// layout — exactly the texel layout the shader's getBoneMatrix expects — so
+  /// the contiguous slice uploads verbatim: one pinned copy, no staging array,
+  /// no per-matrix work.
   let uploadPaletteChunk
     (palettes: Matrix4x4[])
     (offset: int)
@@ -1309,7 +1356,9 @@ module internal PipelineFunctions =
   /// instances: upload each chunk's palette slice to a pooled palette texture,
   /// bind it to paletteTextureSlot, and issue one DrawMeshInstanced per chunk.
   /// gl_InstanceID indexes the chunk-local palette row, so the texture height
-  /// matches the chunk's instance count.
+  /// matches the chunk's instance count. Chunks already uploaded this frame
+  /// (e.g. by the shadow pass — both passes render the same command list) are
+  /// rebound without re-uploading.
   let drawSkinnedInstancedChunks
     (
       pool: PaletteTexturePool,
@@ -1320,15 +1369,22 @@ module internal PipelineFunctions =
       mat: Material,
       transforms: Matrix4x4[],
       palettes: Matrix4x4[],
-      instanceCount: int
+      instanceCount: int,
+      boneCount: int
     ) =
-    let boneCount = palettes.Length / instanceCount
     let mutable start = 0
 
     while start < instanceCount do
       let chunkCount = min maxPaletteTextureRows (instanceCount - start)
-      let tex = pool.Acquire(boneCount * 4, chunkCount)
-      uploadPaletteChunk palettes (start * boneCount) tex
+
+      let tex =
+        match pool.TryGetUploaded(palettes, start) with
+        | ValueSome cached -> cached
+        | ValueNone ->
+          let tex = pool.Acquire(boneCount * 4, chunkCount)
+          uploadPaletteChunk palettes (start * boneCount) tex
+          pool.RememberUploaded(palettes, start, tex)
+          tex
 
       Rlgl.EnableShader shader.Id
       Rlgl.ActiveTextureSlot paletteTextureSlot
@@ -1342,12 +1398,15 @@ module internal PipelineFunctions =
 
       // raylib draws instances 0..count-1 of the array, so a chunk past the first
       // needs a sliced transforms array. The unchunked case passes it through
-      // untouched (no allocation on the common path).
+      // untouched (no allocation on the common path); chunked slices copy into
+      // a pooled scratch buffer instead of allocating per chunk.
       let chunkTransforms =
         if chunkCount = instanceCount then
           transforms
         else
-          transforms[start .. start + chunkCount - 1]
+          let scratch = pool.GetTransformScratch chunkCount
+          Array.Copy(transforms, start, scratch, 0, chunkCount)
+          scratch
 
       Raylib.DrawMeshInstanced(mesh, mat, chunkTransforms, chunkCount)
       start <- start + chunkCount
@@ -1616,7 +1675,8 @@ module internal PipelineFunctions =
       transforms: Matrix4x4[],
       palettes: Matrix4x4[],
       material: Material3D,
-      instanceCount: int
+      instanceCount: int,
+      boneCount: int
     ) =
     Raylib.BeginShaderMode shader
 
@@ -1655,7 +1715,8 @@ module internal PipelineFunctions =
       mat,
       transforms,
       palettes,
-      instanceCount
+      instanceCount,
+      boneCount
     )
 
     Raylib.EndShaderMode()
@@ -1901,7 +1962,7 @@ module internal PipelineFunctions =
           &mat,
           2
         )
-      | Command3D.DrawSkinnedMeshInstanced(_, _, _, mat, _) ->
+      | Command3D.DrawSkinnedMeshInstanced(_, _, _, mat, _, _) ->
         // The skinned-instanced variant is warmed directly — warmMaterial only
         // covers the original three variants.
         let key = MaterialKey.fromMaterial3D &mat
@@ -2041,7 +2102,8 @@ module internal PipelineFunctions =
             resources.SkinnedInstancedMaterial,
             draw.Transforms,
             palettes,
-            draw.InstanceCount
+            draw.InstanceCount,
+            draw.BoneCount
           )
         | ValueNone -> ()
 
@@ -2742,7 +2804,8 @@ type ForwardPipelineBase
                                            transforms,
                                            palettes,
                                            material,
-                                           instanceCount) ->
+                                           instanceCount,
+                                           boneCount) ->
         handleDrawSkinnedMeshInstanced(
           skinnedInstancedShader,
           &skinnedInstanced,
@@ -2757,7 +2820,8 @@ type ForwardPipelineBase
           transforms,
           palettes,
           material,
-          instanceCount
+          instanceCount,
+          boneCount
         )
       | _ -> ()
     | ValueSome userShader ->
@@ -2945,7 +3009,8 @@ type ForwardPipelineBase
                                          transforms,
                                          palettes,
                                          material,
-                                         instanceCount) ->
+                                         instanceCount,
+                                         boneCount) ->
       // Opt-in probe (memoized): the user shader shades its own skinned-instanced
       // draws when it declares `in mat4 instanceTransform`, the bone attributes,
       // and a `bonePalette` sampler (bonePaletteSize is optional). Otherwise the
@@ -2990,7 +3055,8 @@ type ForwardPipelineBase
           userEffectMaterial,
           transforms,
           palettes,
-          instanceCount
+          instanceCount,
+          boneCount
         )
       else
         // No opt-in — fall back to the built-in skinned-instanced variant.
@@ -3010,7 +3076,8 @@ type ForwardPipelineBase
           transforms,
           palettes,
           material,
-          instanceCount
+          instanceCount,
+          boneCount
         )
 
         Raylib.BeginShaderMode userShader
@@ -3444,7 +3511,8 @@ type ForwardPipelineBase
                                                      transforms,
                                                      palettes,
                                                      material,
-                                                     instanceCount) ->
+                                                     instanceCount,
+                                                     boneCount) ->
                   handleDrawSkinnedMeshInstanced(
                     skinnedInstancedShader,
                     &skinnedInstanced,
@@ -3459,7 +3527,8 @@ type ForwardPipelineBase
                     transforms,
                     palettes,
                     material,
-                    instanceCount
+                    instanceCount,
+                    boneCount
                   )
                 | _ -> ()
               | ValueSome _ ->

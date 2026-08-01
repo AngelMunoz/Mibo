@@ -108,7 +108,8 @@ type Command3D =
     transforms: Matrix4x4[] *
     palettes: Matrix4x4[] *
     material: Material3D *
-    instanceCount: int
+    instanceCount: int *
+    boneCount: int
   | DrawBillboardBatch of batch: BillboardBatch3D
   | BeginCamera of camera: Camera3D
   | BeginCameraConfig of config: Camera3DConfig
