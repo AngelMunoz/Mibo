@@ -112,7 +112,7 @@ module Animation3DClips =
   /// Returns <c>ValueNone</c> when both orders already match (no remap work at
   /// sample time). Otherwise the map is indexed by target bone index and yields
   /// the source bone index, or -1 when the source skeleton has no bone with
-  /// that name (the bone samples as a zeroed pose, like an out-of-range bone).
+  /// that name (the bone samples as its bind pose, like an out-of-range bone).
   /// </remarks>
   let buildBoneRemap
     (sourceBoneNames: string[])

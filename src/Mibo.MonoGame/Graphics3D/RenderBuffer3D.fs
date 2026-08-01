@@ -290,7 +290,10 @@ type RenderBuffer3D with
   /// palettes into the command's instance-major array. The instance count is
   /// <c>min(transforms.Length, poses.Length)</c>; 0 (or a boneless model —
   /// use <c>instanced</c> for those) emits nothing. On the OpenGL backend the
-  /// pipeline falls back to per-instance skinned draws.
+  /// pipeline falls back to per-instance skinned draws. Each pose's
+  /// <c>Palette</c> must hold at least one matrix per bone: a longer palette
+  /// truncates to its first <c>boneCount</c> entries, a shorter one throws
+  /// <see cref="T:System.ArgumentException"/>.
   /// </summary>
   member inline b.AddAnimatedModelInstanced
     (
@@ -308,7 +311,14 @@ type RenderBuffer3D with
       let palettes = b.RentMatrixArray(count * boneCount)
 
       for i = 0 to count - 1 do
-        poses[i].Palette.CopyTo(palettes, i * boneCount)
+        let src = poses[i].Palette
+
+        if src.Length < boneCount then
+          invalidArg
+            "poses"
+            $"poses[{i}].Palette has {src.Length} matrices, the model needs {boneCount} (one per bone). Pass poses evaluated for this model (Animation3DState.computePose / computePoseInto)."
+
+        Array.Copy(src, 0, palettes, i * boneCount, boneCount)
 
       b.Add(
         Command3D.DrawAnimatedModelInstanced(

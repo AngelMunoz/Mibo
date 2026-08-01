@@ -701,29 +701,80 @@ module Animation3DState =
       let t1 = ch.Keyframes[nf].Transform
       Matrix.Lerp(t0, t1, blend)
 
-  /// Per-mesh resolved channels for one clip: <c>Channels[i]</c> is the clip's
-  /// channel for mesh bone <c>i</c> (an empty channel when the clip doesn't
-  /// animate that bone). Built once per (clip, mesh) pair via the string-keyed
-  /// <c>Channels</c> dictionary — the per-frame pose loop then samples by bone
-  /// index instead of paying a dictionary lookup per bone per instance.
-  type private BoneChannelCache = {
-    BoneNames: string[]
-    Channels: Animation3DChannel[]
+  let private emptyChannel: Animation3DChannel = {
+    BoneName = ""
+    Keyframes = [||]
   }
 
+  /// Resolved channels for one clip, one entry per mesh the clip was posed
+  /// against: each entry's channels are the clip's channel for that mesh's
+  /// bone <c>i</c> (an empty channel when the clip doesn't animate that bone).
+  /// Built once per (clip, mesh) pair via the string-keyed <c>Channels</c>
+  /// dictionary — the per-frame pose loop then samples by bone index instead
+  /// of paying a dictionary lookup per bone per instance. A clip shared across
+  /// meshes keeps every mesh's entry instead of evicting and rebuilding the
+  /// resolved array per frame. The hit path is allocation-free.
+  type private BoneChannelCache() =
+    let entries = ResizeArray<struct (string[] * Animation3DChannel[])>(2)
+
+    /// <summary>The resolved channel array for <paramref name="boneNames"/>
+    /// (mesh identity is the <c>BoneNames</c> array reference), built and
+    /// appended on first use. Locked (explicit Monitor — an F# <c>lock</c>
+    /// closure would allocate per call) because ConditionalWeakTable factories
+    /// and pose evaluation may run on several threads.</summary>
+    member this.GetChannels
+      (
+        boneNames: string[],
+        channels: IReadOnlyDictionary<string, Animation3DChannel>
+      ) : Animation3DChannel[] =
+      System.Threading.Monitor.Enter this
+
+      try
+        let mutable resolved = Unchecked.defaultof<Animation3DChannel[]>
+        let mutable i = 0
+
+        while isNull resolved && i < entries.Count do
+          let struct (names, cached) = entries[i]
+
+          if obj.ReferenceEquals(names, boneNames) then
+            resolved <- cached
+          else
+            i <- i + 1
+
+        if isNull resolved then
+          let built =
+            Array.init boneNames.Length (fun i ->
+              match channels.TryGetValue boneNames[i] with
+              | true, ch -> ch
+              | _ -> emptyChannel)
+
+          entries.Add(struct (boneNames, built))
+          built
+        else
+          resolved
+      finally
+        System.Threading.Monitor.Exit this
+
   /// Keyed by each clip's <c>Channels</c> dictionary (a unique reference per
-  /// clip), so no public surface changes. A clip re-posed against a different
-  /// mesh rebuilds its entry (mesh identity is the <c>BoneNames</c> array ref).
+  /// clip), so no public surface changes. Each cache holds one entry per mesh
+  /// the clip was posed against (mesh identity is the <c>BoneNames</c> array
+  /// ref).
   let private boneChannelCaches =
     System.Runtime.CompilerServices.ConditionalWeakTable<
       IReadOnlyDictionary<string, Animation3DChannel>,
       BoneChannelCache
      >()
 
-  let private emptyChannel: Animation3DChannel = {
-    BoneName = ""
-    Keyframes = [||]
-  }
+  /// Cached <c>GetValue</c> factory delegate — an inline lambda would allocate
+  /// a closure per call on the per-instance hot path.
+  let private newBoneChannelCache =
+    System
+      .Runtime.CompilerServices
+      .ConditionalWeakTable<
+        IReadOnlyDictionary<string, Animation3DChannel>,
+        BoneChannelCache
+        >
+      .CreateValueCallback(fun _ -> BoneChannelCache())
 
   let private channelsForBones
     (clip: Animation3DClip)
@@ -732,35 +783,11 @@ module Animation3DState =
     if isNull clip.Channels then
       Array.create boneNames.Length emptyChannel
     else
-      // Explicit out-parameter: the tuple-return form of TryGetValue over a
-      // reference-typed value allocates a Tuple per call — this loop is the
-      // per-instance hot path and must stay allocation-free.
-      let mutable cache = Unchecked.defaultof<BoneChannelCache>
-
-      if
-        boneChannelCaches.TryGetValue(clip.Channels, &cache)
-        && obj.ReferenceEquals(cache.BoneNames, boneNames)
-      then
-        cache.Channels
-      else
-        // Replace a stale entry (same clip, different mesh), then fetch-or-add.
-        // GetValue's factory may run concurrently on several threads; the
-        // table keeps one winner and the losers are harmless garbage.
-        boneChannelCaches.Remove clip.Channels |> ignore
-
-        boneChannelCaches
-          .GetValue(
-            clip.Channels,
-            fun channels -> {
-              BoneNames = boneNames
-              Channels =
-                Array.init boneNames.Length (fun i ->
-                  match channels.TryGetValue boneNames[i] with
-                  | true, ch -> ch
-                  | _ -> emptyChannel)
-            }
-          )
-          .Channels
+      // GetValue's factory may run concurrently on several threads; the table
+      // keeps one winner and the losers are harmless empty objects.
+      boneChannelCaches
+        .GetValue(clip.Channels, newBoneChannelCache)
+        .GetChannels(boneNames, clip.Channels)
 
   /// <summary>
   /// Compute the full bone pose for the current animation frame: per-bone

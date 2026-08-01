@@ -223,6 +223,12 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatrices"/>; grown on demand.</summary>
   member val GroupPaletteScratch: Matrix[] = [||] with get, set
 
+  /// <summary>Pooled DX12 group descriptors ((start, count, null-texture) triples)
+  /// for the grouped-uniform skinned + instanced depth path; grown on demand — see
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.planGroups"/>.</summary>
+  member val GroupChunkScratch: struct (int * int * Texture2D)[] =
+    [||] with get, set
+
   /// <summary>CPU staging array for the per-instance <c>VertexInstanceWorld</c> rows. Grows to the
   /// largest instanceCount seen across collected instanced casters. Reused across frames.</summary>
   member val InstanceStaging =
@@ -932,7 +938,8 @@ module internal ShadowPass =
   /// the <c>DepthSkinnedInstancedGrouped</c> technique reads the
   /// <c>bonePaletteGroup</c> constant array instead, chunked to
   /// <c>PaletteGroup.MaxMatrices / boneCount</c> instances per group. On the OpenGL
-  /// backend (no vertex texture fetch) falls back to per-instance <c>DepthSkinned</c>
+  /// backend (no vertex texture fetch) — and on DX12 when a skeleton exceeds
+  /// <c>PaletteGroup.MaxMatrices</c> — falls back to per-instance <c>DepthSkinned</c>
   /// draws with the bone palette uploaded as a uniform array. matModel is Identity in
   /// the instanced path — the per-instance world matrix on stream 1 IS the model
   /// transform (same convention as DepthInstanced).
@@ -948,7 +955,27 @@ module internal ShadowPass =
     (shouldRender: int -> bool)
     =
     if count > 0 then
-      if PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL then
+      // A skeleton beyond the grouped-uniform budget can't ride the DX12
+      // bonePaletteGroup constant array — render the whole span through the
+      // same per-instance fallback as OpenGL, keeping depth consistent with
+      // the forward pass.
+      let dx12BeyondGroupBudget =
+        if PlatformInfo.GraphicsBackend = GraphicsBackend.DirectX12 then
+          let mutable beyond = false
+          let mutable d = 0
+
+          while not beyond && d < count do
+            beyond <- draws[d].BoneCount > PaletteGroup.MaxMatrices
+            d <- d + 1
+
+          beyond
+        else
+          false
+
+      if
+        PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL
+        || dx12BeyondGroupBudget
+      then
         // ── GL fallback: per-instance DepthSkinned draws (uniform bone palette). ──
         effect.CurrentTechnique <- effect.Techniques["DepthSkinned"]
         let boneScratch = res.BonePaletteScratch
@@ -1023,29 +1050,35 @@ module internal ShadowPass =
                 // Chunk driver (mirrors the forward pass): palette-texture chunks
                 // from the shared per-frame cache on DX11/Vulkan; uniform groups
                 // with a null paletteTex on DX12.
-                let chunks =
+                let chunks, chunkTotal =
                   if isDX12 then
-                    let groupSize = max 1 (PaletteGroup.MaxMatrices / boneCount)
+                    // boneCount <= MaxMatrices here — larger skeletons took the
+                    // per-instance fallback at the top of the span.
+                    let needed =
+                      PaletteGroup.groupCountFor instanceCount boneCount
 
-                    Array.init
-                      ((instanceCount + groupSize - 1) / groupSize)
-                      (fun i ->
-                        let start = i * groupSize
+                    if res.GroupChunkScratch.Length < needed then
+                      res.GroupChunkScratch <- Array.zeroCreate needed
 
-                        struct (start,
-                                min groupSize (instanceCount - start),
-                                null))
+                    (res.GroupChunkScratch,
+                     PaletteGroup.planGroups
+                       instanceCount
+                       boneCount
+                       res.GroupChunkScratch)
                   else
-                    res.PaletteChunks.Obtain(
-                      gd,
-                      draw.Palettes,
-                      boneCount,
-                      instanceCount
-                    )
+                    let obtained =
+                      res.PaletteChunks.Obtain(
+                        gd,
+                        draw.Palettes,
+                        boneCount,
+                        instanceCount
+                      )
+
+                    (obtained, obtained.Length)
 
                 let mutable chunkIdx = 0
 
-                while chunkIdx < chunks.Length do
+                while chunkIdx < chunkTotal do
                   let struct (chunkStart, chunkCount, paletteTex) =
                     chunks[chunkIdx]
 

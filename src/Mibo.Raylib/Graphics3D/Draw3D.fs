@@ -113,7 +113,12 @@ module Draw3D =
     buffer.Add(Command3D.drawLine3D start finish color)
     buffer
 
-  /// <summary>Draws a skinned mesh with bone matrix data.</summary>
+  /// <summary>
+  /// Draws a skinned mesh with bone matrix data. <paramref name="bones"/>
+  /// carries the palette in plain System.Numerics row-major layout
+  /// (<c>bones[i] = InverseBindPose[i] * pose[i]</c>), NOT pre-transposed —
+  /// the pipeline transposes at upload where the shader contract needs it.
+  /// </summary>
   let inline drawSkinnedMesh
     (mesh: Mesh)
     (transform: Matrix4x4)

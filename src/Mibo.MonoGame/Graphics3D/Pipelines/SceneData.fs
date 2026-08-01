@@ -84,6 +84,47 @@ module internal PaletteGroup =
   [<Literal>]
   let MaxMatrices = 320
 
+  /// <summary>Instances per group for boneCount; 0 when boneCount exceeds
+  /// MaxMatrices (the caller must fall back to per-instance draws).</summary>
+  let groupSizeFor(boneCount: int) : int =
+    if boneCount > MaxMatrices then
+      0
+    else
+      max 1 (MaxMatrices / boneCount)
+
+  /// <summary>Number of groups for instanceCount at boneCount; 0 when boneCount
+  /// exceeds MaxMatrices.</summary>
+  let groupCountFor (instanceCount: int) (boneCount: int) : int =
+    let groupSize = groupSizeFor boneCount
+
+    if groupSize = 0 then
+      0
+    else
+      (instanceCount + groupSize - 1) / groupSize
+
+  /// <summary>Fill scratch with (start, count, null-texture) group descriptors
+  /// for the DX12 grouped-uniform skinned-instanced path; returns the group
+  /// count, or -1 when boneCount exceeds MaxMatrices (scratch contents are then
+  /// undefined). scratch must hold at least groupCountFor entries.</summary>
+  let planGroups
+    (instanceCount: int)
+    (boneCount: int)
+    (scratch: struct (int * int * Texture2D)[])
+    : int =
+    if boneCount > MaxMatrices then
+      -1
+    else
+      let groupSize = groupSizeFor boneCount
+      let total = groupCountFor instanceCount boneCount
+
+      for i = 0 to total - 1 do
+        let start = i * groupSize
+
+        scratch[i] <-
+          struct (start, min groupSize (instanceCount - start), null)
+
+      total
+
 /// <summary>
 /// Pools <see cref="T:Microsoft.Xna.Framework.Graphics.Texture2D"/> bone-palette textures
 /// (<see cref="F:Microsoft.Xna.Framework.Graphics.SurfaceFormat.Vector4"/>) keyed by

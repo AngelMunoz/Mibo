@@ -116,14 +116,18 @@ none of these renders unshadowed at no cost.
 | `shadowBiases[i]` | `float[]` | Per-caster receiver-side bias (prevents self-shadow acne; raylib adds an in-shader slope-scale term, MonoGame applies it directly) |
 | `pointLightShadowIdx[i]` | `int` | Per-point-light caster slot, `-1` = none |
 | `spotLightShadowIdx[i]` | `int` | Per-spot-light caster slot, `-1` = none |
-| `shadowAtlas` | `sampler2D` | The depth atlas (declared as `sampler2D shadowAtlas : register(s5)` on MonoGame) |
+| `shadowAtlas` | `sampler2D` | The depth atlas (MonoGame DX11/Vulkan: `Texture2D shadowAtlas : register(t5); SamplerState shadowAtlasSampler : register(s5);` — MonoGame OpenGL: `sampler2D shadowAtlas : register(s5)`) |
 
 > **Shadow sampler slot differs by backend.** raylib binds the atlas to
 > **slot 15** (and sets the `shadowAtlas` sampler uniform to 15). MonoGame binds
 > it to **slot 5** (PointClamp) and exposes it through the effect's `shadowAtlas`
-> sampler parameter (mgfxc names the sampler after its HLSL declaration, not the
-> register slot — so declare `sampler2D shadowAtlas : register(s5)`, matching the
-> built-in `ForwardPbr.fx`). Both backends use the same uniform name: `shadowAtlas`.
+> parameter (mgfxc names the parameter after its HLSL declaration, not the
+> register slot — so on DX11/Vulkan declare
+> `Texture2D shadowAtlas : register(t5); SamplerState shadowAtlasSampler : register(s5);`
+> and sample with `shadowAtlas.Sample(shadowAtlasSampler, uv)`; on OpenGL declare
+> `sampler2D shadowAtlas : register(s5)`. The built-in `ForwardPbr.fx` switches
+> between the two forms with an `#if OPENGL` macro). Both backends use the same
+> uniform name: `shadowAtlas`.
 
 ### Skinning (only for skinned draws)
 
@@ -247,11 +251,18 @@ mat4 getBoneMatrix(int boneIndex) {
 **MonoGame (HLSL):** expose a technique named **`SkinnedInstanced`** whose
 vertex shader combines the skinned input (`BLENDWEIGHT0`/`BLENDINDICES0`), the
 instance rows (`TEXCOORD1..4`), and a per-instance palette row index
-(`PaletteOffset : TEXCOORD6`), sampling the palette texture with
-`SAMPLE_TEX_LOD`. Texel `boneIndex*4+r` is row `r` of the bone's matrix.
+(`PaletteOffset : TEXCOORD6`), sampling the palette texture at LOD 0. Texel
+`boneIndex*4+r` is row `r` of the bone's matrix; the texel-center UV is
+`((boneIndex*4+r + 0.5) / paletteTexSize.x, (instance + 0.5) / paletteTexSize.y)`.
+The technique ships only where vertex texture fetch exists (DX11/Vulkan — the
+OpenGL profile compiles it out, see the note below), so declare the texture
+the SM 4+ way: `Texture2D` + `SamplerState` + `.SampleLevel`. (The built-in
+`ForwardPbr.fx` hides this split behind `DECLARE_TEX`/`SAMPLE_TEX_LOD` macros;
+those macros are not visible to your effect, so spell the pair out.)
 
 ```hlsl
-sampler2D paletteTex : register(s6);
+Texture2D paletteTex : register(t6);
+SamplerState paletteTexSampler : register(s6);
 float2 paletteTexSize;   // (boneCount * 4, instanceCount)
 
 struct VS_INPUT_SKINNED_INSTANCED {
@@ -266,6 +277,13 @@ struct VS_INPUT_SKINNED_INSTANCED {
   float4 Row3 : TEXCOORD4;
   float  PaletteOffset : TEXCOORD6;   // instance row in the palette texture
 };
+
+float4 paletteBoneRow(int boneIndex, int row, float instance) {
+  float2 uv = float2(
+    (float(boneIndex * 4 + row) + 0.5) / paletteTexSize.x,
+    (instance + 0.5) / paletteTexSize.y);
+  return paletteTex.SampleLevel(paletteTexSampler, uv, 0);
+}
 ```
 
 > The OpenGL shader profile has no vertex texture fetch, so
@@ -283,7 +301,8 @@ struct VS_INPUT_SKINNED_INSTANCED {
 > `bonePaletteGroup` / `groupBoneCount` params when all 8 techniques are
 > present in one file. User effects that declare a `SkinnedInstanced`
 > technique fall back to per-instance `Skinned` draws on DX12 (the grouped
-> path is framework-PBR-only).
+> path is framework-PBR-only). A model with more than 320 bones exceeds the
+> group budget and takes the same per-instance fallback.
 
 ## `drawMeshEffect` (MonoGame only)
 
@@ -495,6 +514,33 @@ buffer
   uploads are clamped to the effect's declared element count, and the light count
   uniforms (`pointLightCount`/`spotLightCount`) are clamped to the declared slots
   as well.
+
+## Contract changes
+
+Breaking changes and additions to this contract, by Mibo version. Additions
+are opt-in: a shader that declares nothing new renders exactly as before.
+
+### 4.x
+
+- **Breaking: 3.x -> 4.x — raylib skinned palettes.** Palettes handed to
+  `skinnedMesh` / `DrawSkinnedMesh` — and returned by
+  `AnimatedMesh.computeBoneMatrices` — are now plain System.Numerics
+  row-major matrices (`palette[i] = InverseBindPose[i] * pose[i]`); the
+  pipeline transposes at upload. In 3.x the same APIs expected pre-transposed
+  (raylib-native) matrices. If you build palettes yourself, drop your own
+  transpose.
+- **Added: 4.x — skinned + instanced opt-in.** The palette texture (MonoGame
+  `paletteTex` t6 / `paletteTexSampler` s6; raylib `bonePalette` unit 14), the
+  `paletteTexSize` / `bonePaletteSize` size uniforms, the
+  `PaletteOffset : TEXCOORD6` instance field, and the `SkinnedInstanced`
+  technique name — see [Instancing (opt-in)](#instancing-opt-in). No existing
+  uniform changed name, meaning, or slot.
+- **Limits: 4.x.** MonoGame DX12: the grouped path holds at most 320 bone
+  matrices (`bonePaletteGroup[320]`); models with more bones fall back to
+  per-instance `Skinned` draws. raylib: the palette texture is `boneCount * 4`
+  texels wide — OpenGL only guarantees a 1024-texel texture (256 bones);
+  larger skeletons depend on the driver's limit (8192+ texels — 2048+ bones —
+  is typical on desktop).
 
 ## See also
 

@@ -37,8 +37,11 @@ let ShaderList = [
   "DepthShadow.fx"
 ]
 
-// DX12-only shaders — use a named cbuffer (register b1) which other backends reject.
-// ForwardPbrGrouped.fx and DepthShadowGrouped.fx are loaded only on DX12 at runtime.
+// DX12-only shaders — only the DX12 runtime lacks vertex texture fetch, so these keep
+// their palette in plain globals ($Globals at b0). A named cbuffer at b1 was tried and
+// rejected: the MonoGame native DX12 backend only wires b0 (see PaletteGroup in
+// SceneData.fs). ForwardPbrGrouped.fx and DepthShadowGrouped.fx are loaded only on DX12
+// at runtime.
 let Dx12OnlyShaderList = [ "ForwardPbrGrouped.fx"; "DepthShadowGrouped.fx" ]
 
 let commandsToExecute = [

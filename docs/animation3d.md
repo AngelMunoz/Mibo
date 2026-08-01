@@ -161,11 +161,17 @@ buffer
 - `poses` carries one caller-evaluated `BonePose` per instance — compute each
   unit's pose once and share it with bone queries / attachment draws for that
   unit (see above). The instance count is `min(transforms.Length, poses.Length)`.
+  Each pose's palette must cover the model's bones — a shorter palette raises
+  an `ArgumentException`; extra entries beyond the bone count are ignored.
 - `?material` takes a `MaterialOverride` (`All` for a whole-model override,
   `PerMesh` for a per-sub-mesh resolver), like the model draw members.
 - `?colors` tints each instance — **MonoGame only**, like `instanced`.
 - Per-instance bone palettes ride a texture the vertex shader samples (raylib
   indexes it by `gl_InstanceID`), so draws are chunked at 2048 instances.
+  On DX12 (no vertex texture fetch) palettes ride a per-group constant array
+  instead, so draws are chunked into groups of `320 / boneCount` instances —
+  a model with more than 320 bones falls back to per-instance skinned draws
+  there (identical output, no batching win).
 - **Automatic sub-mesh merging (MonoGame):** mesh parts that share a parent
   bone, vertex layout, and material draw as one merged part per chunk instead
   of one draw each — on DX12, where palette groups are small, this is a large
@@ -194,12 +200,16 @@ let poses = Array.init count (fun _ -> BonePose.empty)
 
 // Per frame: zero allocation after the first frame
 for i = 0 to count - 1 do
-    Animation3DState.computePoseInto(animMesh, states[i], &poses[i])
+    poses[i] <- Animation3DState.computePoseInto(animMesh, states[i], poses[i])
 
 buffer
   .animatedModelInstanced(sharedModel, transforms, poses)
   .drop()
 ```
+
+`computePoseInto` takes the existing `BonePose` by value and **returns** it —
+assign the result back: the returned struct carries the (possibly regrown)
+buffers, so discarding it loses the reuse the call is meant to give you.
 
 For moderate counts (< 500) the simpler `Array.map (fun u -> computePose ...)`
 pattern is fine — the garbage is small and collected cheaply.

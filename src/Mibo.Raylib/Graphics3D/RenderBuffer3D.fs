@@ -350,6 +350,12 @@ type RenderBuffer3D with
   /// <paramref name="poses"/> carries one caller-evaluated <c>BonePose</c> per
   /// instance (share them with bone queries / attachment draws). The instance
   /// count is <c>min(transforms.Length, poses.Length)</c>; 0 emits nothing.
+  /// Each pose's <c>Palette</c> must contain at least <c>boneCount</c>
+  /// matrices (one per bone): longer arrays are truncated to their first
+  /// <c>boneCount</c> entries, shorter ones raise
+  /// <see cref="T:System.ArgumentException"/>. A boneless model
+  /// (<c>boneCount</c> = 0) emits nothing on this instanced path (matches the
+  /// MonoGame backend).
   /// <paramref name="material"/> overrides the authored materials
   /// (<c>MaterialOverride.All</c> / <c>MaterialOverride.PerMesh</c>).
   /// <paramref name="colors"/> is MonoGame-only — <c>ValueSome</c> raises
@@ -372,14 +378,21 @@ type RenderBuffer3D with
       )
     | ValueNone ->
       let count = min transforms.Length poses.Length
+      let boneCount = am.Mesh.BoneCount
 
-      if count > 0 then
-        let boneCount = am.Mesh.BoneCount
+      if count > 0 && boneCount > 0 then
         let palettes = ArrayPool<Matrix4x4>.Shared.Rent(count * boneCount)
         b.RegisterRentedArray(palettes)
 
         for i = 0 to count - 1 do
-          poses[i].Palette.CopyTo(palettes, i * boneCount)
+          let src = poses[i].Palette
+
+          if src.Length < boneCount then
+            invalidArg
+              "poses"
+              $"poses[{i}].Palette has {src.Length} matrices, the model needs {boneCount} (one per bone). Pass poses evaluated for this model (Animation3DState.computePose / computePoseInto)."
+
+          Array.Copy(src, 0, palettes, i * boneCount, boneCount)
 
         let model = am.State.Model
         let meshes = model.MeshesAsSpan()
@@ -453,6 +466,13 @@ type RenderBuffer3D with
         )
       ))
 
+  /// <summary>
+  /// Draws a skinned mesh with an explicit bone palette.
+  /// <paramref name="bones"/> carries the palette in plain System.Numerics
+  /// row-major layout (<c>bones[i] = InverseBindPose[i] * pose[i]</c>), NOT
+  /// pre-transposed — the pipeline transposes at upload where the shader
+  /// contract needs it.
+  /// </summary>
   member inline b.AddSkinnedMesh
     (mesh: Mesh, transform: Matrix4x4, material: Material3D, bones: Matrix4x4[])
     =

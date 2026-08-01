@@ -110,7 +110,7 @@ journal. Keep these rules in mind:
 
 ### DisableRuntimeMarshalling + void\* Bug
 
-The project uses `[<DisableRuntimeMarshalling>]`. This affects how `SetShaderValue` and similar FFI calls work:
+The raylib-cs uses `[<DisableRuntimeMarshalling>]`. This affects how `SetShaderValue` and similar FFI calls work:
 
 - **DO NOT** pass raw `int`, `float32`, `Vector3` etc. directly as `void*` arguments. The runtime treats the value itself as a pointer address (e.g., passing `1` reads from address `0x1`, causing access violations).
 - **ALWAYS** use `fixed + NativePtr.toVoidPtr` for scalar/vec3/vec4 uniforms:
@@ -151,23 +151,3 @@ When capturing the View-Projection matrix for shadow mapping:
 - **MUST** capture inside `BeginMode3D` using `Rlgl.GetMatrixModelview() * Rlgl.GetMatrixProjection()`
 - This matches what the batch computes for `mvp` (for identity model transforms)
 - Precomputing VP outside `BeginMode3D` or using `Matrix4x4.CreateLookAt * CreatePerspectiveFieldOfView` may produce different results due to raylib's internal matrix adjustments
-
-#### GPU skinning bone attributes
-
-raylib uploads the `vertexBoneIndices` (location 7) / `vertexBoneWeights` (location 8) vertex buffers only when natively compiled with `SUPPORT_GPU_SKINNING` — off by default in `config.h`, and off in the raylib-cs NuGet native builds. Without them every vertex falls back to bone 0 and skinned meshes render in bind pose. `Mibo.Raylib`'s `Animation3DState.create`/`createByIndex` and `AnimatedMesh.fromModel` detect the empty VBO slots and upload the buffers from managed code via `Rlgl.*` (mirroring `UploadMesh`'s bone branch), writing the ids back into `vboId[7]/[8]` so `UnloadMesh` still owns them. It is a no-op against a natively skinning-enabled build. Keep any new skinned-model entry point routing through that upload.
-
-#### Bone order across animation files
-
-raylib 6 `ModelAnimation` carries no bone names — keyframe poses follow the bone order of the file they were loaded from. Clips from a differently-ordered skeleton file (e.g. KayKit's MovementBasic vs General rigs) drive the wrong bones (mirrored limbs). `Animation3DClips.merge` remaps by bone name at load; `computePose` consults the remap when sampling. The legacy `UpdateModelAnimation` path cannot remap — same-file clips only. MonoGame clips are name-keyed and immune.
-
-## Instancing opt-in for `beginEffect` shaders
-
-Instanced draws inside a `Draw3D.beginEffect`/`endEffect` scope are shaded by the user shader only when the shader opts in. The opt-in convention is backend-specific (each engine feeds per-instance data differently); the data is the same — a per-instance 4×4 world matrix.
-
-- **raylib:** the shader declares `in mat4 instanceTransform;` — that declaration _is_ the opt-in. On raylib 6.0, `DrawMeshInstanced` binds the per-instance VBO through the dedicated `SHADER_LOC_VERTEX_INSTANCETRANSFORM` slot, which raylib auto-resolves from the `instanceTransform` attribute at shader load (no manual `Locs` wiring). `matModel` is unused for instanced draws; `viewProj` is view-projection only.
-- **MonoGame:** the effect exposes a technique named `Instanced` whose vertex shader reads the per-instance matrix as four `float4` rows on `TEXCOORD1..4` (the `VertexInstanceWorld` layout, usage indices 1-4 to avoid the mesh's `TEXCOORD0` on stream 0). The pipeline binds the two-stream vertex layout (mesh on stream 0, instance rows on stream 1) and calls `DrawInstancedPrimitives` through the user effect.
-- **MonoGame:** colored instanced draws (`.instanced(..., colors = ...)`) additionally feed a `float4` per-instance color on `TEXCOORD5` (the `VertexInstanceWorldColor` layout, offset 64). An effect may declare `float4 InstanceColor : TEXCOORD5` to receive it; effects that don't declare it still work — the built-in fallback shades colored draws. Instances beyond the `colors` array length get white.
-
-A shader/effect that doesn't declare the opt-in is unaffected: instanced draws fall back to the built-in PBR instanced path. Skinned + instanced draws are not supported (no per-instance bone palette).
-
-See `docs/shader-uniforms.md` → "Instancing (opt-in)" for the full contract and example shaders.

@@ -1273,6 +1273,10 @@ type Draw =
   /// Draws a skinned mesh with an explicit bone palette and material.
   /// <b>raylib only</b> — MonoGame's skinned path goes through AnimatedModel;
   /// use <c>animatedModel(..., pose)</c> for the MonoGame explicit-palette path.
+  /// <paramref name="bones"/> carries the palette in plain System.Numerics
+  /// row-major layout (<c>bones[i] = InverseBindPose[i] * pose[i]</c>), NOT
+  /// pre-transposed — the raylib backend this member serves transposes at
+  /// upload where the shader contract needs it.
   /// </summary>
   [<Extension>]
   static member inline skinnedMesh<'B, 'M, 'X, 'Mat, 'Bones

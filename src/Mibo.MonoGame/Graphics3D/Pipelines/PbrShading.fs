@@ -194,6 +194,17 @@ type internal PbrResources() =
   /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatrices"/>; grown on demand.</summary>
   member val GroupPaletteScratch: Matrix[] = [||] with get, set
 
+  /// <summary>Pooled DX12 group descriptors ((start, count, null-texture) triples)
+  /// for the grouped-uniform skinned + instanced path; grown on demand — see
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.planGroups"/>.</summary>
+  member val GroupChunkScratch: struct (int * int * Texture2D)[] =
+    [||] with get, set
+
+  /// <summary>Pooled per-part invariants for skinned + instanced draws; cleared
+  /// and rebuilt per command (replaces a fresh ResizeArray per command).</summary>
+  member val SkinnedInstancedPartInfos =
+    ResizeArray<SkinnedInstancedPartInfo>() with get
+
   /// <summary>Per-command draw units for skinned + instanced draws (merged groups or
   /// original parts); cleared and rebuilt per command — see
   /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.MergedModelParts.tryGet"/>.</summary>
@@ -1223,16 +1234,20 @@ module internal PbrShading =
     if count > 0 && paletteLen > 0 && boneCount > 0 then
       // Per-instance fallback: OpenGL (no vertex texture fetch). DX12 uses the
       // grouped-uniform path (SkinnedInstancedGrouped via the isolated ForwardPbrGrouped
-      // effect — the main effect's grouped params are dropped by DX12 mgfx reflection).
+      // effect — the main effect's grouped params are dropped by DX12 mgfx reflection)
+      // unless the skeleton exceeds the grouped-uniform budget
+      // (PaletteGroup.MaxMatrices) — more bones than a group holds can't ride the
+      // constant array, so DX12 falls back to per-instance draws too.
       // User effects on DX12 still fall back to per-instance (a user effect's
       // SkinnedInstanced technique expects the VS-texture contract — broken on DX12;
       // the grouped-uniform path is framework-PBR-only).
       let perInstanceFallback =
         isOpenGLBackend()
         || (isDirectX12Backend()
-            && (match target with
-                | UserEffectTarget _ -> true
-                | PbrTarget -> false))
+            && (boneCount > PaletteGroup.MaxMatrices
+                || (match target with
+                    | UserEffectTarget _ -> true
+                    | PbrTarget -> false)))
 
       if perInstanceFallback then
         // ── Per-instance draws through the existing Skinned path, slicing each
@@ -1352,21 +1367,29 @@ module internal PbrShading =
           // DX12: uniform GROUPS of PaletteGroup.MaxMatrices / boneCount instances
           // with a null paletteTex — palettes ride the bonePaletteGroup constant
           // array (no working vertex texture fetch on DX12).
-          let chunks =
+          let chunks, chunkTotal =
             if isDirectX12Backend() then
-              let groupSize = max 1 (PaletteGroup.MaxMatrices / boneCount)
+              // boneCount <= MaxMatrices here — larger skeletons took the
+              // per-instance fallback above.
+              let needed = PaletteGroup.groupCountFor count boneCount
 
-              Array.init ((count + groupSize - 1) / groupSize) (fun i ->
-                let start = i * groupSize
-                struct (start, min groupSize (count - start), null))
+              if res.GroupChunkScratch.Length < needed then
+                res.GroupChunkScratch <- Array.zeroCreate needed
+
+              (res.GroupChunkScratch,
+               PaletteGroup.planGroups count boneCount res.GroupChunkScratch)
             else
-              res.PaletteChunks.Obtain(gd, palettes, boneCount, count)
+              let obtained =
+                res.PaletteChunks.Obtain(gd, palettes, boneCount, count)
+
+              (obtained, obtained.Length)
 
           // Per-part invariants hoisted out of the chunk loop: technique,
           // material, and matModel don't vary across chunks. PerMesh material
           // resolvers index the model's parts in pipeline iteration order — the
           // resolver now runs once per part per command instead of per chunk.
-          let partInfos = ResizeArray<SkinnedInstancedPartInfo>()
+          let partInfos = res.SkinnedInstancedPartInfos
+          partInfos.Clear()
           let mutable partIndex = 0
 
           for mesh in model.Meshes do
@@ -1509,7 +1532,7 @@ module internal PbrShading =
 
           let mutable chunkIdx = 0
 
-          while chunkIdx < chunks.Length do
+          while chunkIdx < chunkTotal do
             let struct (chunkStart, chunkCount, paletteTex) = chunks[chunkIdx]
 
             let instVB =
