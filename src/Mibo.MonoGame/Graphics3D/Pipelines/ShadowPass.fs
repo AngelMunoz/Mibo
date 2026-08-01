@@ -292,6 +292,11 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   member val CollectedInstancedCount = 0 with get, set
   member val CollectedSkinnedInstancedCount = 0 with get, set
 
+  /// <summary>Running <c>EnableShadows</c>/<c>DisableShadows</c> state while a collection
+  /// walk is in progress (set by <c>ShadowPass.beginCollect</c>, read by
+  /// <c>ShadowPass.collectCommand</c>). Outside a collection walk its value is stale.</summary>
+  member val CollectCastEnabled = true with get, set
+
 /// <summary>The extracted shadow pass: caster geometry types, per-light ViewProj builders, and the pass body.</summary>
 module internal ShadowPass =
 
@@ -490,14 +495,294 @@ module internal ShadowPass =
         )
 
   /// <summary>
+  /// Starts a geometry-collection walk: resets the collected counts and the running
+  /// <c>EnableShadows</c>/<c>DisableShadows</c> state on <paramref name="res"/>. Pair with
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.collectCommand"/> per command —
+  /// either driven by <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.collectGeometry"/>
+  /// over a buffer slice, or inline in the forward pipeline's pre-scan (single-camera frames,
+  /// so the frame's buffer is walked twice instead of three times).
+  /// </summary>
+  let beginCollect (res: ShadowResources) (initialCastEnabled: bool) =
+    res.CollectCastEnabled <- initialCastEnabled
+    res.CollectedDrawCount <- 0
+    res.CollectedSkinnedCount <- 0
+    res.CollectedModelPartCount <- 0
+    res.CollectedInstancedCount <- 0
+    res.CollectedSkinnedInstancedCount <- 0
+
+  /// <summary>
+  /// Collects one buffer command into the pooled arrays on <paramref name="res"/>, recording a
+  /// <c>CastsShadow</c> flag per entry (snapshot of the running cast state — see
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.beginCollect"/>). Shared by the
+  /// shadow render (filters to <c>CastsShadow = true</c>) and the scene-depth render (all
+  /// entries). <paramref name="gd"/> is used only to lazily build merged part groups for
+  /// skinned + instanced models (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.MergedModelParts.tryGet"/>).
+  /// </summary>
+  let collectCommand
+    (gd: GraphicsDevice)
+    (res: ShadowResources)
+    (cmd: Command3D)
+    =
+    let castEnabled = res.CollectCastEnabled
+    let mutable shadowDraws = res.Draws
+    let mutable shadowSkinnedDraws = res.SkinnedDraws
+    let mutable shadowInstancedDraws = res.InstancedDraws
+    let mutable shadowModelPartDraws = res.ModelPartDraws
+    let mutable shadowSkinnedInstancedDraws = res.SkinnedInstancedDraws
+
+    match cmd with
+    | Command3D.EnableShadows -> res.CollectCastEnabled <- true
+    | Command3D.DisableShadows -> res.CollectCastEnabled <- false
+    | Command3D.DrawPrimitive(mesh, transform, _) ->
+      if res.CollectedDrawCount >= shadowDraws.Length then
+        Array.Resize(&shadowDraws, shadowDraws.Length * 2)
+        res.Draws <- shadowDraws
+
+      let worldBounds = mesh.Bounds.Transform transform
+
+      shadowDraws[res.CollectedDrawCount] <- {
+        Mesh = mesh
+        Transform = transform
+        WorldBounds = worldBounds
+        CastsShadow = castEnabled
+      }
+
+      res.CollectedDrawCount <- res.CollectedDrawCount + 1
+    | Command3D.DrawAnimatedModel(model, transform, bones) ->
+      for mesh in model.Meshes do
+        for part in mesh.MeshParts do
+          match part.Effect with
+          | :? SkinnedEffect ->
+            if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
+              Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+              res.SkinnedDraws <- shadowSkinnedDraws
+
+            shadowSkinnedDraws[res.CollectedSkinnedCount] <- {
+              Part = part
+              Transform = transform
+              Bones = bones
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedSkinnedCount <- res.CollectedSkinnedCount + 1
+          | _ -> ()
+    | Command3D.DrawModel(model, transform) ->
+      for mesh in model.Meshes do
+        for part in mesh.MeshParts do
+          match part.Effect with
+          | :? SkinnedEffect ->
+            if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
+              Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+              res.SkinnedDraws <- shadowSkinnedDraws
+
+            shadowSkinnedDraws[res.CollectedSkinnedCount] <- {
+              Part = part
+              Transform = transform
+              Bones = Array.empty
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedSkinnedCount <- res.CollectedSkinnedCount + 1
+          | _ ->
+            if res.CollectedModelPartCount >= shadowModelPartDraws.Length then
+              Array.Resize(
+                &shadowModelPartDraws,
+                shadowModelPartDraws.Length * 2
+              )
+
+              res.ModelPartDraws <- shadowModelPartDraws
+
+            shadowModelPartDraws[res.CollectedModelPartCount] <- {
+              Part = part
+              Transform = transform
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedModelPartCount <- res.CollectedModelPartCount + 1
+    | Command3D.DrawModelWith(model, transform, _) ->
+      // Override material is irrelevant to depth; gather identically to DrawModel.
+      for mesh in model.Meshes do
+        for part in mesh.MeshParts do
+          match part.Effect with
+          | :? SkinnedEffect ->
+            if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
+              Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+              res.SkinnedDraws <- shadowSkinnedDraws
+
+            shadowSkinnedDraws[res.CollectedSkinnedCount] <- {
+              Part = part
+              Transform = transform
+              Bones = Array.empty
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedSkinnedCount <- res.CollectedSkinnedCount + 1
+          | _ ->
+            if res.CollectedModelPartCount >= shadowModelPartDraws.Length then
+              Array.Resize(
+                &shadowModelPartDraws,
+                shadowModelPartDraws.Length * 2
+              )
+
+              res.ModelPartDraws <- shadowModelPartDraws
+
+            shadowModelPartDraws[res.CollectedModelPartCount] <- {
+              Part = part
+              Transform = transform
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedModelPartCount <- res.CollectedModelPartCount + 1
+    | Command3D.DrawAnimatedModelWith(model, transform, bones, _) ->
+      // Mirror DrawAnimatedModel: SkinnedEffect parts only.
+      for mesh in model.Meshes do
+        for part in mesh.MeshParts do
+          match part.Effect with
+          | :? SkinnedEffect ->
+            if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
+              Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+              res.SkinnedDraws <- shadowSkinnedDraws
+
+            shadowSkinnedDraws[res.CollectedSkinnedCount] <- {
+              Part = part
+              Transform = transform
+              Bones = bones
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedSkinnedCount <- res.CollectedSkinnedCount + 1
+          | _ -> ()
+    | Command3D.DrawInstanced(mesh,
+                              transforms,
+                              _colors,
+                              _material,
+                              instanceCount) when instanceCount > 0 ->
+      // The world's instanced geometry (block grid, platforms, etc.). Collected whole (one entry
+      // per emitted DrawInstanced). No per-instance cull — the sample chunk-culls the source
+      // commands, so the emitted count is already bounded.
+      if res.CollectedInstancedCount >= shadowInstancedDraws.Length then
+        Array.Resize(&shadowInstancedDraws, shadowInstancedDraws.Length * 2)
+        res.InstancedDraws <- shadowInstancedDraws
+
+      shadowInstancedDraws[res.CollectedInstancedCount] <- {
+        Mesh = mesh
+        Transforms = transforms
+        InstanceCount = instanceCount
+        CastsShadow = castEnabled
+      }
+
+      res.CollectedInstancedCount <- res.CollectedInstancedCount + 1
+    | Command3D.DrawAnimatedModelInstanced(model,
+                                           transforms,
+                                           palettes,
+                                           _,
+                                           _,
+                                           instanceCount,
+                                           boneCount) when instanceCount > 0 ->
+      // Skinned + instanced casters: one entry per SkinnedEffect part — or one per
+      // MERGED skinned part group off-GL (depth binds no material state, so merged
+      // geometry is always valid here; the GL per-instance fallback needs the real
+      // parts for their Effect). Sharing the command's transforms + flat palettes.
+      let addDraw
+        (
+          part: ModelMeshPart,
+          vb: VertexBuffer,
+          ib: IndexBuffer,
+          vertexOffset: int,
+          startIndex: int,
+          primitiveCount: int
+        ) =
+        if
+          res.CollectedSkinnedInstancedCount
+          >= shadowSkinnedInstancedDraws.Length
+        then
+          Array.Resize(
+            &shadowSkinnedInstancedDraws,
+            shadowSkinnedInstancedDraws.Length * 2
+          )
+
+          res.SkinnedInstancedDraws <- shadowSkinnedInstancedDraws
+
+        shadowSkinnedInstancedDraws[res.CollectedSkinnedInstancedCount] <- {
+          Part = part
+          VertexBuffer = vb
+          IndexBuffer = ib
+          VertexOffset = vertexOffset
+          StartIndex = startIndex
+          PrimitiveCount = primitiveCount
+          Transforms = transforms
+          Palettes = palettes
+          InstanceCount = instanceCount
+          BoneCount = boneCount
+          CastsShadow = castEnabled
+        }
+
+        res.CollectedSkinnedInstancedCount <-
+          res.CollectedSkinnedInstancedCount + 1
+
+      let mergedParts =
+        if PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL then
+          ValueNone
+        else
+          MergedModelParts.tryGet(gd, model)
+
+      match mergedParts with
+      | ValueSome merged ->
+        res.MergedCovered.Clear()
+
+        for mp in merged do
+          for sp in mp.SourceParts do
+            res.MergedCovered.Add sp |> ignore
+
+          if mp.IsSkinned then
+            addDraw(
+              null,
+              mp.VertexBuffer,
+              mp.IndexBuffer,
+              0,
+              0,
+              mp.PrimitiveCount
+            )
+
+        for mesh in model.Meshes do
+          for part in mesh.MeshParts do
+            match part.Effect with
+            | :? SkinnedEffect when not(res.MergedCovered.Contains part) ->
+              addDraw(
+                part,
+                part.VertexBuffer,
+                part.IndexBuffer,
+                part.VertexOffset,
+                part.StartIndex,
+                part.PrimitiveCount
+              )
+            | _ -> ()
+      | ValueNone ->
+        for mesh in model.Meshes do
+          for part in mesh.MeshParts do
+            match part.Effect with
+            | :? SkinnedEffect ->
+              addDraw(
+                part,
+                part.VertexBuffer,
+                part.IndexBuffer,
+                part.VertexOffset,
+                part.StartIndex,
+                part.PrimitiveCount
+              )
+            | _ -> ()
+    | _ -> ()
+
+  /// <summary>
   /// Scans the buffer range <c>[startIdx, endIdx)</c> and collects every opaque draw into the
   /// pooled arrays on <paramref name="res"/>, recording a <c>CastsShadow</c> flag per entry
   /// (snapshot of the <c>EnableShadows</c>/<c>DisableShadows</c> state when the draw was emitted,
   /// starting from <paramref name="initialCastEnabled"/>). Shared by the shadow render (filters
   /// to <c>CastsShadow = true</c>) and the scene-depth render (all entries), so shadow + depth
-  /// never re-scan the buffer. Stashes the four counts on <paramref name="res"/>.
-  /// <paramref name="gd"/> is used only to lazily build merged part groups for skinned +
-  /// instanced models (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.MergedModelParts.tryGet"/>).
+  /// never re-scan the buffer. Stashes the counts on <paramref name="res"/>. Thin slice
+  /// wrapper over <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.beginCollect"/> +
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.collectCommand"/> — single-camera
+  /// frames collect inline in the forward pipeline's pre-scan instead.
   /// </summary>
   let collectGeometry
     (gd: GraphicsDevice)
@@ -507,263 +792,10 @@ module internal ShadowPass =
     (initialCastEnabled: bool)
     (res: ShadowResources)
     =
-    let mutable castEnabled = initialCastEnabled
-    let mutable drawCount = 0
-    let mutable skinnedCount = 0
-    let mutable instancedCount = 0
-    let mutable modelPartCount = 0
-    let mutable skinnedInstancedCount = 0
-    let mutable shadowDraws = res.Draws
-    let mutable shadowSkinnedDraws = res.SkinnedDraws
-    let mutable shadowInstancedDraws = res.InstancedDraws
-    let mutable shadowModelPartDraws = res.ModelPartDraws
-    let mutable shadowSkinnedInstancedDraws = res.SkinnedInstancedDraws
+    beginCollect res initialCastEnabled
 
     for i = startIdx to endIdx - 1 do
-      match buffer[i] with
-      | Command3D.EnableShadows -> castEnabled <- true
-      | Command3D.DisableShadows -> castEnabled <- false
-      | Command3D.DrawPrimitive(mesh, transform, _) ->
-        if drawCount >= shadowDraws.Length then
-          Array.Resize(&shadowDraws, shadowDraws.Length * 2)
-          res.Draws <- shadowDraws
-
-        let worldBounds = mesh.Bounds.Transform transform
-
-        shadowDraws[drawCount] <- {
-          Mesh = mesh
-          Transform = transform
-          WorldBounds = worldBounds
-          CastsShadow = castEnabled
-        }
-
-        drawCount <- drawCount + 1
-      | Command3D.DrawAnimatedModel(model, transform, bones) ->
-        for mesh in model.Meshes do
-          for part in mesh.MeshParts do
-            match part.Effect with
-            | :? SkinnedEffect ->
-              if skinnedCount >= shadowSkinnedDraws.Length then
-                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
-                res.SkinnedDraws <- shadowSkinnedDraws
-
-              shadowSkinnedDraws[skinnedCount] <- {
-                Part = part
-                Transform = transform
-                Bones = bones
-                CastsShadow = castEnabled
-              }
-
-              skinnedCount <- skinnedCount + 1
-            | _ -> ()
-      | Command3D.DrawModel(model, transform) ->
-        for mesh in model.Meshes do
-          for part in mesh.MeshParts do
-            match part.Effect with
-            | :? SkinnedEffect ->
-              if skinnedCount >= shadowSkinnedDraws.Length then
-                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
-                res.SkinnedDraws <- shadowSkinnedDraws
-
-              shadowSkinnedDraws[skinnedCount] <- {
-                Part = part
-                Transform = transform
-                Bones = Array.empty
-                CastsShadow = castEnabled
-              }
-
-              skinnedCount <- skinnedCount + 1
-            | _ ->
-              if modelPartCount >= shadowModelPartDraws.Length then
-                Array.Resize(
-                  &shadowModelPartDraws,
-                  shadowModelPartDraws.Length * 2
-                )
-
-                res.ModelPartDraws <- shadowModelPartDraws
-
-              shadowModelPartDraws[modelPartCount] <- {
-                Part = part
-                Transform = transform
-                CastsShadow = castEnabled
-              }
-
-              modelPartCount <- modelPartCount + 1
-      | Command3D.DrawModelWith(model, transform, _) ->
-        // Override material is irrelevant to depth; gather identically to DrawModel.
-        for mesh in model.Meshes do
-          for part in mesh.MeshParts do
-            match part.Effect with
-            | :? SkinnedEffect ->
-              if skinnedCount >= shadowSkinnedDraws.Length then
-                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
-                res.SkinnedDraws <- shadowSkinnedDraws
-
-              shadowSkinnedDraws[skinnedCount] <- {
-                Part = part
-                Transform = transform
-                Bones = Array.empty
-                CastsShadow = castEnabled
-              }
-
-              skinnedCount <- skinnedCount + 1
-            | _ ->
-              if modelPartCount >= shadowModelPartDraws.Length then
-                Array.Resize(
-                  &shadowModelPartDraws,
-                  shadowModelPartDraws.Length * 2
-                )
-
-                res.ModelPartDraws <- shadowModelPartDraws
-
-              shadowModelPartDraws[modelPartCount] <- {
-                Part = part
-                Transform = transform
-                CastsShadow = castEnabled
-              }
-
-              modelPartCount <- modelPartCount + 1
-      | Command3D.DrawAnimatedModelWith(model, transform, bones, _) ->
-        // Mirror DrawAnimatedModel: SkinnedEffect parts only.
-        for mesh in model.Meshes do
-          for part in mesh.MeshParts do
-            match part.Effect with
-            | :? SkinnedEffect ->
-              if skinnedCount >= shadowSkinnedDraws.Length then
-                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
-                res.SkinnedDraws <- shadowSkinnedDraws
-
-              shadowSkinnedDraws[skinnedCount] <- {
-                Part = part
-                Transform = transform
-                Bones = bones
-                CastsShadow = castEnabled
-              }
-
-              skinnedCount <- skinnedCount + 1
-            | _ -> ()
-      | Command3D.DrawInstanced(mesh,
-                                transforms,
-                                _colors,
-                                _material,
-                                instanceCount) when instanceCount > 0 ->
-        // The world's instanced geometry (block grid, platforms, etc.). Collected whole (one entry
-        // per emitted DrawInstanced). No per-instance cull — the sample chunk-culls the source
-        // commands, so the emitted count is already bounded.
-        if instancedCount >= shadowInstancedDraws.Length then
-          Array.Resize(&shadowInstancedDraws, shadowInstancedDraws.Length * 2)
-          res.InstancedDraws <- shadowInstancedDraws
-
-        shadowInstancedDraws[instancedCount] <- {
-          Mesh = mesh
-          Transforms = transforms
-          InstanceCount = instanceCount
-          CastsShadow = castEnabled
-        }
-
-        instancedCount <- instancedCount + 1
-      | Command3D.DrawAnimatedModelInstanced(model,
-                                             transforms,
-                                             palettes,
-                                             _,
-                                             _,
-                                             instanceCount,
-                                             boneCount) when instanceCount > 0 ->
-        // Skinned + instanced casters: one entry per SkinnedEffect part — or one per
-        // MERGED skinned part group off-GL (depth binds no material state, so merged
-        // geometry is always valid here; the GL per-instance fallback needs the real
-        // parts for their Effect). Sharing the command's transforms + flat palettes.
-        let addDraw
-          (
-            part: ModelMeshPart,
-            vb: VertexBuffer,
-            ib: IndexBuffer,
-            vertexOffset: int,
-            startIndex: int,
-            primitiveCount: int
-          ) =
-          if skinnedInstancedCount >= shadowSkinnedInstancedDraws.Length then
-            Array.Resize(
-              &shadowSkinnedInstancedDraws,
-              shadowSkinnedInstancedDraws.Length * 2
-            )
-
-            res.SkinnedInstancedDraws <- shadowSkinnedInstancedDraws
-
-          shadowSkinnedInstancedDraws[skinnedInstancedCount] <- {
-            Part = part
-            VertexBuffer = vb
-            IndexBuffer = ib
-            VertexOffset = vertexOffset
-            StartIndex = startIndex
-            PrimitiveCount = primitiveCount
-            Transforms = transforms
-            Palettes = palettes
-            InstanceCount = instanceCount
-            BoneCount = boneCount
-            CastsShadow = castEnabled
-          }
-
-          skinnedInstancedCount <- skinnedInstancedCount + 1
-
-        let mergedParts =
-          if PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL then
-            ValueNone
-          else
-            MergedModelParts.tryGet(gd, model)
-
-        match mergedParts with
-        | ValueSome merged ->
-          res.MergedCovered.Clear()
-
-          for mp in merged do
-            for sp in mp.SourceParts do
-              res.MergedCovered.Add sp |> ignore
-
-            if mp.IsSkinned then
-              addDraw(
-                null,
-                mp.VertexBuffer,
-                mp.IndexBuffer,
-                0,
-                0,
-                mp.PrimitiveCount
-              )
-
-          for mesh in model.Meshes do
-            for part in mesh.MeshParts do
-              match part.Effect with
-              | :? SkinnedEffect when not(res.MergedCovered.Contains part) ->
-                addDraw(
-                  part,
-                  part.VertexBuffer,
-                  part.IndexBuffer,
-                  part.VertexOffset,
-                  part.StartIndex,
-                  part.PrimitiveCount
-                )
-              | _ -> ()
-        | ValueNone ->
-          for mesh in model.Meshes do
-            for part in mesh.MeshParts do
-              match part.Effect with
-              | :? SkinnedEffect ->
-                addDraw(
-                  part,
-                  part.VertexBuffer,
-                  part.IndexBuffer,
-                  part.VertexOffset,
-                  part.StartIndex,
-                  part.PrimitiveCount
-                )
-              | _ -> ()
-      | _ -> ()
-
-    res.CollectedDrawCount <- drawCount
-    res.CollectedSkinnedCount <- skinnedCount
-    res.CollectedModelPartCount <- modelPartCount
-    res.CollectedInstancedCount <- instancedCount
-    res.CollectedSkinnedInstancedCount <- skinnedInstancedCount
+      collectCommand gd res buffer[i]
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Per-draw-type render helpers
@@ -1666,6 +1698,7 @@ module internal ShadowPass =
     (initialCastEnabled: bool)
     (activeCamera: Camera3D)
     (needsDepth: bool)
+    (precollected: bool)
     : ShadowResult voption =
     // ── Scan lights for casters ──
     let hasDirCaster =
@@ -1696,7 +1729,9 @@ module internal ShadowPass =
       Array.Fill(res.SpotShadowSlots, -1)
 
     // ── Collect opaque geometry ONCE (shared by shadow render + scene-depth render) ──
-    if hasAnyCaster || needsDepth then
+    // Skipped when the caller already collected this frame: single-camera frames collect
+    // inline in the forward pipeline's pre-scan (one less full buffer walk per frame).
+    if (hasAnyCaster || needsDepth) && not precollected then
       collectGeometry gd buffer startIdx endIdx initialCastEnabled res
 
     // ── Shadow pass (only when a shadow-casting light exists) ──

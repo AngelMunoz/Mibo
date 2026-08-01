@@ -851,7 +851,8 @@ type ForwardPipelineBase
       initialCastEnabled: bool,
       passLights: Pipelines.LightBuffers,
       camera: Camera3D,
-      needsDepth: bool
+      needsDepth: bool,
+      precollected: bool
     ) =
     // Ensure the PBR effect is loaded BEFORE the pass uploads shadow uniforms to it.
     PbrShading.ensureEffect(gd, pbrRes) |> ignore
@@ -869,6 +870,7 @@ type ForwardPipelineBase
       initialCastEnabled
       camera
       needsDepth
+      precollected
     |> fun r -> shadowRes.ShadowResult <- r // stash for the forward pass (Shade / user-effect scopes)
 
   /// <summary>
@@ -901,6 +903,7 @@ type ForwardPipelineBase
       block.InitialCastEnabled,
       blockLights,
       camera,
+      false,
       false
     )
 
@@ -1105,6 +1108,22 @@ type ForwardPipelineBase
 
       let multiBlock = buffer.CameraBlockCount > 1
 
+      // Scene depth is needed when at least one PostProcessWithDepth action exists. Also
+      // feeds the shadow pass's geometry collection gate below.
+      let needsDepth = buffer.DepthPostProcessCount > 0
+
+      // Single-camera frames collect shadow/scene-depth geometry inline in the pre-scan
+      // walk — one less full buffer walk per frame (was: pre-scan + collect + forward).
+      // Gated on the frame possibly needing geometry: a depth-needing post-process, or at
+      // least one shadow-casting light in the buffer (ShadowCasterLightCount — zero means
+      // provably no caster, so collection would be discarded work). Multi-block frames keep
+      // per-block collection in their block shadow passes (slices + per-block initial state).
+      let collectInline =
+        not multiBlock && (needsDepth || buffer.ShadowCasterLightCount > 0)
+
+      if collectInline then
+        ShadowPass.beginCollect shadowRes true
+
       let plan =
         if multiBlock then
           BlockPlan.build buffer
@@ -1133,9 +1152,15 @@ type ForwardPipelineBase
       // Pre-scan: camera and shadow commands (shadow origin / toggle) need to be known before
       // the shadow pass runs. Single-camera frames also gather lights frame-globally here —
       // multi-block frames scope lights per camera block in the forward pass instead.
-      // Draw commands are handled in the forward pass.
+      // Draw commands are handled in the forward pass; single-camera frames ALSO collect
+      // shadow/scene-depth geometry inline here (collectInline).
       for i = 0 to buffer.Count - 1 do
-        match buffer[i] with
+        let cmd = buffer[i]
+
+        if collectInline then
+          ShadowPass.collectCommand gd shadowRes cmd
+
+        match cmd with
         | Command3D.BeginCamera cam ->
           let struct (v, p) = buildMatrices cam
           state.HasCamera <- true
@@ -1177,13 +1202,10 @@ type ForwardPipelineBase
         // frame's result into a DrawImmediate before the first block.
         shadowRes.ShadowResult <- ValueNone
 
-      // Scene depth is needed when at least one PostProcessWithDepth action exists. Pass that to
-      // the shadow pass so it collects opaque geometry even without a shadow-casting light.
-      let needsDepth = buffer.DepthPostProcessCount > 0
-
-      // Shadow pass: single-camera frames run one pass up front (also collects geometry for
-      // scene-depth when needsDepth is true). Multi-block frames run one pass per camera block
-      // at its BeginCamera/BeginCameraConfig in the forward loop instead.
+      // Shadow pass: single-camera frames run one pass up front; geometry was already
+      // collected inline in the pre-scan when this frame can need it (collectInline).
+      // Multi-block frames run one pass per camera block at its BeginCamera/BeginCameraConfig
+      // in the forward loop instead.
       if state.HasCamera && not multiBlock then
         this.runShadowPass(
           gd,
@@ -1193,7 +1215,8 @@ type ForwardPipelineBase
           true,
           lights,
           state.CurrentCamera,
-          needsDepth
+          needsDepth,
+          collectInline
         )
 
       // Forward pass
