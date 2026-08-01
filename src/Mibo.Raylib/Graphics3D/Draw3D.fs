@@ -113,7 +113,12 @@ module Draw3D =
     buffer.Add(Command3D.drawLine3D start finish color)
     buffer
 
-  /// <summary>Draws a skinned mesh with bone matrix data.</summary>
+  /// <summary>
+  /// Draws a skinned mesh with bone matrix data. <paramref name="bones"/>
+  /// carries the palette in plain System.Numerics row-major layout
+  /// (<c>bones[i] = InverseBindPose[i] * pose[i]</c>), NOT pre-transposed —
+  /// the pipeline transposes at upload where the shader contract needs it.
+  /// </summary>
   let inline drawSkinnedMesh
     (mesh: Mesh)
     (transform: Matrix4x4)
@@ -227,8 +232,8 @@ module Draw3D =
   /// <para>
   /// <see cref="M:Mibo.Elmish.Graphics3D.Draw3D.drawMeshInstanced"/> inside a scope is shaded by the
   /// user shader when it declares <c>in mat4 instanceTransform;</c> (the instancing opt-in); a shader
-  /// that doesn't declare it falls back to the PBR instanced path. Skinned + instanced draws are not
-  /// supported. See <c>docs/graphics3d/instancing.md</c>.
+  /// that doesn't declare it falls back to the PBR instanced path. Skinned + instanced draws are
+  /// supported — see <c>docs/graphics3d/instancing.md</c>.
   /// </para>
   /// </remarks>
   let inline beginEffect (shader: Shader) (buffer: RenderBuffer3D) =

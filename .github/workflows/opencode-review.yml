@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
       - uses: anomalyco/opencode/github@latest
         env:
-          KIMI_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
         with:
           model: kimi-for-coding/k3-256k
           prompt: |

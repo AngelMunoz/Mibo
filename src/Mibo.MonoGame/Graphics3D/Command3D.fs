@@ -94,6 +94,21 @@ type Command3D =
     transform: Matrix *
     bones: Matrix[] *
     matOverride: MaterialOverride
+  /// <summary>
+  /// Skinned + instanced: one draw call for <paramref name="instanceCount"/> instances
+  /// of the same animated model, each with its own pose. <paramref name="palettes"/> is
+  /// the flat per-instance bone palettes (<c>instanceCount * boneCount</c>,
+  /// instance-major). On the OpenGL backend the pipeline falls back to per-instance
+  /// draws (no vertex texture fetch there).
+  /// </summary>
+  | DrawAnimatedModelInstanced of
+    model: Model *
+    transforms: Matrix[] *
+    palettes: Matrix[] *
+    materialOverride: MaterialOverride voption *
+    colors: Color[] voption *
+    instanceCount: int *
+    boneCount: int
   | DrawInstanced of
     mesh: PrimitiveMesh *
     transforms: Matrix[] *

@@ -86,6 +86,13 @@ type Command3D =
     matOverride: MaterialOverride
   | DrawBillboard of billboard: Billboard3D
   | DrawLine3D of start: Vector3 * finish: Vector3 * color: Color
+  /// <summary>
+  /// Skinned: one skinned-mesh draw with an explicit bone palette.
+  /// <paramref name="bones"/> carries the palette in plain System.Numerics
+  /// row-major layout (<c>bones[i] = InverseBindPose[i] * pose[i]</c>), NOT
+  /// pre-transposed — the pipeline transposes at upload where the shader
+  /// contract needs it.
+  /// </summary>
   | DrawSkinnedMesh of
     mesh: Mesh *
     transform: Matrix4x4 *
@@ -96,6 +103,24 @@ type Command3D =
     transforms: Matrix4x4[] *
     material: Material3D *
     instanceCount: int
+  /// <summary>
+  /// Skinned + instanced: one draw call for <paramref name="instanceCount"/> instances
+  /// of the same skinned mesh, each with its own pose. <paramref name="palettes"/> is
+  /// the flat per-instance bone palettes (<c>instanceCount * boneCount</c>,
+  /// instance-major); the shader indexes it by <c>gl_InstanceID</c> on the palette
+  /// texture. The flat instance-major palettes array carries each matrix in plain
+  /// System.Numerics row-major layout
+  /// (<c>palettes[i * boneCount + b] = InverseBindPose[b] * pose_i[b]</c>), NOT
+  /// pre-transposed — the pipeline transposes at upload where the shader
+  /// contract needs it.
+  /// </summary>
+  | DrawSkinnedMeshInstanced of
+    mesh: Mesh *
+    transforms: Matrix4x4[] *
+    palettes: Matrix4x4[] *
+    material: Material3D *
+    instanceCount: int *
+    boneCount: int
   | DrawBillboardBatch of batch: BillboardBatch3D
   | BeginCamera of camera: Camera3D
   | BeginCameraConfig of config: Camera3DConfig
@@ -163,6 +188,13 @@ module Command3D =
   let inline drawLine3D (start: Vector3) (finish: Vector3) (color: Color) =
     Command3D.DrawLine3D(start, finish, color)
 
+  /// <summary>
+  /// Creates a <see cref="F:Mibo.Elmish.Graphics3D.Command3D.DrawSkinnedMesh"/>
+  /// command. <paramref name="bones"/> carries the palette in plain
+  /// System.Numerics row-major layout
+  /// (<c>bones[i] = InverseBindPose[i] * pose[i]</c>), NOT pre-transposed —
+  /// the pipeline transposes at upload where the shader contract needs it.
+  /// </summary>
   let inline drawSkinnedMesh
     (mesh: Mesh)
     (transform: Matrix4x4)

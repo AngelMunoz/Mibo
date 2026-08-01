@@ -1,3 +1,5 @@
+#nowarn "9"
+
 namespace Mibo.Elmish.Graphics3D
 
 open System
@@ -30,6 +32,8 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   let mutable postProcessCount = 0
   let mutable depthPostProcessCount = 0
   let mutable cameraBlockCount = 0
+
+  let rentedArrays = ResizeArray<System.Numerics.Matrix4x4[]>()
 
   let ensureCapacity(needed: int) =
     if count + needed > items.Length then
@@ -89,7 +93,8 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   /// Clears all commands from the buffer without deallocating the backing array.
   /// Call this at the start of each frame before populating with new commands.
   /// </summary>
-  member _.Clear() =
+  member x.Clear() =
+    x.ReleaseRentedArrays()
     count <- 0
     postProcessCount <- 0
     depthPostProcessCount <- 0
@@ -99,6 +104,31 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
     if clearCounter >= 300 then
       clearCounter <- 0
       Array.Clear(items, 0, items.Length)
+
+  /// <summary>
+  /// Tracks a rented palette array so it can be returned to the
+  /// <see cref="T:System.Buffers.ArrayPool`1"/> after the pipeline consumes the
+  /// commands. Called from <c>AddAnimatedModelInstanced</c> (an inline
+  /// extension member) — it cannot see primary-constructor <c>let</c>
+  /// bindings, so it reaches the field through this public method.
+  /// </summary>
+  member _.RegisterRentedArray(arr: System.Numerics.Matrix4x4[]) =
+    rentedArrays.Add(arr)
+
+  /// <summary>
+  /// Returns all rented palette arrays to the shared
+  /// <see cref="T:System.Buffers.ArrayPool`1"/>. Called from <c>Clear</c> at
+  /// frame start (safety net for arrays left over from a prior frame whose
+  /// <c>finally</c> didn't run) and from the renderer's <c>finally</c> block
+  /// after pipeline execution — the arrays are consumed synchronously within
+  /// the same frame.
+  /// </summary>
+  member _.ReleaseRentedArrays() =
+    for arr in rentedArrays do
+      ArrayPool<System.Numerics.Matrix4x4>.Shared
+        .Return(arr, clearArray = false)
+
+    rentedArrays.Clear()
 
   /// <summary>
   /// Sorts commands using the provided comparer.
@@ -127,6 +157,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
 // ─────────────────────────────────────────────────────────────────────────────
 
 open System.Numerics
+open FSharp.NativeInterop
 open Raylib_cs
 open Mibo.Animation
 open Mibo.Elmish
@@ -188,17 +219,26 @@ type RenderBuffer3D with
       )
     )
 
-  /// raylib animated draw: applies the state's bone pose to its embedded model
-  /// (raylib's UpdateModelAnimation path), then draws the model.
+  /// raylib animated draw (legacy mutating path): applies the state's bone pose
+  /// to its embedded model (raylib's UpdateModelAnimation path), then draws the
+  /// model. The <paramref name="pose"/> argument is ignored — the mutating path
+  /// derives nothing from a palette; use the <c>AnimatedModel</c> overload for
+  /// the GPU skinning path.
   member inline b.AddAnimatedModel
-    (state: Animation3DState, transform: Matrix4x4)
+    (state: Animation3DState, transform: Matrix4x4, _pose: BonePose voption)
     =
     Animation3DState.applyToModel state
     b.Add(Command3D.DrawModel(state.Model, transform))
 
+  /// Legacy mutating path — <paramref name="_pose"/> is ignored; see the
+  /// <c>Animation3DState</c> <c>AddAnimatedModel</c> overload.
   member inline b.AddAnimatedModelWith
-    (state: Animation3DState, transform: Matrix4x4, material: Material3D)
-    =
+    (
+      state: Animation3DState,
+      transform: Matrix4x4,
+      material: Material3D,
+      _pose: BonePose voption
+    ) =
     Animation3DState.applyToModel state
 
     b.Add(
@@ -209,11 +249,14 @@ type RenderBuffer3D with
       )
     )
 
+  /// Legacy mutating path — <paramref name="_pose"/> is ignored; see the
+  /// <c>Animation3DState</c> <c>AddAnimatedModel</c> overload.
   member inline b.AddAnimatedModelWithPerMesh
     (
       state: Animation3DState,
       transform: Matrix4x4,
-      [<InlineIfLambda>] resolver: int -> Material3D
+      [<InlineIfLambda>] resolver: int -> Material3D,
+      _pose: BonePose voption
     ) =
     Animation3DState.applyToModel state
 
@@ -225,6 +268,211 @@ type RenderBuffer3D with
       )
     )
 
+  /// <summary>
+  /// raylib animated draw (GPU skinning path): emits one <c>DrawSkinnedMesh</c>
+  /// per sub-mesh carrying the shared bone palette — no model mutation, so the
+  /// same model can be drawn with several different poses in one frame.
+  /// When <paramref name="pose"/> is <c>ValueNone</c>, the pose is computed from
+  /// the model's state. <paramref name="transform"/> is the full world transform
+  /// (the pipeline applies it directly, like every other mesh draw —
+  /// <c>model.Transform</c> is not composed in).
+  /// </summary>
+  member inline b.AddAnimatedModel
+    (am: AnimatedModel, transform: Matrix4x4, pose: BonePose voption)
+    =
+    let p =
+      match pose with
+      | ValueSome p -> p
+      | ValueNone -> Animation3DState.computePose am.Mesh am.State
+
+    let model = am.State.Model
+    let meshes = model.MeshesAsSpan()
+
+    for i = 0 to meshes.Length - 1 do
+      // NOTE: MeshMaterialAsSpan() is MaterialCount-long in raylib-cs — index
+      // the MeshMaterial pointer per mesh directly, like the pipeline does.
+      let matIdx = NativePtr.get model.MeshMaterial i
+      let raylibMat = NativePtr.get model.Materials matIdx
+      let mat = Material3D.fromRaylibMaterial raylibMat
+      b.Add(Command3D.DrawSkinnedMesh(meshes[i], transform, mat, p.Palette))
+
+  /// <summary>
+  /// GPU skinning path with a whole-model material override — see the
+  /// <c>AnimatedModel</c> <c>AddAnimatedModel</c> overload.
+  /// </summary>
+  member inline b.AddAnimatedModelWith
+    (
+      am: AnimatedModel,
+      transform: Matrix4x4,
+      material: Material3D,
+      pose: BonePose voption
+    ) =
+    let p =
+      match pose with
+      | ValueSome p -> p
+      | ValueNone -> Animation3DState.computePose am.Mesh am.State
+
+    let meshes = am.State.Model.MeshesAsSpan()
+
+    for i = 0 to meshes.Length - 1 do
+      b.Add(
+        Command3D.DrawSkinnedMesh(meshes[i], transform, material, p.Palette)
+      )
+
+  /// <summary>
+  /// GPU skinning path with a per-mesh material resolver — see the
+  /// <c>AnimatedModel</c> <c>AddAnimatedModel</c> overload. The resolver receives
+  /// the sub-mesh index.
+  /// </summary>
+  member inline b.AddAnimatedModelWithPerMesh
+    (
+      am: AnimatedModel,
+      transform: Matrix4x4,
+      [<InlineIfLambda>] resolver: int -> Material3D,
+      pose: BonePose voption
+    ) =
+    let p =
+      match pose with
+      | ValueSome p -> p
+      | ValueNone -> Animation3DState.computePose am.Mesh am.State
+
+    let meshes = am.State.Model.MeshesAsSpan()
+
+    for i = 0 to meshes.Length - 1 do
+      b.Add(
+        Command3D.DrawSkinnedMesh(meshes[i], transform, resolver i, p.Palette)
+      )
+
+  /// <summary>
+  /// GPU skinning path, instanced: one <c>DrawSkinnedMeshInstanced</c> per
+  /// sub-mesh carrying the shared flat per-instance palettes — N instances,
+  /// each with its own pose, in one draw call per sub-mesh.
+  /// <paramref name="poses"/> carries one caller-evaluated <c>BonePose</c> per
+  /// instance (share them with bone queries / attachment draws). The instance
+  /// count is <c>min(transforms.Length, poses.Length)</c>; 0 emits nothing.
+  /// Each pose's <c>Palette</c> must contain at least <c>boneCount</c>
+  /// matrices (one per bone): longer arrays are truncated to their first
+  /// <c>boneCount</c> entries, shorter ones raise
+  /// <see cref="T:System.ArgumentException"/>. A boneless model
+  /// (<c>boneCount</c> = 0) emits nothing on this instanced path (matches the
+  /// MonoGame backend).
+  /// <paramref name="material"/> overrides the authored materials
+  /// (<c>MaterialOverride.All</c> / <c>MaterialOverride.PerMesh</c>).
+  /// <paramref name="colors"/> is MonoGame-only — <c>ValueSome</c> raises
+  /// <see cref="T:System.NotSupportedException"/>.
+  /// </summary>
+  member inline b.AddAnimatedModelInstanced
+    (
+      am: AnimatedModel,
+      transforms: Matrix4x4[],
+      poses: BonePose[],
+      material: MaterialOverride voption,
+      colors: Raylib_cs.Color[] voption
+    ) =
+    match colors with
+    | ValueSome _ ->
+      raise(
+        System.NotSupportedException(
+          "Per-instance colors are only supported on the MonoGame backend"
+        )
+      )
+    | ValueNone ->
+      let count = min transforms.Length poses.Length
+      let boneCount = am.Mesh.BoneCount
+
+      if count > 0 && boneCount > 0 then
+        let palettes = ArrayPool<Matrix4x4>.Shared.Rent(count * boneCount)
+        b.RegisterRentedArray(palettes)
+
+        for i = 0 to count - 1 do
+          let src = poses[i].Palette
+
+          if src.Length < boneCount then
+            invalidArg
+              "poses"
+              $"poses[{i}].Palette has {src.Length} matrices, the model needs {boneCount} (one per bone). Pass poses evaluated for this model (Animation3DState.computePose / computePoseInto)."
+
+          Array.Copy(src, 0, palettes, i * boneCount, boneCount)
+
+        let model = am.State.Model
+        let meshes = model.MeshesAsSpan()
+
+        for i = 0 to meshes.Length - 1 do
+          let mat =
+            match material with
+            | ValueSome(MaterialOverride.All m) -> m
+            | ValueSome(MaterialOverride.PerMesh resolver) -> resolver i
+            | ValueNone ->
+              // NOTE: MeshMaterialAsSpan() is MaterialCount-long in raylib-cs —
+              // index the MeshMaterial pointer per mesh directly, like the
+              // pipeline does.
+              let matIdx = NativePtr.get model.MeshMaterial i
+
+              Material3D.fromRaylibMaterial(
+                NativePtr.get model.Materials matIdx
+              )
+
+          b.Add(
+            Command3D.DrawSkinnedMeshInstanced(
+              meshes[i],
+              transforms,
+              palettes,
+              mat,
+              count,
+              boneCount
+            )
+          )
+
+  /// <summary>
+  /// Draws a static <paramref name="mesh"/> parented to <paramref name="bone"/>
+  /// of the animated model <paramref name="am"/>. The attachment's world
+  /// transform is <c>localTransform * boneWorld * transform</c> (applied
+  /// left-to-right). All three matrices must be in raylib's native matrix
+  /// layout — build them with <c>Raymath.*</c> ops (<c>boneWorld</c> already
+  /// is, coming from <c>BonePose.WorldPoses</c>); never mix in
+  /// <c>System.Numerics.Matrix4x4.*</c> results, which are the transpose of
+  /// the native layout. An unknown bone is a no-op — no command
+  /// is emitted. When <paramref name="pose"/> is <c>ValueNone</c>, the pose is
+  /// computed from the model's state; pass the same pose given to
+  /// <c>animatedModel</c> to avoid a second evaluation this frame.
+  /// </summary>
+  member inline b.AddAttachedMesh
+    (
+      am: AnimatedModel,
+      bone: BoneRef,
+      localTransform: Matrix4x4,
+      mesh: Mesh,
+      material: Material3D,
+      transform: Matrix4x4,
+      pose: BonePose voption
+    ) =
+    let p =
+      match pose with
+      | ValueSome p -> p
+      | ValueNone -> Animation3DState.computePose am.Mesh am.State
+
+    (match bone with
+     | BoneRef.ByIndex i -> BonePose.worldAt i p
+     | BoneRef.ByName name -> BonePose.tryGetWorld name am.Mesh p)
+    |> ValueOption.iter(fun boneWorld ->
+      b.Add(
+        Command3D.DrawMesh(
+          mesh,
+          Raymath.MatrixMultiply(
+            Raymath.MatrixMultiply(localTransform, boneWorld),
+            transform
+          ),
+          material
+        )
+      ))
+
+  /// <summary>
+  /// Draws a skinned mesh with an explicit bone palette.
+  /// <paramref name="bones"/> carries the palette in plain System.Numerics
+  /// row-major layout (<c>bones[i] = InverseBindPose[i] * pose[i]</c>), NOT
+  /// pre-transposed — the pipeline transposes at upload where the shader
+  /// contract needs it.
+  /// </summary>
   member inline b.AddSkinnedMesh
     (mesh: Mesh, transform: Matrix4x4, material: Material3D, bones: Matrix4x4[])
     =

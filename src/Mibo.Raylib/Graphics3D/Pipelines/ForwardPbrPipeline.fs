@@ -70,6 +70,17 @@ module internal NativeHelpers =
       ShaderUniformDataType.Vec4
     )
 
+  let inline setShaderIVec2 (shader: Shader) (loc: int) (x: int) (y: int) =
+    let mutable v = struct (x, y)
+    use p = fixed &v
+
+    Raylib.SetShaderValue(
+      shader,
+      loc,
+      NativePtr.toVoidPtr p,
+      ShaderUniformDataType.IVec2
+    )
+
   let inline rlSetUniformInt (loc: int) (value: int) =
     use p = fixed &value
 
@@ -224,6 +235,8 @@ type internal ShaderLocations = {
   CameraPos: int
   ShadowNormalMatrix: int
   Bones: int // -1 for non-skinned variants
+  BonePalette: int // -1 for non skinned-instanced variants
+  BonePaletteSize: int // -1 for non skinned-instanced variants
 }
 
 // ------------------------------------------------------------------
@@ -275,13 +288,147 @@ type internal ShadowDepthResources = {
   Shader: Shader
   SkinnedShader: Shader
   InstancedShader: Shader
+  SkinnedInstancedShader: Shader
   Material: Material
   SkinnedMaterial: Material
   InstancedMaterial: Material
+  SkinnedInstancedMaterial: Material
   NormalMatrixLoc: int
   SkinnedNormalMatrixLoc: int
   BoneLoc: int
+  BonePaletteLoc: int
+  BonePaletteSizeLoc: int
 }
+
+// ------------------------------------------------------------------
+// Bone Palette Texture Pool (skinned + instanced draws)
+// ------------------------------------------------------------------
+
+[<AutoOpen>]
+module internal PaletteTextureHelpers =
+
+  /// Maximum palette-texture height — skinned-instanced draws chunk instances so
+  /// each chunk's palette texture stays within this many rows (one per instance).
+  let maxPaletteTextureRows = 2048
+
+  /// Texture unit the bone-palette sampler is bound to during skinned-instanced
+  /// draws. 14 is free: material maps occupy units 0-10 (MAX_MATERIAL_MAPS) and
+  /// the shadow atlas owns 15.
+  let paletteTextureSlot = 14
+
+  /// Create an RGBA32F palette texture (point-filtered — texels are fetched
+  /// exactly via texelFetch). Allocates zeroed once; contents are replaced by
+  /// UpdateTexture on every use.
+  let createPaletteTexture (width: int) (height: int) : Texture2D =
+    let bytes = Array.zeroCreate<byte>(width * height * 16)
+    use pb = fixed &bytes[0]
+
+    let id =
+      Rlgl.LoadTexture(
+        NativePtr.toVoidPtr pb,
+        width,
+        height,
+        PixelFormat.UncompressedR32G32B32A32,
+        1
+      )
+
+    let tex =
+      Texture2D(
+        Id = id,
+        Width = width,
+        Height = height,
+        Mipmaps = 1,
+        Format = PixelFormat.UncompressedR32G32B32A32
+      )
+
+    Raylib.SetTextureFilter(tex, TextureFilter.Point)
+    tex
+
+/// <summary>
+/// Pool of RGBA32F bone-palette textures for skinned-instanced draws, keyed by
+/// (width, height). Textures are acquired per chunk and returned once per frame
+/// (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PaletteTexturePool.ReleaseAll"/>):
+/// a chunk's texture must stay alive until the rlgl batch flushes, so reusing a
+/// single texture across chunks would let a later chunk's upload overwrite texels
+/// an in-flight batched draw still reads.
+/// </summary>
+/// <remarks>
+/// Also carries a per-frame upload cache: the shadow and forward passes render
+/// the same command list, so each chunk's palette slice would otherwise upload
+/// twice per frame. <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PaletteTexturePool.TryGetUploaded"/>
+/// returns the texture a chunk already uploaded this frame (keyed by palettes
+/// array reference + chunk offset — both passes share the same command arrays);
+/// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PaletteTexturePool.RememberUploaded"/>
+/// records it. Cleared by <c>ReleaseAll</c>.
+/// </remarks>
+type internal PaletteTexturePool() =
+
+  let pool = Dictionary<struct (int * int), Queue<Texture2D>>()
+  let inUse = ResizeArray<Texture2D>()
+  let uploaded = Dictionary<struct (Matrix4x4[] * int), Texture2D>()
+  let mutable transformScratch = Array.zeroCreate<Matrix4x4> 64
+
+  member _.Acquire(width: int, height: int) : Texture2D =
+    let key = struct (width, height)
+
+    match pool.TryGetValue key with
+    | true, queue when queue.Count > 0 ->
+      let tex = queue.Dequeue()
+      inUse.Add tex
+      tex
+    | _ ->
+      let tex = createPaletteTexture width height
+      inUse.Add tex
+      tex
+
+  /// Texture a chunk already uploaded this frame, if any.
+  member _.TryGetUploaded
+    (palettes: Matrix4x4[], chunkStart: int)
+    : Texture2D voption =
+    match uploaded.TryGetValue(struct (palettes, chunkStart)) with
+    | true, tex -> ValueSome tex
+    | false, _ -> ValueNone
+
+  /// Record a chunk's freshly uploaded texture for this frame.
+  member _.RememberUploaded
+    (palettes: Matrix4x4[], chunkStart: int, tex: Texture2D)
+    =
+    uploaded[struct (palettes, chunkStart)] <- tex
+
+  /// Growable scratch for slicing per-chunk transform runs without allocating.
+  member _.GetTransformScratch(needed: int) : Matrix4x4[] =
+    if transformScratch.Length < needed then
+      transformScratch <- Array.zeroCreate<Matrix4x4> needed
+
+    transformScratch
+
+  member _.ReleaseAll() =
+    for tex in inUse do
+      let key = struct (tex.Width, tex.Height)
+
+      match pool.TryGetValue key with
+      | true, queue -> queue.Enqueue tex
+      | false, _ ->
+        let queue = Queue<Texture2D>()
+        queue.Enqueue tex
+        pool[key] <- queue
+
+    inUse.Clear()
+    uploaded.Clear()
+
+  member _.UnloadAll() =
+    for tex in inUse do
+      Raylib.UnloadTexture tex
+
+    inUse.Clear()
+
+    for KeyValue(_, queue) in pool do
+      for tex in queue do
+        Raylib.UnloadTexture tex
+
+      queue.Clear()
+
+    pool.Clear()
 
 // ------------------------------------------------------------------
 // Frame State (uses voption)
@@ -312,12 +459,17 @@ module internal ShadowPassHelpers =
   /// and renders via `DrawMeshInstanced` — one GPU draw call per entry,
   /// not one per instance. This is critical for instanced-heavy scenes (e.g.
   /// block-grid terrain) where unrolling would produce thousands of
-  /// individual shadow draws.
+  /// individual shadow draws. `Palettes` carries the flat per-instance bone
+  /// palettes for skinned-instanced draws (ValueNone for plain instanced
+  /// draws); entries partition by it at render time, so skinned-instanced
+  /// draws go through the depth skinned-instanced shader.
   [<Struct>]
   type InstancedMeshDraw = {
     Mesh: Mesh
     Transforms: Matrix4x4[]
+    Palettes: Matrix4x4[] voption
     InstanceCount: int
+    BoneCount: int
   }
 
   let collectMeshDraws
@@ -347,6 +499,8 @@ module internal ShadowPassHelpers =
       | Command3D.DrawModelWith(model, _, _) when shadowsEnabled ->
         meshCount <- meshCount + model.MeshCount
       | Command3D.DrawMeshInstanced _ when shadowsEnabled ->
+        instancedCount <- instancedCount + 1
+      | Command3D.DrawSkinnedMeshInstanced _ when shadowsEnabled ->
         instancedCount <- instancedCount + 1
       | _ -> ()
 
@@ -408,7 +562,24 @@ module internal ShadowPassHelpers =
         instArr[icount] <- {
           Mesh = mesh
           Transforms = transforms
+          Palettes = ValueNone
           InstanceCount = instanceCount
+          BoneCount = 0
+        }
+
+        icount <- icount + 1
+      | Command3D.DrawSkinnedMeshInstanced(mesh,
+                                           transforms,
+                                           palettes,
+                                           _,
+                                           instanceCount,
+                                           boneCount) when shadowsEnabled ->
+        instArr[icount] <- {
+          Mesh = mesh
+          Transforms = transforms
+          Palettes = ValueSome palettes
+          InstanceCount = instanceCount
+          BoneCount = boneCount
         }
 
         icount <- icount + 1
@@ -868,6 +1039,8 @@ module internal PipelineFunctions =
       CameraPos = Raylib.GetShaderLocation(shader, "cameraPos")
       ShadowNormalMatrix = Raylib.GetShaderLocation(shader, "normalMatrix")
       Bones = Raylib.GetShaderLocation(shader, "boneMatrices[0]")
+      BonePalette = Raylib.GetShaderLocation(shader, "bonePalette")
+      BonePaletteSize = Raylib.GetShaderLocation(shader, "bonePaletteSize")
     }
 
   /// Single parameterized light upload replacing 3x duplication.
@@ -1092,13 +1265,14 @@ module internal PipelineFunctions =
     else
       ValueNone
 
-  /// Upload shadow atlas uniforms to all three shader variants.
+  /// Upload shadow atlas uniforms to all four shader variants.
   let uploadShadowUniforms
     (
       hasCasters: bool,
       forward: inref<ShaderVariant>,
       instanced: inref<ShaderVariant>,
       skinned: inref<ShaderVariant>,
+      skinnedInstanced: inref<ShaderVariant>,
       atlas: ShadowAtlas,
       cameraPos: Vector3,
       maxCasters: int
@@ -1108,6 +1282,7 @@ module internal PipelineFunctions =
       let fwd = forward.Locs
       let inst = instanced.Locs
       let sk = skinned.Locs
+      let skInst = skinnedInstanced.Locs
 
       uploadShadowUniformsForShader(
         fwd.Shader,
@@ -1136,14 +1311,109 @@ module internal PipelineFunctions =
         maxCasters
       )
 
+      uploadShadowUniformsForShader(
+        skInst.Shader,
+        &skInst.Shadow,
+        skInst.CameraPos,
+        atlas,
+        cameraPos,
+        maxCasters
+      )
+
   /// Upload bone matrices to skinned shader — uses ReadOnlySpan for no-copy.
+  /// Palettes arrive in plain System.Numerics row-major layout
+  /// (<c>InverseBindPose[i] * pose[i]</c>); SetShaderValueMatrix expects the
+  /// transposed (raylib-native) layout, so transpose each matrix here. This is
+  /// the non-instanced path — at most 128 bones per draw, so the per-matrix
+  /// transpose stays off the instanced hot path.
   let inline uploadBoneMatrices
     (shader: Shader, boneLoc: int, bones: ReadOnlySpan<Matrix4x4>)
     =
     let count = min bones.Length 128
 
     for i = 0 to count - 1 do
-      Raylib.SetShaderValueMatrix(shader, boneLoc + i, bones[i])
+      Raylib.SetShaderValueMatrix(
+        shader,
+        boneLoc + i,
+        Matrix4x4.Transpose bones[i]
+      )
+
+  /// Upload a palette slice into a palette texture: texel (boneIndex*4+c, instance)
+  /// receives floats 4c..4c+3 of the instance's bone matrix. The palettes array
+  /// holds <c>InverseBindPose[i] * pose[i]</c> in plain System.Numerics row-major
+  /// layout — exactly the texel layout the shader's getBoneMatrix expects — so
+  /// the contiguous slice uploads verbatim: one pinned copy, no staging array,
+  /// no per-matrix work.
+  let uploadPaletteChunk
+    (palettes: Matrix4x4[])
+    (offset: int)
+    (tex: Texture2D)
+    =
+    use p = fixed &palettes[offset]
+    Raylib.UpdateTexture(tex, NativePtr.toVoidPtr p)
+
+  /// Draw a skinned-instanced mesh in chunks of at most maxPaletteTextureRows
+  /// instances: upload each chunk's palette slice to a pooled palette texture,
+  /// bind it to paletteTextureSlot, and issue one DrawMeshInstanced per chunk.
+  /// gl_InstanceID indexes the chunk-local palette row, so the texture height
+  /// matches the chunk's instance count. Chunks already uploaded this frame
+  /// (e.g. by the shadow pass — both passes render the same command list) are
+  /// rebound without re-uploading.
+  let drawSkinnedInstancedChunks
+    (
+      pool: PaletteTexturePool,
+      shader: Shader,
+      bonePaletteLoc: int,
+      bonePaletteSizeLoc: int,
+      mesh: Mesh,
+      mat: Material,
+      transforms: Matrix4x4[],
+      palettes: Matrix4x4[],
+      instanceCount: int,
+      boneCount: int
+    ) =
+    // A boneless command (boneCount = 0 — only possible from a manually
+    // constructed DrawSkinnedMeshInstanced) no-ops: pinning the empty palette
+    // slice and acquiring a zero-width palette texture would both throw.
+    if boneCount > 0 then
+      let mutable start = 0
+
+      while start < instanceCount do
+        let chunkCount = min maxPaletteTextureRows (instanceCount - start)
+
+        let tex =
+          match pool.TryGetUploaded(palettes, start) with
+          | ValueSome cached -> cached
+          | ValueNone ->
+            let tex = pool.Acquire(boneCount * 4, chunkCount)
+            uploadPaletteChunk palettes (start * boneCount) tex
+            pool.RememberUploaded(palettes, start, tex)
+            tex
+
+        Rlgl.EnableShader shader.Id
+        Rlgl.ActiveTextureSlot paletteTextureSlot
+        Rlgl.EnableTexture tex.Id
+        rlSetUniformInt bonePaletteLoc paletteTextureSlot
+
+        if bonePaletteSizeLoc >= 0 then
+          setShaderIVec2 shader bonePaletteSizeLoc (boneCount * 4) chunkCount
+
+        Rlgl.ActiveTextureSlot 0
+
+        // raylib draws instances 0..count-1 of the array, so a chunk past the first
+        // needs a sliced transforms array. The unchunked case passes it through
+        // untouched (no allocation on the common path); chunked slices copy into
+        // a pooled scratch buffer instead of allocating per chunk.
+        let chunkTransforms =
+          if chunkCount = instanceCount then
+            transforms
+          else
+            let scratch = pool.GetTransformScratch chunkCount
+            Array.Copy(transforms, start, scratch, 0, chunkCount)
+            scratch
+
+        Raylib.DrawMeshInstanced(mesh, mat, chunkTransforms, chunkCount)
+        start <- start + chunkCount
 
   /// Clear all light buffers.
   let inline clearLights(lights: LightBuffers) = LightBuffers.clear lights
@@ -1389,6 +1659,72 @@ module internal PipelineFunctions =
     Raylib.DrawMeshInstanced(mesh, mat, transforms, instanceCount)
     Raylib.EndShaderMode()
 
+  /// Handle skinned + instanced mesh draw: shader switch, lights, material,
+  /// then chunked palette-texture draws (one DrawMeshInstanced per chunk).
+  /// The mvp uniform is view-projection only — raylib uploads it that way for
+  /// instanced draws, since no per-instance model is pushed onto the matrix
+  /// stack; the per-instance transform comes from the instanceTransform VBO.
+  let inline handleDrawSkinnedMeshInstanced
+    (
+      shader: Shader,
+      variant: byref<ShaderVariant>,
+      lights: LightBuffers,
+      maxPt: int,
+      maxSp: int,
+      pointShadowSlots: int[],
+      spotShadowSlots: int[],
+      currentCamera: Camera3D,
+      pool: PaletteTexturePool,
+      mesh: Mesh,
+      transforms: Matrix4x4[],
+      palettes: Matrix4x4[],
+      material: Material3D,
+      instanceCount: int,
+      boneCount: int
+    ) =
+    Raylib.BeginShaderMode shader
+
+    if variant.LightsDirty then
+      uploadLights(
+        shader,
+        &variant,
+        lights,
+        maxPt,
+        maxSp,
+        pointShadowSlots,
+        spotShadowSlots
+      )
+
+      variant.LightsDirty <- false
+
+    setShaderVec3 shader variant.Locs.CameraPos currentCamera.Position
+    setShaderInt shader variant.Locs.Shadow.Pass 0
+
+    let key = MaterialKey.fromMaterial3D &material
+
+    if not variant.HasLastMaterial || key <> variant.LastMaterialKey then
+      setMaterialUniforms(shader, &variant.Locs.Material, &material)
+
+      variant.LastMaterialKey <- key
+      variant.HasLastMaterial <- true
+
+    let mat = getOrCreate(&variant, shader, &material, &key)
+
+    drawSkinnedInstancedChunks(
+      pool,
+      shader,
+      variant.Locs.BonePalette,
+      variant.Locs.BonePaletteSize,
+      mesh,
+      mat,
+      transforms,
+      palettes,
+      instanceCount,
+      boneCount
+    )
+
+    Raylib.EndShaderMode()
+
   /// True when a billboard source rect is the all-zero sentinel (= full texture).
   let inline isZeroSourceRect(rect: Rectangle) =
     rect.X = 0.0f && rect.Y = 0.0f && rect.Width = 0.0f && rect.Height = 0.0f
@@ -1467,7 +1803,8 @@ module internal PipelineFunctions =
       command: Command3D,
       forward: byref<ShaderVariant>,
       instanced: byref<ShaderVariant>,
-      skinned: byref<ShaderVariant>
+      skinned: byref<ShaderVariant>,
+      skinnedInstanced: byref<ShaderVariant>
     ) =
     match command with
     | Command3D.SetAmbientLight l ->
@@ -1475,21 +1812,25 @@ module internal PipelineFunctions =
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
+      skinnedInstanced.LightsDirty <- true
     | Command3D.AddDirectionalLight l ->
       lights.DirLights.Add l
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
+      skinnedInstanced.LightsDirty <- true
     | Command3D.AddPointLight l ->
       lights.PointLights.Add l
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
+      skinnedInstanced.LightsDirty <- true
     | Command3D.AddSpotLight l ->
       lights.SpotLights.Add l
       forward.LightsDirty <- true
       instanced.LightsDirty <- true
       skinned.LightsDirty <- true
+      skinnedInstanced.LightsDirty <- true
     | _ -> ()
 
   /// Pre-scan buffer: collect camera, lights, shadow origin, and warm material caches.
@@ -1502,9 +1843,11 @@ module internal PipelineFunctions =
       forward: byref<ShaderVariant>,
       instanced: byref<ShaderVariant>,
       skinned: byref<ShaderVariant>,
+      skinnedInstanced: byref<ShaderVariant>,
       forwardShader: Shader,
       instancedShader: Shader,
       skinnedShader: Shader,
+      skinnedInstancedShader: Shader,
       ppActions: ResizeArray<PostProcessContext3D -> unit> voption
     ) : FrameState =
     let mutable frameState = {
@@ -1623,6 +1966,13 @@ module internal PipelineFunctions =
           &mat,
           2
         )
+      | Command3D.DrawSkinnedMeshInstanced(_, _, _, mat, _, _) ->
+        // The skinned-instanced variant is warmed directly — warmMaterial only
+        // covers the original three variants.
+        let key = MaterialKey.fromMaterial3D &mat
+
+        getOrCreate(&skinnedInstanced, skinnedInstancedShader, &mat, &key)
+        |> ignore
       | Command3D.PostProcess action
       | Command3D.PostProcessWithDepth action ->
         match ppActions with
@@ -1641,6 +1991,7 @@ module internal PipelineFunctions =
       regionIndex: int,
       camera: Camera3D,
       resources: inref<ShadowDepthResources>,
+      palettePool: PaletteTexturePool,
       meshDraws: MeshDraw[],
       meshDrawCount: int,
       skinnedStart: int,
@@ -1719,18 +2070,46 @@ module internal PipelineFunctions =
     // `in mat4 instanceTransform` so raylib wires up the instance VBO.
     // The non-instanced `resources.Shader` lacks that attribute and would
     // collapse every instance to a single clip-space position.
+    // Skinned-instanced entries (Palettes = ValueSome) render after the plain
+    // ones with the depth skinned-instanced shader + a palette texture.
     if instancedDrawCount > 0 then
       Raylib.BeginShaderMode resources.InstancedShader
 
       for i = 0 to instancedDrawCount - 1 do
         let draw = instancedDraws[i]
 
-        Raylib.DrawMeshInstanced(
-          draw.Mesh,
-          resources.InstancedMaterial,
-          draw.Transforms,
-          draw.InstanceCount
-        )
+        match draw.Palettes with
+        | ValueNone ->
+          Raylib.DrawMeshInstanced(
+            draw.Mesh,
+            resources.InstancedMaterial,
+            draw.Transforms,
+            draw.InstanceCount
+          )
+        | ValueSome _ -> ()
+
+      Raylib.EndShaderMode()
+
+      Raylib.BeginShaderMode resources.SkinnedInstancedShader
+
+      for i = 0 to instancedDrawCount - 1 do
+        let draw = instancedDraws[i]
+
+        match draw.Palettes with
+        | ValueSome palettes ->
+          drawSkinnedInstancedChunks(
+            palettePool,
+            resources.SkinnedInstancedShader,
+            resources.BonePaletteLoc,
+            resources.BonePaletteSizeLoc,
+            draw.Mesh,
+            resources.SkinnedInstancedMaterial,
+            draw.Transforms,
+            palettes,
+            draw.InstanceCount,
+            draw.BoneCount
+          )
+        | ValueNone -> ()
 
       Raylib.EndShaderMode()
 
@@ -1745,6 +2124,7 @@ module internal PipelineFunctions =
       shadowAtlas: ShadowAtlas,
       atlasCfg: ShadowAtlasConfig,
       resources: inref<ShadowDepthResources>,
+      palettePool: PaletteTexturePool,
       lights: LightBuffers,
       meshDraws: MeshDraw[],
       meshDrawCount: int,
@@ -1829,6 +2209,7 @@ module internal PipelineFunctions =
                     caster.AtlasRegion,
                     ptCamera,
                     &resources,
+                    palettePool,
                     meshDraws,
                     meshDrawCount,
                     skinnedStart,
@@ -1860,6 +2241,7 @@ module internal PipelineFunctions =
                     caster.AtlasRegion,
                     spotCamera,
                     &resources,
+                    palettePool,
                     meshDraws,
                     meshDrawCount,
                     skinnedStart,
@@ -1884,6 +2266,7 @@ module internal PipelineFunctions =
                     caster.AtlasRegion,
                     dirCamera,
                     &resources,
+                    palettePool,
                     meshDraws,
                     meshDrawCount,
                     skinnedStart,
@@ -1989,9 +2372,15 @@ type ForwardPipelineBase
   let mutable forwardShader: Shader = Unchecked.defaultof<Shader>
   let mutable instancedShader: Shader = Unchecked.defaultof<Shader>
   let mutable skinnedShader: Shader = Unchecked.defaultof<Shader>
+
+  let mutable skinnedInstancedShader: Shader = Unchecked.defaultof<Shader>
+
   let mutable depthShadowShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowSkinnedShader: Shader = Unchecked.defaultof<Shader>
   let mutable depthShadowInstancedShader: Shader = Unchecked.defaultof<Shader>
+
+  let mutable depthShadowSkinnedInstancedShader: Shader =
+    Unchecked.defaultof<Shader>
 
   let mutable depthShadowMaterial: Material = Unchecked.defaultof<Material>
 
@@ -2001,13 +2390,26 @@ type ForwardPipelineBase
   let mutable depthShadowInstancedMaterial: Material =
     Unchecked.defaultof<Material>
 
+  let mutable depthShadowSkinnedInstancedMaterial: Material =
+    Unchecked.defaultof<Material>
+
   let mutable shadowNormalMatrixLoc: int = -1
   let mutable shadowSkinnedNormalMatrixLoc: int = -1
   let mutable shadowBoneLoc: int = -1
+  let mutable shadowBonePaletteLoc: int = -1
+  let mutable shadowBonePaletteSizeLoc: int = -1
 
   let mutable forward: ShaderVariant = Unchecked.defaultof<ShaderVariant>
   let mutable instanced: ShaderVariant = Unchecked.defaultof<ShaderVariant>
   let mutable skinned: ShaderVariant = Unchecked.defaultof<ShaderVariant>
+
+  let mutable skinnedInstanced: ShaderVariant =
+    Unchecked.defaultof<ShaderVariant>
+
+  // Pooled RGBA32F bone-palette textures for skinned-instanced draws (both the
+  // forward pass and the shadow pass). Acquired per chunk, released once per
+  // frame at the end of Execute.
+  let palettePool = PaletteTexturePool()
 
   let mutable shadowAtlas: ShadowAtlas = Unchecked.defaultof<ShadowAtlas>
 
@@ -2026,6 +2428,15 @@ type ForwardPipelineBase
   // reference).
   let mutable instanceAttrLocs: Dictionary<Shader, int> =
     Dictionary<Shader, int>()
+
+  // Resolved (bonePalette, bonePaletteSize) uniform locations per user shader for
+  // skinned-instanced draws inside a beginEffect/endEffect scope, memoized like
+  // instanceAttrLocs. bonePalette = -1 = the shader doesn't opt in (no
+  // instanceTransform + bone attributes + bonePalette sampler) -> skinned-instanced
+  // draws fall back to the built-in variant. bonePaletteSize = -1 is allowed (the
+  // uniform is optional; the draw helper skips setting it).
+  let mutable skinnedInstancedLocs: Dictionary<Shader, struct (int * int)> =
+    Dictionary<Shader, struct (int * int)>()
 
   // Per-light shadow caster slot mapping (computed in runShadowPass, read in uploadLights).
   // Indexed by lights.PointLights/SpotLights buffer position; -1 = no shadow. Reallocated per
@@ -2119,6 +2530,7 @@ type ForwardPipelineBase
           shadowAtlas,
           atlasCfg,
           &resources,
+          palettePool,
           lights,
           meshDraws,
           meshDrawCount,
@@ -2141,6 +2553,7 @@ type ForwardPipelineBase
         &forward,
         &instanced,
         &skinned,
+        &skinnedInstanced,
         shadowAtlas,
         cam.Position,
         atlasCfg.MaxCasters
@@ -2212,6 +2625,7 @@ type ForwardPipelineBase
             shadowAtlas,
             atlasCfg,
             &resources,
+            palettePool,
             blockLights,
             meshDraws,
             meshDrawCount,
@@ -2229,6 +2643,7 @@ type ForwardPipelineBase
           &forward,
           &instanced,
           &skinned,
+          &skinnedInstanced,
           shadowAtlas,
           camera.Position,
           atlasCfg.MaxCasters
@@ -2239,6 +2654,11 @@ type ForwardPipelineBase
           setShaderInt forwardShader forward.Locs.DirLight.CastsShadows 0
           setShaderInt instancedShader instanced.Locs.DirLight.CastsShadows 0
           setShaderInt skinnedShader skinned.Locs.DirLight.CastsShadows 0
+
+          setShaderInt
+            skinnedInstancedShader
+            skinnedInstanced.Locs.DirLight.CastsShadows
+            0
 
         frame.PointShadowSlots <- pointShadowSlots
         frame.SpotShadowSlots <- spotShadowSlots
@@ -2383,6 +2803,29 @@ type ForwardPipelineBase
           transforms,
           material,
           instanceCount
+        )
+      | Command3D.DrawSkinnedMeshInstanced(mesh,
+                                           transforms,
+                                           palettes,
+                                           material,
+                                           instanceCount,
+                                           boneCount) ->
+        handleDrawSkinnedMeshInstanced(
+          skinnedInstancedShader,
+          &skinnedInstanced,
+          frame.Lights,
+          maxPt,
+          maxSp,
+          frame.PointShadowSlots,
+          frame.SpotShadowSlots,
+          currentCamera,
+          palettePool,
+          mesh,
+          transforms,
+          palettes,
+          material,
+          instanceCount,
+          boneCount
         )
       | _ -> ()
     | ValueSome userShader ->
@@ -2566,6 +3009,83 @@ type ForwardPipelineBase
 
         Raylib.BeginShaderMode userShader
 
+    | Command3D.DrawSkinnedMeshInstanced(mesh,
+                                         transforms,
+                                         palettes,
+                                         material,
+                                         instanceCount,
+                                         boneCount) ->
+      // Opt-in probe (memoized): the user shader shades its own skinned-instanced
+      // draws when it declares `in mat4 instanceTransform`, the bone attributes,
+      // and a `bonePalette` sampler (bonePaletteSize is optional). Otherwise the
+      // draws fall back to the built-in skinned-instanced variant.
+      let struct (paletteLoc, paletteSizeLoc) =
+        match skinnedInstancedLocs.TryGetValue userShader with
+        | true, locs -> locs
+        | false, _ ->
+          let paletteLoc =
+            if
+              Raylib.GetShaderLocationAttrib(userShader, "instanceTransform")
+              >= 0
+              && Raylib.GetShaderLocationAttrib(userShader, "vertexBoneIndices")
+                 >= 0
+              && Raylib.GetShaderLocationAttrib(userShader, "vertexBoneWeights")
+                 >= 0
+            then
+              Raylib.GetShaderLocation(userShader, "bonePalette")
+            else
+              -1
+
+          let locs =
+            struct (paletteLoc,
+                    Raylib.GetShaderLocation(userShader, "bonePaletteSize"))
+
+          skinnedInstancedLocs[userShader] <- locs
+          locs
+
+      if paletteLoc >= 0 then
+        // Opt-in: matModel is identity (the per-instance transform IS the model
+        // matrix); viewProj is view-projection only. The bone palette reaches the
+        // shader through the bonePalette texture, like the built-in variant.
+        upload Matrix4x4.Identity material ValueNone
+        populateMaps material
+
+        drawSkinnedInstancedChunks(
+          palettePool,
+          userShader,
+          paletteLoc,
+          paletteSizeLoc,
+          mesh,
+          userEffectMaterial,
+          transforms,
+          palettes,
+          instanceCount,
+          boneCount
+        )
+      else
+        // No opt-in — fall back to the built-in skinned-instanced variant.
+        Raylib.EndShaderMode()
+
+        handleDrawSkinnedMeshInstanced(
+          skinnedInstancedShader,
+          &skinnedInstanced,
+          frame.Lights,
+          maxPt,
+          maxSp,
+          frame.PointShadowSlots,
+          frame.SpotShadowSlots,
+          currentCamera,
+          palettePool,
+          mesh,
+          transforms,
+          palettes,
+          material,
+          instanceCount,
+          boneCount
+        )
+
+        Raylib.BeginShaderMode userShader
+
     | _ -> ()
 
     Raylib.EndShaderMode()
@@ -2582,6 +3102,12 @@ type ForwardPipelineBase
       skinnedShader <-
         Shaders.loadForwardSkinnedShader maxPt maxSp atlasCfg.MaxCasters
 
+      skinnedInstancedShader <-
+        Shaders.loadForwardSkinnedInstancedShader
+          maxPt
+          maxSp
+          atlasCfg.MaxCasters
+
       // No Locs wiring needed: forwardVertexInstanced declares `in mat4 instanceTransform`,
       // so raylib 6.0 auto-resolves SHADER_LOC_VERTEX_INSTANCETRANSFORM at load and
       // DrawMeshInstanced binds the per-instance VBO through it.
@@ -2589,6 +3115,9 @@ type ForwardPipelineBase
       depthShadowShader <- Shaders.loadDepthShadowShader()
       depthShadowSkinnedShader <- Shaders.loadDepthShadowSkinnedShader()
       depthShadowInstancedShader <- Shaders.loadDepthShadowInstancedShader()
+
+      depthShadowSkinnedInstancedShader <-
+        Shaders.loadDepthShadowSkinnedInstancedShader()
 
       depthShadowMaterial <- Raylib.LoadMaterialDefault()
       depthShadowMaterial.Shader <- depthShadowShader
@@ -2599,6 +3128,11 @@ type ForwardPipelineBase
       depthShadowInstancedMaterial <- Raylib.LoadMaterialDefault()
       depthShadowInstancedMaterial.Shader <- depthShadowInstancedShader
 
+      depthShadowSkinnedInstancedMaterial <- Raylib.LoadMaterialDefault()
+
+      depthShadowSkinnedInstancedMaterial.Shader <-
+        depthShadowSkinnedInstancedShader
+
       shadowNormalMatrixLoc <-
         Raylib.GetShaderLocation(depthShadowShader, "normalMatrix")
 
@@ -2607,6 +3141,18 @@ type ForwardPipelineBase
 
       shadowBoneLoc <-
         Raylib.GetShaderLocation(depthShadowSkinnedShader, "boneMatrices[0]")
+
+      shadowBonePaletteLoc <-
+        Raylib.GetShaderLocation(
+          depthShadowSkinnedInstancedShader,
+          "bonePalette"
+        )
+
+      shadowBonePaletteSizeLoc <-
+        Raylib.GetShaderLocation(
+          depthShadowSkinnedInstancedShader,
+          "bonePaletteSize"
+        )
 
       shadowAtlas <- ShadowAtlas(atlasCfg, biasCfg)
       shadowAtlas.Initialize()
@@ -2620,9 +3166,18 @@ type ForwardPipelineBase
       let skLocs =
         cacheLocations(skinnedShader, maxPt, maxSp, atlasCfg.MaxCasters)
 
+      let skInstLocs =
+        cacheLocations(
+          skinnedInstancedShader,
+          maxPt,
+          maxSp,
+          atlasCfg.MaxCasters
+        )
+
       forward <- ShaderVariant(fwdLocs, MaterialCache 16)
       instanced <- ShaderVariant(instLocs, MaterialCache 16)
       skinned <- ShaderVariant(skLocs, MaterialCache 16)
+      skinnedInstanced <- ShaderVariant(skInstLocs, MaterialCache 16)
 
     member _.Shutdown() =
       // raylib 6.0 changed UnloadMaterial to destroy the material's shader AND
@@ -2644,16 +3199,26 @@ type ForwardPipelineBase
 
       skinned.MaterialCache.cache.Clear()
 
+      for KeyValue(_, mat) in skinnedInstanced.MaterialCache.cache do
+        freeMaps mat
+
+      skinnedInstanced.MaterialCache.cache.Clear()
+
       Raylib.UnloadShader forwardShader
       Raylib.UnloadShader instancedShader
       Raylib.UnloadShader skinnedShader
+      Raylib.UnloadShader skinnedInstancedShader
       Raylib.UnloadShader depthShadowShader
       Raylib.UnloadShader depthShadowSkinnedShader
       Raylib.UnloadShader depthShadowInstancedShader
+      Raylib.UnloadShader depthShadowSkinnedInstancedShader
 
       freeMaps depthShadowMaterial
       freeMaps depthShadowSkinnedMaterial
       freeMaps depthShadowInstancedMaterial
+      freeMaps depthShadowSkinnedInstancedMaterial
+
+      palettePool.UnloadAll()
 
       if userEffectMaterialCreated then
         freeMaps userEffectMaterial
@@ -2667,385 +3232,436 @@ type ForwardPipelineBase
         shadowAtlas.Shutdown()
 
     member this.Execute(gameCtx, gameTime, buffer, rtPool) =
-      let frameTime = float32 gameTime.TotalTime.TotalSeconds
+      try
+        this.executeCore(gameCtx, gameTime, buffer, rtPool)
+      finally
+        // Return this frame's palette textures to the pool even when a draw or a
+        // user callback throws — a skipped release would leak the in-use textures
+        // and leave stale per-frame upload memos keyed by dead array references.
+        palettePool.ReleaseAll()
 
-      // Pre-scan: gather camera, shadow origin, warm material caches, and — when present —
-      // post-process actions in a single pass over the buffer. Lights are gathered here only
-      // for single-camera frames; multi-block frames scope them per camera block in the
-      // forward pass instead.
-      clearLights lights
+  // Frame dispatch body; the IRenderPipeline3D.Execute wrapper above
+  // guarantees the palette-pool release on success and on exception.
+  member private this.executeCore
+    (
+      gameCtx: GameContext,
+      gameTime: GameTime,
+      buffer: RenderBuffer3D,
+      rtPool: IRenderTargetPool3D
+    ) =
+    let frameTime = float32 gameTime.TotalTime.TotalSeconds
 
-      // The block plan walks the buffer once for the per-camera-block light/shadow scoping.
-      // Single-camera frames skip the walk (and its allocations) entirely — the counter is
-      // maintained by the buffer on Add.
-      let multiBlock = buffer.CameraBlockCount > 1
+    // Pre-scan: gather camera, shadow origin, warm material caches, and — when present —
+    // post-process actions in a single pass over the buffer. Lights are gathered here only
+    // for single-camera frames; multi-block frames scope them per camera block in the
+    // forward pass instead.
+    clearLights lights
 
-      let plan =
-        if multiBlock then
-          BlockPlan.build buffer
-        else
-          BlockPlan.empty
+    // The block plan walks the buffer once for the per-camera-block light/shadow scoping.
+    // Single-camera frames skip the walk (and its allocations) entirely — the counter is
+    // maintained by the buffer on Add.
+    let multiBlock = buffer.CameraBlockCount > 1
 
-      // Allocated only when the view emits at least one post-process command, so frames with none
-      // skip the allocation and the per-command scan entirely.
-      let ppActions: ResizeArray<PostProcessContext3D -> unit> voption =
-        if buffer.PostProcessCount > 0 then
-          ValueSome(ResizeArray(buffer.PostProcessCount))
-        else
-          ValueNone
-
-      let frameState =
-        preScan(
-          buffer,
-          lights,
-          not multiBlock,
-          &forward,
-          &instanced,
-          &skinned,
-          forwardShader,
-          instancedShader,
-          skinnedShader,
-          ppActions
-        )
-
-      forward.LightsDirty <- true
-      instanced.LightsDirty <- true
-      skinned.LightsDirty <- true
-
-      let shadowResources = {
-        Shader = depthShadowShader
-        SkinnedShader = depthShadowSkinnedShader
-        InstancedShader = depthShadowInstancedShader
-        Material = depthShadowMaterial
-        SkinnedMaterial = depthShadowSkinnedMaterial
-        InstancedMaterial = depthShadowInstancedMaterial
-        NormalMatrixLoc = shadowNormalMatrixLoc
-        SkinnedNormalMatrixLoc = shadowSkinnedNormalMatrixLoc
-        BoneLoc = shadowBoneLoc
-      }
-
-      // Shadow pass: single-camera frames run one pass up front (frame-global gather, first
-      // camera). Multi-block frames run one pass per camera block at its BeginCamera in the
-      // forward loop instead.
-      let shadowResult: ShadowResult voption =
-        if multiBlock then
-          ValueNone
-        else
-          this.runFrameShadowPass(
-            gameCtx,
-            buffer,
-            &shadowResources,
-            &frameState
-          )
-
-      let mutable frame: ForwardFrame = {
-        Lights = lights
-        PointShadowSlots = pointShadowSlots
-        SpotShadowSlots = spotShadowSlots
-        Shadows = shadowResult
-        Time = frameTime
-      }
-
-      // Clear lights; the forward pass re-adds them per camera block
-      clearLights lights
-      forward.LightsDirty <- true
-      instanced.LightsDirty <- true
-      skinned.LightsDirty <- true
-
-      // Multi-camera-block frames: start the persistent defaults empty — the forward pass
-      // builds them in-order (between-block commands accumulate; each block resets to the
-      // defaults-so-far or inherits the running set at its BeginCamera), so live shading
-      // matches the block plan by construction.
+    let plan =
       if multiBlock then
-        LightBuffers.clear defaultLights
+        BlockPlan.build buffer
+      else
+        BlockPlan.empty
 
-      // Forward pass — dispatch all commands
-      let mutable cameraActive = false
-      let mutable currentCamera = Unchecked.defaultof<Camera3D>
-      let mutable shaderActive = false
-      // Running camera-block index into the block plan; advanced at each
-      // BeginCamera/BeginCameraConfig below (multi-block frames only).
-      let mutable blockIndex = -1
-      // Per-group shading scope (beginEffect/endEffect). ValueNone → default PBR path;
-      // ValueSome shader → shade with the user shader. Reset on camera boundaries.
-      let mutable activeEffect: Shader voption = ValueNone
+    // Allocated only when the view emits at least one post-process command, so frames with none
+    // skip the allocation and the per-command scan entirely.
+    let ppActions: ResizeArray<PostProcessContext3D -> unit> voption =
+      if buffer.PostProcessCount > 0 then
+        ValueSome(ResizeArray(buffer.PostProcessCount))
+      else
+        ValueNone
 
-      let dispatchForwardPass(sceneRT: RenderTexture2D voption) =
-        for i = 0 to buffer.Count - 1 do
-          match buffer[i] with
-          // ── Camera management (inline — simple state toggles) ──
-          | Command3D.BeginCamera cam ->
-            if cameraActive then
-              if shaderActive then
-                Raylib.EndShaderMode()
-                shaderActive <- false
+    let frameState =
+      preScan(
+        buffer,
+        lights,
+        not multiBlock,
+        &forward,
+        &instanced,
+        &skinned,
+        &skinnedInstanced,
+        forwardShader,
+        instancedShader,
+        skinnedShader,
+        skinnedInstancedShader,
+        ppActions
+      )
 
-              Raylib.EndMode3D()
+    forward.LightsDirty <- true
+    instanced.LightsDirty <- true
+    skinned.LightsDirty <- true
+    skinnedInstanced.LightsDirty <- true
 
-            // Multi-block frames: reset-or-inherit the lights, then render this block's
-            // shadow map (outside the camera and scene-RT scopes) before BeginMode3D.
-            if multiBlock then
-              this.beginShadowedBlock(
-                gameCtx,
-                buffer,
-                &shadowResources,
-                sceneRT,
-                plan,
-                &blockIndex,
-                cam,
-                &frame
-              )
+    let shadowResources = {
+      Shader = depthShadowShader
+      SkinnedShader = depthShadowSkinnedShader
+      InstancedShader = depthShadowInstancedShader
+      SkinnedInstancedShader = depthShadowSkinnedInstancedShader
+      Material = depthShadowMaterial
+      SkinnedMaterial = depthShadowSkinnedMaterial
+      InstancedMaterial = depthShadowInstancedMaterial
+      SkinnedInstancedMaterial = depthShadowSkinnedInstancedMaterial
+      NormalMatrixLoc = shadowNormalMatrixLoc
+      SkinnedNormalMatrixLoc = shadowSkinnedNormalMatrixLoc
+      BoneLoc = shadowBoneLoc
+      BonePaletteLoc = shadowBonePaletteLoc
+      BonePaletteSizeLoc = shadowBonePaletteSizeLoc
+    }
 
-            Raylib.BeginMode3D cam
-            cameraActive <- true
-            currentCamera <- cam
-            // New camera block: scopes don't persist across cameras.
-            activeEffect <- ValueNone
+    // Shadow pass: single-camera frames run one pass up front (frame-global gather, first
+    // camera). Multi-block frames run one pass per camera block at its BeginCamera in the
+    // forward loop instead.
+    let shadowResult: ShadowResult voption =
+      if multiBlock then
+        ValueNone
+      else
+        this.runFrameShadowPass(gameCtx, buffer, &shadowResources, &frameState)
 
-          | Command3D.BeginCameraConfig cfg ->
-            if cameraActive then
-              if shaderActive then
-                Raylib.EndShaderMode()
-                shaderActive <- false
+    let mutable frame: ForwardFrame = {
+      Lights = lights
+      PointShadowSlots = pointShadowSlots
+      SpotShadowSlots = spotShadowSlots
+      Shadows = shadowResult
+      Time = frameTime
+    }
 
-              Raylib.EndMode3D()
+    // Clear lights; the forward pass re-adds them per camera block
+    clearLights lights
+    forward.LightsDirty <- true
+    instanced.LightsDirty <- true
+    skinned.LightsDirty <- true
+    skinnedInstanced.LightsDirty <- true
 
-            // Multi-block frames: reset-or-inherit the lights, then render this block's
-            // shadow map (outside the camera and scene-RT scopes) before BeginMode3D.
-            if multiBlock then
-              this.beginShadowedBlock(
-                gameCtx,
-                buffer,
-                &shadowResources,
-                sceneRT,
-                plan,
-                &blockIndex,
-                cfg.Camera,
-                &frame
-              )
+    // Multi-camera-block frames: start the persistent defaults empty — the forward pass
+    // builds them in-order (between-block commands accumulate; each block resets to the
+    // defaults-so-far or inherits the running set at its BeginCamera), so live shading
+    // matches the block plan by construction.
+    if multiBlock then
+      LightBuffers.clear defaultLights
 
-            applyCameraConfig(&cfg, gameCtx)
-            Raylib.BeginMode3D cfg.Camera
-            cameraActive <- true
-            currentCamera <- cfg.Camera
-            // New camera block: scopes don't persist across cameras.
-            activeEffect <- ValueNone
+    // Forward pass — dispatch all commands
+    let mutable cameraActive = false
+    let mutable currentCamera = Unchecked.defaultof<Camera3D>
+    let mutable shaderActive = false
+    // Running camera-block index into the block plan; advanced at each
+    // BeginCamera/BeginCameraConfig below (multi-block frames only).
+    let mutable blockIndex = -1
+    // Per-group shading scope (beginEffect/endEffect). ValueNone → default PBR path;
+    // ValueSome shader → shade with the user shader. Reset on camera boundaries.
+    let mutable activeEffect: Shader voption = ValueNone
 
-          | Command3D.EndCamera ->
-            if cameraActive then
-              if shaderActive then
-                Raylib.EndShaderMode()
-                shaderActive <- false
-
-              Raylib.EndMode3D()
-              cameraActive <- false
-
-            Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
-            // EndCamera closes any open effect scope.
-            activeEffect <- ValueNone
-
-          // ── Per-group shading scope ──
-          | Command3D.BeginEffect shader -> activeEffect <- ValueSome shader
-          | Command3D.EndEffect -> activeEffect <- ValueNone
-
-          // ── Drawing commands ──
-          // The default PBR path (activeEffect = ValueNone) calls the inline handlers directly
-          // to keep the hot path inlined (a virtual Shade call per draw regresses FPS). The
-          // user-effect scope (ValueSome) and any Shade override route through this.Shade.
-          | Command3D.DrawMesh _
-          | Command3D.DrawModel _
-          | Command3D.DrawModelWith _
-          | Command3D.DrawSkinnedMesh _
-          | Command3D.DrawMeshInstanced _ ->
-            if cameraActive then
-              match activeEffect with
-              | ValueNone ->
-                // Default path: inline PBR fast path (hot path — no virtual call).
-                match buffer[i] with
-                | Command3D.DrawMesh(mesh, transform, material) ->
-                  handleDrawMesh(
-                    forwardShader,
-                    &forward,
-                    lights,
-                    maxPt,
-                    maxSp,
-                    pointShadowSlots,
-                    spotShadowSlots,
-                    currentCamera,
-                    mesh,
-                    transform,
-                    material
-                  )
-                | Command3D.DrawModel(model, transform) ->
-                  handleDrawModel(
-                    forwardShader,
-                    &forward,
-                    lights,
-                    maxPt,
-                    maxSp,
-                    pointShadowSlots,
-                    spotShadowSlots,
-                    currentCamera,
-                    model,
-                    transform,
-                    ValueNone
-                  )
-                | Command3D.DrawModelWith(model, transform, matOverride) ->
-                  handleDrawModel(
-                    forwardShader,
-                    &forward,
-                    lights,
-                    maxPt,
-                    maxSp,
-                    pointShadowSlots,
-                    spotShadowSlots,
-                    currentCamera,
-                    model,
-                    transform,
-                    ValueSome matOverride
-                  )
-                | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
-                  handleDrawSkinnedMesh(
-                    skinnedShader,
-                    &skinned,
-                    lights,
-                    maxPt,
-                    maxSp,
-                    pointShadowSlots,
-                    spotShadowSlots,
-                    currentCamera,
-                    mesh,
-                    transform,
-                    material,
-                    bones
-                  )
-                | Command3D.DrawMeshInstanced(mesh,
-                                              transforms,
-                                              material,
-                                              instanceCount) ->
-                  handleDrawMeshInstanced(
-                    instancedShader,
-                    &instanced,
-                    lights,
-                    maxPt,
-                    maxSp,
-                    pointShadowSlots,
-                    spotShadowSlots,
-                    currentCamera,
-                    mesh,
-                    transforms,
-                    material,
-                    instanceCount
-                  )
-                | _ -> ()
-              | ValueSome _ ->
-                this.Shade(frame, activeEffect, &currentCamera, buffer[i])
-
-          | Command3D.DrawBillboard bb ->
-            if cameraActive then
-              handleDrawBillboard(currentCamera, bb)
-
-          | Command3D.DrawBillboardBatch batch ->
-            if cameraActive then
-              handleDrawBillboardBatch(currentCamera, batch)
-
-          | Command3D.DrawLine3D(start, finish, color) ->
-            if cameraActive then
-              Raylib.DrawLine3D(start, finish, color)
-
-          // ── Light commands (delegated) ──
-          | Command3D.SetAmbientLight _
-          | Command3D.AddDirectionalLight _
-          | Command3D.AddPointLight _
-          | Command3D.AddSpotLight _ as cmd ->
-            handleLightCommand(lights, cmd, &forward, &instanced, &skinned)
-
-            // Between-block commands also update the frame defaults, so a later block
-            // that resets sees them.
-            if multiBlock && not cameraActive then
-              LightScoping.apply defaultLights cmd
-
-          // ── Immediate mode: hand the callback the gathered scene data ──
-          | Command3D.DrawImmediate action ->
-            let savedCam = cameraActive
-            let savedShader = shaderActive
-
-            // Capture the view/projection from raylib's current rlgl state before exiting the
-            // camera scope (AGENTS.md "VP Matrix Capture" — must read inside BeginMode3D).
-            let view = Rlgl.GetMatrixModelview()
-            let projection = Rlgl.GetMatrixProjection()
-
+    let dispatchForwardPass(sceneRT: RenderTexture2D voption) =
+      for i = 0 to buffer.Count - 1 do
+        match buffer[i] with
+        // ── Camera management (inline — simple state toggles) ──
+        | Command3D.BeginCamera cam ->
+          if cameraActive then
             if shaderActive then
               Raylib.EndShaderMode()
               shaderActive <- false
 
-            if cameraActive then
-              Raylib.EndMode3D()
-              cameraActive <- false
+            Raylib.EndMode3D()
 
-            let ctx: SceneContext = {
-              Camera = currentCamera
-              View = view
-              Projection = projection
-              Lights = lights
-              Shadows = frame.Shadows
-              Time = frame.Time
-            }
+          // Multi-block frames: reset-or-inherit the lights, then render this block's
+          // shadow map (outside the camera and scene-RT scopes) before BeginMode3D.
+          if multiBlock then
+            this.beginShadowedBlock(
+              gameCtx,
+              buffer,
+              &shadowResources,
+              sceneRT,
+              plan,
+              &blockIndex,
+              cam,
+              &frame
+            )
 
-            try
-              action ctx
-            finally
-              if savedCam then
-                Raylib.BeginMode3D currentCamera
-                cameraActive <- true
+          Raylib.BeginMode3D cam
+          cameraActive <- true
+          currentCamera <- cam
+          // New camera block: scopes don't persist across cameras.
+          activeEffect <- ValueNone
 
-              if savedShader then
-                Raylib.BeginShaderMode forwardShader
-                shaderActive <- true
+        | Command3D.BeginCameraConfig cfg ->
+          if cameraActive then
+            if shaderActive then
+              Raylib.EndShaderMode()
+              shaderActive <- false
 
-          // ── State toggles (inline — no-ops) ──
-          | Command3D.SetShadowOrigin _ -> ()
-          | Command3D.EnableShadows -> ()
-          | Command3D.DisableShadows -> ()
-          // Post-process actions are collected above and run after the scene renders to
-          // an offscreen target; nothing to do during the forward pass.
-          | Command3D.PostProcess _
-          | Command3D.PostProcessWithDepth _ -> ()
+            Raylib.EndMode3D()
 
-        // End remaining shader/camera state after dispatch
-        if shaderActive then
-          Raylib.EndShaderMode()
+          // Multi-block frames: reset-or-inherit the lights, then render this block's
+          // shadow map (outside the camera and scene-RT scopes) before BeginMode3D.
+          if multiBlock then
+            this.beginShadowedBlock(
+              gameCtx,
+              buffer,
+              &shadowResources,
+              sceneRT,
+              plan,
+              &blockIndex,
+              cfg.Camera,
+              &frame
+            )
 
-        if cameraActive then
-          Raylib.EndMode3D()
+          applyCameraConfig(&cfg, gameCtx)
+          Raylib.BeginMode3D cfg.Camera
+          cameraActive <- true
+          currentCamera <- cfg.Camera
+          // New camera block: scopes don't persist across cameras.
+          activeEffect <- ValueNone
 
-      // Render the forward pass direct, or via a scene RT when post-process commands are present.
-      // When depth-needing actions exist (DepthPostProcessCount > 0), expose the scene RT's depth
-      // attachment to the post-process context — OpenGL's depth buffer is directly sampleable, so
-      // no separate geometry pre-pass is needed (unlike the MonoGame backend).
-      match ppActions with
-      | ValueNone -> dispatchForwardPass ValueNone
-      | ValueSome actions ->
-        // Use a depth-sampleable RT (custom FBO with a depth texture) when post-process effects
-        // need to sample depth; otherwise a standard raylib RT (depth renderbuffer, cheaper).
-        let sceneRT =
-          if buffer.DepthPostProcessCount > 0 then
-            rtPool.AcquireWithDepth(gameCtx.WindowWidth, gameCtx.WindowHeight)
-          else
-            rtPool.Acquire(gameCtx.WindowWidth, gameCtx.WindowHeight)
+        | Command3D.EndCamera ->
+          if cameraActive then
+            if shaderActive then
+              Raylib.EndShaderMode()
+              shaderActive <- false
 
-        Raylib.BeginTextureMode sceneRT
-        Raylib.ClearBackground Color.Black
-        dispatchForwardPass(ValueSome sceneRT)
-        Raylib.EndTextureMode()
+            Raylib.EndMode3D()
+            cameraActive <- false
 
-        let depth: Texture2D voption =
-          if buffer.DepthPostProcessCount > 0 then
-            ValueSome sceneRT.Depth
-          else
-            ValueNone
+          Rlgl.Viewport(0, 0, gameCtx.WindowWidth, gameCtx.WindowHeight)
+          // EndCamera closes any open effect scope.
+          activeEffect <- ValueNone
 
-        applyPostProcess gameCtx sceneRT rtPool actions depth frameTime
+        // ── Per-group shading scope ──
+        | Command3D.BeginEffect shader -> activeEffect <- ValueSome shader
+        | Command3D.EndEffect -> activeEffect <- ValueNone
+
+        // ── Drawing commands ──
+        // The default PBR path (activeEffect = ValueNone) calls the inline handlers directly
+        // to keep the hot path inlined (a virtual Shade call per draw regresses FPS). The
+        // user-effect scope (ValueSome) and any Shade override route through this.Shade.
+        | Command3D.DrawMesh _
+        | Command3D.DrawModel _
+        | Command3D.DrawModelWith _
+        | Command3D.DrawSkinnedMesh _
+        | Command3D.DrawMeshInstanced _
+        | Command3D.DrawSkinnedMeshInstanced _ ->
+          if cameraActive then
+            match activeEffect with
+            | ValueNone ->
+              // Default path: inline PBR fast path (hot path — no virtual call).
+              match buffer[i] with
+              | Command3D.DrawMesh(mesh, transform, material) ->
+                handleDrawMesh(
+                  forwardShader,
+                  &forward,
+                  lights,
+                  maxPt,
+                  maxSp,
+                  pointShadowSlots,
+                  spotShadowSlots,
+                  currentCamera,
+                  mesh,
+                  transform,
+                  material
+                )
+              | Command3D.DrawModel(model, transform) ->
+                handleDrawModel(
+                  forwardShader,
+                  &forward,
+                  lights,
+                  maxPt,
+                  maxSp,
+                  pointShadowSlots,
+                  spotShadowSlots,
+                  currentCamera,
+                  model,
+                  transform,
+                  ValueNone
+                )
+              | Command3D.DrawModelWith(model, transform, matOverride) ->
+                handleDrawModel(
+                  forwardShader,
+                  &forward,
+                  lights,
+                  maxPt,
+                  maxSp,
+                  pointShadowSlots,
+                  spotShadowSlots,
+                  currentCamera,
+                  model,
+                  transform,
+                  ValueSome matOverride
+                )
+              | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
+                handleDrawSkinnedMesh(
+                  skinnedShader,
+                  &skinned,
+                  lights,
+                  maxPt,
+                  maxSp,
+                  pointShadowSlots,
+                  spotShadowSlots,
+                  currentCamera,
+                  mesh,
+                  transform,
+                  material,
+                  bones
+                )
+              | Command3D.DrawMeshInstanced(mesh,
+                                            transforms,
+                                            material,
+                                            instanceCount) ->
+                handleDrawMeshInstanced(
+                  instancedShader,
+                  &instanced,
+                  lights,
+                  maxPt,
+                  maxSp,
+                  pointShadowSlots,
+                  spotShadowSlots,
+                  currentCamera,
+                  mesh,
+                  transforms,
+                  material,
+                  instanceCount
+                )
+              | Command3D.DrawSkinnedMeshInstanced(mesh,
+                                                   transforms,
+                                                   palettes,
+                                                   material,
+                                                   instanceCount,
+                                                   boneCount) ->
+                handleDrawSkinnedMeshInstanced(
+                  skinnedInstancedShader,
+                  &skinnedInstanced,
+                  lights,
+                  maxPt,
+                  maxSp,
+                  pointShadowSlots,
+                  spotShadowSlots,
+                  currentCamera,
+                  palettePool,
+                  mesh,
+                  transforms,
+                  palettes,
+                  material,
+                  instanceCount,
+                  boneCount
+                )
+              | _ -> ()
+            | ValueSome _ ->
+              this.Shade(frame, activeEffect, &currentCamera, buffer[i])
+
+        | Command3D.DrawBillboard bb ->
+          if cameraActive then
+            handleDrawBillboard(currentCamera, bb)
+
+        | Command3D.DrawBillboardBatch batch ->
+          if cameraActive then
+            handleDrawBillboardBatch(currentCamera, batch)
+
+        | Command3D.DrawLine3D(start, finish, color) ->
+          if cameraActive then
+            Raylib.DrawLine3D(start, finish, color)
+
+        // ── Light commands (delegated) ──
+        | Command3D.SetAmbientLight _
+        | Command3D.AddDirectionalLight _
+        | Command3D.AddPointLight _
+        | Command3D.AddSpotLight _ as cmd ->
+          handleLightCommand(
+            lights,
+            cmd,
+            &forward,
+            &instanced,
+            &skinned,
+            &skinnedInstanced
+          )
+
+          // Between-block commands also update the frame defaults, so a later block
+          // that resets sees them.
+          if multiBlock && not cameraActive then
+            LightScoping.apply defaultLights cmd
+
+        // ── Immediate mode: hand the callback the gathered scene data ──
+        | Command3D.DrawImmediate action ->
+          let savedCam = cameraActive
+          let savedShader = shaderActive
+
+          // Capture the view/projection from raylib's current rlgl state before exiting the
+          // camera scope (AGENTS.md "VP Matrix Capture" — must read inside BeginMode3D).
+          let view = Rlgl.GetMatrixModelview()
+          let projection = Rlgl.GetMatrixProjection()
+
+          if shaderActive then
+            Raylib.EndShaderMode()
+            shaderActive <- false
+
+          if cameraActive then
+            Raylib.EndMode3D()
+            cameraActive <- false
+
+          let ctx: SceneContext = {
+            Camera = currentCamera
+            View = view
+            Projection = projection
+            Lights = lights
+            Shadows = frame.Shadows
+            Time = frame.Time
+          }
+
+          try
+            action ctx
+          finally
+            if savedCam then
+              Raylib.BeginMode3D currentCamera
+              cameraActive <- true
+
+            if savedShader then
+              Raylib.BeginShaderMode forwardShader
+              shaderActive <- true
+
+        // ── State toggles (inline — no-ops) ──
+        | Command3D.SetShadowOrigin _ -> ()
+        | Command3D.EnableShadows -> ()
+        | Command3D.DisableShadows -> ()
+        // Post-process actions are collected above and run after the scene renders to
+        // an offscreen target; nothing to do during the forward pass.
+        | Command3D.PostProcess _
+        | Command3D.PostProcessWithDepth _ -> ()
+
+      // End remaining shader/camera state after dispatch
+      if shaderActive then
+        Raylib.EndShaderMode()
+
+      if cameraActive then
+        Raylib.EndMode3D()
+
+    // Render the forward pass direct, or via a scene RT when post-process commands are present.
+    // When depth-needing actions exist (DepthPostProcessCount > 0), expose the scene RT's depth
+    // attachment to the post-process context — OpenGL's depth buffer is directly sampleable, so
+    // no separate geometry pre-pass is needed (unlike the MonoGame backend).
+    match ppActions with
+    | ValueNone -> dispatchForwardPass ValueNone
+    | ValueSome actions ->
+      // Use a depth-sampleable RT (custom FBO with a depth texture) when post-process effects
+      // need to sample depth; otherwise a standard raylib RT (depth renderbuffer, cheaper).
+      let sceneRT =
+        if buffer.DepthPostProcessCount > 0 then
+          rtPool.AcquireWithDepth(gameCtx.WindowWidth, gameCtx.WindowHeight)
+        else
+          rtPool.Acquire(gameCtx.WindowWidth, gameCtx.WindowHeight)
+
+      Raylib.BeginTextureMode sceneRT
+      Raylib.ClearBackground Color.Black
+      dispatchForwardPass(ValueSome sceneRT)
+      Raylib.EndTextureMode()
+
+      let depth: Texture2D voption =
+        if buffer.DepthPostProcessCount > 0 then
+          ValueSome sceneRT.Depth
+        else
+          ValueNone
+
+      applyPostProcess gameCtx sceneRT rtPool actions depth frameTime
 
 // ------------------------------------------------------------------
 // ForwardPbrPipeline — the default PBR subclass (thin).

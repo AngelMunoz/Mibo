@@ -41,9 +41,11 @@
     <Compile Include="Graphics3D/RenderPipeline3D.fs" />
     <Compile Include="Graphics3D/Renderer3D.fs" />
     <Compile Include="Graphics3D/Pipelines/BlockPlan.fs" />
+    <Compile Include="Graphics3D/Pipelines/SceneData.fs" />
     <Compile Include="Graphics3D/Pipelines/ShadowAtlas.fs" />
     <Compile Include="Graphics3D/Pipelines/PbrUniforms.fs" />
     <Compile Include="Graphics3D/Pipelines/SceneUpload.fs" />
+    <Compile Include="Graphics3D/Pipelines/MergedModelParts.fs" />
     <Compile Include="Graphics3D/Pipelines/ShadowPass.fs" />
     <Compile Include="Graphics3D/Pipelines/PbrShading.fs" />
     <Compile Include="Graphics3D/Pipelines/ForwardPipeline.fs" />
@@ -77,6 +79,8 @@
     <EmbeddedResource Include="Shaders\DepthShadow.ogl.mgfx" />
     <EmbeddedResource Include="Shaders\DepthShadow.dx12.mgfx" />
     <EmbeddedResource Include="Shaders\DepthShadow.vk.mgfx" />
+    <EmbeddedResource Include="Shaders\ForwardPbrGrouped.dx12.mgfx" />
+    <EmbeddedResource Include="Shaders\DepthShadowGrouped.dx12.mgfx" />
     <None Include="Shaders\*.fx" CopyToOutputDirectory="Never" />
   </ItemGroup>
 

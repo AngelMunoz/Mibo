@@ -140,7 +140,7 @@ module SceneUpload =
   /// <param name="normalMatrix">transpose(inverse(world)).</param>
   /// <param name="lights">The frame's accumulated lights.</param>
   /// <param name="shadows">The frame's shadow pass output (ValueNone when no shadow-casting light).</param>
-  /// <param name="bones">Bone palette (ValueSome for skinned draws; ValueNone otherwise).</param>
+  /// <param name="bones">Bone palette (ValueSome for skinned draws; ValueNone otherwise), in plain System.Numerics row-major layout (<c>bones[i] = InverseBindPose[i] * pose[i]</c>) — transposed to the raylib-native layout at upload here.</param>
   /// <param name="material">The draw's material.</param>
   /// <param name="time">Total elapsed game time, in seconds — the <c>time</c> uniform for animated shaders.</param>
   let uploadToShader
@@ -331,6 +331,8 @@ module SceneUpload =
     | ValueNone -> setInt shader (loc shader "dirLightCastsShadows") 0
 
     // ── Bones (only for skinned draws) ──
+    // Palettes arrive in System.Numerics row-major layout; SetShaderValueMatrix
+    // expects the transposed (raylib-native) layout (see uploadBoneMatrices).
     match bones with
     | ValueSome bs ->
       let boneLoc = loc shader "boneMatrices[0]"
@@ -339,5 +341,9 @@ module SceneUpload =
         let count = min bs.Length 128
 
         for i = 0 to count - 1 do
-          Raylib.SetShaderValueMatrix(shader, boneLoc + i, bs[i])
+          Raylib.SetShaderValueMatrix(
+            shader,
+            boneLoc + i,
+            Matrix4x4.Transpose bs[i]
+          )
     | ValueNone -> ()

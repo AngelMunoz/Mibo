@@ -2,6 +2,7 @@ namespace Mibo.Animation
 
 open System
 open System.Collections.Generic
+open System.Collections.Frozen
 open Assimp
 open Microsoft.Xna.Framework
 
@@ -36,6 +37,7 @@ type Animation3DKeyframe = {
 /// <summary>
 /// A per-bone animation channel: a sorted array of keyframes for one bone.
 /// </summary>
+[<Struct>]
 type Animation3DChannel = {
   BoneName: string
   Keyframes: Animation3DKeyframe[]
@@ -44,6 +46,7 @@ type Animation3DChannel = {
 /// <summary>
 /// A single animation clip with a name, duration (in seconds), and per-bone channels.
 /// </summary>
+[<Struct>]
 type Animation3DClip = {
   Name: string
   DurationSeconds: float32
@@ -61,6 +64,7 @@ type Animation3DClip = {
 /// <c>Animation3DState</c> instances. Use <c>Animation3DClips.names</c> to
 /// discover available animations at runtime.
 /// </remarks>
+[<Struct>]
 type Animation3DClips = {
   Clips: Animation3DClip[]
   ClipNames: IReadOnlyDictionary<string, int>
@@ -99,6 +103,7 @@ type Animation3DState = {
 /// own bone matrices via <c>AnimatedMesh.computeBoneMatrices</c> and passes
 /// them to <c>Draw3D.drawSkinnedMesh</c>.
 /// </remarks>
+[<Struct>]
 type AnimatedMesh = {
   BoneCount: int
   BoneNames: string[]
@@ -128,7 +133,74 @@ type AnimatedMesh = {
   /// sort that the hot path would otherwise pay.
   /// </remarks>
   BoneOrder: int[]
+  /// <summary>Bone name → bone index lookup for <c>BoneRef.ByName</c> queries.</summary>
+  /// <remarks>
+  /// Built once at load from <c>BoneNames</c>; retained on the record so bone
+  /// queries and attachment draws can resolve names without re-walking the array.
+  /// </remarks>
+  BoneLookup: IReadOnlyDictionary<string, int>
 }
+
+/// <summary>
+/// One evaluated pose of an animated mesh: the per-bone model-space world
+/// transforms for the current frame plus the shader skinning palette derived
+/// from them.
+/// </summary>
+/// <remarks>
+/// Produced once per instance per frame by <c>Animation3DState.computePose</c>
+/// (or <c>AnimatedModel.computePose</c>) and shared between the skinned draw
+/// (<c>Palette</c>) and any number of bone queries / attachment draws
+/// (<c>WorldPoses</c>). The caller owns the value — there is no per-frame
+/// caching on <c>Animation3DState</c>.
+/// All matrices are in MonoGame's row-vector convention, consumed as-is
+/// (no transpose/inversion anywhere in the query/attachment path).
+/// </remarks>
+[<Struct>]
+type BonePose = {
+  /// <summary>Model-space bone transform for the current frame, per bone.</summary>
+  /// <remarks>Mutable so <c>computePoseInto</c> can grow the backing array in place
+  /// on first use (or skeleton change) and reuse it thereafter — no per-frame
+  /// allocation after warmup. Caller-owned; never aliased across frames.</remarks>
+  mutable WorldPoses: Matrix[]
+  /// <summary>Skinning palette: <c>InverseBindPose[i] * WorldPoses[i]</c>, per bone.</summary>
+  /// <remarks>Mutable for the same reason as <c>WorldPoses</c> — grown in place by
+  /// <c>computePoseInto</c> and reused.</remarks>
+  mutable Palette: Matrix[]
+} with
+
+  /// <summary>A pose with no bones. Use as the starting point for
+  /// <c>computePoseInto</c> — arrays are grown on first use and reused
+  /// on subsequent calls, so no per-frame allocation after the first frame.</summary>
+  static member empty = {
+    WorldPoses = Array.empty
+    Palette = Array.empty
+  }
+
+/// <summary>Query functions for <see cref="T:Mibo.Animation.BonePose"/>.</summary>
+module BonePose =
+
+  /// <summary>
+  /// Get the model-space world transform of a bone by index, bounds-checked.
+  /// Returns <c>ValueNone</c> when <paramref name="index"/> is outside the pose.
+  /// </summary>
+  let inline worldAt (index: int) (pose: BonePose) : Matrix voption =
+    if index >= 0 && index < pose.WorldPoses.Length then
+      ValueSome pose.WorldPoses[index]
+    else
+      ValueNone
+
+  /// <summary>
+  /// Get the model-space world transform of a bone by name.
+  /// Returns <c>ValueNone</c> when the mesh has no bone with that name.
+  /// </summary>
+  let inline tryGetWorld
+    (name: string)
+    (mesh: AnimatedMesh)
+    (pose: BonePose)
+    : Matrix voption =
+    match mesh.BoneLookup.TryGetValue(name) with
+    | true, index -> worldAt index pose
+    | false, _ -> ValueNone
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers (internal)
@@ -334,7 +406,10 @@ module Animation3DClips =
         clips[i] <- {
           Name = anim.Name
           DurationSeconds = durationSeconds
-          Channels = channels
+          // Frozen: name-keyed channel access is the userland path; make its
+          // lookups as fast as possible. The hot pose loop bypasses the
+          // dictionary entirely (see channelsForBones).
+          Channels = FrozenDictionary.ToFrozenDictionary channels
           KeyframeCount = maxKeys
         }
 
@@ -350,7 +425,7 @@ module Animation3DClips =
 
       {
         Clips = clips
-        ClipNames = nameDict
+        ClipNames = FrozenDictionary.ToFrozenDictionary nameDict
         ClipsInfo = clipsInfo
       }
 
@@ -364,7 +439,7 @@ module Animation3DClips =
     Animation3DClipsInfo.tryGetClipIndex name clips.ClipsInfo
 
   /// <summary>Get the list of animation names in this clip set.</summary>
-  let names(clips: Animation3DClips) : string[] =
+  let inline names(clips: Animation3DClips) : string[] =
     Animation3DClipsInfo.names clips.ClipsInfo
 
   /// <summary>Get the number of animation clips.</summary>
@@ -469,14 +544,17 @@ module Animation3DState =
     }
 
   /// <summary>Play an animation by name. Resets the frame if switching clips.</summary>
-  let play (clipName: string) (state: Animation3DState) : Animation3DState =
+  let inline play
+    (clipName: string)
+    (state: Animation3DState)
+    : Animation3DState =
     let core = Mibo.Animation.Animation3DState.play clipName (toCoreState state)
     fromCoreState state core
 
   /// <summary>
   /// Play by clip index (zero string allocation).
   /// </summary>
-  let playByIndex
+  let inline playByIndex
     (clipIndex: int)
     (state: Animation3DState)
     : Animation3DState =
@@ -486,7 +564,7 @@ module Animation3DState =
     fromCoreState state core
 
   /// <summary>Play animation only if not already playing it.</summary>
-  let playIfNot
+  let inline playIfNot
     (clipName: string)
     (state: Animation3DState)
     : Animation3DState =
@@ -500,7 +578,7 @@ module Animation3DState =
   /// </summary>
   /// <param name="clipName">The animation to blend towards.</param>
   /// <param name="duration">The blend duration in seconds.</param>
-  let blendTo
+  let inline blendTo
     (clipName: string)
     (duration: float32)
     (state: Animation3DState)
@@ -514,7 +592,7 @@ module Animation3DState =
     fromCoreState state core
 
   /// <summary>Start blending to a target animation by clip index.</summary>
-  let blendToByIndex
+  let inline blendToByIndex
     (clipIndex: int)
     (duration: float32)
     (state: Animation3DState)
@@ -532,7 +610,7 @@ module Animation3DState =
     Mibo.Animation.Animation3DState.isBlending(toCoreState state)
 
   /// <summary>Force restart the current animation from the beginning.</summary>
-  let restart(state: Animation3DState) : Animation3DState =
+  let inline restart(state: Animation3DState) : Animation3DState =
     let core = Mibo.Animation.Animation3DState.restart(toCoreState state)
     fromCoreState state core
 
@@ -541,7 +619,7 @@ module Animation3DState =
   /// </summary>
   /// <remarks>Call from your Elmish update function each frame. Does not compute
   /// bone matrices — use <c>computeBonePalette</c> after.</remarks>
-  let update
+  let inline update
     (deltaSeconds: float32)
     (state: Animation3DState)
     : Animation3DState =
@@ -555,7 +633,7 @@ module Animation3DState =
     Mibo.Animation.Animation3DState.isFinished(toCoreState state)
 
   /// <summary>Is currently playing the specified animation?</summary>
-  let isPlaying (clipName: string) (state: Animation3DState) =
+  let inline isPlaying (clipName: string) (state: Animation3DState) =
     Mibo.Animation.Animation3DState.isPlaying clipName (toCoreState state)
 
   /// <summary>Get the total duration of the current clip in seconds at the current speed.</summary>
@@ -591,112 +669,262 @@ module Animation3DState =
   /// Sample a single bone channel at a fractional frame index, returning a
   /// bone-local transform matrix (SRT).
   /// </summary>
-  /// <param name="fallback">Pose returned when this clip has no channel for the bone
-  /// (or the channel has no keyframes). Pass the bone's bind local pose so unanimated
-  /// limbs hold their rest position — <c>Matrix.Identity</c> here collapses channelless
-  /// bones to the skeleton origin (the vanished-limbs bug).</param>
-  let private sampleChannel
-    (clip: Animation3DClip)
-    (boneName: string)
+  /// <param name="keyframeCount">Clip-wide max keyframe count — maps the
+  /// clip-wide frame index into this channel's keyframe space so every bone
+  /// samples at the same normalized time.</param>
+  /// <param name="fallback">Pose returned when the channel has no keyframes.
+  /// Pass the bone's bind local pose so unanimated limbs hold their rest
+  /// position — <c>Matrix.Identity</c> here collapses channelless bones to the
+  /// skeleton origin (the vanished-limbs bug).</param>
+  let private sampleChannelAt
+    (channel: Animation3DChannel)
     (frame: float32)
+    (keyframeCount: int)
     (fallback: Matrix)
     : Matrix =
-    match clip.Channels.TryGetValue(boneName) with
-    | false, _ -> fallback
-    | true, ch ->
-      if ch.Keyframes.Length = 0 then
-        fallback
-      elif ch.Keyframes.Length = 1 then
-        ch.Keyframes[0].Transform
+    let ch = channel
+
+    if ch.Keyframes.Length = 0 then
+      fallback
+    elif ch.Keyframes.Length = 1 then
+      ch.Keyframes[0].Transform
+    else
+      let len = ch.Keyframes.Length
+      // Map the clip-wide frame index into this channel's keyframe space so every
+      // bone samples at the same normalized time. Indexing by the raw frame with
+      // per-channel modulo desyncs bones whose channels have differing counts.
+      let pos = frame * float32 len / float32 keyframeCount
+      let cf = int pos % len
+      let nf = (cf + 1) % len
+      let blend = Math.Clamp(pos - float32(int pos), 0.0f, 1.0f)
+      let t0 = ch.Keyframes[cf].Transform
+      let t1 = ch.Keyframes[nf].Transform
+      Matrix.Lerp(t0, t1, blend)
+
+  let private emptyChannel: Animation3DChannel = {
+    BoneName = ""
+    Keyframes = [||]
+  }
+
+  /// Resolved channels for one clip, one entry per mesh the clip was posed
+  /// against: each entry's channels are the clip's channel for that mesh's
+  /// bone <c>i</c> (an empty channel when the clip doesn't animate that bone).
+  /// Built once per (clip, mesh) pair via the string-keyed <c>Channels</c>
+  /// dictionary — the per-frame pose loop then samples by bone index instead
+  /// of paying a dictionary lookup per bone per instance. A clip shared across
+  /// meshes keeps every mesh's entry instead of evicting and rebuilding the
+  /// resolved array per frame. The hit path is allocation-free.
+  type private BoneChannelCache() =
+    let entries = ResizeArray<struct (string[] * Animation3DChannel[])>(2)
+
+    /// <summary>The resolved channel array for <paramref name="boneNames"/>
+    /// (mesh identity is the <c>BoneNames</c> array reference), built and
+    /// appended on first use. Locked (explicit Monitor — an F# <c>lock</c>
+    /// closure would allocate per call) because ConditionalWeakTable factories
+    /// and pose evaluation may run on several threads.</summary>
+    member this.GetChannels
+      (
+        boneNames: string[],
+        channels: IReadOnlyDictionary<string, Animation3DChannel>
+      ) : Animation3DChannel[] =
+      System.Threading.Monitor.Enter this
+
+      try
+        let mutable resolved = Unchecked.defaultof<Animation3DChannel[]>
+        let mutable i = 0
+
+        while isNull resolved && i < entries.Count do
+          let struct (names, cached) = entries[i]
+
+          if obj.ReferenceEquals(names, boneNames) then
+            resolved <- cached
+          else
+            i <- i + 1
+
+        if isNull resolved then
+          let built =
+            Array.init boneNames.Length (fun i ->
+              match channels.TryGetValue boneNames[i] with
+              | true, ch -> ch
+              | _ -> emptyChannel)
+
+          entries.Add(struct (boneNames, built))
+          built
+        else
+          resolved
+      finally
+        System.Threading.Monitor.Exit this
+
+  /// Keyed by each clip's <c>Channels</c> dictionary (a unique reference per
+  /// clip), so no public surface changes. Each cache holds one entry per mesh
+  /// the clip was posed against (mesh identity is the <c>BoneNames</c> array
+  /// ref).
+  let private boneChannelCaches =
+    System.Runtime.CompilerServices.ConditionalWeakTable<
+      IReadOnlyDictionary<string, Animation3DChannel>,
+      BoneChannelCache
+     >()
+
+  /// Cached <c>GetValue</c> factory delegate — an inline lambda would allocate
+  /// a closure per call on the per-instance hot path.
+  let private newBoneChannelCache =
+    System
+      .Runtime.CompilerServices
+      .ConditionalWeakTable<
+        IReadOnlyDictionary<string, Animation3DChannel>,
+        BoneChannelCache
+        >
+      .CreateValueCallback(fun _ -> BoneChannelCache())
+
+  let private channelsForBones
+    (clip: Animation3DClip)
+    (boneNames: string[])
+    : Animation3DChannel[] =
+    if isNull clip.Channels then
+      Array.create boneNames.Length emptyChannel
+    else
+      // GetValue's factory may run concurrently on several threads; the table
+      // keeps one winner and the losers are harmless empty objects.
+      boneChannelCaches
+        .GetValue(clip.Channels, newBoneChannelCache)
+        .GetChannels(boneNames, clip.Channels)
+
+  /// <summary>
+  /// Compute the full bone pose for the current animation frame: per-bone
+  /// model-space world transforms plus the shader skinning palette.
+  /// </summary>
+  /// <remarks>
+  /// This is the MonoGame analog of raylib's <c>UpdateModelAnimation</c>. Instead
+  /// of mutating the model, it returns a <c>BonePose</c> the caller owns and
+  /// shares between the skinned draw (<c>Palette</c>, passed to
+  /// <c>Draw3D.drawSkinnedMesh</c>) and bone queries / attachment draws
+  /// (<c>WorldPoses</c>). Each palette entry is
+  /// <c>InverseBindPose[i] * WorldPoses[i]</c> — the standard skinning palette.
+  /// When blending, the two clips' bone matrices are linearly interpolated by
+  /// <c>BlendProgress</c>. One evaluation per instance per frame serves draw +
+  /// queries + attachments.
+  /// </remarks>
+  let computePoseInto
+    (mesh: AnimatedMesh)
+    (state: Animation3DState)
+    (existing: BonePose)
+    : BonePose =
+    let boneCount = mesh.BoneCount
+
+    // Grow arrays on first use or skeleton change; reuse thereafter.
+    let worldPoses =
+      if existing.WorldPoses.Length < boneCount then
+        Array.zeroCreate<Matrix> boneCount
       else
-        let len = ch.Keyframes.Length
-        // Map the clip-wide frame index into this channel's keyframe space so every
-        // bone samples at the same normalized time. Indexing by the raw frame with
-        // per-channel modulo desyncs bones whose channels have differing counts.
-        let pos = frame * float32 len / float32 clip.KeyframeCount
-        let cf = int pos % len
-        let nf = (cf + 1) % len
-        let blend = Math.Clamp(pos - float32(int pos), 0.0f, 1.0f)
-        let t0 = ch.Keyframes[cf].Transform
-        let t1 = ch.Keyframes[nf].Transform
-        Matrix.Lerp(t0, t1, blend)
+        existing.WorldPoses
+
+    let palette =
+      if existing.Palette.Length < boneCount then
+        Array.zeroCreate<Matrix> boneCount
+      else
+        existing.Palette
+
+    if boneCount <= 0 || state.Clips.Clips.Length = 0 then
+      ()
+    else
+      let clip = state.Clips.Clips[state.CurrentClipIndex]
+      let bindLocal = mesh.BindLocalPoses
+      let parents = mesh.BoneParents
+      let order = mesh.BoneOrder
+      let blending = state.BlendTargetIndex >= 0
+
+      let clipB =
+        if blending then
+          state.Clips.Clips[state.BlendTargetIndex]
+        else
+          clip
+
+      let blend = state.BlendProgress
+
+      // Bone-indexed channel views — resolved once per (clip, mesh) pair and
+      // cached, so the per-bone loop below does no string dictionary lookups.
+      let channelsA = channelsForBones clip mesh.BoneNames
+
+      let channelsB =
+        if blending then
+          channelsForBones clipB mesh.BoneNames
+        else
+          channelsA
+
+      // Compose parent chains in one pass — sample each bone's local pose inline,
+      // then immediately compose with the parent's world pose. This eliminates the
+      // intermediate localPoses array (3 arrays → 2). Safe because localPose[i]
+      // depends only on bone i, and BoneOrder processes parents before children.
+      for i in order do
+        let fb = bindLocal[i]
+
+        let localPose =
+          if blending then
+            let poseA =
+              sampleChannelAt
+                channelsA[i]
+                state.CurrentFrame
+                clip.KeyframeCount
+                fb
+
+            let poseB =
+              sampleChannelAt
+                channelsB[i]
+                state.BlendTargetFrame
+                clipB.KeyframeCount
+                fb
+
+            Matrix.Lerp(poseA, poseB, blend)
+          else
+            sampleChannelAt
+              channelsA[i]
+              state.CurrentFrame
+              clip.KeyframeCount
+              fb
+
+        let p = parents[i]
+
+        let worldPose = if p < 0 then localPose else localPose * worldPoses[p]
+
+        worldPoses[i] <- worldPose
+        palette[i] <- mesh.InverseBindPose[i] * worldPose
+
+    {
+      WorldPoses = worldPoses
+      Palette = palette
+    }
+
+  /// <summary>
+  /// Compute the full bone pose for the current animation frame: per-bone
+  /// model-space world transforms plus the shader skinning palette.
+  /// </summary>
+  /// <remarks>
+  /// This is the MonoGame analog of raylib's <c>UpdateModelAnimation</c>. Instead
+  /// of mutating the model, it returns a <c>BonePose</c> the caller owns and
+  /// shares between the skinned draw (<c>Palette</c>, passed to
+  /// <c>Draw3D.drawSkinnedMesh</c>) and bone queries / attachment draws
+  /// (<c>WorldPoses</c>). Each palette entry is
+  /// <c>InverseBindPose[i] * WorldPoses[i]</c> — the standard skinning palette.
+  /// When blending, the two clips' bone matrices are linearly interpolated by
+  /// <c>BlendProgress</c>. One evaluation per instance per frame serves draw +
+  /// queries + attachments.
+  /// </remarks>
+  let computePose (mesh: AnimatedMesh) (state: Animation3DState) : BonePose =
+    computePoseInto mesh state BonePose.empty
 
   /// <summary>
   /// Compute the bone matrix palette for the current animation frame.
   /// </summary>
   /// <remarks>
-  /// This is the MonoGame analog of raylib's <c>UpdateModelAnimation</c>. Instead
-  /// of mutating the model, it returns a <c>Matrix[]</c> the caller passes to
-  /// <c>Draw3D.drawSkinnedMesh</c>. Each entry is
-  /// <c>InverseBindPose[i] * currentPoseMatrix</c> — the standard skinning palette.
-  /// When blending, the two clips' bone matrices are linearly interpolated by
-  /// <c>BlendProgress</c>.
+  /// Returns <c>(computePose mesh state).Palette</c>. Use <c>computePose</c>
+  /// directly when the per-bone world poses are also needed (bone queries,
+  /// attachment draws) so one evaluation serves everything.
   /// </remarks>
-  let computeBonePalette
+  let inline computeBonePalette
     (mesh: AnimatedMesh)
     (state: Animation3DState)
     : Matrix[] =
-    let boneCount = mesh.BoneCount
-    let matrices = Array.zeroCreate<Matrix> boneCount
-
-    if boneCount <= 0 || state.Clips.Clips.Length = 0 then
-      matrices
-    else
-      let clip = state.Clips.Clips[state.CurrentClipIndex]
-
-      // Sample each bone's LOCAL pose for the current frame (or blend two clips).
-      // Channelless bones fall back to their bind local pose (captured at load) so they
-      // hold their rest position instead of snapping to the skeleton origin.
-      let localPoses = Array.zeroCreate<Matrix> boneCount
-      let bindLocal = mesh.BindLocalPoses
-
-      if state.BlendTargetIndex >= 0 then
-        let clipB = state.Clips.Clips[state.BlendTargetIndex]
-        let blend = state.BlendProgress
-
-        for i = 0 to boneCount - 1 do
-          let boneName = mesh.BoneNames[i]
-          let fb = bindLocal[i]
-          let poseA = sampleChannel clip boneName state.CurrentFrame fb
-          let poseB = sampleChannel clipB boneName state.BlendTargetFrame fb
-          localPoses[i] <- Matrix.Lerp(poseA, poseB, blend)
-      else
-        for i = 0 to boneCount - 1 do
-          let boneName = mesh.BoneNames[i]
-
-          localPoses[i] <-
-            sampleChannel clip boneName state.CurrentFrame bindLocal[i]
-
-      // Compose parent chains: worldPose[i] = localPose[i] * worldPose[parent].
-      // MonoGame uses the row-vector convention (v' = v * M; A * B applies A then B),
-      // so a child's world transform applies the child's local offset first, then the
-      // parent's world pose — local on the LEFT. Writing it the other way detaches
-      // children from their parents (the "exploding joints" symptom).
-      // Parents must be processed before children. The bone indices from Assimp
-      // aren't guaranteed to be hierarchy-ordered, so process by ascending parent
-      // depth (roots first). The final palette entry is inverseBind * worldPose,
-      // which maps a bind-space vertex through the animated skeleton
-      // (v * (invBind * world) = (v * invBind) * world).
-      let parents = mesh.BoneParents
-      let worldPoses = Array.zeroCreate<Matrix> boneCount
-
-      // Process bones in ascending depth order so a parent's world pose is ready.
-      // The order is precomputed from the immutable BoneParents at load time.
-      let order = mesh.BoneOrder
-
-      for i in order do
-        let p = parents[i]
-
-        let worldPose =
-          if p < 0 then
-            localPoses[i]
-          else
-            localPoses[i] * worldPoses[p]
-
-        worldPoses[i] <- worldPose
-        matrices[i] <- mesh.InverseBindPose[i] * worldPose
-
-      matrices
+    (computePoseInto mesh state BonePose.empty).Palette
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AnimatedMesh
@@ -756,7 +984,8 @@ module AnimatedMesh =
           for i = 0 to boneCount - 1 do
             d[boneNames[i]] <- i
 
-          d
+          // Frozen — name→bone lookup is the userland BoneRef.ByName path.
+          FrozenDictionary.ToFrozenDictionary d
 
         let boneParents = Array.create boneCount -1
 
@@ -837,7 +1066,20 @@ module AnimatedMesh =
           InverseBindPose = invBind
           BindLocalPoses = bindLocalPoses
           BoneOrder = boneOrder
+          BoneLookup = nameToIndex
         }
+
+  /// <summary>
+  /// Resolve a bone name to its bone index. Returns <c>ValueNone</c> when the
+  /// mesh has no bone with that name — missing bones are never an error.
+  /// </summary>
+  let inline tryFindBoneIndex
+    (name: string)
+    (mesh: AnimatedMesh)
+    : int voption =
+    match mesh.BoneLookup.TryGetValue(name) with
+    | true, index -> ValueSome index
+    | false, _ -> ValueNone
 
   /// <summary>
   /// Compute bone matrices for a given animation clip and frame.
@@ -955,7 +1197,7 @@ module AnimatedModel =
   /// <param name="clips">Shared animation clip set (from <c>IAssets.ModelAnimations</c>).</param>
   /// <param name="clipName">The animation to start on (falls back to clip 0 if absent).</param>
   /// <param name="fps">Playback speed in frames per second.</param>
-  let create
+  let inline create
     (model: Microsoft.Xna.Framework.Graphics.Model)
     (mesh: AnimatedMesh voption)
     (clips: Animation3DClips)
@@ -969,31 +1211,35 @@ module AnimatedModel =
     }
 
   /// <summary>Advance playback by delta seconds. Pure; returns a new state.</summary>
-  let update (deltaSeconds: float32) (am: AnimatedModel) : AnimatedModel = {
-    am with
-        State = Animation3DState.update deltaSeconds am.State
-  }
+  let inline update
+    (deltaSeconds: float32)
+    (am: AnimatedModel)
+    : AnimatedModel =
+    {
+      am with
+          State = Animation3DState.update deltaSeconds am.State
+    }
 
   /// <summary>Play an animation by name. Resets the frame if switching clips.</summary>
-  let play (clipName: string) (am: AnimatedModel) : AnimatedModel = {
+  let inline play (clipName: string) (am: AnimatedModel) : AnimatedModel = {
     am with
         State = Animation3DState.play clipName am.State
   }
 
   /// <summary>Play by clip index (zero string allocation).</summary>
-  let playByIndex (clipIndex: int) (am: AnimatedModel) : AnimatedModel = {
+  let inline playByIndex (clipIndex: int) (am: AnimatedModel) : AnimatedModel = {
     am with
         State = Animation3DState.playByIndex clipIndex am.State
   }
 
   /// <summary>Play only if not already playing it.</summary>
-  let playIfNot (clipName: string) (am: AnimatedModel) : AnimatedModel = {
+  let inline playIfNot (clipName: string) (am: AnimatedModel) : AnimatedModel = {
     am with
         State = Animation3DState.playIfNot clipName am.State
   }
 
   /// <summary>Start blending toward a target animation.</summary>
-  let blendTo
+  let inline blendTo
     (clipName: string)
     (duration: float32)
     (am: AnimatedModel)
@@ -1008,11 +1254,11 @@ module AnimatedModel =
     Animation3DState.isFinished am.State
 
   /// <summary>Is currently playing the specified animation?</summary>
-  let isPlaying (clipName: string) (am: AnimatedModel) =
+  let inline isPlaying (clipName: string) (am: AnimatedModel) =
     Animation3DState.isPlaying clipName am.State
 
   /// <summary>Force restart the current animation.</summary>
-  let restart(am: AnimatedModel) : AnimatedModel = {
+  let inline restart(am: AnimatedModel) : AnimatedModel = {
     am with
         State = Animation3DState.restart am.State
   }
@@ -1021,7 +1267,7 @@ module AnimatedModel =
   let inline duration(am: AnimatedModel) = Animation3DState.duration am.State
 
   /// <summary>Name of the current clip.</summary>
-  let currentClipName(am: AnimatedModel) : string =
+  let inline currentClipName(am: AnimatedModel) : string =
     Animation3DState.currentClipName am.State
 
   /// <summary>Set the playback speed multiplier.</summary>
@@ -1035,3 +1281,58 @@ module AnimatedModel =
     am with
         State = Animation3DState.withLoop loop am.State
   }
+
+  /// <summary>
+  /// Evaluate the model's pose for the current frame: per-bone world
+  /// transforms plus the skinning palette. <c>ValueNone</c> when the model
+  /// has no skeleton (<c>am.Mesh</c> is <c>ValueNone</c>).
+  /// </summary>
+  /// <remarks>
+  /// Compute this once per instance per frame and share the result between
+  /// the skinned draw (<c>Draw.animatedModel(..., pose)</c>) and any bone
+  /// queries / attachment draws — the caller owns the <c>BonePose</c> value.
+  /// </remarks>
+  let inline computePose(am: AnimatedModel) : BonePose voption =
+    match am.Mesh with
+    | ValueSome mesh -> ValueSome(Animation3DState.computePose mesh am.State)
+    | ValueNone -> ValueNone
+
+  /// <summary>
+  /// Compute the bone pose into caller-owned arrays (zero per-frame allocation
+  /// after the first call). Pass the previous frame's <c>BonePose</c> (or
+  /// <c>BonePose.empty</c> on the first call) — arrays are grown on demand
+  /// and reused on subsequent calls. Returns <c>ValueNone</c> when the model
+  /// has no skeleton.
+  /// </summary>
+  let inline computePoseInto
+    (am: AnimatedModel)
+    (existing: BonePose)
+    : BonePose voption =
+    match am.Mesh with
+    | ValueSome mesh ->
+      ValueSome(Animation3DState.computePoseInto mesh am.State existing)
+    | ValueNone -> ValueNone
+
+  /// <summary>
+  /// Get the current model-space world transform of a bone, addressed by name
+  /// or index. <c>ValueNone</c> when the model has no skeleton or the bone is
+  /// missing — missing bones are never an error.
+  /// </summary>
+  /// <remarks>
+  /// Convenience that recomputes the pose on every call. When several bones
+  /// are queried in the same frame, use <c>computePose</c> once and query the
+  /// resulting <c>BonePose</c> with <c>BonePose.worldAt</c> /
+  /// <c>BonePose.tryGetWorld</c> instead.
+  /// </remarks>
+  let inline tryGetBoneWorld
+    (bone: BoneRef)
+    (am: AnimatedModel)
+    : Matrix voption =
+    match am.Mesh with
+    | ValueNone -> ValueNone
+    | ValueSome mesh ->
+      let pose = Animation3DState.computePose mesh am.State
+
+      match bone with
+      | BoneRef.ByIndex index -> BonePose.worldAt index pose
+      | BoneRef.ByName name -> BonePose.tryGetWorld name mesh pose
