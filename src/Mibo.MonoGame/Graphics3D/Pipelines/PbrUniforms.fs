@@ -57,6 +57,7 @@ type internal MaterialUniforms = {
   Opacity: EffectParameter
   Tiling: EffectParameter
   UseNormalMap: EffectParameter
+  UseEmissionMap: EffectParameter
   // Texture maps — EffectParameter (not gd.Textures[]) because EffectPass.Apply clobbers
   // gd.Textures[i] from the effect's own params (see ForwardPbr.fx sampler binding).
   AlbedoMapTex: EffectParameter
@@ -166,6 +167,7 @@ module internal PbrUniforms =
     Opacity = param e "opacity"
     Tiling = param e "tiling"
     UseNormalMap = param e "useNormalMap"
+    UseEmissionMap = param e "useEmissionMap"
     AlbedoMapTex = param e "texture0"
     RoughnessMapTex = param e "texture1"
     NormalMapTex = param e "texture2"
@@ -431,6 +433,12 @@ module internal PbrUniforms =
     setInt
       m.UseNormalMap
       (match mat.NormalMap with
+       | ValueSome _ -> 1
+       | ValueNone -> 0)
+
+    setInt
+      m.UseEmissionMap
+      (match mat.EmissionMap with
        | ValueSome _ -> 1
        | ValueNone -> 0)
 

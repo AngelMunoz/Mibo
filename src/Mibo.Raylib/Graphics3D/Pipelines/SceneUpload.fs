@@ -204,6 +204,13 @@ module SceneUpload =
        | ValueSome _ -> 1
        | ValueNone -> 0)
 
+    setInt
+      shader
+      (loc shader "useEmissionMap")
+      (match material.EmissionMap with
+       | ValueSome _ -> 1
+       | ValueNone -> 0)
+
     // ── Lights: ambient (single slot) ──
     match lights.Ambient with
     | ValueSome a ->

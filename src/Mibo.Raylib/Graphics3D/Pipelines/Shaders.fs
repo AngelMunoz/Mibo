@@ -405,6 +405,7 @@ uniform vec4 emissionColor;
 uniform float opacity;
 uniform vec2 tiling;
 uniform int useNormalMap;
+uniform int useEmissionMap;
 
 uniform vec3 ambientColor;
 uniform float ambientIntensity;
@@ -667,8 +668,11 @@ void main()
     vec3 ambient = ambientColor * albedo * ambientIntensity;
 
     // Directional light (PBR)
-    float dirShadow = computeDirShadow(fragWorldPos);
     vec3 L = normalize(-dirLightDir);
+    // Fragments facing away from the sun get zero directional contribution from
+    // calcPBR anyway — skip the shadow matrix multiply and the PCF taps for them.
+    float dirShadow = 0.0;
+    if (dot(normal, L) > 0.0) dirShadow = computeDirShadow(fragWorldPos);
     vec3 radiance = dirLightColor * dirLightIntensity;
     vec3 dirResult = calcPBR(V, normal, L, radiance, albedo, r, m) * dirShadow;
 
@@ -718,9 +722,9 @@ void main()
     }}
 
     vec3 emission = emissionColor.rgb;
-    // Emission map modulation
-    vec4 emTex = texture(texture4, uv);
-    emission *= emTex.rgb;
+    // Emission map modulation — sampled only when the material binds one
+    // (black-emission materials, the common case, skip the fetch entirely).
+    if (useEmissionMap == 1) emission *= texture(texture4, uv).rgb;
 
     vec3 result = ambient + dirResult + pointResult + spotResult + emission;
     float alpha = texColor.a * opacity;
