@@ -14,7 +14,8 @@ open Mibo.Elmish.Graphics3D
 //
 // The former per-frame scene gather (ForwardState / SceneData / gather) lived here
 // too; main moved it into SceneContext.fs (early scene types) and BlockPlan.fs
-// (per-camera-block plan), so this file now holds only the palette machinery.
+// (per-camera-block plan). What remains is the palette machinery plus
+// InstanceWorldCache (per-frame world-row staging for instanced draws).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>Constants for the skinned-instanced bone-palette texture.</summary>

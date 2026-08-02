@@ -1629,7 +1629,7 @@ module internal PbrShading =
               // holds null techniques, which must not become the cached state.
               match res.Effect with
               | ValueSome _ ->
-                res.SkinnedInstancedModelCache.Remove model
+                res.SkinnedInstancedModelCache.Remove model |> ignore
                 res.SkinnedInstancedModelCache.Add(model, e')
               | ValueNone -> ()
 

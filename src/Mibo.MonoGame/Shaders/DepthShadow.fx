@@ -153,12 +153,11 @@ VS_OUTPUT VS_SkinnedInstanced(VS_INPUT_SKINNED_INSTANCED input) {
 // ── Grouped-uniform variant (DX12 fallback): the native DX12 runtime never
 // delivers vertex-stage textures to the VS, so palettes ride a constant array
 // (one GROUP of instances, groupBoneCount matrices each, indexed by the
-// group-local PaletteOffset). Same vertex layout as VS_SkinnedInstanced; the
-// pipeline chunks draws to 320/boneCount instances per group. 320 matrices =
-// 20KB: mgfx packs all globals into one shared $Globals CB with a signed
-// Int16 size (32,767 cap — ~8KB is already used by boneMatrices & co) and
-// the Vulkan profile rejects multi-CB effects. Mirrors ForwardPbr.fx's
-// SkinnedInstancedGrouped.
+// group-local PaletteOffset). Same vertex layout as VS_SkinnedInstanced.
+// NOTE: RETAINED BUT UNUSED — on DX12 the shadow pass draws through the
+// isolated DepthShadowGrouped.fx effect instead (500-matrix groups, at the
+// $Globals cap); every other backend uses the texture-palette variant.
+// Mirrors ForwardPbr.fx's SkinnedInstancedGrouped.
 #define MAX_GROUP_PALETTES 320
 float4x4 bonePaletteGroup[MAX_GROUP_PALETTES];
 int groupBoneCount;

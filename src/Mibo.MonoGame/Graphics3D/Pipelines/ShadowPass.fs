@@ -203,7 +203,9 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
     System.Collections.Generic.HashSet<ModelMeshPart>() with get
 
   /// <summary>CPU staging array for the per-instance <c>VertexInstanceWorldPalette</c> rows of
-  /// skinned + instanced casters. Grows to the largest chunk seen. Reused across frames.</summary>
+  /// skinned + instanced casters — DX12 only (the grouped path stages per pass there because the
+  /// forward/depth group budgets differ). DX11/Vulkan stage through the shared InstanceWorldCache
+  /// instead. Grows to the largest chunk seen. Reused across frames.</summary>
   member val SkinnedInstancedStaging =
     Array.zeroCreate<VertexInstanceWorldPalette> 64 with get, set
 
