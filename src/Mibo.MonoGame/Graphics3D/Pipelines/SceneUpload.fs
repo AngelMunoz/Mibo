@@ -195,7 +195,7 @@ module SceneUpload =
   /// Uploads the full scene-data contract to <paramref name="effect"/> by resolving each
   /// uniform by name. Absent uniforms are skipped (MonoGame returns null). Uploads:
   /// matrices (matModel/viewProj/normalMatrix/cameraPos), the <c>time</c> animation clock,
-  /// material (albedoColor, maps texture0..4, roughness/metallic/emissionColor/opacity/tiling/useNormalMap),
+  /// material (albedoColor, maps texture0..4, roughness/metallic/emissionColor/opacity/tiling/useNormalMap/useEmissionMap),
   /// lights (ambient + 1 directional + N point + M spot), shadows (when a ShadowResult is present),
   /// and bones (boneMatrices[128], only when <paramref name="bones"/> is ValueSome).
   /// </summary>
@@ -246,6 +246,12 @@ module SceneUpload =
     setInt
       (p "useNormalMap")
       (match material.NormalMap with
+       | ValueSome _ -> 1
+       | ValueNone -> 0)
+
+    setInt
+      (p "useEmissionMap")
+      (match material.EmissionMap with
        | ValueSome _ -> 1
        | ValueNone -> 0)
 
