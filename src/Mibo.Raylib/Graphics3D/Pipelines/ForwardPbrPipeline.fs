@@ -280,6 +280,31 @@ type internal ShaderVariant =
     }
 
 // ------------------------------------------------------------------
+// Shader Variants bundle (reference type holding the four mutable struct
+// variants — record copies share the object, so mutations through any alias
+// land in place. &variants.Forward yields a legal byref for byref callees.)
+// ------------------------------------------------------------------
+
+/// <summary>The four PBR shader variants, bundled so functions take one argument
+/// instead of four. An explicit class with <c>val mutable</c> fields: real fields are
+/// addressable (<c>&amp;variants.Forward</c> is a legal byref for byref callees) and
+/// mutations write in place — no copies, no nulls (created eagerly; the fields start
+/// as zeroed structs, the same semantics the old <c>Unchecked.defaultof&lt;ShaderVariant&gt;</c>
+/// bindings had).</summary>
+type internal ShaderVariants() =
+  [<DefaultValue>]
+  val mutable Forward: ShaderVariant
+
+  [<DefaultValue>]
+  val mutable Instanced: ShaderVariant
+
+  [<DefaultValue>]
+  val mutable Skinned: ShaderVariant
+
+  [<DefaultValue>]
+  val mutable SkinnedInstanced: ShaderVariant
+
+// ------------------------------------------------------------------
 // Shadow Depth Resources (immutable — bundles shadow shader + material)
 // ------------------------------------------------------------------
 
@@ -472,94 +497,94 @@ module internal ShadowPassHelpers =
     BoneCount: int
   }
 
-  let collectMeshDraws
-    (
-      buffer: RenderBuffer3D,
-      startIdx: int,
-      endIdx: int,
-      initialShadowsEnabled: bool
-    ) =
-    let pool = ArrayPool<MeshDraw>.Shared
-    let instPool = ArrayPool<InstancedMeshDraw>.Shared
-
+  /// <summary>
+  /// Grow-only pooled collection of mesh draws for the shadow pass, gathered per command
+  /// (<c>Begin</c> → <c>Add</c>* → <c>Finish</c>) instead of a count scan + rent-exact +
+  /// fill scan: the frame's geometry is collected in ONE buffer walk (driven inline from
+  /// the pipeline's pre-scan for single-camera frames, per block slice for multi-camera).
+  /// Persistent across frames (grow-doubling arrays, no per-frame rent/return).
+  /// </summary>
+  type internal MeshDrawCollection() =
+    let mutable meshDraws: MeshDraw[] = [||]
+    let mutable instancedDraws: InstancedMeshDraw[] = [||]
     let mutable meshCount = 0
     let mutable instancedCount = 0
-    let mutable shadowsEnabled = initialShadowsEnabled
-    let mutable i = startIdx
+    let mutable shadowsEnabled = true
 
-    while i < endIdx do
-      match buffer[i] with
-      | Command3D.DisableShadows -> shadowsEnabled <- false
-      | Command3D.EnableShadows -> shadowsEnabled <- true
-      | Command3D.DrawMesh _ when shadowsEnabled -> meshCount <- meshCount + 1
-      | Command3D.DrawSkinnedMesh _ when shadowsEnabled ->
-        meshCount <- meshCount + 1
-      | Command3D.DrawModel(model, _) when shadowsEnabled ->
-        meshCount <- meshCount + model.MeshCount
-      | Command3D.DrawModelWith(model, _, _) when shadowsEnabled ->
-        meshCount <- meshCount + model.MeshCount
-      | Command3D.DrawMeshInstanced _ when shadowsEnabled ->
-        instancedCount <- instancedCount + 1
-      | Command3D.DrawSkinnedMeshInstanced _ when shadowsEnabled ->
-        instancedCount <- instancedCount + 1
-      | _ -> ()
+    let ensureMesh(needed: int) =
+      if meshDraws.Length < needed then
+        Array.Resize(&meshDraws, max (meshDraws.Length * 2) (max needed 16))
 
-      i <- i + 1
+    let ensureInst(needed: int) =
+      if instancedDraws.Length < needed then
+        Array.Resize(
+          &instancedDraws,
+          max (instancedDraws.Length * 2) (max needed 16)
+        )
 
-    let arr = pool.Rent(max meshCount 1)
-    let instArr = instPool.Rent(max instancedCount 1)
-    let mutable count = 0
-    let mutable icount = 0
-    let mutable skinnedStart = count
-    shadowsEnabled <- initialShadowsEnabled
-    i <- startIdx
+    /// <summary>Resets the collection for a new walk (counts and the running
+    /// <c>EnableShadows</c>/<c>DisableShadows</c> state). Arrays are kept (grow-only).</summary>
+    member _.Begin(initialShadowsEnabled: bool) =
+      shadowsEnabled <- initialShadowsEnabled
+      meshCount <- 0
+      instancedCount <- 0
 
-    while i < endIdx do
-      match buffer[i] with
+    /// <summary>Collects one buffer command. Draws emitted while shadows are disabled are
+    /// skipped (they don't cast); everything else appends to the pooled spans.</summary>
+    member _.Add(cmd: Command3D) =
+      match cmd with
       | Command3D.DisableShadows -> shadowsEnabled <- false
       | Command3D.EnableShadows -> shadowsEnabled <- true
       | Command3D.DrawMesh(mesh, transform, _) when shadowsEnabled ->
-        arr[count] <- {
+        ensureMesh(meshCount + 1)
+
+        meshDraws[meshCount] <- {
           Mesh = mesh
           Transform = transform
           Bones = ValueNone
         }
 
-        count <- count + 1
+        meshCount <- meshCount + 1
       | Command3D.DrawSkinnedMesh(mesh, transform, _, bones) when shadowsEnabled ->
-        arr[count] <- {
+        ensureMesh(meshCount + 1)
+
+        meshDraws[meshCount] <- {
           Mesh = mesh
           Transform = transform
           Bones = ValueSome bones
         }
 
-        count <- count + 1
+        meshCount <- meshCount + 1
       | Command3D.DrawModel(model, transform) when shadowsEnabled ->
         for mi = 0 to model.MeshCount - 1 do
           let mesh = NativePtr.get model.Meshes mi
+          ensureMesh(meshCount + 1)
 
-          arr[count] <- {
+          meshDraws[meshCount] <- {
             Mesh = mesh
             Transform = transform
             Bones = ValueNone
           }
 
-          count <- count + 1
+          meshCount <- meshCount + 1
       | Command3D.DrawModelWith(model, transform, _) when shadowsEnabled ->
         for mi = 0 to model.MeshCount - 1 do
           let mesh = NativePtr.get model.Meshes mi
+          ensureMesh(meshCount + 1)
 
-          arr[count] <- {
+          meshDraws[meshCount] <- {
             Mesh = mesh
             Transform = transform
             Bones = ValueNone
           }
 
-          count <- count + 1
+          meshCount <- meshCount + 1
       | Command3D.DrawMeshInstanced(mesh, transforms, _, instanceCount) when
         shadowsEnabled
         ->
-        instArr[icount] <- {
+        ensureInst(instancedCount + 1)
+
+        instancedDraws[instancedCount] <- {
           Mesh = mesh
           Transforms = transforms
           Palettes = ValueNone
@@ -567,14 +592,16 @@ module internal ShadowPassHelpers =
           BoneCount = 0
         }
 
-        icount <- icount + 1
+        instancedCount <- instancedCount + 1
       | Command3D.DrawSkinnedMeshInstanced(mesh,
                                            transforms,
                                            palettes,
                                            _,
                                            instanceCount,
                                            boneCount) when shadowsEnabled ->
-        instArr[icount] <- {
+        ensureInst(instancedCount + 1)
+
+        instancedDraws[instancedCount] <- {
           Mesh = mesh
           Transforms = transforms
           Palettes = ValueSome palettes
@@ -582,35 +609,38 @@ module internal ShadowPassHelpers =
           BoneCount = boneCount
         }
 
-        icount <- icount + 1
+        instancedCount <- instancedCount + 1
       | _ -> ()
 
-      i <- i + 1
+    /// <summary>Partitions the collected mesh draws (non-skinned first, skinned at the end)
+    /// and returns the spans. The arrays are this collection's own — valid until the next
+    /// <c>Begin</c>; callers must not retain or return them to any pool.</summary>
+    member _.Finish
+      ()
+      : struct (MeshDraw[] * int * int * InstancedMeshDraw[] * int) =
+      let mutable writeIdx = 0
 
-    // Partition: move skinned draws to end
-    let mutable writeIdx = 0
+      for j = 0 to meshCount - 1 do
+        match meshDraws[j].Bones with
+        | ValueNone ->
+          if writeIdx <> j then
+            meshDraws[writeIdx] <- meshDraws[j]
 
-    for j = 0 to count - 1 do
-      match arr[j].Bones with
-      | ValueNone ->
-        if writeIdx <> j then
-          arr[writeIdx] <- arr[j]
+          writeIdx <- writeIdx + 1
+        | ValueSome _ -> ()
 
-        writeIdx <- writeIdx + 1
-      | ValueSome _ -> ()
+      let skinnedStart = writeIdx
 
-    skinnedStart <- writeIdx
+      for j = 0 to meshCount - 1 do
+        match meshDraws[j].Bones with
+        | ValueSome _ ->
+          if writeIdx <> j then
+            meshDraws[writeIdx] <- meshDraws[j]
 
-    for j = 0 to count - 1 do
-      match arr[j].Bones with
-      | ValueSome _ ->
-        if writeIdx <> j then
-          arr[writeIdx] <- arr[j]
+          writeIdx <- writeIdx + 1
+        | ValueNone -> ()
 
-        writeIdx <- writeIdx + 1
-      | ValueNone -> ()
-
-    struct (arr, count, skinnedStart, instArr, icount)
+      struct (meshDraws, meshCount, skinnedStart, instancedDraws, instancedCount)
 
   /// <summary>
   /// Register shadow casters for every shadow-casting light into the caller-provided slot
@@ -1269,20 +1299,17 @@ module internal PipelineFunctions =
   let uploadShadowUniforms
     (
       hasCasters: bool,
-      forward: inref<ShaderVariant>,
-      instanced: inref<ShaderVariant>,
-      skinned: inref<ShaderVariant>,
-      skinnedInstanced: inref<ShaderVariant>,
+      variants: ShaderVariants,
       atlas: ShadowAtlas,
       cameraPos: Vector3,
       maxCasters: int
     ) =
     if hasCasters then
       atlas.PrepareUniforms()
-      let fwd = forward.Locs
-      let inst = instanced.Locs
-      let sk = skinned.Locs
-      let skInst = skinnedInstanced.Locs
+      let fwd = variants.Forward.Locs
+      let inst = variants.Instanced.Locs
+      let sk = variants.Skinned.Locs
+      let skInst = variants.SkinnedInstanced.Locs
 
       uploadShadowUniformsForShader(
         fwd.Shader,
@@ -1418,12 +1445,26 @@ module internal PipelineFunctions =
   /// Clear all light buffers.
   let inline clearLights(lights: LightBuffers) = LightBuffers.clear lights
 
+  /// <summary>Everything the frame pre-scan reads and gathers into, bundled so the
+  /// walk takes (buffer, ctx) instead of a parameter per concern. Reference record —
+  /// copies share the fields (light buffers, variant bundle, collection), so writes
+  /// through the ctx land in place.</summary>
+  type internal PreScanContext = {
+    Variants: ShaderVariants
+    Lights: LightBuffers
+    GatherLights: bool
+    ForwardShader: Shader
+    InstancedShader: Shader
+    SkinnedShader: Shader
+    SkinnedInstancedShader: Shader
+    PpActions: ResizeArray<PostProcessContext3D -> unit> voption
+    Collect: MeshDrawCollection voption
+  }
+
   /// Warm material caches for a single material using the appropriate variant.
   let inline warmMaterial
     (
-      forward: byref<ShaderVariant>,
-      instanced: byref<ShaderVariant>,
-      skinned: byref<ShaderVariant>,
+      variants: ShaderVariants,
       forwardShader: Shader,
       instancedShader: Shader,
       skinnedShader: Shader,
@@ -1433,9 +1474,10 @@ module internal PipelineFunctions =
     let key = MaterialKey.fromMaterial3D &mat
 
     match variant with
-    | 1 -> getOrCreate(&forward, forwardShader, &mat, &key) |> ignore
-    | 2 -> getOrCreate(&instanced, instancedShader, &mat, &key) |> ignore
-    | 3 -> getOrCreate(&skinned, skinnedShader, &mat, &key) |> ignore
+    | 1 -> getOrCreate(&variants.Forward, forwardShader, &mat, &key) |> ignore
+    | 2 ->
+      getOrCreate(&variants.Instanced, instancedShader, &mat, &key) |> ignore
+    | 3 -> getOrCreate(&variants.Skinned, skinnedShader, &mat, &key) |> ignore
     | _ -> ()
 
   /// Apply camera config: viewport and clear color.
@@ -1798,65 +1840,52 @@ module internal PipelineFunctions =
 
   /// Handle light command: add or set light, mark dirty.
   let inline handleLightCommand
-    (
-      lights: LightBuffers,
-      command: Command3D,
-      forward: byref<ShaderVariant>,
-      instanced: byref<ShaderVariant>,
-      skinned: byref<ShaderVariant>,
-      skinnedInstanced: byref<ShaderVariant>
-    ) =
+    (lights: LightBuffers, command: Command3D, variants: ShaderVariants)
+    =
     match command with
     | Command3D.SetAmbientLight l ->
       lights.Ambient <- ValueSome l
-      forward.LightsDirty <- true
-      instanced.LightsDirty <- true
-      skinned.LightsDirty <- true
-      skinnedInstanced.LightsDirty <- true
+      variants.Forward.LightsDirty <- true
+      variants.Instanced.LightsDirty <- true
+      variants.Skinned.LightsDirty <- true
+      variants.SkinnedInstanced.LightsDirty <- true
     | Command3D.AddDirectionalLight l ->
       lights.DirLights.Add l
-      forward.LightsDirty <- true
-      instanced.LightsDirty <- true
-      skinned.LightsDirty <- true
-      skinnedInstanced.LightsDirty <- true
+      variants.Forward.LightsDirty <- true
+      variants.Instanced.LightsDirty <- true
+      variants.Skinned.LightsDirty <- true
+      variants.SkinnedInstanced.LightsDirty <- true
     | Command3D.AddPointLight l ->
       lights.PointLights.Add l
-      forward.LightsDirty <- true
-      instanced.LightsDirty <- true
-      skinned.LightsDirty <- true
-      skinnedInstanced.LightsDirty <- true
+      variants.Forward.LightsDirty <- true
+      variants.Instanced.LightsDirty <- true
+      variants.Skinned.LightsDirty <- true
+      variants.SkinnedInstanced.LightsDirty <- true
     | Command3D.AddSpotLight l ->
       lights.SpotLights.Add l
-      forward.LightsDirty <- true
-      instanced.LightsDirty <- true
-      skinned.LightsDirty <- true
-      skinnedInstanced.LightsDirty <- true
+      variants.Forward.LightsDirty <- true
+      variants.Instanced.LightsDirty <- true
+      variants.Skinned.LightsDirty <- true
+      variants.SkinnedInstanced.LightsDirty <- true
     | _ -> ()
 
   /// Pre-scan buffer: collect camera, lights, shadow origin, and warm material caches.
-  /// Returns the frame state for shadow pass.
-  let preScan
-    (
-      buffer: RenderBuffer3D,
-      lights: LightBuffers,
-      gatherLights: bool,
-      forward: byref<ShaderVariant>,
-      instanced: byref<ShaderVariant>,
-      skinned: byref<ShaderVariant>,
-      skinnedInstanced: byref<ShaderVariant>,
-      forwardShader: Shader,
-      instancedShader: Shader,
-      skinnedShader: Shader,
-      skinnedInstancedShader: Shader,
-      ppActions: ResizeArray<PostProcessContext3D -> unit> voption
-    ) : FrameState =
+  /// Returns the frame state for shadow pass. Everything the walk reads or gathers
+  /// into rides the <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.ForwardPbrPipeline.PreScanContext"/>.
+  let preScan(buffer: RenderBuffer3D, ctx: PreScanContext) : FrameState =
     let mutable frameState = {
       Camera = ValueNone
       ShadowOrigin = ValueNone
     }
 
     for i = 0 to buffer.Count - 1 do
-      match buffer[i] with
+      let cmd = buffer[i]
+
+      match ctx.Collect with
+      | ValueSome c -> c.Add cmd
+      | ValueNone -> ()
+
+      match cmd with
       | Command3D.BeginCamera cam ->
         match frameState.Camera with
         | ValueNone ->
@@ -1879,25 +1908,23 @@ module internal PipelineFunctions =
               ShadowOrigin = ValueSome origin
         }
       | Command3D.SetAmbientLight l ->
-        if gatherLights then
-          lights.Ambient <- ValueSome l
+        if ctx.GatherLights then
+          ctx.Lights.Ambient <- ValueSome l
       | Command3D.AddDirectionalLight l ->
-        if gatherLights then
-          lights.DirLights.Add l
+        if ctx.GatherLights then
+          ctx.Lights.DirLights.Add l
       | Command3D.AddPointLight l ->
-        if gatherLights then
-          lights.PointLights.Add l
+        if ctx.GatherLights then
+          ctx.Lights.PointLights.Add l
       | Command3D.AddSpotLight l ->
-        if gatherLights then
-          lights.SpotLights.Add l
+        if ctx.GatherLights then
+          ctx.Lights.SpotLights.Add l
       | Command3D.DrawMesh(_, _, mat) ->
         warmMaterial(
-          &forward,
-          &instanced,
-          &skinned,
-          forwardShader,
-          instancedShader,
-          skinnedShader,
+          ctx.Variants,
+          ctx.ForwardShader,
+          ctx.InstancedShader,
+          ctx.SkinnedShader,
           &mat,
           1
         )
@@ -1908,12 +1935,10 @@ module internal PipelineFunctions =
           let mat3d = Material3D.fromRaylibMaterial raylibMat
 
           warmMaterial(
-            &forward,
-            &instanced,
-            &skinned,
-            forwardShader,
-            instancedShader,
-            skinnedShader,
+            ctx.Variants,
+            ctx.ForwardShader,
+            ctx.InstancedShader,
+            ctx.SkinnedShader,
             &mat3d,
             1
           )
@@ -1921,12 +1946,10 @@ module internal PipelineFunctions =
         match matOverride with
         | MaterialOverride.All m ->
           warmMaterial(
-            &forward,
-            &instanced,
-            &skinned,
-            forwardShader,
-            instancedShader,
-            skinnedShader,
+            ctx.Variants,
+            ctx.ForwardShader,
+            ctx.InstancedShader,
+            ctx.SkinnedShader,
             &m,
             1
           )
@@ -1935,34 +1958,28 @@ module internal PipelineFunctions =
             let m = f mi
 
             warmMaterial(
-              &forward,
-              &instanced,
-              &skinned,
-              forwardShader,
-              instancedShader,
-              skinnedShader,
+              ctx.Variants,
+              ctx.ForwardShader,
+              ctx.InstancedShader,
+              ctx.SkinnedShader,
               &m,
               1
             )
       | Command3D.DrawSkinnedMesh(_, _, mat, _) ->
         warmMaterial(
-          &forward,
-          &instanced,
-          &skinned,
-          forwardShader,
-          instancedShader,
-          skinnedShader,
+          ctx.Variants,
+          ctx.ForwardShader,
+          ctx.InstancedShader,
+          ctx.SkinnedShader,
           &mat,
           3
         )
       | Command3D.DrawMeshInstanced(_, _, mat, _) ->
         warmMaterial(
-          &forward,
-          &instanced,
-          &skinned,
-          forwardShader,
-          instancedShader,
-          skinnedShader,
+          ctx.Variants,
+          ctx.ForwardShader,
+          ctx.InstancedShader,
+          ctx.SkinnedShader,
           &mat,
           2
         )
@@ -1971,11 +1988,16 @@ module internal PipelineFunctions =
         // covers the original three variants.
         let key = MaterialKey.fromMaterial3D &mat
 
-        getOrCreate(&skinnedInstanced, skinnedInstancedShader, &mat, &key)
+        getOrCreate(
+          &ctx.Variants.SkinnedInstanced,
+          ctx.SkinnedInstancedShader,
+          &mat,
+          &key
+        )
         |> ignore
       | Command3D.PostProcess action
       | Command3D.PostProcessWithDepth action ->
-        match ppActions with
+        match ctx.PpActions with
         | ValueSome list -> list.Add action
         | ValueNone -> ()
       | _ -> ()
@@ -2399,12 +2421,10 @@ type ForwardPipelineBase
   let mutable shadowBonePaletteLoc: int = -1
   let mutable shadowBonePaletteSizeLoc: int = -1
 
-  let mutable forward: ShaderVariant = Unchecked.defaultof<ShaderVariant>
-  let mutable instanced: ShaderVariant = Unchecked.defaultof<ShaderVariant>
-  let mutable skinned: ShaderVariant = Unchecked.defaultof<ShaderVariant>
-
-  let mutable skinnedInstanced: ShaderVariant =
-    Unchecked.defaultof<ShaderVariant>
+  // The four PBR shader variants, bundled (ShaderVariants): eager, no nulls —
+  // the fields start as zeroed structs and are initialized with real values when
+  // the pipeline shaders load (see below).
+  let variants = ShaderVariants()
 
   // Pooled RGBA32F bone-palette textures for skinned-instanced draws (both the
   // forward pass and the shadow pass). Acquired per chunk, released once per
@@ -2454,6 +2474,11 @@ type ForwardPipelineBase
   // block's shadow pass — the live buffers trail the block's own in-order commands at block
   // start, so the pass can't read them.
   let blockLights: LightBuffers = createLightBuffers(maxPt, maxSp)
+
+  // Persistent shadow-geometry collection (grow-only spans): single-camera frames fill it
+  // inline in the pre-scan walk; multi-block frames fill it per block slice. Replaces the
+  // former count-scan + rent-exact + fill-scan (two buffer walks + pool churn per pass).
+  let drawCollection = MeshDrawCollection()
 
   let applyPostProcess
     (ctx: GameContext)
@@ -2518,42 +2543,35 @@ type ForwardPipelineBase
       resources: inref<ShadowDepthResources>,
       frameState: inref<FrameState>
     ) : ShadowResult voption =
+    // Geometry was collected inline in the pre-scan (single-camera frames) — partition
+    // and consume it (persistent spans, no pool rent/return).
     let struct (meshDraws, meshDrawCount, skinnedStart, instancedDraws,
                 instancedDrawCount) =
-      collectMeshDraws(buffer, 0, buffer.Count, true)
+      drawCollection.Finish()
 
-    let mutable hasCasters = false
-
-    try
-      hasCasters <-
-        runShadowPass(
-          shadowAtlas,
-          atlasCfg,
-          &resources,
-          palettePool,
-          lights,
-          meshDraws,
-          meshDrawCount,
-          skinnedStart,
-          instancedDraws,
-          instancedDrawCount,
-          &frameState,
-          gameCtx,
-          &pointShadowSlots,
-          &spotShadowSlots
-        )
-    finally
-      ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
-      ArrayPool<InstancedMeshDraw>.Shared.Return(instancedDraws, false)
+    let hasCasters =
+      runShadowPass(
+        shadowAtlas,
+        atlasCfg,
+        &resources,
+        palettePool,
+        lights,
+        meshDraws,
+        meshDrawCount,
+        skinnedStart,
+        instancedDraws,
+        instancedDrawCount,
+        &frameState,
+        gameCtx,
+        &pointShadowSlots,
+        &spotShadowSlots
+      )
 
     match frameState.Camera with
     | ValueSome cam ->
       uploadShadowUniforms(
         hasCasters,
-        &forward,
-        &instanced,
-        &skinned,
-        &skinnedInstanced,
+        variants,
         shadowAtlas,
         cam.Position,
         atlasCfg.MaxCasters
@@ -2591,9 +2609,9 @@ type ForwardPipelineBase
       frame: byref<ForwardFrame>
     ) =
     if LightScoping.resetForBlock plan defaultLights lights &blockIndex then
-      forward.LightsDirty <- true
-      instanced.LightsDirty <- true
-      skinned.LightsDirty <- true
+      variants.Forward.LightsDirty <- true
+      variants.Instanced.LightsDirty <- true
+      variants.Skinned.LightsDirty <- true
 
     let block = plan.Blocks[blockIndex]
     LightScoping.loadSet block.Lights blockLights
@@ -2605,76 +2623,74 @@ type ForwardPipelineBase
     // Re-wrap the caller's texture mode even when the pass throws — raylib has no FBO
     // stack, so an unwound frame would otherwise leave the pipeline outside texture mode.
     try
+      drawCollection.Begin block.InitialCastEnabled
+
+      for i = block.StartIndex to block.EndIndex - 1 do
+        drawCollection.Add buffer[i]
+
       let struct (meshDraws, meshDrawCount, skinnedStart, instancedDraws,
                   instancedDrawCount) =
-        collectMeshDraws(
-          buffer,
-          block.StartIndex,
-          block.EndIndex,
-          block.InitialCastEnabled
-        )
+        drawCollection.Finish()
 
       let mutable blockFrame = {
         Camera = ValueSome camera
         ShadowOrigin = block.ShadowOrigin
       }
 
-      try
-        let hasC =
-          runShadowPass(
-            shadowAtlas,
-            atlasCfg,
-            &resources,
-            palettePool,
-            blockLights,
-            meshDraws,
-            meshDrawCount,
-            skinnedStart,
-            instancedDraws,
-            instancedDrawCount,
-            &blockFrame,
-            gameCtx,
-            &pointShadowSlots,
-            &spotShadowSlots
-          )
-
-        uploadShadowUniforms(
-          hasC,
-          &forward,
-          &instanced,
-          &skinned,
-          &skinnedInstanced,
+      let hasC =
+        runShadowPass(
           shadowAtlas,
-          camera.Position,
-          atlasCfg.MaxCasters
+          atlasCfg,
+          &resources,
+          palettePool,
+          blockLights,
+          meshDraws,
+          meshDrawCount,
+          skinnedStart,
+          instancedDraws,
+          instancedDrawCount,
+          &blockFrame,
+          gameCtx,
+          &pointShadowSlots,
+          &spotShadowSlots
         )
 
-        if not hasC then
-          // Caster-less block: clear the flag so shaders don't sample the previous block's atlas.
-          setShaderInt forwardShader forward.Locs.DirLight.CastsShadows 0
-          setShaderInt instancedShader instanced.Locs.DirLight.CastsShadows 0
-          setShaderInt skinnedShader skinned.Locs.DirLight.CastsShadows 0
+      uploadShadowUniforms(
+        hasC,
+        variants,
+        shadowAtlas,
+        camera.Position,
+        atlasCfg.MaxCasters
+      )
 
-          setShaderInt
-            skinnedInstancedShader
-            skinnedInstanced.Locs.DirLight.CastsShadows
-            0
+      if not hasC then
+        // Caster-less block: clear the flag so shaders don't sample the previous block's atlas.
+        setShaderInt forwardShader variants.Forward.Locs.DirLight.CastsShadows 0
 
-        frame.PointShadowSlots <- pointShadowSlots
-        frame.SpotShadowSlots <- spotShadowSlots
+        setShaderInt
+          instancedShader
+          variants.Instanced.Locs.DirLight.CastsShadows
+          0
 
-        frame.Shadows <-
-          shadowResultOf
-            shadowAtlas
-            atlasCfg
-            hasC
-            (blockLights.DirLights.Count > 0
-             && blockLights.DirLights[0].CastsShadows)
-            pointShadowSlots
-            spotShadowSlots
-      finally
-        ArrayPool<MeshDraw>.Shared.Return(meshDraws, false)
-        ArrayPool<InstancedMeshDraw>.Shared.Return(instancedDraws, false)
+        setShaderInt skinnedShader variants.Skinned.Locs.DirLight.CastsShadows 0
+
+        setShaderInt
+          skinnedInstancedShader
+          variants.SkinnedInstanced.Locs.DirLight.CastsShadows
+          0
+
+      frame.PointShadowSlots <- pointShadowSlots
+      frame.SpotShadowSlots <- spotShadowSlots
+
+      frame.Shadows <-
+        shadowResultOf
+          shadowAtlas
+          atlasCfg
+          hasC
+          (blockLights.DirLights.Count > 0
+           && blockLights.DirLights[0].CastsShadows)
+          pointShadowSlots
+          spotShadowSlots
     finally
       match sceneRT with
       | ValueSome rt -> Raylib.BeginTextureMode rt
@@ -2735,7 +2751,7 @@ type ForwardPipelineBase
       | Command3D.DrawMesh(mesh, transform, material) ->
         handleDrawMesh(
           forwardShader,
-          &forward,
+          &variants.Forward,
           frame.Lights,
           maxPt,
           maxSp,
@@ -2749,7 +2765,7 @@ type ForwardPipelineBase
       | Command3D.DrawModel(model, transform) ->
         handleDrawModel(
           forwardShader,
-          &forward,
+          &variants.Forward,
           frame.Lights,
           maxPt,
           maxSp,
@@ -2763,7 +2779,7 @@ type ForwardPipelineBase
       | Command3D.DrawModelWith(model, transform, matOverride) ->
         handleDrawModel(
           forwardShader,
-          &forward,
+          &variants.Forward,
           frame.Lights,
           maxPt,
           maxSp,
@@ -2777,7 +2793,7 @@ type ForwardPipelineBase
       | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
         handleDrawSkinnedMesh(
           skinnedShader,
-          &skinned,
+          &variants.Skinned,
           frame.Lights,
           maxPt,
           maxSp,
@@ -2792,7 +2808,7 @@ type ForwardPipelineBase
       | Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount) ->
         handleDrawMeshInstanced(
           instancedShader,
-          &instanced,
+          &variants.Instanced,
           frame.Lights,
           maxPt,
           maxSp,
@@ -2812,7 +2828,7 @@ type ForwardPipelineBase
                                            boneCount) ->
         handleDrawSkinnedMeshInstanced(
           skinnedInstancedShader,
-          &skinnedInstanced,
+          &variants.SkinnedInstanced,
           frame.Lights,
           maxPt,
           maxSp,
@@ -2994,7 +3010,7 @@ type ForwardPipelineBase
 
         handleDrawMeshInstanced(
           instancedShader,
-          &instanced,
+          &variants.Instanced,
           frame.Lights,
           maxPt,
           maxSp,
@@ -3068,7 +3084,7 @@ type ForwardPipelineBase
 
         handleDrawSkinnedMeshInstanced(
           skinnedInstancedShader,
-          &skinnedInstanced,
+          &variants.SkinnedInstanced,
           frame.Lights,
           maxPt,
           maxSp,
@@ -3174,10 +3190,10 @@ type ForwardPipelineBase
           atlasCfg.MaxCasters
         )
 
-      forward <- ShaderVariant(fwdLocs, MaterialCache 16)
-      instanced <- ShaderVariant(instLocs, MaterialCache 16)
-      skinned <- ShaderVariant(skLocs, MaterialCache 16)
-      skinnedInstanced <- ShaderVariant(skInstLocs, MaterialCache 16)
+      variants.Forward <- ShaderVariant(fwdLocs, MaterialCache 16)
+      variants.Instanced <- ShaderVariant(instLocs, MaterialCache 16)
+      variants.Skinned <- ShaderVariant(skLocs, MaterialCache 16)
+      variants.SkinnedInstanced <- ShaderVariant(skInstLocs, MaterialCache 16)
 
     member _.Shutdown() =
       // raylib 6.0 changed UnloadMaterial to destroy the material's shader AND
@@ -3189,20 +3205,20 @@ type ForwardPipelineBase
       let freeMaps(mat: Material) =
         Raylib.MemFree(NativePtr.toVoidPtr mat.Maps)
 
-      for KeyValue(_, mat) in instanced.MaterialCache.cache do
+      for KeyValue(_, mat) in variants.Instanced.MaterialCache.cache do
         freeMaps mat
 
-      instanced.MaterialCache.cache.Clear()
+      variants.Instanced.MaterialCache.cache.Clear()
 
-      for KeyValue(_, mat) in skinned.MaterialCache.cache do
+      for KeyValue(_, mat) in variants.Skinned.MaterialCache.cache do
         freeMaps mat
 
-      skinned.MaterialCache.cache.Clear()
+      variants.Skinned.MaterialCache.cache.Clear()
 
-      for KeyValue(_, mat) in skinnedInstanced.MaterialCache.cache do
+      for KeyValue(_, mat) in variants.SkinnedInstanced.MaterialCache.cache do
         freeMaps mat
 
-      skinnedInstanced.MaterialCache.cache.Clear()
+      variants.SkinnedInstanced.MaterialCache.cache.Clear()
 
       Raylib.UnloadShader forwardShader
       Raylib.UnloadShader instancedShader
@@ -3223,10 +3239,10 @@ type ForwardPipelineBase
       if userEffectMaterialCreated then
         freeMaps userEffectMaterial
 
-      for KeyValue(_, mat) in forward.MaterialCache.cache do
+      for KeyValue(_, mat) in variants.Forward.MaterialCache.cache do
         freeMaps mat
 
-      forward.MaterialCache.cache.Clear()
+      variants.Forward.MaterialCache.cache.Clear()
 
       if shadowAtlas <> Unchecked.defaultof<ShadowAtlas> then
         shadowAtlas.Shutdown()
@@ -3276,26 +3292,45 @@ type ForwardPipelineBase
       else
         ValueNone
 
+    // Scene depth is needed when at least one PostProcessWithDepth action exists.
+    let needsDepth = buffer.DepthPostProcessCount > 0
+
+    // Single-camera frames collect shadow geometry inline in the pre-scan walk — one
+    // less full buffer walk per frame (was: preScan + count + fill + dispatch).
+    // Gated on the frame possibly needing geometry: a depth-needing post-process, or
+    // at least one shadow-casting light in the buffer (ShadowCasterLightCount — zero
+    // means provably no caster, so collection would be discarded work). Multi-block
+    // frames keep per-block slice collection.
+    let collectInline =
+      not multiBlock && (needsDepth || buffer.ShadowCasterLightCount > 0)
+
+    if collectInline then
+      drawCollection.Begin true
+
     let frameState =
       preScan(
         buffer,
-        lights,
-        not multiBlock,
-        &forward,
-        &instanced,
-        &skinned,
-        &skinnedInstanced,
-        forwardShader,
-        instancedShader,
-        skinnedShader,
-        skinnedInstancedShader,
-        ppActions
+        {
+          Variants = variants
+          Lights = lights
+          GatherLights = not multiBlock
+          ForwardShader = forwardShader
+          InstancedShader = instancedShader
+          SkinnedShader = skinnedShader
+          SkinnedInstancedShader = skinnedInstancedShader
+          PpActions = ppActions
+          Collect =
+            if collectInline then
+              ValueSome drawCollection
+            else
+              ValueNone
+        }
       )
 
-    forward.LightsDirty <- true
-    instanced.LightsDirty <- true
-    skinned.LightsDirty <- true
-    skinnedInstanced.LightsDirty <- true
+    variants.Forward.LightsDirty <- true
+    variants.Instanced.LightsDirty <- true
+    variants.Skinned.LightsDirty <- true
+    variants.SkinnedInstanced.LightsDirty <- true
 
     let shadowResources = {
       Shader = depthShadowShader
@@ -3332,10 +3367,10 @@ type ForwardPipelineBase
 
     // Clear lights; the forward pass re-adds them per camera block
     clearLights lights
-    forward.LightsDirty <- true
-    instanced.LightsDirty <- true
-    skinned.LightsDirty <- true
-    skinnedInstanced.LightsDirty <- true
+    variants.Forward.LightsDirty <- true
+    variants.Instanced.LightsDirty <- true
+    variants.Skinned.LightsDirty <- true
+    variants.SkinnedInstanced.LightsDirty <- true
 
     // Multi-camera-block frames: start the persistent defaults empty — the forward pass
     // builds them in-order (between-block commands accumulate; each block resets to the
@@ -3451,7 +3486,7 @@ type ForwardPipelineBase
               | Command3D.DrawMesh(mesh, transform, material) ->
                 handleDrawMesh(
                   forwardShader,
-                  &forward,
+                  &variants.Forward,
                   lights,
                   maxPt,
                   maxSp,
@@ -3465,7 +3500,7 @@ type ForwardPipelineBase
               | Command3D.DrawModel(model, transform) ->
                 handleDrawModel(
                   forwardShader,
-                  &forward,
+                  &variants.Forward,
                   lights,
                   maxPt,
                   maxSp,
@@ -3479,7 +3514,7 @@ type ForwardPipelineBase
               | Command3D.DrawModelWith(model, transform, matOverride) ->
                 handleDrawModel(
                   forwardShader,
-                  &forward,
+                  &variants.Forward,
                   lights,
                   maxPt,
                   maxSp,
@@ -3493,7 +3528,7 @@ type ForwardPipelineBase
               | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
                 handleDrawSkinnedMesh(
                   skinnedShader,
-                  &skinned,
+                  &variants.Skinned,
                   lights,
                   maxPt,
                   maxSp,
@@ -3511,7 +3546,7 @@ type ForwardPipelineBase
                                             instanceCount) ->
                 handleDrawMeshInstanced(
                   instancedShader,
-                  &instanced,
+                  &variants.Instanced,
                   lights,
                   maxPt,
                   maxSp,
@@ -3531,7 +3566,7 @@ type ForwardPipelineBase
                                                    boneCount) ->
                 handleDrawSkinnedMeshInstanced(
                   skinnedInstancedShader,
-                  &skinnedInstanced,
+                  &variants.SkinnedInstanced,
                   lights,
                   maxPt,
                   maxSp,
@@ -3567,14 +3602,7 @@ type ForwardPipelineBase
         | Command3D.AddDirectionalLight _
         | Command3D.AddPointLight _
         | Command3D.AddSpotLight _ as cmd ->
-          handleLightCommand(
-            lights,
-            cmd,
-            &forward,
-            &instanced,
-            &skinned,
-            &skinnedInstanced
-          )
+          handleLightCommand(lights, cmd, variants)
 
           // Between-block commands also update the frame defaults, so a later block
           // that resets sees them.

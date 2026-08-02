@@ -1763,25 +1763,22 @@ let preScanTests =
       let cam = Camera3D(Position = v3a, Target = v3b)
       buffer.Add(Command3D.beginCamera cam)
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let fs =
         preScan(
           buffer,
-          lights,
-          true,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Lights = lights
+            GatherLights = true
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       match fs.Camera with
@@ -1797,25 +1794,22 @@ let preScanTests =
       buffer.Add(Command3D.beginCamera cam1)
       buffer.Add(Command3D.beginCamera cam2)
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let fs =
         preScan(
           buffer,
-          lights,
-          true,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Lights = lights
+            GatherLights = true
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       match fs.Camera with
@@ -1827,25 +1821,22 @@ let preScanTests =
       use buffer = new RenderBuffer3D()
       buffer.Add(Command3D.setShadowOrigin v3c)
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let fs =
         preScan(
           buffer,
-          lights,
-          true,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Lights = lights
+            GatherLights = true
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       match fs.ShadowOrigin with
@@ -1864,25 +1855,22 @@ let preScanTests =
       buffer.Add(Command3D.addPointLight(PointLight3D.create(v3b, 10.0f)))
       buffer.Add(Command3D.addSpotLight(SpotLight3D.create(v3c, v3a, 5.0f)))
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let _fs =
         preScan(
           buffer,
-          lights,
-          true,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Lights = lights
+            GatherLights = true
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       Expect.isTrue lights.Ambient.IsSome "Should have 1 ambient"
@@ -1896,25 +1884,22 @@ let preScanTests =
       buffer.Add(Command3D.addDirectionalLight(DirectionalLight3D.create v3a))
       buffer.Add(Command3D.addPointLight(PointLight3D.create(v3b, 10.0f)))
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let _fs =
         preScan(
           buffer,
-          lights,
-          false,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Lights = lights
+            GatherLights = false
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       Expect.equal lights.DirLights.Count 0 "No dir lights gathered"
@@ -1924,25 +1909,22 @@ let preScanTests =
     test "empty buffer returns empty frame state" {
       use buffer = new RenderBuffer3D()
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let fs =
         preScan(
           buffer,
-          lights,
-          true,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Lights = lights
+            GatherLights = true
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       Expect.equal fs.Camera ValueNone "No camera"
