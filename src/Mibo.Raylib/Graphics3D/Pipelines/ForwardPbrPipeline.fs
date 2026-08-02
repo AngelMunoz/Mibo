@@ -405,7 +405,9 @@ module internal PaletteTextureHelpers =
 /// the same command list, so each chunk's palette slice would otherwise upload
 /// twice per frame. <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PaletteTexturePool.TryGetUploaded"/>
 /// returns the texture a chunk already uploaded this frame (keyed by palettes
-/// array reference + chunk offset — both passes share the same command arrays);
+/// array reference + chunk offset + chunk count — both passes share the same
+/// command arrays, and the count keeps commands that share one array with
+/// different instance counts from colliding);
 /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PaletteTexturePool.RememberUploaded"/>
 /// records it. Cleared by <c>ReleaseAll</c>.
 /// </remarks>
@@ -413,13 +415,18 @@ type internal PaletteTexturePool() =
 
   let pool = Dictionary<struct (int * int), Queue<Texture2D>>()
   let inUse = ResizeArray<Texture2D>()
-  let uploaded = Dictionary<struct (Matrix4x4[] * int), Texture2D>()
+  // Keys carry the chunk count alongside the array reference and start: two commands
+  // may share one palettes/transforms array at the same chunk start with different
+  // instance counts, and a memo hit must never hand back a texture/slice sized for
+  // the OTHER command's count.
+  let uploaded = Dictionary<struct (Matrix4x4[] * int * int), Texture2D>()
   let mutable transformScratch = Array.zeroCreate<Matrix4x4> 64
 
   // Per-frame memo of sliced per-chunk transform runs: both passes chunk the same
   // command arrays, so each slice would otherwise be re-copied per pass. Keyed by
-  // (transforms array reference, chunk start) → pooled slot; cleared by ReleaseAll.
-  let slices = Dictionary<struct (Matrix4x4[] * int), int>()
+  // (transforms array reference, chunk start, chunk count) → pooled slot; cleared
+  // by ReleaseAll.
+  let slices = Dictionary<struct (Matrix4x4[] * int * int), int>()
   let slicePool = ResizeArray<Matrix4x4[]>()
   let mutable slicesUsed = 0
 
@@ -438,17 +445,17 @@ type internal PaletteTexturePool() =
 
   /// Texture a chunk already uploaded this frame, if any.
   member _.TryGetUploaded
-    (palettes: Matrix4x4[], chunkStart: int)
+    (palettes: Matrix4x4[], chunkStart: int, chunkCount: int)
     : Texture2D voption =
-    match uploaded.TryGetValue(struct (palettes, chunkStart)) with
+    match uploaded.TryGetValue(struct (palettes, chunkStart, chunkCount)) with
     | true, tex -> ValueSome tex
     | false, _ -> ValueNone
 
   /// Record a chunk's freshly uploaded texture for this frame.
   member _.RememberUploaded
-    (palettes: Matrix4x4[], chunkStart: int, tex: Texture2D)
+    (palettes: Matrix4x4[], chunkStart: int, chunkCount: int, tex: Texture2D)
     =
-    uploaded[struct (palettes, chunkStart)] <- tex
+    uploaded[struct (palettes, chunkStart, chunkCount)] <- tex
 
   /// Growable scratch for slicing per-chunk transform runs without allocating.
   member _.GetTransformScratch(needed: int) : Matrix4x4[] =
@@ -459,9 +466,9 @@ type internal PaletteTexturePool() =
 
   /// Sliced transform run for a chunk already cut this frame, if any.
   member _.TryGetTransformSlice
-    (transforms: Matrix4x4[], chunkStart: int)
+    (transforms: Matrix4x4[], chunkStart: int, chunkCount: int)
     : Matrix4x4[] voption =
-    match slices.TryGetValue(struct (transforms, chunkStart)) with
+    match slices.TryGetValue(struct (transforms, chunkStart, chunkCount)) with
     | true, slot -> ValueSome slicePool[slot]
     | false, _ -> ValueNone
 
@@ -480,7 +487,7 @@ type internal PaletteTexturePool() =
 
     let arr = slicePool[slot]
     Array.Copy(transforms, chunkStart, arr, 0, chunkCount)
-    slices[struct (transforms, chunkStart)] <- slot
+    slices[struct (transforms, chunkStart, chunkCount)] <- slot
     arr
 
   member _.ReleaseAll() =
@@ -1474,12 +1481,12 @@ module internal PipelineFunctions =
         let chunkCount = min maxPaletteTextureRows (instanceCount - start)
 
         let tex =
-          match pool.TryGetUploaded(palettes, start) with
+          match pool.TryGetUploaded(palettes, start, chunkCount) with
           | ValueSome cached -> cached
           | ValueNone ->
             let tex = pool.Acquire(boneCount * 4, chunkCount)
             uploadPaletteChunk palettes (start * boneCount) tex
-            pool.RememberUploaded(palettes, start, tex)
+            pool.RememberUploaded(palettes, start, chunkCount, tex)
             tex
 
         Rlgl.EnableShader shader.Id
@@ -1501,7 +1508,7 @@ module internal PipelineFunctions =
           if chunkCount = instanceCount then
             transforms
           else
-            match pool.TryGetTransformSlice(transforms, start) with
+            match pool.TryGetTransformSlice(transforms, start, chunkCount) with
             | ValueSome slice -> slice
             | ValueNone ->
               pool.RememberTransformSlice(transforms, start, chunkCount)
@@ -2616,8 +2623,10 @@ type ForwardPipelineBase
   // ----------------------------------------------------------------
 
   /// <summary>
-  /// Single-camera shadow pass: collects casters frame-globally, renders the atlas, uploads
-  /// shadow uniforms to all three shader variants, and returns the frame's shadow result.
+  /// Single-camera shadow pass: consumes the geometry the pre-scan collected (empty
+  /// when the frame has no shadow-casting lights), renders the atlas, uploads shadow
+  /// uniforms to the shader variants used this frame, and returns the frame's shadow
+  /// result.
   /// </summary>
   member private this.runFrameShadowPass
     (
@@ -2626,8 +2635,9 @@ type ForwardPipelineBase
       resources: inref<ShadowDepthResources>,
       frameState: inref<FrameState>
     ) : ShadowResult voption =
-    // Geometry was collected inline in the pre-scan (single-camera frames) — partition
-    // and consume it (persistent spans, no pool rent/return).
+    // Geometry was collected inline in the pre-scan when the frame can need it
+    // (otherwise the collection was reset to empty) — partition and consume it
+    // (persistent spans, no pool rent/return).
     let struct (meshDraws, meshDrawCount, skinnedStart, instancedDraws,
                 instancedDrawCount) =
       drawCollection.Finish()
@@ -3377,19 +3387,21 @@ type ForwardPipelineBase
       else
         ValueNone
 
-    // Scene depth is needed when at least one PostProcessWithDepth action exists.
-    let needsDepth = buffer.DepthPostProcessCount > 0
-
     // Single-camera frames collect shadow geometry inline in the pre-scan walk — one
     // less full buffer walk per frame (was: preScan + count + fill + dispatch).
-    // Gated on the frame possibly needing geometry: a depth-needing post-process, or
-    // at least one shadow-casting light in the buffer (ShadowCasterLightCount — zero
-    // means provably no caster, so collection would be discarded work). Multi-block
-    // frames keep per-block slice collection.
-    let collectInline =
-      not multiBlock && (needsDepth || buffer.ShadowCasterLightCount > 0)
+    // Gated on the frame possibly needing geometry: at least one shadow-casting light
+    // in the buffer (ShadowCasterLightCount — zero means provably no caster, so
+    // collection would be discarded work). Depth-needing post-processes do NOT gate
+    // collection here: raylib's depth PP samples the scene RT's depth attachment and
+    // never consumes the collected geometry (unlike the MonoGame backend, which runs
+    // a geometry depth pre-pass). Multi-block frames keep per-block slice collection.
+    let collectInline = not multiBlock && buffer.ShadowCasterLightCount > 0
 
-    if collectInline then
+    // Single-camera frames always reset the collection: runFrameShadowPass calls
+    // Finish() unconditionally, so it must see this frame's (possibly empty) state
+    // even when the gate above skips collection — never last frame's draws.
+    // Multi-block frames Begin per block in the forward loop instead.
+    if not multiBlock then
       drawCollection.Begin true
 
     shaderUsage.Clear()

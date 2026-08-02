@@ -1939,6 +1939,69 @@ let preScanTests =
   ]
 
 // ──────────────────────────────────────────────
+// PaletteTexturePool per-frame memo tests
+// ──────────────────────────────────────────────
+
+let paletteTexturePoolTests =
+  testList "PaletteTexturePool" [
+    test "upload memo distinguishes chunk counts on the same array and start" {
+      let pool = PaletteTexturePool()
+      let palettes = Array.zeroCreate<Matrix4x4> 4096
+
+      pool.RememberUploaded(palettes, 2048, 452, tex)
+
+      match pool.TryGetUploaded(palettes, 2048, 452) with
+      | ValueSome t -> Expect.equal t tex "Same key returns the texture"
+      | ValueNone -> Tests.failtest "Expected a memo hit for the recorded count"
+
+      match pool.TryGetUploaded(palettes, 2048, 2048) with
+      | ValueSome _ -> Tests.failtest "Different chunk count must not hit"
+      | ValueNone -> ()
+    }
+
+    test "slice memo distinguishes chunk counts on the same array and start" {
+      let pool = PaletteTexturePool()
+
+      let transforms =
+        Array.init 4096 (fun i ->
+          Matrix4x4.CreateTranslation(float32 i, 0.0f, 0.0f))
+
+      let cut = pool.RememberTransformSlice(transforms, 2048, 452)
+      Expect.equal cut.Length 452 "Slice is sized to the recorded count"
+
+      Expect.equal
+        cut[0].Translation
+        transforms[2048].Translation
+        "Slice starts at the chunk start"
+
+      match pool.TryGetTransformSlice(transforms, 2048, 452) with
+      | ValueSome s -> Expect.equal s.Length 452 "Same key returns the slice"
+      | ValueNone -> Tests.failtest "Expected a memo hit for the recorded count"
+
+      match pool.TryGetTransformSlice(transforms, 2048, 2048) with
+      | ValueSome _ -> Tests.failtest "Different chunk count must not hit"
+      | ValueNone -> ()
+    }
+
+    test "ReleaseAll clears both memos" {
+      let pool = PaletteTexturePool()
+      let arr = Array.zeroCreate<Matrix4x4> 4096
+
+      pool.RememberUploaded(arr, 0, 100, tex)
+      pool.RememberTransformSlice(arr, 0, 100) |> ignore
+      pool.ReleaseAll()
+
+      match pool.TryGetUploaded(arr, 0, 100) with
+      | ValueSome _ -> Tests.failtest "Upload memo must be cleared"
+      | ValueNone -> ()
+
+      match pool.TryGetTransformSlice(arr, 0, 100) with
+      | ValueSome _ -> Tests.failtest "Slice memo must be cleared"
+      | ValueNone -> ()
+    }
+  ]
+
+// ──────────────────────────────────────────────
 // All tests
 // ──────────────────────────────────────────────
 
@@ -1954,4 +2017,5 @@ let tests =
     shadowConfigTests
     shadowAtlasTests
     preScanTests
+    paletteTexturePoolTests
   ]
