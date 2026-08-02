@@ -454,9 +454,16 @@ let tests =
                                                _) ->
           Expect.equal count 2 "two instances"
 
-          Expect.isTrue
+          Expect.isFalse
             (System.Object.ReferenceEquals(t, transforms))
-            "transforms array forwarded untouched"
+            "transforms are copied at record time (the caller may reuse its array)"
+
+          Expect.equal t[0] Matrix.Identity "transform 0 copied"
+
+          Expect.equal
+            t[1].Translation
+            (Vector3(10.0f, 0.0f, 0.0f))
+            "transform 1 copied"
 
           // ArrayPool may return a larger array than requested — verify the
           // logical content (first count * boneCount elements) is correct.
@@ -479,6 +486,41 @@ let tests =
           | _ -> failtest "material override not forwarded"
 
           Expect.equal c (ValueSome colors) "colors forwarded"
+        | other ->
+          failtest $"expected DrawAnimatedModelInstanced, got %A{other}"
+      }
+
+      test
+        "mutating the caller's transforms after Add does not affect the command" {
+        use buffer = new RenderBuffer3D()
+
+        let pose: BonePose = {
+          WorldPoses = [||]
+          Palette = Array.create 3 Matrix.Identity
+        }
+
+        let transforms = [| Matrix.Identity |]
+
+        buffer.AddAnimatedModelInstanced(
+          testModel,
+          transforms,
+          [| pose |],
+          ValueNone,
+          ValueNone
+        )
+
+        // Simulate the caller refilling its persistent array (e.g. for the
+        // next camera block) before the buffer executes.
+        transforms[0] <- Matrix.CreateTranslation(99.0f, 99.0f, 99.0f)
+
+        match buffer[0] with
+        | Command3D.DrawAnimatedModelInstanced(_, t, _, _, _, count, _) ->
+          Expect.equal count 1 "one instance"
+
+          Expect.equal
+            t[0]
+            Matrix.Identity
+            "the recorded command must keep the values from record time"
         | other ->
           failtest $"expected DrawAnimatedModelInstanced, got %A{other}"
       }

@@ -19,6 +19,7 @@
     <Compile Include="PaletteGroupTests.fs" />
     <Compile Include="InstanceWorldCacheTests.fs" />
     <Compile Include="SkinnedInstancedCacheTests.fs" />
+    <Compile Include="RenderBuffer3DTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 

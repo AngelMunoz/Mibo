@@ -123,11 +123,12 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
       Array.Clear(items, 0, items.Length)
 
   /// <summary>
-  /// Tracks a rented palette array so it can be returned to the
-  /// <see cref="T:System.Buffers.ArrayPool`1"/> after the pipeline consumes the
-  /// commands. Called from <c>AddAnimatedModelInstanced</c> (an inline
-  /// extension member) — it cannot see primary-constructor <c>let</c>
-  /// bindings, so it reaches the field through this public method.
+  /// Tracks a rented matrix array (palette or transforms copy) so it can be
+  /// returned to the <see cref="T:System.Buffers.ArrayPool`1"/> after the
+  /// pipeline consumes the commands. Called from the instanced draw witnesses
+  /// (<c>AddDrawInstanced</c>/<c>AddAnimatedModelInstanced</c>, both inline
+  /// extension members) — they cannot see primary-constructor <c>let</c>
+  /// bindings, so they reach the field through this public method.
   /// </summary>
   member _.RegisterRentedArray(arr: System.Numerics.Matrix4x4[]) =
     rentedArrays.Add(arr)
@@ -208,9 +209,22 @@ type RenderBuffer3D with
         )
       )
     | ValueNone ->
-      b.Add(
-        Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount)
-      )
+      // Copy the transforms into a rented array: the command executes after
+      // the whole view has been recorded, so a caller reusing its backing
+      // array (across camera blocks or frames) must not be able to overwrite
+      // this command's transforms before they execute. Same by-reference
+      // fix as AddAnimatedModelInstanced.
+      // max 0: ArrayPool.Rent throws on a negative length — a negative
+      // instanceCount was (and stays) a recorded no-op.
+      let count = max 0 (min instanceCount transforms.Length)
+      let transformsCopy = ArrayPool<Matrix4x4>.Shared.Rent(count)
+      b.RegisterRentedArray(transformsCopy)
+      Array.Copy(transforms, 0, transformsCopy, 0, count)
+
+      // Pass count (not instanceCount): the rented array may be longer than
+      // count, and the pipeline clamps draws to transforms.Length — with the
+      // pooled length that clamp could read past the copied rows.
+      b.Add(Command3D.DrawMeshInstanced(mesh, transformsCopy, material, count))
 
   member inline b.AddDrawModel(model: Model, transform: Matrix4x4) =
     b.Add(Command3D.DrawModel(model, transform))
@@ -377,6 +391,9 @@ type RenderBuffer3D with
   /// (<c>MaterialOverride.All</c> / <c>MaterialOverride.PerMesh</c>).
   /// <paramref name="colors"/> is MonoGame-only — <c>ValueSome</c> raises
   /// <see cref="T:System.NotSupportedException"/>.
+  /// Both <paramref name="transforms"/> and the palettes are copied into
+  /// pooled arrays at record time, so the caller may freely reuse or refill
+  /// its arrays once this call returns.
   /// </summary>
   member inline b.AddAnimatedModelInstanced
     (
@@ -414,6 +431,16 @@ type RenderBuffer3D with
         let model = am.State.Model
         let meshes = model.MeshesAsSpan()
 
+        // Copy the instance transforms into a rented array too: the command
+        // executes after the whole view has been recorded (and after later
+        // camera blocks are recorded), so storing the caller's array by
+        // reference would let a refill — e.g. reusing one array across
+        // camera blocks — overwrite this command's transforms before they
+        // execute.
+        let transformsCopy = ArrayPool<Matrix4x4>.Shared.Rent(count)
+        b.RegisterRentedArray(transformsCopy)
+        Array.Copy(transforms, 0, transformsCopy, 0, count)
+
         for i = 0 to meshes.Length - 1 do
           let mat =
             match material with
@@ -432,7 +459,7 @@ type RenderBuffer3D with
           b.Add(
             Command3D.DrawSkinnedMeshInstanced(
               meshes[i],
-              transforms,
+              transformsCopy,
               palettes,
               mat,
               count,
