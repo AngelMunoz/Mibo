@@ -405,6 +405,7 @@ uniform vec4 emissionColor;
 uniform float opacity;
 uniform vec2 tiling;
 uniform int useNormalMap;
+uniform int useEmissionMap;
 
 uniform vec3 ambientColor;
 uniform float ambientIntensity;
@@ -718,9 +719,9 @@ void main()
     }}
 
     vec3 emission = emissionColor.rgb;
-    // Emission map modulation
-    vec4 emTex = texture(texture4, uv);
-    emission *= emTex.rgb;
+    // Emission map modulation — sampled only when the material binds one
+    // (black-emission materials, the common case, skip the fetch entirely).
+    if (useEmissionMap == 1) emission *= texture(texture4, uv).rgb;
 
     vec3 result = ambient + dirResult + pointResult + spotResult + emission;
     float alpha = texColor.a * opacity;

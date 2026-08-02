@@ -52,6 +52,7 @@ float4 emissionColor;
 float opacity;
 float2 tiling;
 int useNormalMap;
+int useEmissionMap;
 
 float3 ambientColor;
 float ambientIntensity;
@@ -341,7 +342,11 @@ float4 shadePBR(float2 texCoord, float3 fragNormal, float3 worldPos, float4 inst
 
   float3 L = normalize(-dirLightDir);
   float3 radiance = dirLightColor * dirLightIntensity;
-  float dirShadow = computeDirShadow(worldPos);
+  // Fragments facing away from the sun get zero directional contribution from
+  // calcPBR anyway — skip the shadow matrix multiply and the 9-tap PCF for them.
+  float dirShadow = 0.0;
+  if (dot(normal, L) > 0.0)
+    dirShadow = computeDirShadow(worldPos);
   float3 dirResult = calcPBR(V, normal, L, radiance, albedo, r, m) * dirShadow;
 
   float3 pointResult = float3(0.0, 0.0, 0.0);
@@ -377,7 +382,11 @@ float4 shadePBR(float2 texCoord, float3 fragNormal, float3 worldPos, float4 inst
     }
   }
 
-  float3 emission = emissionColor.rgb * SAMPLE_TEX(texture4, uv).rgb;
+  // Emission map modulation — sampled only when the material binds one
+  // (black-emission materials, the common case, skip the tap entirely).
+  float3 emission = emissionColor.rgb;
+  if (useEmissionMap == 1)
+    emission *= SAMPLE_TEX(texture4, uv).rgb;
   float3 result = ambient + dirResult + pointResult + spotResult + emission;
   float alpha = texColor.a * opacity * instanceColor.a;
   return float4(result, alpha);

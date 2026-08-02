@@ -168,6 +168,7 @@ type internal MaterialUniforms = {
   Opacity: int
   Tiling: int
   UseNormalMap: int
+  UseEmissionMap: int
   NormalMatrix: int
 }
 
@@ -1103,6 +1104,7 @@ module internal PipelineFunctions =
       Opacity = Raylib.GetShaderLocation(shader, "opacity")
       Tiling = Raylib.GetShaderLocation(shader, "tiling")
       UseNormalMap = Raylib.GetShaderLocation(shader, "useNormalMap")
+      UseEmissionMap = Raylib.GetShaderLocation(shader, "useEmissionMap")
       NormalMatrix = Raylib.GetShaderLocation(shader, "normalMatrix")
     }
 
@@ -1242,6 +1244,13 @@ module internal PipelineFunctions =
       | ValueNone -> 0
 
     setShaderInt shader matLocs.UseNormalMap useNormal
+
+    let useEmission =
+      match mat3d.EmissionMap with
+      | ValueSome _ -> 1
+      | ValueNone -> 0
+
+    setShaderInt shader matLocs.UseEmissionMap useEmission
 
   /// Single parameterized material cache lookup/creation replacing 3x duplication.
   let getOrCreate

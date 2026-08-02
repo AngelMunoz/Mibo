@@ -63,6 +63,7 @@ on MonoGame).
 | `opacity` | `float` | Alpha multiplier |
 | `tiling` | `vec2` / `float2` | UV tiling |
 | `useNormalMap` | `int` | `1` if a normal map is bound, else `0` |
+| `useEmissionMap` | `int` | `1` if an emission map is bound, else `0` — the emission texture is only sampled when `1` |
 | `texture0` | `sampler2D` | Albedo map |
 | `texture1` | `sampler2D` | Roughness map (raylib) / Roughness map (MonoGame `s1`) |
 | `texture2` | `sampler2D` | Normal map |
