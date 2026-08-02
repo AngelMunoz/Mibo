@@ -843,34 +843,17 @@ type ForwardPipelineBase
   /// Ensures the PBR effect is loaded first (shadow uniforms upload to it).
   /// </summary>
   member private this.runShadowPass
-    (
-      gd: GraphicsDevice,
-      buffer: RenderBuffer3D,
-      startIdx: int,
-      endIdx: int,
-      initialCastEnabled: bool,
-      passLights: Pipelines.LightBuffers,
-      camera: Camera3D,
-      needsDepth: bool,
-      precollected: bool
-    ) =
+    (gd: GraphicsDevice)
+    (args: ShadowPass.ShadowPassArgs)
+    =
     // Ensure the PBR effect is loaded BEFORE the pass uploads shadow uniforms to it.
     PbrShading.ensureEffect(gd, pbrRes) |> ignore
 
-    ShadowPass.run
-      gd
-      atlasCfg
-      biasCfg
-      shadowRes
-      passLights
-      pbrRes.Params
-      buffer
-      startIdx
-      endIdx
-      initialCastEnabled
-      camera
-      needsDepth
-      precollected
+    // PbrParams is injected here — callers leave it ValueNone.
+    ShadowPass.run gd atlasCfg biasCfg shadowRes {
+      args with
+          PbrParams = pbrRes.Params
+    }
     |> fun r -> shadowRes.ShadowResult <- r // stash for the forward pass (Shade / user-effect scopes)
 
   /// <summary>
@@ -895,17 +878,17 @@ type ForwardPipelineBase
     LightScoping.loadSet block.Lights blockLights
     shadowRes.Origin <- block.ShadowOrigin
 
-    this.runShadowPass(
-      gd,
-      buffer,
-      block.StartIndex,
-      block.EndIndex,
-      block.InitialCastEnabled,
-      blockLights,
-      camera,
-      false,
-      false
-    )
+    this.runShadowPass gd {
+      Lights = blockLights
+      PbrParams = ValueNone
+      Buffer = buffer
+      StartIndex = block.StartIndex
+      EndIndex = block.EndIndex
+      InitialCastEnabled = block.InitialCastEnabled
+      Camera = camera
+      NeedsDepth = false
+      Precollected = false
+    }
 
     scene.PointShadowSlots <- shadowRes.PointShadowSlots
     scene.SpotShadowSlots <- shadowRes.SpotShadowSlots
@@ -1207,17 +1190,17 @@ type ForwardPipelineBase
       // Multi-block frames run one pass per camera block at its BeginCamera/BeginCameraConfig
       // in the forward loop instead.
       if state.HasCamera && not multiBlock then
-        this.runShadowPass(
-          gd,
-          buffer,
-          0,
-          buffer.Count,
-          true,
-          lights,
-          state.CurrentCamera,
-          needsDepth,
-          collectInline
-        )
+        this.runShadowPass gd {
+          Lights = lights
+          PbrParams = ValueNone
+          Buffer = buffer
+          StartIndex = 0
+          EndIndex = buffer.Count
+          InitialCastEnabled = true
+          Camera = state.CurrentCamera
+          NeedsDepth = needsDepth
+          Precollected = collectInline
+        }
 
       // Forward pass
       // Lights are seeded (frame-global for single-camera frames, the frame defaults for

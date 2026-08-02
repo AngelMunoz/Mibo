@@ -1678,28 +1678,49 @@ module internal ShadowPass =
         res.Effect <- ValueSome e
       | ValueNone -> ()
 
+  /// <summary>Per-run inputs to
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.run"/>, bundled so the pass's
+  /// signature stops growing one parameter per concern. A struct — built per call, no
+  /// allocation.</summary>
+  [<Struct>]
+  type internal ShadowPassArgs = {
+    Lights: LightBuffers
+    PbrParams: PbrEffectParams voption
+    Buffer: RenderBuffer3D
+    StartIndex: int
+    EndIndex: int
+    InitialCastEnabled: bool
+    Camera: Camera3D
+    NeedsDepth: bool
+    Precollected: bool
+  }
+
   /// <summary>
   /// Runs the shadow pass: scans lights, collects opaque geometry from the buffer range
-  /// <c>[startIdx, endIdx)</c> (shared with scene-depth), registers casters into the atlas,
-  /// renders depth, and uploads shadow uniforms to the PBR effect. When <paramref name="needsDepth"/>
-  /// is true, geometry is collected even without a shadow-casting light so <c>renderSceneDepth</c>
-  /// can reuse it. Only the first directional light can cast (it is the one the shader lights with).
+  /// <c>[StartIndex, EndIndex)</c> (shared with scene-depth, skipped when
+  /// <c>Precollected</c> — the single-camera pre-scan already collected), registers casters
+  /// into the atlas, renders depth, and uploads shadow uniforms to the PBR effect. When
+  /// <c>NeedsDepth</c> is true, geometry is collected even without a shadow-casting light so
+  /// <c>renderSceneDepth</c> can reuse it. Only the first directional light can cast (it is
+  /// the one the shader lights with).
   /// </summary>
   let run
     (gd: GraphicsDevice)
     (atlasCfg: ShadowAtlasConfig)
     (biasCfg: ShadowBiasConfig)
     (res: ShadowResources)
-    (lights: LightBuffers)
-    (pbrParams: PbrEffectParams voption)
-    (buffer: RenderBuffer3D)
-    (startIdx: int)
-    (endIdx: int)
-    (initialCastEnabled: bool)
-    (activeCamera: Camera3D)
-    (needsDepth: bool)
-    (precollected: bool)
+    (args: ShadowPassArgs)
     : ShadowResult voption =
+    let lights = args.Lights
+    let pbrParams = args.PbrParams
+    let buffer = args.Buffer
+    let startIdx = args.StartIndex
+    let endIdx = args.EndIndex
+    let initialCastEnabled = args.InitialCastEnabled
+    let activeCamera = args.Camera
+    let needsDepth = args.NeedsDepth
+    let precollected = args.Precollected
+
     // ── Scan lights for casters ──
     let hasDirCaster =
       lights.DirLights.Count > 0 && lights.DirLights[0].CastsShadows
