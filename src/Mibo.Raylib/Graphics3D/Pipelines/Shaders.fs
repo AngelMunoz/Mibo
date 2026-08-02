@@ -668,8 +668,11 @@ void main()
     vec3 ambient = ambientColor * albedo * ambientIntensity;
 
     // Directional light (PBR)
-    float dirShadow = computeDirShadow(fragWorldPos);
     vec3 L = normalize(-dirLightDir);
+    // Fragments facing away from the sun get zero directional contribution from
+    // calcPBR anyway — skip the shadow matrix multiply and the PCF taps for them.
+    float dirShadow = 0.0;
+    if (dot(normal, L) > 0.0) dirShadow = computeDirShadow(fragWorldPos);
     vec3 radiance = dirLightColor * dirLightIntensity;
     vec3 dirResult = calcPBR(V, normal, L, radiance, albedo, r, m) * dirShadow;
 
