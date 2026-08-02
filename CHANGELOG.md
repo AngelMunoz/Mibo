@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.0.0-rc-001] - 2026-08-02
+
 ### Added
 
 - **Core, MonoGame 3D, Raylib 3D:** bone pose queries and attachment draws for animated models. The new `BoneRef` type (`ByName` / `ByIndex`) addresses a bone; `Animation3DState.computePose` and `AnimatedModel.computePose` evaluate the pose once per frame into a `BonePose` (per-bone world transforms plus the skinning palette) that bone queries (`AnimatedModel.tryGetBoneWorld`, `BonePose.worldAt`/`tryGetWorld`) and the new `buffer.attachedMesh(animModel, bone, localTransform, mesh, material, transform, ?pose)` member share with the skinned draw. Evaluation is allocation-free after warmup. Attachments compose as `localTransform * boneWorld * transform` and inherit the instance's full world transform including scale; missing bones are never an error — queries return `ValueNone` and attachment draws emit nothing. `AnimatedMesh` now retains a bone name→index lookup (plus bone names/parents on raylib) for `ByName` resolution. See `docs/animation3d.md`.
