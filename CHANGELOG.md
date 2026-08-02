@@ -27,6 +27,7 @@
 
 - **Raylib 3D:** bones a clip doesn't animate (a merged clip animating only part of the skeleton, or a clip with fewer bones than the mesh) now hold their bind pose instead of collapsing to the skeleton origin with a zeroed transform — and blends no longer slerp against a zero quaternion — matching the MonoGame backend's long-standing behavior. `AnimatedMesh.computeBoneMatrices` also no longer reads past the end of the clip's native keyframe pose array when the clip has fewer bones than the mesh.
 - **Raylib 3D:** GPU skinning now works with the stock raylib native library. raylib uploads the bone index/weight vertex buffers only when natively compiled with `SUPPORT_GPU_SKINNING` (off by default, including the raylib-cs NuGet builds), so skinned meshes previously rendered frozen in bind pose; `Animation3DState.create`/`AnimatedMesh.fromModel` now detect the missing buffers and upload them from managed code.
+- **MonoGame 3D:** pooled 3D render targets (the post-process scene RT and the ping-pong intermediates) are now created with `RenderTargetUsage.PreserveContents`. MonoGame clears a `DiscardContents` target on every bind, so when a mid-frame pass (the scene-depth pre-pass, or a per-camera-block shadow pass) restored the caller's bindings and re-bound the scene RT, the rendered scene was wiped before post-process actions sampled it — `postProcessWithDepth` effects (fog, DOF, SSAO) received a black scene.
 
 ## [4.0.0-beta-001] - 2026-07-28
 

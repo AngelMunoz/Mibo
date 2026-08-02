@@ -60,7 +60,11 @@ type RenderTargetPool3D(gd: GraphicsDevice, ?maxIdlePerDimension: int) =
             SurfaceFormat.Color,
             DepthFormat.Depth24,
             0,
-            RenderTargetUsage.DiscardContents
+            // PreserveContents: mid-frame passes (scene-depth pre-pass, per-camera-block
+            // shadow passes) re-bind the scene RT when restoring the caller's bindings, and
+            // MonoGame clears a DiscardContents target on every bind — wiping the rendered
+            // scene before post-process samples it.
+            RenderTargetUsage.PreserveContents
           )
 
         inUse.Add(rt)
