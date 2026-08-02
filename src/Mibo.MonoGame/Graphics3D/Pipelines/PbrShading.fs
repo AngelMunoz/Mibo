@@ -130,15 +130,22 @@ type internal SkinnedInstancedPartMeta = {
   IsSkinned: bool
   UseGrouped: bool
   Technique: EffectTechnique
+  /// <summary>The effect instance <c>IsSkinned</c>/<c>Technique</c> were derived
+  /// from. Validated on every cache use — a game swapping the part's effect
+  /// (a documented MonoGame pattern) forces an entry rebuild, so the skinned
+  /// flag and technique choice follow the new effect.</summary>
+  SourceEffect: Effect
 }
 
 /// <summary>
 /// Per-model cache entry for skinned + instanced draws: the static part metadata (both
 /// color modes), the part→merged-group map, and the part→info index — all built once per
 /// model per pipeline instead of rebuilt per command. Keyed by model reference in a
-/// ConditionalWeakTable, so entries die with the model. Validated against the pipeline's
-/// current effect instances on each use — a Shutdown + reload produces new instances and
-/// forces a rebuild.
+/// ConditionalWeakTable, so entries die with the model. Validated on each use against
+/// the pipeline's current effect instances (a Shutdown + reload produces new instances
+/// and forces a rebuild) and against each part's current effect instance (a game
+/// swapping <c>part.Effect</c> forces a rebuild, so <c>IsSkinned</c> and the technique
+/// choice track the swap — see <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.SkinnedInstancedPartMeta.SourceEffect"/>).
 /// </summary>
 type internal SkinnedInstancedModelEntry = {
   /// <summary>Static part metadata for commands without per-instance colors.</summary>
@@ -366,6 +373,43 @@ type internal SkinnedInstancedTarget =
 
 /// <summary>The extracted PBR draw handlers + the user-effect scope shading path.</summary>
 module internal PbrShading =
+
+  /// <summary>Does a cached skinned + instanced entry still match the live state?
+  /// The pipeline's effect instances must be the ones the entry was built against,
+  /// and every part must still carry the effect instance its metadata derives from.
+  /// Module-level (no closure) so the per-command validation stays allocation-free;
+  /// the per-part loop is O(parts) reference compares.</summary>
+  let skinnedInstancedEntryMatches
+    (effect: Effect voption)
+    (groupedEffect: Effect voption)
+    (e: SkinnedInstancedModelEntry)
+    =
+    let effectMatches =
+      match e.ForEffect, effect with
+      | ValueSome a, ValueSome b -> obj.ReferenceEquals(a, b)
+      | ValueNone, ValueNone -> true
+      | _ -> false
+
+    let groupedMatches =
+      match e.ForGroupedEffect, groupedEffect with
+      | ValueSome a, ValueSome b -> obj.ReferenceEquals(a, b)
+      | ValueNone, ValueNone -> true
+      | _ -> false
+
+    // Plain and Colored hold the same parts with the same source effects — one
+    // array suffices for the per-part check.
+    let mutable partsMatch = true
+    let mutable i = 0
+
+    while partsMatch && i < e.Plain.Length do
+      let meta = e.Plain[i]
+
+      if obj.ReferenceEquals(meta.Part.Effect, meta.SourceEffect) then
+        i <- i + 1
+      else
+        partsMatch <- false
+
+    effectMatches && groupedMatches && partsMatch
 
   /// <summary>True on the OpenGL backend, which has no vertex texture fetch — skinned +
   /// instanced draws fall back to per-instance skinned draws there.</summary>
@@ -1494,18 +1538,11 @@ module internal PbrShading =
           // game-mutable parts (world from the current bone transforms, material,
           // normal matrix) resolve per command.
           let entry =
-            let isValid(e: SkinnedInstancedModelEntry) =
-              (match e.ForEffect, res.Effect with
-               | ValueSome a, ValueSome b -> obj.ReferenceEquals(a, b)
-               | ValueNone, ValueNone -> true
-               | _ -> false)
-              && (match e.ForGroupedEffect, res.GroupedEffect with
-                  | ValueSome a, ValueSome b -> obj.ReferenceEquals(a, b)
-                  | ValueNone, ValueNone -> true
-                  | _ -> false)
-
             match res.SkinnedInstancedModelCache.TryGetValue model with
-            | true, e when isValid e -> e
+            | true, e when
+              skinnedInstancedEntryMatches res.Effect res.GroupedEffect e
+              ->
+              e
             | _ ->
               let plain = ResizeArray<SkinnedInstancedPartMeta>()
               let colored = ResizeArray<SkinnedInstancedPartMeta>()
@@ -1550,6 +1587,7 @@ module internal PbrShading =
                       IsSkinned = isSkinned
                       UseGrouped = useGrouped
                       Technique = resolve false
+                      SourceEffect = part.Effect
                     }
 
                     colored.Add {
@@ -1559,6 +1597,7 @@ module internal PbrShading =
                       IsSkinned = isSkinned
                       UseGrouped = useGrouped
                       Technique = resolve true
+                      SourceEffect = part.Effect
                     }
 
                     infoIndex[part] <- plain.Count - 1
