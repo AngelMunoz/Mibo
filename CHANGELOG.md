@@ -31,6 +31,10 @@
 - **Raylib 3D:** GPU skinning now works with the stock raylib native library. raylib uploads the bone index/weight vertex buffers only when natively compiled with `SUPPORT_GPU_SKINNING` (off by default, including the raylib-cs NuGet builds), so skinned meshes previously rendered frozen in bind pose; `Animation3DState.create`/`AnimatedMesh.fromModel` now detect the missing buffers and upload them from managed code.
 - **MonoGame 3D:** pooled 3D render targets (the post-process scene RT and the ping-pong intermediates) are now created with `RenderTargetUsage.PreserveContents`. MonoGame clears a `DiscardContents` target on every bind, so when a mid-frame pass (the scene-depth pre-pass, or a per-camera-block shadow pass) restored the caller's bindings and re-bound the scene RT, the rendered scene was wiped before post-process actions sampled it — `postProcessWithDepth` effects (fog, DOF, SSAO) received a black scene.
 
+### Deprecated
+
+- **Raylib, MonoGame:** the piped draw modules (`Draw`, `Draw3D`, `LightDraw`, `ParticleDraw`) now carry an `[<Obsolete>]` attribute, so code that still uses them builds with a deprecation warning (FS0044) pointing at the fluent draw DSL. The modules were announced as deprecated in 3.1.0 and remain functional; they will be removed in a future release. See `docs/draw-dsl.md` → "Migrating from the piped DSL".
+
 ## [4.0.0-beta-001] - 2026-07-28
 
 ### Added

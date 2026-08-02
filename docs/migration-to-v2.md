@@ -595,7 +595,7 @@ compositing), and on-top layering was draw order anyway. Build the same with
 emitting that camera after the main one. The v2-only `Camera3D.overlay`,
 `Camera3DConfig.PostProcessPasses`, and `Camera3D.withPostProcess`/
 `withoutPostProcess` are removed too — v2 post-processing is command-driven via
-`Draw3D.postProcess`.
+the `postProcess` draw command (`buffer.postProcess(...)`).
 
 **Migration (raylib):** if you held a `Mibo.Camera` or `Mibo.Ray` value, switch
 to the native `Raylib_cs.Camera3D` / `Raylib_cs.Ray` (produced by
@@ -650,10 +650,11 @@ let renderer =
 // 2D — v2, emitted from the view, only on frames that need it
 let view ctx model (buffer: RenderBuffer2D) =
   buffer
-  |> Draw.postProcess (fun ppCtx ->
+    .postProcess(fun ppCtx ->
       // ppCtx.Source — the scene texture (or previous pass's output)
       // ppCtx.Width, ppCtx.Height, ppCtx.Time — dimensions + frame time
       drawFullscreenQuad ppCtx.Source vignetteShader)
+    .drop()
 ```
 
 ```fsharp
@@ -675,12 +676,12 @@ let pipeline =
 // 3D — v2, emitted from the view, only on frames that need it
 let view ctx model (buffer: RenderBuffer3D) =
   buffer
-  |> Draw3D.postProcess (fun ppCtx ->
+    .postProcess(fun ppCtx ->
       // ppCtx.Source — the scene texture (or previous pass's output)
       // ppCtx.Width, ppCtx.Height, ppCtx.Time — dimensions + frame time
       // ppCtx.Context — GameContext (resolve a shader via IAssets)
       drawFullscreenQuad ppCtx.Source vignetteShader)
-  |> Draw3D.drop
+    .drop()
 ```
 
 Multiple passes chain in buffer order, ping-ponging through pooled render
@@ -690,20 +691,20 @@ one — the action owns the draw.
 
 ### Depth-aware post-processing (3D)
 
-A second command, `Draw3D.postProcessWithDepth`, gives the action a
+A second command, `postProcessWithDepth`, gives the action a
 `PostProcessContext3D` whose `Depth` field is a camera-POV depth texture (NDC z
 in `[0,1]`) for distance effects like fog, depth-of-field, and SSAO. Use plain
-`Draw3D.postProcess` when you don't sample depth — the pipeline skips the
+`postProcess` when you don't sample depth — the pipeline skips the
 depth-production cost entirely:
 
 ```fsharp
 buffer
-|> Draw3D.postProcessWithDepth (fun ppCtx ->
+  .postProcessWithDepth(fun ppCtx ->
     match ppCtx.Depth with
     | ValueSome depthTex -> // bind depthTex, apply the distance effect
     | ValueNone ->          // no depth produced this frame — pass through
     ())
-|> Draw3D.drop
+  .drop()
 ```
 
 The depth texture is produced differently per backend (raylib samples the

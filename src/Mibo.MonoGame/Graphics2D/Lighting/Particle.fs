@@ -26,6 +26,7 @@ module ParticleCommands =
     Command2D.Particle(texture, particles, count, layer)
 
 /// <summary>Pipe-friendly wrappers for particle drawing.</summary>
+[<System.Obsolete("ParticleDraw is deprecated; use the new Mibo.Elmish.Graphics API instead.")>]
 module ParticleDraw =
 
   /// <summary>Adds a batched particle render command to the buffer. Returns the buffer for chaining.</summary>

@@ -20,8 +20,9 @@ This is the key to rendering voxel worlds, forests, or any scene with high objec
 | Situation | Approach |
 |-----------|----------|
 | < 50 identical objects | `.mesh(...)` per object (simpler) |
-| 50–10,000+ identical objects | `.instanced(...)` (one draw call) |
-| Cell grid (voxels, tiles) | `CellGridRenderer3D.renderInstanced` (automatic grouping) |
+| 50–1,000+ identical objects | `.instanced(...)` (one draw call) |
+| dozens of *animated* characters | `.animatedModelInstanced(...)` — see [Skinned + Instanced Draws](../animation3d.html#skinned--instanced-draws) |
+| Cell grid (voxels, tiles) | `buffer.renderCellGridInstanced(...)` (automatic grouping) |
 
 ## Instanced draws
 
@@ -95,27 +96,30 @@ Three lambda parameters:
 
 ```fsharp
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
-    buffer.beginCamera(camera).setAmbientLight(AmbientLight3D.create (Color(40, 40, 40, 255))).drop()
-    // ... lights ...
-
     // Reset pooled buffers before rendering
     instancedCtx.ResetFrameBuffers()
 
-    // Render full grid
-    CellGridRenderer3D.renderInstanced instancedCtx model.World buffer
+    buffer
+      .beginCamera(camera)
+      .setAmbientLight(AmbientLight3D.create (Color(40, 40, 40, 255)))
+      // ... lights ...
 
-    // Or render only within a bounding volume
-    CellGridRenderer3D.renderVolumeInstanced instancedCtx viewBounds model.World buffer
+      // Render full grid
+      .renderCellGridInstanced(instancedCtx, model.World)
 
-    // ... other geometry ...
-    buffer.endCamera().drop()
+      // Or render only within a bounding volume
+      // .renderCellGridVolumeInstanced(instancedCtx, viewBounds, model.World)
+
+      // ... other geometry ...
+      .endCamera()
+      .drop()
 ```
 
 > _**IMPORTANT**_: Call `instancedCtx.ResetFrameBuffers()` once per frame **before** rendering. This returns pooled arrays to `ArrayPool` and prevents memory leaks.
 
 ### Volume-culled rendering
 
-`renderVolumeInstanced` only processes cells within a bounding box. Use it for chunk-based worlds where you only render nearby chunks:
+`renderCellGridVolumeInstanced` only processes cells within a bounding box. Use it for chunk-based worlds where you only render nearby chunks:
 
 ```fsharp
 let bounds = {
@@ -123,12 +127,14 @@ let bounds = {
     Max = Vector3(cx + 50f, 64f, cz + 50f)
 }
 
-CellGridRenderer3D.renderVolumeInstanced instancedCtx bounds model.World buffer
+buffer
+  .renderCellGridVolumeInstanced(instancedCtx, bounds, model.World)
+  .drop()
 ```
 
 ## How it works internally
 
-1. `renderInstanced` iterates all cells in the grid.
+1. `renderCellGridInstanced` iterates all cells in the grid.
 2. Each cell's key is computed via `getKey`.
 3. Transforms are accumulated into per-key `ResizeArray<Matrix4x4>`.
 4. After iteration, each group emits one instanced draw command per sub-mesh.
@@ -213,7 +219,7 @@ to shade every cell with one effect.
 - **Key function** — Keep `getKey` cheap. It's called per cell per frame.
 - **Transform function** — Avoid allocations. `Raymath.MatrixTranslate` returns a struct.
 - **ResetFrameBuffers** — Always call it. Skipping it leaks pooled arrays.
-- **Volume culling** — Use `renderVolumeInstanced` for large worlds to skip distant cells.
+- **Volume culling** — Use `renderCellGridVolumeInstanced` for large worlds to skip distant cells.
 - **Material sharing** — Cells with the same key share materials. Don't create new materials per cell.
 
 ## Example: voxel world
@@ -245,3 +251,4 @@ Air cells produce no draw calls. Stone, dirt, and grass each batch into one inst
 - [Overview](overview.html) — Architecture and pipeline setup
 - [Draw DSL](../draw-dsl.html) — The fluent draw surface
 - [Materials](materials.html) — PBR material system
+- [Animation 3D — Skinned + Instanced Draws](../animation3d.html#skinned--instanced-draws) — instancing animated characters (`animatedModelInstanced`)

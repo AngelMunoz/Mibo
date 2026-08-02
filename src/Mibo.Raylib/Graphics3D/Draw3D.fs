@@ -25,6 +25,7 @@ open Mibo.Elmish
 /// </code>
 /// </para>
 /// </remarks>
+[<System.Obsolete("Draw3D is deprecated; use the new Mibo.Elmish.Graphics API instead.")>]
 module Draw3D =
 
   // ──────────────────────────────────────────────

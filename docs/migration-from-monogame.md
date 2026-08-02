@@ -568,20 +568,22 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
     }
   ) |> ignore
 
-// After — record builders + the Draw module (pipe-friendly)
+// After — record builders + the fluent Draw DSL
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
   let dest = Rectangle(int model.Position.X, int model.Position.Y, 32, 32)
   buffer
-  |> Draw.sprite
-    (SpriteState.create(tex, dest, model.SourceRect)
-       |> SpriteState.withLayer 0<RenderLayer>)
-  |> Draw.drop
+    .sprite(
+      SpriteState.create(tex, dest, model.SourceRect)
+      |> SpriteState.withLayer 0<RenderLayer>
+    )
+    .drop()
 ```
 
-The `Draw` module is pipe-friendly: `Draw.sprite …`, `Draw.text …`,
-`Draw.fillRect …`, `Draw.lineThick …`, `Draw.fillCircle …`, `Draw.beginCamera …`,
-`Draw.beginShader …`, `Draw.particles …`, etc. Each takes the buffer last and
-returns it for chaining.
+The fluent DSL chains members on the buffer: `.sprite(...)`, `.text(...)`,
+`.fillRect(...)`, `.lineThick(...)`, `.fillCircle(...)`, `.beginCamera(...)`,
+`.beginShader(...)`, `.particles(...)`, etc. Each returns the buffer for
+chaining; end the chain with `.drop()`. See
+[Draw DSL](draw-dsl.html).
 
 #### 2D lighting & shadows
 
@@ -604,7 +606,7 @@ shadows, normal maps, and per-instance lit-sprite quads are all supported.
 | `PostProcessConfig` (+ `withBloom`/`withToneMapping`)                                                                | `PostProcessConfig3D` + `PostProcessPass3D`                                                                                                       |
 | `PipelineBuffer<RenderCommand>`                                                                                      | `RenderBuffer3D` (= `RenderBuffer<unit, Command3D>`)                                                                                              |
 | `RenderCommand` DU (`SetCamera`, `AddLight`, `Draw`, `DrawSpriteBillboard`, …)                                       | `Command3D` DU (`BeginCamera`, `AddPointLight`, `DrawModel`, `DrawBillboard`, …)                                                                  |
-| `draw { }` / `quad { }` / `billboard { }` CEs + `PipelineBuffer` extensions (`.Camera(...).Draw(...).AddLight(...)`) | the `Draw3D` module (pipe-friendly: `Draw3D.drawModel …`, `Draw3D.addPointLight …`, `Draw3D.beginCamera …`)                                       |
+| `draw { }` / `quad { }` / `billboard { }` CEs + `PipelineBuffer` extensions (`.Camera(...).Draw(...).AddLight(...)`) | the fluent Draw DSL (`buffer.model(...)`, `buffer.addPointLight(...)`, `buffer.beginCamera(...)` — see [Draw DSL](draw-dsl.html))                                           |
 | `Light` DU (`Directional`/`Point`/`Spot`), `DirectionalLight`, `PointLight`, `SpotLight`, `ShadowSettings`           | `AmbientLight3D` + `DirectionalLight3D` + `PointLight3D` + `SpotLight3D` records (ambient is now its own record, not a field of a lighting state) |
 | `Material` / `PBRMaterial` / `MaterialFlags`                                                                         | `Material3D` record (+ `Material3D.defaults`, `Material3D.fromModelMeshPart`)                                                                     |
 | `Mesh` + `Mesh.fromModel`                                                                                            | `PrimitiveMesh` / `Primitive3D` (unit cube/sphere/cylinder/plane/torus/cone)                                                                      |
@@ -636,36 +638,32 @@ shadows, normal maps, and per-instance lit-sprite quads are all supported.
 `ForwardPipeline` takes optional `?postProcess`, `?shadowAtlas`, `?shadowBias`.
 For a non-PBR shading strategy, subclass `ForwardPipelineBase` and override
 `Shade`. There is also `NoopPipeline` if you want to do all drawing yourself via
-`Draw3D.drawImmediate`.
+`buffer.drawImmediate(...)`.
 
-#### View function and the `Draw3D` DSL
+#### View function and the fluent Draw DSL
 
 ```fsharp
-// After — pipe-friendly command recording
+// After — fluent command recording
 let view (ctx: GameContext) (model: GameModel) (buffer: RenderBuffer3D) =
   buffer
-  |> Draw3D.beginCameraWith(
-       Camera3D.render camera |> Camera3D.withClear skyColor
-     )
-  |> Draw3D.setAmbientLight { Color = ambient; Intensity = 0.5f }
-  |> Draw3D.addDirectionalLight { Direction = sunDir; Color = sunColor
-                                  Intensity = 1.0f; CastsShadows = true }
-  |> Draw3D.drop
-
-  Draw3D.drawModel model.PlayerModel playerTransform buffer |> Draw3D.drop
-  Draw3D.drawBillboard tex pos size color buffer |> Draw3D.drop
-  Draw3D.addPointLight light buffer |> Draw3D.drop
-
-  buffer |> Draw3D.endCamera |> Draw3D.drop
+    .beginCameraWith(Camera3D.render camera |> Camera3D.withClear skyColor)
+    .setAmbientLight { Color = ambient; Intensity = 0.5f }
+    .addDirectionalLight { Direction = sunDir; Color = sunColor
+                           Intensity = 1.0f; CastsShadows = true }
+    .model(model.PlayerModel, playerTransform)
+    .billboard(tex, pos, size, color)
+    .addPointLight(light)
+    .endCamera()
+    .drop()
 ```
 
-The `Draw3D` module surface: `drawModel`, `drawAnimatedModel`, `drawPrimitive`,
-`drawInstanced`, `drawMeshEffect`, `drawBillboard`, `drawBillboardBatch`,
-`drawLine3D`, `beginCamera`/`beginCameraWith`/`endCamera`, `setAmbientLight`,
+The fluent 3D surface: `model`, `animatedModel`, `mesh`, `instanced`,
+`billboard`, `billboardBatch`, `line3D`,
+`beginCamera`/`beginCameraWith`/`endCamera`, `setAmbientLight`,
 `addDirectionalLight`/`addPointLight`/`addSpotLight`, `setShadowOrigin`,
 `enableShadows`/`disableShadows`, `beginEffect`/`endEffect` (per-group custom
 shading), `drawImmediate` (raw `GraphicsDevice` access with a gathered
-`SceneContext`), `drop`.
+`SceneContext`), `drop`. See [Draw DSL](draw-dsl.html) for the full surface.
 
 #### What you can still use from Core
 
@@ -718,12 +716,12 @@ let mutable anim = AnimatedModel.create model mesh clips "idle" 60.0f
 anim <- anim |> AnimatedModel.blendTo "walk" 0.15f |> AnimatedModel.update dt
 
 // Draw — the bone palette is computed for you
-Draw3D.drawAnimatedModel anim transform buffer |> Draw3D.drop
+buffer.animatedModel(anim, transform).drop()
 ```
 
 There is also a lower-level `Animation3DState` (carries the model on the state)
-if you prefer to call `Animation3DState.applyToModel` + `Draw3D.drawModel`
-yourself.
+if you prefer to call `Animation3DState.applyToModel` + a plain
+`buffer.model(...)` draw yourself.
 
 ---
 
@@ -764,10 +762,11 @@ let camera =
     |> Camera3D.withUp customUp
     |> Camera3D.withNearFar 0.01f 5000.0f
 
-// hand it to the 3D renderer via the Draw3D DSL:
+// hand it to the 3D renderer via the fluent Draw DSL:
 buffer
-|> Draw3D.beginCameraWith(Camera3D.render camera |> Camera3D.withClear skyColor)
-|> ...
+  .beginCameraWith(Camera3D.render camera |> Camera3D.withClear skyColor)
+  // ...
+  .drop()
 ```
 
 The `Camera3D` module provides `create`, `orbit`, `screenPointToRay`, and
@@ -1018,10 +1017,11 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
   let source = AnimatedSprite.currentSource model.Sprite
   let dest = Rectangle(int model.Position.X, int model.Position.Y, 32, 32)
   buffer
-  |> Draw.sprite
-    (SpriteState.create(model.Texture, dest, source)
-       |> SpriteState.withLayer 0<RenderLayer>)
-  |> Draw.drop
+    .sprite(
+      SpriteState.create(model.Texture, dest, source)
+      |> SpriteState.withLayer 0<RenderLayer>
+    )
+    .drop()
 
 let program =
   Program.mkProgram init update
@@ -1055,7 +1055,7 @@ let main _ =
 4. `Program.withInputMapper` → `MonoGameProgram.withInputMapper` (on the `MonoGameProgram` wrapper)
 5. `Assets.texture "player" ctx` → `GameContext.getService<IAssets> ctx` + `assets.Texture "player"`
 6. `Keys.A` → `KeyCode.A` (backend-neutral input codes)
-7. `sprite { }` CE / `buffer.Sprite(...)` → `SpriteState.create` + `Draw.sprite … buffer`
+7. `sprite { }` CE / `buffer.Sprite(...)` → `SpriteState.create` + `buffer.sprite(...)`
 8. `RenderBuffer<RenderCmd2D>` → `RenderBuffer2D`
 9. `init`/`update` now return `struct (model, cmd)` tuples
 
@@ -1077,7 +1077,7 @@ are the divergences to plan for (surfaced by comparing the `MonoThreeD` and
 | Shadow config           | `ShadowBiasConfig.defaults`, `ShadowAtlasConfig { Resolution; GridSnapSize }`    | explicit per-light biases, `shadowAtlasConfig { Resolution; DirectionalLightSize }` |
 | `Camera3D`              | struct record, **radians** FOV, defaulted near/far                               | the raylib `Camera3D` struct, **degrees** FOV, no explicit near/far                 |
 | Vector / Color / Matrix | `Microsoft.Xna.Framework.*` (`Color(int)`, `Matrix.Create*`)                     | `System.Numerics` + `Raylib_cs` (`Color(byte)`, `Raymath.Matrix*`)                  |
-| 3D animated model       | `AnimatedModel` + `Draw3D.drawAnimatedModel` (bundles model+mesh+state)          | `Animation3DState` + `Animation3DState.applyToModel` + `Draw3D.drawModel`           |
+| 3D animated model       | `AnimatedModel` + `buffer.animatedModel(...)` (bundles model+mesh+state)         | `Animation3DState` + `Animation3DState.applyToModel` + `buffer.model(...)`           |
 | Animated mesh loader    | `assets.AnimatedMesh rawPath` (Assimp — XNB drops anim data)                     | not needed — raylib loads `.glb` once with animations                               |
 | Assets                  | XNB content pipeline (names without extension)                                   | raw files (paths with extension)                                                    |
 | Procedural 1×1 texture  | `new Texture2D(gd,1,1) + SetData`                                                | `GenImageColor + LoadTextureFromImage`                                              |

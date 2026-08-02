@@ -233,11 +233,17 @@ The piped modules keep working in this release, but they will be removed. The fl
 | `buffer \|> LightDraw.litSprite ctx state` | `buffer.litSprite(ctx, state)` |
 | `buffer \|> LightDraw.litAnimatedSprite ctx layer dest anim` | `buffer.litAnimatedSprite(ctx, dest, anim, layer = layer)` |
 | `buffer \|> LightDraw.addPointLight ctx layer light` | `buffer.addPointLight(ctx, light, layer = layer)` |
+| `buffer \|> LightDraw.setAmbient ctx (layer, ambient)` | `buffer.setAmbient(ctx, ambient.Color, layer = layer)` |
+| `buffer \|> LightDraw.endLighting ctx layer` | `buffer.endLighting(ctx, layer = layer)` |
 | `buffer \|> ParticleDraw.particles tex data count layer` | `buffer.particles(tex, data, count, layer = layer)` |
 | `buffer \|> Draw3D.drawModel model transform` | `buffer.model(model, transform)` |
 | `buffer \|> Draw3D.drawAnimatedModel anim transform` | `buffer.animatedModel(anim, transform)` |
+| `buffer \|> Draw3D.drawMesh mesh transform material` | `buffer.mesh(mesh, transform, material)` |
+| `buffer \|> Draw3D.drawMeshInstanced mesh transforms material count` | `buffer.instanced(mesh, transforms, material, count)` |
 | `buffer \|> Draw3D.addPointLight light` | `buffer.addPointLight light` |
+| `buffer \|> Draw3D.enableShadows` | `buffer.enableShadows()` |
 | `buffer \|> Draw3D.beginCamera cam \|> ... \|> Draw3D.endCamera` | `buffer.beginCamera(cam) .... .endCamera()` |
+| `CellGridRenderer3D.renderInstanced ctx grid buffer` | `buffer.renderCellGridInstanced(ctx, grid)` |
 | `... \|> Draw.drop` | `.... .drop()` (or chain into the next view) |
 
 Notes for migrating:

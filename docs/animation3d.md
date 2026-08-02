@@ -216,6 +216,12 @@ buffers, so discarding it loses the reuse the call is meant to give you.
 For moderate counts (< 500) the simpler `Array.map (fun u -> computePose ...)`
 pattern is fine — the garbage is small and collected cheaply.
 
+> _**Sample.**_ The [AnimatedInstancing sample](https://github.com/AngelMunoz/Mibo.Samples)
+> in the Mibo.Samples repo is a working crowd probe built on this API — it runs
+> 500–10,000 animated instances with per-instance poses on raylib and MonoGame
+> (DX12/DesktopGL), and shows both the plain `computePose` path and the
+> `computePoseInto` buffer-reuse path at tier scale.
+
 ## Animation3DClips API
 
 ### Loading

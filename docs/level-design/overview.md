@@ -192,6 +192,11 @@ available on both backends (raylib and MonoGame):
 - `renderInstanced` — GPU instancing for many copies of the same mesh
 - `renderVolumeInstanced` — GPU instancing with frustum culling
 
+The instanced renders are also available as fluent buffer members —
+`buffer.renderCellGridInstanced(ctx, grid)` / `buffer.renderHexGridInstanced(ctx, grid)`
+and their volume-culled variants — which is the recommended style for new code
+(see [Draw DSL](../draw-dsl.html)).
+
 > _**NOTE**_: The layout geometry (`CellGrid3D`, `HexGrid3D`, stamps) lives in `Mibo.Core` and
 > is available on every backend. The instanced-draw renderer bridge depends on the backend's
 > native mesh/command types, so it ships per backend — both the raylib and MonoGame backends

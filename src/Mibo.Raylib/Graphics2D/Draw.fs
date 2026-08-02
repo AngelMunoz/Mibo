@@ -28,6 +28,7 @@ open Mibo.Elmish.Graphics2D.Lighting
 /// </code>
 /// </para>
 /// </remarks>
+[<System.Obsolete("Draw is deprecated; use the new Mibo.Elmish.Graphics API instead.")>]
 module Draw =
 
   // ──────────────────────────────────────────────

@@ -152,6 +152,7 @@ module LightCommands =
 /// <see cref="T:Mibo.Elmish.Graphics2D.RenderBuffer2D"/> as the last argument,
 /// adds the command, and returns the buffer for chaining.
 /// </summary>
+[<System.Obsolete("LightDraw is deprecated; use the new Mibo.Elmish.Graphics API instead.")>]
 module LightDraw =
 
   let inline setAmbient

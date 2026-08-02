@@ -576,10 +576,10 @@ let instancedCtx = InstancedRenderContext(
 )
 
 // Render with instancing (one draw call per mesh type)
-HexGrid3DRenderer.renderInstanced instancedCtx grid renderBuffer
+renderBuffer.renderHexGridInstanced(instancedCtx, grid).drop()
 
 // Volume-culled instancing
-HexGrid3DRenderer.renderVolumeInstanced instancedCtx frustumBounds grid renderBuffer
+renderBuffer.renderHexGridVolumeInstanced(instancedCtx, frustumBounds, grid).drop()
 ```
 
 **When to use instancing:** If you have 100+ copies of the same mesh (trees, rocks, identical buildings), instancing reduces draw calls from 100+ to 1-2. For unique meshes, regular rendering is fine.
