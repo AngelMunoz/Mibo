@@ -453,10 +453,12 @@ VS_OUTPUT_COLOR VS_SkinnedInstancedColor(VS_INPUT_SKINNED_INSTANCED_COLOR input)
 // SRV samples zeros there regardless of slot or content — the PS reads the
 // same SRV fine), so on DX12 bone palettes ride a constant array instead:
 // bonePaletteGroup holds ONE GROUP of instances (groupBoneCount matrices
-// each), indexed by the group-local PaletteOffset from stream 1. The pipeline
-// chunks draws to 320/boneCount instances per group (see the sizing note at
-// the declaration). The vertex layout is the same
-// VS_INPUT_SKINNED_INSTANCED(+COLOR) — only the palette source differs.
+// each), indexed by the group-local PaletteOffset from stream 1.
+// NOTE: these grouped techniques are RETAINED BUT UNUSED — on DX12 the
+// pipeline draws through the isolated ForwardPbrGrouped.fx effect instead
+// (448-matrix groups, at the $Globals cap), and every other backend uses
+// the texture-palette (VTF) techniques above. The vertex layout is the
+// same VS_INPUT_SKINNED_INSTANCED(+COLOR) — only the palette source differs.
 // ------------------------------------------------------------------
 #define MAX_GROUP_PALETTES 320
 // Declared as plain globals (NOT an explicit cbuffer block): mgfx packs all

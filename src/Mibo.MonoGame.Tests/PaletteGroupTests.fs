@@ -4,9 +4,12 @@ open Expecto
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish.Graphics3D.Pipelines
 
-let private groupSizeFor = PaletteGroup.groupSizeFor
-let private groupCountFor = PaletteGroup.groupCountFor
-let private planGroups = PaletteGroup.planGroups
+// The function tests pin the math at a 320-matrix budget; the per-pass budget
+// constants (MaxMatrices = 448 forward, MaxMatricesDepth = 500 depth) get their
+// own test list below.
+let private groupSizeFor = PaletteGroup.groupSizeFor 320
+let private groupCountFor = PaletteGroup.groupCountFor 320
+let private planGroups = PaletteGroup.planGroups 320
 
 [<Tests>]
 let paletteGroupTests =
@@ -83,6 +86,29 @@ let paletteGroupTests =
         let scratch = Array.zeroCreate<struct (int * int * Texture2D)> 1
 
         Expect.equal (planGroups 10 321 scratch) -1 "no group fits"
+      }
+    ]
+
+    testList "per-pass budgets" [
+      test "forward budget: 23 bones fit 19 instances per group" {
+        Expect.equal
+          (PaletteGroup.groupSizeFor PaletteGroup.MaxMatrices 23)
+          19
+          "448 / 23"
+      }
+
+      test "depth budget: 23 bones fit 21 instances per group" {
+        Expect.equal
+          (PaletteGroup.groupSizeFor PaletteGroup.MaxMatricesDepth 23)
+          21
+          "500 / 23"
+      }
+
+      test "depth budget is larger than the forward budget" {
+        Expect.isGreaterThan
+          PaletteGroup.MaxMatricesDepth
+          PaletteGroup.MaxMatrices
+          "fewer shadow-pass draws per frame"
       }
     ]
   ]

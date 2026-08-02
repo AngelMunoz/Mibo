@@ -30,6 +30,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   let mutable postProcessCount = 0
   let mutable depthPostProcessCount = 0
   let mutable cameraBlockCount = 0
+  let mutable shadowCasterLightCount = 0
 
   let rentedArrays = ResizeArray<Microsoft.Xna.Framework.Matrix[]>()
 
@@ -71,6 +72,15 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
   /// </summary>
   member _.CameraBlockCount = cameraBlockCount
 
+  /// <summary>
+  /// Number of light commands with <c>CastsShadows = true</c> added since the last
+  /// <c>Clear</c>. A conservative gate for shadow-geometry collection: zero means no
+  /// shadow-casting light exists in the buffer, so collection can be skipped outright.
+  /// (Conservative because any casting directional counts, not just the first — only
+  /// <c>DirLights[0]</c> can actually cast.)
+  /// </summary>
+  member _.ShadowCasterLightCount = shadowCasterLightCount
+
   /// <summary>Gets the command at the specified index.</summary>
   member _.Item(i: int) = items[i]
 
@@ -86,6 +96,12 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
       depthPostProcessCount <- depthPostProcessCount + 1
     | Command3D.BeginCamera _
     | Command3D.BeginCameraConfig _ -> cameraBlockCount <- cameraBlockCount + 1
+    | Command3D.AddDirectionalLight light when light.CastsShadows ->
+      shadowCasterLightCount <- shadowCasterLightCount + 1
+    | Command3D.AddPointLight light when light.CastsShadows ->
+      shadowCasterLightCount <- shadowCasterLightCount + 1
+    | Command3D.AddSpotLight light when light.CastsShadows ->
+      shadowCasterLightCount <- shadowCasterLightCount + 1
     | _ -> ()
 
     count <- count + 1
@@ -129,6 +145,7 @@ type RenderBuffer3D([<Struct>] ?capacity: int) =
     postProcessCount <- 0
     depthPostProcessCount <- 0
     cameraBlockCount <- 0
+    shadowCasterLightCount <- 0
     // Periodically zero the backing array so stale managed refs (Model/Texture2D/Effect)
     // in slots above count don't keep unloaded assets alive indefinitely after a scene
     // shrinks or chunks evict. ~5s at 60fps; Array.Clear on structs is a cheap memset.

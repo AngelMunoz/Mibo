@@ -203,7 +203,9 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
     System.Collections.Generic.HashSet<ModelMeshPart>() with get
 
   /// <summary>CPU staging array for the per-instance <c>VertexInstanceWorldPalette</c> rows of
-  /// skinned + instanced casters. Grows to the largest chunk seen. Reused across frames.</summary>
+  /// skinned + instanced casters — DX12 only (the grouped path stages per pass there because the
+  /// forward/depth group budgets differ). DX11/Vulkan stage through the shared InstanceWorldCache
+  /// instead. Grows to the largest chunk seen. Reused across frames.</summary>
   member val SkinnedInstancedStaging =
     Array.zeroCreate<VertexInstanceWorldPalette> 64 with get, set
 
@@ -213,14 +215,24 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   member val SkinnedInstancedVertexBuffer: VertexBuffer voption =
     ValueNone with get, set
 
+  /// <summary>Cached 2-slot binding array for SetVertexBuffers on the instanced paths
+  /// (avoids the params-array allocation per call — thousands per frame on DX12).
+  /// Contents are rewritten per call and consumed immediately.</summary>
+  member val InstanceBindings = Array.zeroCreate<VertexBufferBinding> 2 with get
+
   /// <summary>Shared per-frame palette-chunk cache for skinned + instanced casters (aliased
   /// with the forward pass by ForwardPipeline so each frame's palettes are staged + uploaded
   /// once, not per pass — see <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>).</summary>
   member val PaletteChunks = new PaletteChunkCache() with get, set
 
+  /// <summary>Shared per-frame instance-world staging cache for skinned + instanced casters
+  /// (aliased with the forward pass by ForwardPipeline — DX11/Vulkan only, see
+  /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.InstanceWorldCache"/>).</summary>
+  member val InstanceWorlds = new InstanceWorldCache() with get, set
+
   /// <summary>Pooled bone-palette scratch for the grouped-uniform skinned + instanced depth
   /// path (the DX12 fallback — DepthSkinnedInstancedGrouped). Sized to
-  /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatrices"/>; grown on demand.</summary>
+  /// <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.PaletteGroup.MaxMatricesDepth"/>; grown on demand.</summary>
   member val GroupPaletteScratch: Matrix[] = [||] with get, set
 
   /// <summary>Pooled DX12 group descriptors ((start, count, null-texture) triples)
@@ -281,6 +293,11 @@ type ShadowResources(atlasCfg: ShadowAtlasConfig, biasCfg: ShadowBiasConfig) =
   member val CollectedModelPartCount = 0 with get, set
   member val CollectedInstancedCount = 0 with get, set
   member val CollectedSkinnedInstancedCount = 0 with get, set
+
+  /// <summary>Running <c>EnableShadows</c>/<c>DisableShadows</c> state while a collection
+  /// walk is in progress (set by <c>ShadowPass.beginCollect</c>, read by
+  /// <c>ShadowPass.collectCommand</c>). Outside a collection walk its value is stale.</summary>
+  member val CollectCastEnabled = true with get, set
 
 /// <summary>The extracted shadow pass: caster geometry types, per-light ViewProj builders, and the pass body.</summary>
 module internal ShadowPass =
@@ -480,14 +497,294 @@ module internal ShadowPass =
         )
 
   /// <summary>
+  /// Starts a geometry-collection walk: resets the collected counts and the running
+  /// <c>EnableShadows</c>/<c>DisableShadows</c> state on <paramref name="res"/>. Pair with
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.collectCommand"/> per command —
+  /// either driven by <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.collectGeometry"/>
+  /// over a buffer slice, or inline in the forward pipeline's pre-scan (single-camera frames,
+  /// so the frame's buffer is walked twice instead of three times).
+  /// </summary>
+  let beginCollect (res: ShadowResources) (initialCastEnabled: bool) =
+    res.CollectCastEnabled <- initialCastEnabled
+    res.CollectedDrawCount <- 0
+    res.CollectedSkinnedCount <- 0
+    res.CollectedModelPartCount <- 0
+    res.CollectedInstancedCount <- 0
+    res.CollectedSkinnedInstancedCount <- 0
+
+  /// <summary>
+  /// Collects one buffer command into the pooled arrays on <paramref name="res"/>, recording a
+  /// <c>CastsShadow</c> flag per entry (snapshot of the running cast state — see
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.beginCollect"/>). Shared by the
+  /// shadow render (filters to <c>CastsShadow = true</c>) and the scene-depth render (all
+  /// entries). <paramref name="gd"/> is used only to lazily build merged part groups for
+  /// skinned + instanced models (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.MergedModelParts.tryGet"/>).
+  /// </summary>
+  let collectCommand
+    (gd: GraphicsDevice)
+    (res: ShadowResources)
+    (cmd: Command3D)
+    =
+    let castEnabled = res.CollectCastEnabled
+    let mutable shadowDraws = res.Draws
+    let mutable shadowSkinnedDraws = res.SkinnedDraws
+    let mutable shadowInstancedDraws = res.InstancedDraws
+    let mutable shadowModelPartDraws = res.ModelPartDraws
+    let mutable shadowSkinnedInstancedDraws = res.SkinnedInstancedDraws
+
+    match cmd with
+    | Command3D.EnableShadows -> res.CollectCastEnabled <- true
+    | Command3D.DisableShadows -> res.CollectCastEnabled <- false
+    | Command3D.DrawPrimitive(mesh, transform, _) ->
+      if res.CollectedDrawCount >= shadowDraws.Length then
+        Array.Resize(&shadowDraws, shadowDraws.Length * 2)
+        res.Draws <- shadowDraws
+
+      let worldBounds = mesh.Bounds.Transform transform
+
+      shadowDraws[res.CollectedDrawCount] <- {
+        Mesh = mesh
+        Transform = transform
+        WorldBounds = worldBounds
+        CastsShadow = castEnabled
+      }
+
+      res.CollectedDrawCount <- res.CollectedDrawCount + 1
+    | Command3D.DrawAnimatedModel(model, transform, bones) ->
+      for mesh in model.Meshes do
+        for part in mesh.MeshParts do
+          match part.Effect with
+          | :? SkinnedEffect ->
+            if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
+              Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+              res.SkinnedDraws <- shadowSkinnedDraws
+
+            shadowSkinnedDraws[res.CollectedSkinnedCount] <- {
+              Part = part
+              Transform = transform
+              Bones = bones
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedSkinnedCount <- res.CollectedSkinnedCount + 1
+          | _ -> ()
+    | Command3D.DrawModel(model, transform) ->
+      for mesh in model.Meshes do
+        for part in mesh.MeshParts do
+          match part.Effect with
+          | :? SkinnedEffect ->
+            if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
+              Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+              res.SkinnedDraws <- shadowSkinnedDraws
+
+            shadowSkinnedDraws[res.CollectedSkinnedCount] <- {
+              Part = part
+              Transform = transform
+              Bones = Array.empty
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedSkinnedCount <- res.CollectedSkinnedCount + 1
+          | _ ->
+            if res.CollectedModelPartCount >= shadowModelPartDraws.Length then
+              Array.Resize(
+                &shadowModelPartDraws,
+                shadowModelPartDraws.Length * 2
+              )
+
+              res.ModelPartDraws <- shadowModelPartDraws
+
+            shadowModelPartDraws[res.CollectedModelPartCount] <- {
+              Part = part
+              Transform = transform
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedModelPartCount <- res.CollectedModelPartCount + 1
+    | Command3D.DrawModelWith(model, transform, _) ->
+      // Override material is irrelevant to depth; gather identically to DrawModel.
+      for mesh in model.Meshes do
+        for part in mesh.MeshParts do
+          match part.Effect with
+          | :? SkinnedEffect ->
+            if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
+              Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+              res.SkinnedDraws <- shadowSkinnedDraws
+
+            shadowSkinnedDraws[res.CollectedSkinnedCount] <- {
+              Part = part
+              Transform = transform
+              Bones = Array.empty
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedSkinnedCount <- res.CollectedSkinnedCount + 1
+          | _ ->
+            if res.CollectedModelPartCount >= shadowModelPartDraws.Length then
+              Array.Resize(
+                &shadowModelPartDraws,
+                shadowModelPartDraws.Length * 2
+              )
+
+              res.ModelPartDraws <- shadowModelPartDraws
+
+            shadowModelPartDraws[res.CollectedModelPartCount] <- {
+              Part = part
+              Transform = transform
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedModelPartCount <- res.CollectedModelPartCount + 1
+    | Command3D.DrawAnimatedModelWith(model, transform, bones, _) ->
+      // Mirror DrawAnimatedModel: SkinnedEffect parts only.
+      for mesh in model.Meshes do
+        for part in mesh.MeshParts do
+          match part.Effect with
+          | :? SkinnedEffect ->
+            if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
+              Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
+              res.SkinnedDraws <- shadowSkinnedDraws
+
+            shadowSkinnedDraws[res.CollectedSkinnedCount] <- {
+              Part = part
+              Transform = transform
+              Bones = bones
+              CastsShadow = castEnabled
+            }
+
+            res.CollectedSkinnedCount <- res.CollectedSkinnedCount + 1
+          | _ -> ()
+    | Command3D.DrawInstanced(mesh,
+                              transforms,
+                              _colors,
+                              _material,
+                              instanceCount) when instanceCount > 0 ->
+      // The world's instanced geometry (block grid, platforms, etc.). Collected whole (one entry
+      // per emitted DrawInstanced). No per-instance cull — the sample chunk-culls the source
+      // commands, so the emitted count is already bounded.
+      if res.CollectedInstancedCount >= shadowInstancedDraws.Length then
+        Array.Resize(&shadowInstancedDraws, shadowInstancedDraws.Length * 2)
+        res.InstancedDraws <- shadowInstancedDraws
+
+      shadowInstancedDraws[res.CollectedInstancedCount] <- {
+        Mesh = mesh
+        Transforms = transforms
+        InstanceCount = instanceCount
+        CastsShadow = castEnabled
+      }
+
+      res.CollectedInstancedCount <- res.CollectedInstancedCount + 1
+    | Command3D.DrawAnimatedModelInstanced(model,
+                                           transforms,
+                                           palettes,
+                                           _,
+                                           _,
+                                           instanceCount,
+                                           boneCount) when instanceCount > 0 ->
+      // Skinned + instanced casters: one entry per SkinnedEffect part — or one per
+      // MERGED skinned part group off-GL (depth binds no material state, so merged
+      // geometry is always valid here; the GL per-instance fallback needs the real
+      // parts for their Effect). Sharing the command's transforms + flat palettes.
+      let addDraw
+        (
+          part: ModelMeshPart,
+          vb: VertexBuffer,
+          ib: IndexBuffer,
+          vertexOffset: int,
+          startIndex: int,
+          primitiveCount: int
+        ) =
+        if
+          res.CollectedSkinnedInstancedCount
+          >= shadowSkinnedInstancedDraws.Length
+        then
+          Array.Resize(
+            &shadowSkinnedInstancedDraws,
+            shadowSkinnedInstancedDraws.Length * 2
+          )
+
+          res.SkinnedInstancedDraws <- shadowSkinnedInstancedDraws
+
+        shadowSkinnedInstancedDraws[res.CollectedSkinnedInstancedCount] <- {
+          Part = part
+          VertexBuffer = vb
+          IndexBuffer = ib
+          VertexOffset = vertexOffset
+          StartIndex = startIndex
+          PrimitiveCount = primitiveCount
+          Transforms = transforms
+          Palettes = palettes
+          InstanceCount = instanceCount
+          BoneCount = boneCount
+          CastsShadow = castEnabled
+        }
+
+        res.CollectedSkinnedInstancedCount <-
+          res.CollectedSkinnedInstancedCount + 1
+
+      let mergedParts =
+        if PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL then
+          ValueNone
+        else
+          MergedModelParts.tryGet(gd, model)
+
+      match mergedParts with
+      | ValueSome merged ->
+        res.MergedCovered.Clear()
+
+        for mp in merged do
+          for sp in mp.SourceParts do
+            res.MergedCovered.Add sp |> ignore
+
+          if mp.IsSkinned then
+            addDraw(
+              null,
+              mp.VertexBuffer,
+              mp.IndexBuffer,
+              0,
+              0,
+              mp.PrimitiveCount
+            )
+
+        for mesh in model.Meshes do
+          for part in mesh.MeshParts do
+            match part.Effect with
+            | :? SkinnedEffect when not(res.MergedCovered.Contains part) ->
+              addDraw(
+                part,
+                part.VertexBuffer,
+                part.IndexBuffer,
+                part.VertexOffset,
+                part.StartIndex,
+                part.PrimitiveCount
+              )
+            | _ -> ()
+      | ValueNone ->
+        for mesh in model.Meshes do
+          for part in mesh.MeshParts do
+            match part.Effect with
+            | :? SkinnedEffect ->
+              addDraw(
+                part,
+                part.VertexBuffer,
+                part.IndexBuffer,
+                part.VertexOffset,
+                part.StartIndex,
+                part.PrimitiveCount
+              )
+            | _ -> ()
+    | _ -> ()
+
+  /// <summary>
   /// Scans the buffer range <c>[startIdx, endIdx)</c> and collects every opaque draw into the
   /// pooled arrays on <paramref name="res"/>, recording a <c>CastsShadow</c> flag per entry
   /// (snapshot of the <c>EnableShadows</c>/<c>DisableShadows</c> state when the draw was emitted,
   /// starting from <paramref name="initialCastEnabled"/>). Shared by the shadow render (filters
   /// to <c>CastsShadow = true</c>) and the scene-depth render (all entries), so shadow + depth
-  /// never re-scan the buffer. Stashes the four counts on <paramref name="res"/>.
-  /// <paramref name="gd"/> is used only to lazily build merged part groups for skinned +
-  /// instanced models (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.MergedModelParts.tryGet"/>).
+  /// never re-scan the buffer. Stashes the counts on <paramref name="res"/>. Thin slice
+  /// wrapper over <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.beginCollect"/> +
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.collectCommand"/> — single-camera
+  /// frames collect inline in the forward pipeline's pre-scan instead.
   /// </summary>
   let collectGeometry
     (gd: GraphicsDevice)
@@ -497,263 +794,10 @@ module internal ShadowPass =
     (initialCastEnabled: bool)
     (res: ShadowResources)
     =
-    let mutable castEnabled = initialCastEnabled
-    let mutable drawCount = 0
-    let mutable skinnedCount = 0
-    let mutable instancedCount = 0
-    let mutable modelPartCount = 0
-    let mutable skinnedInstancedCount = 0
-    let mutable shadowDraws = res.Draws
-    let mutable shadowSkinnedDraws = res.SkinnedDraws
-    let mutable shadowInstancedDraws = res.InstancedDraws
-    let mutable shadowModelPartDraws = res.ModelPartDraws
-    let mutable shadowSkinnedInstancedDraws = res.SkinnedInstancedDraws
+    beginCollect res initialCastEnabled
 
     for i = startIdx to endIdx - 1 do
-      match buffer[i] with
-      | Command3D.EnableShadows -> castEnabled <- true
-      | Command3D.DisableShadows -> castEnabled <- false
-      | Command3D.DrawPrimitive(mesh, transform, _) ->
-        if drawCount >= shadowDraws.Length then
-          Array.Resize(&shadowDraws, shadowDraws.Length * 2)
-          res.Draws <- shadowDraws
-
-        let worldBounds = mesh.Bounds.Transform transform
-
-        shadowDraws[drawCount] <- {
-          Mesh = mesh
-          Transform = transform
-          WorldBounds = worldBounds
-          CastsShadow = castEnabled
-        }
-
-        drawCount <- drawCount + 1
-      | Command3D.DrawAnimatedModel(model, transform, bones) ->
-        for mesh in model.Meshes do
-          for part in mesh.MeshParts do
-            match part.Effect with
-            | :? SkinnedEffect ->
-              if skinnedCount >= shadowSkinnedDraws.Length then
-                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
-                res.SkinnedDraws <- shadowSkinnedDraws
-
-              shadowSkinnedDraws[skinnedCount] <- {
-                Part = part
-                Transform = transform
-                Bones = bones
-                CastsShadow = castEnabled
-              }
-
-              skinnedCount <- skinnedCount + 1
-            | _ -> ()
-      | Command3D.DrawModel(model, transform) ->
-        for mesh in model.Meshes do
-          for part in mesh.MeshParts do
-            match part.Effect with
-            | :? SkinnedEffect ->
-              if skinnedCount >= shadowSkinnedDraws.Length then
-                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
-                res.SkinnedDraws <- shadowSkinnedDraws
-
-              shadowSkinnedDraws[skinnedCount] <- {
-                Part = part
-                Transform = transform
-                Bones = Array.empty
-                CastsShadow = castEnabled
-              }
-
-              skinnedCount <- skinnedCount + 1
-            | _ ->
-              if modelPartCount >= shadowModelPartDraws.Length then
-                Array.Resize(
-                  &shadowModelPartDraws,
-                  shadowModelPartDraws.Length * 2
-                )
-
-                res.ModelPartDraws <- shadowModelPartDraws
-
-              shadowModelPartDraws[modelPartCount] <- {
-                Part = part
-                Transform = transform
-                CastsShadow = castEnabled
-              }
-
-              modelPartCount <- modelPartCount + 1
-      | Command3D.DrawModelWith(model, transform, _) ->
-        // Override material is irrelevant to depth; gather identically to DrawModel.
-        for mesh in model.Meshes do
-          for part in mesh.MeshParts do
-            match part.Effect with
-            | :? SkinnedEffect ->
-              if skinnedCount >= shadowSkinnedDraws.Length then
-                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
-                res.SkinnedDraws <- shadowSkinnedDraws
-
-              shadowSkinnedDraws[skinnedCount] <- {
-                Part = part
-                Transform = transform
-                Bones = Array.empty
-                CastsShadow = castEnabled
-              }
-
-              skinnedCount <- skinnedCount + 1
-            | _ ->
-              if modelPartCount >= shadowModelPartDraws.Length then
-                Array.Resize(
-                  &shadowModelPartDraws,
-                  shadowModelPartDraws.Length * 2
-                )
-
-                res.ModelPartDraws <- shadowModelPartDraws
-
-              shadowModelPartDraws[modelPartCount] <- {
-                Part = part
-                Transform = transform
-                CastsShadow = castEnabled
-              }
-
-              modelPartCount <- modelPartCount + 1
-      | Command3D.DrawAnimatedModelWith(model, transform, bones, _) ->
-        // Mirror DrawAnimatedModel: SkinnedEffect parts only.
-        for mesh in model.Meshes do
-          for part in mesh.MeshParts do
-            match part.Effect with
-            | :? SkinnedEffect ->
-              if skinnedCount >= shadowSkinnedDraws.Length then
-                Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
-                res.SkinnedDraws <- shadowSkinnedDraws
-
-              shadowSkinnedDraws[skinnedCount] <- {
-                Part = part
-                Transform = transform
-                Bones = bones
-                CastsShadow = castEnabled
-              }
-
-              skinnedCount <- skinnedCount + 1
-            | _ -> ()
-      | Command3D.DrawInstanced(mesh,
-                                transforms,
-                                _colors,
-                                _material,
-                                instanceCount) when instanceCount > 0 ->
-        // The world's instanced geometry (block grid, platforms, etc.). Collected whole (one entry
-        // per emitted DrawInstanced). No per-instance cull — the sample chunk-culls the source
-        // commands, so the emitted count is already bounded.
-        if instancedCount >= shadowInstancedDraws.Length then
-          Array.Resize(&shadowInstancedDraws, shadowInstancedDraws.Length * 2)
-          res.InstancedDraws <- shadowInstancedDraws
-
-        shadowInstancedDraws[instancedCount] <- {
-          Mesh = mesh
-          Transforms = transforms
-          InstanceCount = instanceCount
-          CastsShadow = castEnabled
-        }
-
-        instancedCount <- instancedCount + 1
-      | Command3D.DrawAnimatedModelInstanced(model,
-                                             transforms,
-                                             palettes,
-                                             _,
-                                             _,
-                                             instanceCount,
-                                             boneCount) when instanceCount > 0 ->
-        // Skinned + instanced casters: one entry per SkinnedEffect part — or one per
-        // MERGED skinned part group off-GL (depth binds no material state, so merged
-        // geometry is always valid here; the GL per-instance fallback needs the real
-        // parts for their Effect). Sharing the command's transforms + flat palettes.
-        let addDraw
-          (
-            part: ModelMeshPart,
-            vb: VertexBuffer,
-            ib: IndexBuffer,
-            vertexOffset: int,
-            startIndex: int,
-            primitiveCount: int
-          ) =
-          if skinnedInstancedCount >= shadowSkinnedInstancedDraws.Length then
-            Array.Resize(
-              &shadowSkinnedInstancedDraws,
-              shadowSkinnedInstancedDraws.Length * 2
-            )
-
-            res.SkinnedInstancedDraws <- shadowSkinnedInstancedDraws
-
-          shadowSkinnedInstancedDraws[skinnedInstancedCount] <- {
-            Part = part
-            VertexBuffer = vb
-            IndexBuffer = ib
-            VertexOffset = vertexOffset
-            StartIndex = startIndex
-            PrimitiveCount = primitiveCount
-            Transforms = transforms
-            Palettes = palettes
-            InstanceCount = instanceCount
-            BoneCount = boneCount
-            CastsShadow = castEnabled
-          }
-
-          skinnedInstancedCount <- skinnedInstancedCount + 1
-
-        let mergedParts =
-          if PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL then
-            ValueNone
-          else
-            MergedModelParts.tryGet(gd, model)
-
-        match mergedParts with
-        | ValueSome merged ->
-          res.MergedCovered.Clear()
-
-          for mp in merged do
-            for sp in mp.SourceParts do
-              res.MergedCovered.Add sp |> ignore
-
-            if mp.IsSkinned then
-              addDraw(
-                null,
-                mp.VertexBuffer,
-                mp.IndexBuffer,
-                0,
-                0,
-                mp.PrimitiveCount
-              )
-
-          for mesh in model.Meshes do
-            for part in mesh.MeshParts do
-              match part.Effect with
-              | :? SkinnedEffect when not(res.MergedCovered.Contains part) ->
-                addDraw(
-                  part,
-                  part.VertexBuffer,
-                  part.IndexBuffer,
-                  part.VertexOffset,
-                  part.StartIndex,
-                  part.PrimitiveCount
-                )
-              | _ -> ()
-        | ValueNone ->
-          for mesh in model.Meshes do
-            for part in mesh.MeshParts do
-              match part.Effect with
-              | :? SkinnedEffect ->
-                addDraw(
-                  part,
-                  part.VertexBuffer,
-                  part.IndexBuffer,
-                  part.VertexOffset,
-                  part.StartIndex,
-                  part.PrimitiveCount
-                )
-              | _ -> ()
-      | _ -> ()
-
-    res.CollectedDrawCount <- drawCount
-    res.CollectedSkinnedCount <- skinnedCount
-    res.CollectedModelPartCount <- modelPartCount
-    res.CollectedInstancedCount <- instancedCount
-    res.CollectedSkinnedInstancedCount <- skinnedInstancedCount
+      collectCommand gd res buffer[i]
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Per-draw-type render helpers
@@ -907,10 +951,10 @@ module internal ShadowPass =
 
           instVB.SetData(res.InstanceStaging, 0, instanceCount)
 
-          gd.SetVertexBuffers(
-            VertexBufferBinding(draw.Mesh.Vertices, 0, 0),
-            VertexBufferBinding(instVB, 0, 1)
-          )
+          let bindings = res.InstanceBindings
+          bindings[0] <- VertexBufferBinding(draw.Mesh.Vertices, 0, 0)
+          bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+          gd.SetVertexBuffers(bindings)
 
           gd.Indices <- draw.Mesh.Indices
           PbrUniforms.setMatrix shadowParams.ViewProj viewProj
@@ -937,10 +981,13 @@ module internal ShadowPass =
   /// carries each instance's palette row. On DX12 (no working vertex texture fetch)
   /// the <c>DepthSkinnedInstancedGrouped</c> technique reads the
   /// <c>bonePaletteGroup</c> constant array instead, chunked to
-  /// <c>PaletteGroup.MaxMatrices / boneCount</c> instances per group. On the OpenGL
-  /// backend (no vertex texture fetch) — and on DX12 when a skeleton exceeds
-  /// <c>PaletteGroup.MaxMatrices</c> — falls back to per-instance <c>DepthSkinned</c>
-  /// draws with the bone palette uploaded as a uniform array. matModel is Identity in
+  /// <c>PaletteGroup.MaxMatricesDepth / boneCount</c> instances per group (the depth
+  /// effect's $Globals budget is larger than the forward effect's). On the OpenGL
+  /// backend (no vertex texture fetch) — and on DX12 when a skeleton exceeds the
+  /// forward budget <c>PaletteGroup.MaxMatrices</c> — falls back to per-instance
+  /// <c>DepthSkinned</c> draws with the bone palette uploaded as a uniform array
+  /// (the threshold follows the forward pass so both passes take the same path).
+  /// matModel is Identity in
   /// the instanced path — the per-instance world matrix on stream 1 IS the model
   /// transform (same convention as DepthInstanced).
   /// </summary>
@@ -1019,13 +1066,13 @@ module internal ShadowPass =
         let isDX12 = PlatformInfo.GraphicsBackend = GraphicsBackend.DirectX12
 
         // Select the effect + params: grouped on DX12, main on DX11/Vulkan.
-        let shadowEffect, shadowEffectParams =
+        let struct (shadowEffect, shadowEffectParams) =
           if isDX12 then
-            match res.GroupedEffect, res.GroupedParams with
-            | ValueSome ge, ValueSome gp -> (ge, gp)
-            | _ -> (effect, shadowParams) // fallback (grouped effect missing)
+            match struct (res.GroupedEffect, res.GroupedParams) with
+            | struct (ValueSome ge, ValueSome gp) -> struct (ge, gp)
+            | _ -> struct (effect, shadowParams) // fallback (grouped effect missing)
           else
-            (effect, shadowParams)
+            struct (effect, shadowParams)
 
         match
           shadowEffect.Techniques[if isDX12 then
@@ -1055,13 +1102,17 @@ module internal ShadowPass =
                     // boneCount <= MaxMatrices here — larger skeletons took the
                     // per-instance fallback at the top of the span.
                     let needed =
-                      PaletteGroup.groupCountFor instanceCount boneCount
+                      PaletteGroup.groupCountFor
+                        PaletteGroup.MaxMatricesDepth
+                        instanceCount
+                        boneCount
 
                     if res.GroupChunkScratch.Length < needed then
                       res.GroupChunkScratch <- Array.zeroCreate needed
 
                     (res.GroupChunkScratch,
                      PaletteGroup.planGroups
+                       PaletteGroup.MaxMatricesDepth
                        instanceCount
                        boneCount
                        res.GroupChunkScratch)
@@ -1076,21 +1127,42 @@ module internal ShadowPass =
 
                     (obtained, obtained.Length)
 
+                // Command-invariant on DX12: the group's bone stride never
+                // changes across this draw's chunks.
+                if isDX12 then
+                  PbrUniforms.setInt shadowEffectParams.GroupBoneCount boneCount
+
                 let mutable chunkIdx = 0
 
                 while chunkIdx < chunkTotal do
                   let struct (chunkStart, chunkCount, paletteTex) =
                     chunks[chunkIdx]
 
-                  if res.SkinnedInstancedStaging.Length < chunkCount then
-                    res.SkinnedInstancedStaging <-
-                      Array.zeroCreate<VertexInstanceWorldPalette> chunkCount
+                  // DX11/Vulkan: shared per-frame staging (InstanceWorldCache) —
+                  // the chunk plan is shared with the forward pass, so one staging
+                  // pass per frame serves both passes' VB uploads. DX12 stages per
+                  // pass (its forward/depth group budgets differ).
+                  let staged =
+                    if isDX12 then
+                      if res.SkinnedInstancedStaging.Length < chunkCount then
+                        res.SkinnedInstancedStaging <-
+                          Array.zeroCreate<VertexInstanceWorldPalette>
+                            chunkCount
 
-                  for i = 0 to chunkCount - 1 do
-                    res.SkinnedInstancedStaging[i] <-
-                      VertexInstanceWorldPalette.Create(
-                        draw.Transforms[chunkStart + i],
-                        float32 i // palette row is chunk-local (texture holds this chunk only)
+                      for i = 0 to chunkCount - 1 do
+                        res.SkinnedInstancedStaging[i] <-
+                          VertexInstanceWorldPalette.Create(
+                            draw.Transforms[chunkStart + i],
+                            float32 i // palette row is chunk-local (texture holds this chunk only)
+                          )
+
+                      res.SkinnedInstancedStaging
+                    else
+                      res.InstanceWorlds.Obtain(
+                        draw.Transforms,
+                        instanceCount,
+                        chunks,
+                        chunkTotal
                       )
 
                   // Must stay a DynamicVertexBuffer — same DX12 upload-ordering hazard
@@ -1125,16 +1197,22 @@ module internal ShadowPass =
                     | ValueSome vb -> vb
                     | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
 
-                  instVB.SetData(res.SkinnedInstancedStaging, 0, chunkCount)
+                  // Cached rows are command-global: this chunk's rows start at
+                  // chunkStart (DX12's per-pass staging starts at 0).
+                  instVB.SetData(
+                    staged,
+                    (if isDX12 then 0 else chunkStart),
+                    chunkCount
+                  )
 
                   // Per-chunk palette storage: the cached texture on DX11/Vulkan,
                   // the bonePaletteGroup constant array on DX12 (null paletteTex).
                   if isNull paletteTex then
                     if
-                      res.GroupPaletteScratch.Length < PaletteGroup.MaxMatrices
+                      res.GroupPaletteScratch.Length < PaletteGroup.MaxMatricesDepth
                     then
                       res.GroupPaletteScratch <-
-                        Array.zeroCreate PaletteGroup.MaxMatrices
+                        Array.zeroCreate PaletteGroup.MaxMatricesDepth
 
                     Array.Copy(
                       draw.Palettes,
@@ -1147,10 +1225,6 @@ module internal ShadowPass =
                     PbrUniforms.setMatrixArray
                       shadowEffectParams.BonePaletteGroup
                       res.GroupPaletteScratch
-
-                    PbrUniforms.setInt
-                      shadowEffectParams.GroupBoneCount
-                      boneCount
                   else
                     PbrUniforms.setTexture
                       shadowEffectParams.PaletteTex
@@ -1160,10 +1234,10 @@ module internal ShadowPass =
                       shadowEffectParams.PaletteTexSize
                       (Vector2(float32(boneCount * 4), float32 chunkCount))
 
-                  gd.SetVertexBuffers(
-                    VertexBufferBinding(draw.VertexBuffer, 0, 0),
-                    VertexBufferBinding(instVB, 0, 1)
-                  )
+                  let bindings = res.InstanceBindings
+                  bindings[0] <- VertexBufferBinding(draw.VertexBuffer, 0, 0)
+                  bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+                  gd.SetVertexBuffers(bindings)
 
                   gd.Indices <- draw.IndexBuffer
 
@@ -1267,6 +1341,19 @@ module internal ShadowPass =
 
       let shadowFrustum = res.Frustum
 
+      // Span predicates are caster-invariant: they capture the span arrays (and the
+      // frustum, read at call time — the per-caster Matrix assign below stays visible
+      // through the shared reference). Create them once per pass, not per caster.
+      let primitiveShouldRender d =
+        shadowDraws[d].CastsShadow
+        && Culling.isVisible shadowFrustum shadowDraws[d].WorldBounds
+
+      let modelPartShouldRender d = modelPartDraws[d].CastsShadow
+      let skinnedShouldRender d = skinnedDraws[d].CastsShadow
+      let instancedShouldRender d = instancedDraws[d].CastsShadow
+
+      let skinnedInstancedShouldRender d = skinnedInstancedDraws[d].CastsShadow
+
       for caster in res.Atlas.Casters do
         if caster.Enabled then
           let casterVP = res.Atlas.GetRegionViewProj caster.AtlasRegion
@@ -1280,9 +1367,7 @@ module internal ShadowPass =
             casterVP
             shadowDraws
             drawCount
-            (fun d ->
-              shadowDraws[d].CastsShadow
-              && Culling.isVisible shadowFrustum shadowDraws[d].WorldBounds)
+            primitiveShouldRender
 
           renderModelPartSpan
             gd
@@ -1291,7 +1376,7 @@ module internal ShadowPass =
             casterVP
             modelPartDraws
             modelPartCount
-            (fun d -> modelPartDraws[d].CastsShadow)
+            modelPartShouldRender
 
           renderSkinnedSpan
             gd
@@ -1301,7 +1386,7 @@ module internal ShadowPass =
             res.BonePaletteScratch
             skinnedDraws
             skinnedCount
-            (fun d -> skinnedDraws[d].CastsShadow)
+            skinnedShouldRender
 
           renderInstancedSpan
             gd
@@ -1311,7 +1396,7 @@ module internal ShadowPass =
             res
             instancedDraws
             instancedCount
-            (fun d -> instancedDraws[d].CastsShadow)
+            instancedShouldRender
 
           renderSkinnedInstancedSpan
             gd
@@ -1321,7 +1406,7 @@ module internal ShadowPass =
             res
             skinnedInstancedDraws
             skinnedInstancedCount
-            (fun d -> skinnedInstancedDraws[d].CastsShadow)
+            skinnedInstancedShouldRender
 
       gd.SetRenderTargets prevTargets
       gd.Viewport <- prevViewport
@@ -1586,8 +1671,8 @@ module internal ShadowPass =
 
   /// <summary>Loads the DepthShadow effect on first use (no-op once loaded).</summary>
   let ensureDepthEffect (gd: GraphicsDevice) (res: ShadowResources) =
-    match res.Effect, res.Params with
-    | ValueSome _, ValueSome _ -> ()
+    match struct (res.Effect, res.Params) with
+    | struct (ValueSome _, ValueSome _) -> ()
     | _ ->
       match ShaderLoader.loadEffect gd "DepthShadow" with
       | ValueSome e ->
@@ -1595,27 +1680,49 @@ module internal ShadowPass =
         res.Effect <- ValueSome e
       | ValueNone -> ()
 
+  /// <summary>Per-run inputs to
+  /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.run"/>, bundled so the pass's
+  /// signature stops growing one parameter per concern. A struct — built per call, no
+  /// allocation.</summary>
+  [<Struct>]
+  type internal ShadowPassArgs = {
+    Lights: LightBuffers
+    PbrParams: PbrEffectParams voption
+    Buffer: RenderBuffer3D
+    StartIndex: int
+    EndIndex: int
+    InitialCastEnabled: bool
+    Camera: Camera3D
+    NeedsDepth: bool
+    Precollected: bool
+  }
+
   /// <summary>
   /// Runs the shadow pass: scans lights, collects opaque geometry from the buffer range
-  /// <c>[startIdx, endIdx)</c> (shared with scene-depth), registers casters into the atlas,
-  /// renders depth, and uploads shadow uniforms to the PBR effect. When <paramref name="needsDepth"/>
-  /// is true, geometry is collected even without a shadow-casting light so <c>renderSceneDepth</c>
-  /// can reuse it. Only the first directional light can cast (it is the one the shader lights with).
+  /// <c>[StartIndex, EndIndex)</c> (shared with scene-depth, skipped when
+  /// <c>Precollected</c> — the single-camera pre-scan already collected), registers casters
+  /// into the atlas, renders depth, and uploads shadow uniforms to the PBR effect. When
+  /// <c>NeedsDepth</c> is true, geometry is collected even without a shadow-casting light so
+  /// <c>renderSceneDepth</c> can reuse it. Only the first directional light can cast (it is
+  /// the one the shader lights with).
   /// </summary>
   let run
     (gd: GraphicsDevice)
     (atlasCfg: ShadowAtlasConfig)
     (biasCfg: ShadowBiasConfig)
     (res: ShadowResources)
-    (lights: LightBuffers)
-    (pbrParams: PbrEffectParams voption)
-    (buffer: RenderBuffer3D)
-    (startIdx: int)
-    (endIdx: int)
-    (initialCastEnabled: bool)
-    (activeCamera: Camera3D)
-    (needsDepth: bool)
+    (args: ShadowPassArgs)
     : ShadowResult voption =
+    let lights = args.Lights
+    let pbrParams = args.PbrParams
+    let buffer = args.Buffer
+    let startIdx = args.StartIndex
+    let endIdx = args.EndIndex
+    let initialCastEnabled = args.InitialCastEnabled
+    let activeCamera = args.Camera
+    let needsDepth = args.NeedsDepth
+    let precollected = args.Precollected
+
     // ── Scan lights for casters ──
     let hasDirCaster =
       lights.DirLights.Count > 0 && lights.DirLights[0].CastsShadows
@@ -1645,7 +1752,9 @@ module internal ShadowPass =
       Array.Fill(res.SpotShadowSlots, -1)
 
     // ── Collect opaque geometry ONCE (shared by shadow render + scene-depth render) ──
-    if hasAnyCaster || needsDepth then
+    // Skipped when the caller already collected this frame: single-camera frames collect
+    // inline in the forward pipeline's pre-scan (one less full buffer walk per frame).
+    if (hasAnyCaster || needsDepth) && not precollected then
       collectGeometry gd buffer startIdx endIdx initialCastEnabled res
 
     // ── Shadow pass (only when a shadow-casting light exists) ──
@@ -1688,8 +1797,8 @@ module internal ShadowPass =
             res.GroupedEffect <- ValueSome e
           | ValueNone -> ()
 
-      match res.Effect, res.Params with
-      | ValueSome depthEffect, ValueSome depthParams ->
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome depthEffect, ValueSome depthParams) ->
         let casterSlot = registerCasters atlasCfg res lights activeCamera
 
         if casterSlot = 0 then

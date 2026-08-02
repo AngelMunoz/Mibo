@@ -17,6 +17,8 @@
     <Compile Include="BlockPlanTests.fs" />
     <Compile Include="ShadowPassTests.fs" />
     <Compile Include="PaletteGroupTests.fs" />
+    <Compile Include="InstanceWorldCacheTests.fs" />
+    <Compile Include="SkinnedInstancedCacheTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 

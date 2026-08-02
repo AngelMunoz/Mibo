@@ -344,6 +344,11 @@ type ForwardPipelineBase
   let paletteChunks = pbrRes.PaletteChunks
   do shadowRes.PaletteChunks <- paletteChunks
 
+  // Same sharing for the per-instance world-row staging (InstanceWorldCache): the chunk
+  // plan is shared, so one staging pass per frame serves both passes' VB uploads.
+  let instanceWorlds = pbrRes.InstanceWorlds
+  do shadowRes.InstanceWorlds <- instanceWorlds
+
   // B8 billboards + lines: lazily-created unlit BasicEffects (one textured+alpha for
   // billboards, one vertex-color for lines) and a pooled CPU vertex staging array for
   // DrawUserIndexedPrimitives. Created on first use against the real device.
@@ -838,32 +843,17 @@ type ForwardPipelineBase
   /// Ensures the PBR effect is loaded first (shadow uniforms upload to it).
   /// </summary>
   member private this.runShadowPass
-    (
-      gd: GraphicsDevice,
-      buffer: RenderBuffer3D,
-      startIdx: int,
-      endIdx: int,
-      initialCastEnabled: bool,
-      passLights: Pipelines.LightBuffers,
-      camera: Camera3D,
-      needsDepth: bool
-    ) =
+    (gd: GraphicsDevice)
+    (args: ShadowPass.ShadowPassArgs)
+    =
     // Ensure the PBR effect is loaded BEFORE the pass uploads shadow uniforms to it.
     PbrShading.ensureEffect(gd, pbrRes) |> ignore
 
-    ShadowPass.run
-      gd
-      atlasCfg
-      biasCfg
-      shadowRes
-      passLights
-      pbrRes.Params
-      buffer
-      startIdx
-      endIdx
-      initialCastEnabled
-      camera
-      needsDepth
+    // PbrParams is injected here — callers leave it ValueNone.
+    ShadowPass.run gd atlasCfg biasCfg shadowRes {
+      args with
+          PbrParams = pbrRes.Params
+    }
     |> fun r -> shadowRes.ShadowResult <- r // stash for the forward pass (Shade / user-effect scopes)
 
   /// <summary>
@@ -888,20 +878,25 @@ type ForwardPipelineBase
     LightScoping.loadSet block.Lights blockLights
     shadowRes.Origin <- block.ShadowOrigin
 
-    this.runShadowPass(
-      gd,
-      buffer,
-      block.StartIndex,
-      block.EndIndex,
-      block.InitialCastEnabled,
-      blockLights,
-      camera,
-      false
-    )
+    this.runShadowPass gd {
+      Lights = blockLights
+      PbrParams = ValueNone
+      Buffer = buffer
+      StartIndex = block.StartIndex
+      EndIndex = block.EndIndex
+      InitialCastEnabled = block.InitialCastEnabled
+      Camera = camera
+      NeedsDepth = false
+      Precollected = false
+    }
 
     scene.PointShadowSlots <- shadowRes.PointShadowSlots
     scene.SpotShadowSlots <- shadowRes.SpotShadowSlots
     scene.Shadows <- shadowRes.ShadowResult
+
+    // The block refreshed both the light set and the shadow state — the DX12
+    // grouped effect must re-upload its frame constants before its next draw.
+    pbrRes.GroupedUniformsDirty <- true
 
   /// <summary>
   /// Draws a solid-color NDC fullscreen triangle, which covers exactly the active viewport.
@@ -966,6 +961,7 @@ type ForwardPipelineBase
         pbrRes.Effect <- ValueNone
         pbrRes.Params <- ValueNone
         pbrRes.HasLastMaterial <- false
+        pbrRes.HasLastGroupedMaterial <- false
       | ValueNone -> ()
 
       match pbrRes.FallbackEffect with
@@ -1083,6 +1079,7 @@ type ForwardPipelineBase
       // Return last frame's bone-palette chunk textures to the shared pool before any
       // draw of this frame re-acquires them (per-frame lifetime — see PaletteChunkCache).
       paletteChunks.ReleaseAll()
+      instanceWorlds.ReleaseAll()
 
       // Pre-scan — capture camera, shadow state, and post-process actions in one pass.
       // The block plan walks the buffer once for the per-camera-block light scoping; frames
@@ -1093,6 +1090,22 @@ type ForwardPipelineBase
       shadowRes.Origin <- ValueNone
 
       let multiBlock = buffer.CameraBlockCount > 1
+
+      // Scene depth is needed when at least one PostProcessWithDepth action exists. Also
+      // feeds the shadow pass's geometry collection gate below.
+      let needsDepth = buffer.DepthPostProcessCount > 0
+
+      // Single-camera frames collect shadow/scene-depth geometry inline in the pre-scan
+      // walk — one less full buffer walk per frame (was: pre-scan + collect + forward).
+      // Gated on the frame possibly needing geometry: a depth-needing post-process, or at
+      // least one shadow-casting light in the buffer (ShadowCasterLightCount — zero means
+      // provably no caster, so collection would be discarded work). Multi-block frames keep
+      // per-block collection in their block shadow passes (slices + per-block initial state).
+      let collectInline =
+        not multiBlock && (needsDepth || buffer.ShadowCasterLightCount > 0)
+
+      if collectInline then
+        ShadowPass.beginCollect shadowRes true
 
       let plan =
         if multiBlock then
@@ -1122,9 +1135,15 @@ type ForwardPipelineBase
       // Pre-scan: camera and shadow commands (shadow origin / toggle) need to be known before
       // the shadow pass runs. Single-camera frames also gather lights frame-globally here —
       // multi-block frames scope lights per camera block in the forward pass instead.
-      // Draw commands are handled in the forward pass.
+      // Draw commands are handled in the forward pass; single-camera frames ALSO collect
+      // shadow/scene-depth geometry inline here (collectInline).
       for i = 0 to buffer.Count - 1 do
-        match buffer[i] with
+        let cmd = buffer[i]
+
+        if collectInline then
+          ShadowPass.collectCommand gd shadowRes cmd
+
+        match cmd with
         | Command3D.BeginCamera cam ->
           let struct (v, p) = buildMatrices cam
           state.HasCamera <- true
@@ -1166,24 +1185,22 @@ type ForwardPipelineBase
         // frame's result into a DrawImmediate before the first block.
         shadowRes.ShadowResult <- ValueNone
 
-      // Scene depth is needed when at least one PostProcessWithDepth action exists. Pass that to
-      // the shadow pass so it collects opaque geometry even without a shadow-casting light.
-      let needsDepth = buffer.DepthPostProcessCount > 0
-
-      // Shadow pass: single-camera frames run one pass up front (also collects geometry for
-      // scene-depth when needsDepth is true). Multi-block frames run one pass per camera block
-      // at its BeginCamera/BeginCameraConfig in the forward loop instead.
+      // Shadow pass: single-camera frames run one pass up front; geometry was already
+      // collected inline in the pre-scan when this frame can need it (collectInline).
+      // Multi-block frames run one pass per camera block at its BeginCamera/BeginCameraConfig
+      // in the forward loop instead.
       if state.HasCamera && not multiBlock then
-        this.runShadowPass(
-          gd,
-          buffer,
-          0,
-          buffer.Count,
-          true,
-          lights,
-          state.CurrentCamera,
-          needsDepth
-        )
+        this.runShadowPass gd {
+          Lights = lights
+          PbrParams = ValueNone
+          Buffer = buffer
+          StartIndex = 0
+          EndIndex = buffer.Count
+          InitialCastEnabled = true
+          Camera = state.CurrentCamera
+          NeedsDepth = needsDepth
+          Precollected = collectInline
+        }
 
       // Forward pass
       // Lights are seeded (frame-global for single-camera frames, the frame defaults for
@@ -1193,6 +1210,7 @@ type ForwardPipelineBase
       // persist across cameras — a new camera block (BeginCamera/BeginCameraConfig) and EndCamera
       // both reset it, so a forgotten endEffect can't leak a user effect into the next view.
       pbrRes.LightsDirty <- true
+      pbrRes.GroupedUniformsDirty <- true
       let mutable activeEffect: Effect voption = ValueNone
 
       // Build the per-frame scene bundle once (lights, shared bone palette, per-light shadow slots,
@@ -1383,6 +1401,7 @@ type ForwardPipelineBase
           if multiBlock then
             LightScoping.applyInOrder lights defaultLights state.HasCamera cmd
             pbrRes.LightsDirty <- true
+            pbrRes.GroupedUniformsDirty <- true
 
         // ── Shadow state (consumed in the shadow pass; no-op here) ──
         | Command3D.SetShadowOrigin _

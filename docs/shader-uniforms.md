@@ -295,13 +295,13 @@ float4 paletteBoneRow(int boneIndex, int row, float instance) {
 > fetch (`NotSupportedException`), so VTF is unavailable. Instead, the
 > framework loads an isolated `ForwardPbrGrouped.fx` (DX12-only) whose
 > `SkinnedInstancedGrouped` / `SkinnedInstancedGroupedColor` techniques read
-> bone palettes from a `bonePaletteGroup[320]` constant array in `$Globals`,
+> bone palettes from a `bonePaletteGroup[448]` constant array in `$Globals`,
 > indexed by the per-instance `PaletteOffset`. The main `ForwardPbr.fx` cannot
 > serve these techniques on DX12 because the mgfx reflection parser drops the
 > `bonePaletteGroup` / `groupBoneCount` params when all 8 techniques are
 > present in one file. User effects that declare a `SkinnedInstanced`
 > technique fall back to per-instance `Skinned` draws on DX12 (the grouped
-> path is framework-PBR-only). A model with more than 320 bones exceeds the
+> path is framework-PBR-only). A model with more than 448 bones exceeds the
 > group budget and takes the same per-instance fallback.
 
 ## `drawMeshEffect` (MonoGame only)
@@ -535,8 +535,9 @@ are opt-in: a shader that declares nothing new renders exactly as before.
   `PaletteOffset : TEXCOORD6` instance field, and the `SkinnedInstanced`
   technique name — see [Instancing (opt-in)](#instancing-opt-in). No existing
   uniform changed name, meaning, or slot.
-- **Limits: 4.x.** MonoGame DX12: the grouped path holds at most 320 bone
-  matrices (`bonePaletteGroup[320]`); models with more bones fall back to
+- **Limits: 4.x.** MonoGame DX12: the grouped path holds at most 448 bone
+  matrices in the forward effect (`bonePaletteGroup[448]`) and 500 in the
+  depth effect; models with more than 448 bones fall back to
   per-instance `Skinned` draws. raylib: the palette texture is `boneCount * 4`
   texels wide — OpenGL only guarantees a 1024-texel texture (256 bones);
   larger skeletons depend on the driver's limit (8192+ texels — 2048+ bones —

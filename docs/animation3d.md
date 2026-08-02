@@ -169,8 +169,10 @@ buffer
 - Per-instance bone palettes ride a texture the vertex shader samples (raylib
   indexes it by `gl_InstanceID`), so draws are chunked at 2048 instances.
   On DX12 (no vertex texture fetch) palettes ride a per-group constant array
-  instead, so draws are chunked into groups of `320 / boneCount` instances —
-  a model with more than 320 bones falls back to per-instance skinned draws
+  instead, so draws are chunked into groups of `448 / boneCount` instances in
+  the forward pass (`500 / boneCount` in the shadow pass — the depth effect
+  carries no lighting uniforms, so it affords larger groups) — a model with
+  more than 448 bones falls back to per-instance skinned draws
   there (identical output, no batching win).
 - **Automatic sub-mesh merging (MonoGame):** mesh parts that share a parent
   bone, vertex layout, and material draw as one merged part per chunk instead

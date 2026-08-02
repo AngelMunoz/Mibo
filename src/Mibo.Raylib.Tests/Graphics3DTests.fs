@@ -1763,25 +1763,23 @@ let preScanTests =
       let cam = Camera3D(Position = v3a, Target = v3b)
       buffer.Add(Command3D.beginCamera cam)
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let fs =
         preScan(
           buffer,
-          lights,
-          true,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Usage = ShaderUsage()
+            Lights = lights
+            GatherLights = true
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       match fs.Camera with
@@ -1797,25 +1795,23 @@ let preScanTests =
       buffer.Add(Command3D.beginCamera cam1)
       buffer.Add(Command3D.beginCamera cam2)
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let fs =
         preScan(
           buffer,
-          lights,
-          true,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Usage = ShaderUsage()
+            Lights = lights
+            GatherLights = true
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       match fs.Camera with
@@ -1827,25 +1823,23 @@ let preScanTests =
       use buffer = new RenderBuffer3D()
       buffer.Add(Command3D.setShadowOrigin v3c)
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let fs =
         preScan(
           buffer,
-          lights,
-          true,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Usage = ShaderUsage()
+            Lights = lights
+            GatherLights = true
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       match fs.ShadowOrigin with
@@ -1864,25 +1858,23 @@ let preScanTests =
       buffer.Add(Command3D.addPointLight(PointLight3D.create(v3b, 10.0f)))
       buffer.Add(Command3D.addSpotLight(SpotLight3D.create(v3c, v3a, 5.0f)))
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let _fs =
         preScan(
           buffer,
-          lights,
-          true,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Usage = ShaderUsage()
+            Lights = lights
+            GatherLights = true
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       Expect.isTrue lights.Ambient.IsSome "Should have 1 ambient"
@@ -1896,25 +1888,23 @@ let preScanTests =
       buffer.Add(Command3D.addDirectionalLight(DirectionalLight3D.create v3a))
       buffer.Add(Command3D.addPointLight(PointLight3D.create(v3b, 10.0f)))
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let _fs =
         preScan(
           buffer,
-          lights,
-          false,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Usage = ShaderUsage()
+            Lights = lights
+            GatherLights = false
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       Expect.equal lights.DirLights.Count 0 "No dir lights gathered"
@@ -1924,29 +1914,90 @@ let preScanTests =
     test "empty buffer returns empty frame state" {
       use buffer = new RenderBuffer3D()
       let lights = createLightBuffers(8, 4)
-      let mutable fwd = Unchecked.defaultof<ShaderVariant>
-      let mutable inst = Unchecked.defaultof<ShaderVariant>
-      let mutable sk = Unchecked.defaultof<ShaderVariant>
-      let mutable skInst = Unchecked.defaultof<ShaderVariant>
+      let variants = ShaderVariants()
 
       let fs =
         preScan(
           buffer,
-          lights,
-          true,
-          &fwd,
-          &inst,
-          &sk,
-          &skInst,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          Unchecked.defaultof<_>,
-          ValueNone
+          {
+            Variants = variants
+            Usage = ShaderUsage()
+            Lights = lights
+            GatherLights = true
+            ForwardShader = Unchecked.defaultof<_>
+            InstancedShader = Unchecked.defaultof<_>
+            SkinnedShader = Unchecked.defaultof<_>
+            SkinnedInstancedShader = Unchecked.defaultof<_>
+            PpActions = ValueNone
+            Collect = ValueNone
+          }
         )
 
       Expect.equal fs.Camera ValueNone "No camera"
       Expect.equal fs.ShadowOrigin ValueNone "No shadow origin"
+    }
+  ]
+
+// ──────────────────────────────────────────────
+// PaletteTexturePool per-frame memo tests
+// ──────────────────────────────────────────────
+
+let paletteTexturePoolTests =
+  testList "PaletteTexturePool" [
+    test "upload memo distinguishes chunk counts on the same array and start" {
+      let pool = PaletteTexturePool()
+      let palettes = Array.zeroCreate<Matrix4x4> 4096
+
+      pool.RememberUploaded(palettes, 2048, 452, tex)
+
+      match pool.TryGetUploaded(palettes, 2048, 452) with
+      | ValueSome t -> Expect.equal t tex "Same key returns the texture"
+      | ValueNone -> Tests.failtest "Expected a memo hit for the recorded count"
+
+      match pool.TryGetUploaded(palettes, 2048, 2048) with
+      | ValueSome _ -> Tests.failtest "Different chunk count must not hit"
+      | ValueNone -> ()
+    }
+
+    test "slice memo distinguishes chunk counts on the same array and start" {
+      let pool = PaletteTexturePool()
+
+      let transforms =
+        Array.init 4096 (fun i ->
+          Matrix4x4.CreateTranslation(float32 i, 0.0f, 0.0f))
+
+      let cut = pool.RememberTransformSlice(transforms, 2048, 452)
+      Expect.equal cut.Length 452 "Slice is sized to the recorded count"
+
+      Expect.equal
+        cut[0].Translation
+        transforms[2048].Translation
+        "Slice starts at the chunk start"
+
+      match pool.TryGetTransformSlice(transforms, 2048, 452) with
+      | ValueSome s -> Expect.equal s.Length 452 "Same key returns the slice"
+      | ValueNone -> Tests.failtest "Expected a memo hit for the recorded count"
+
+      match pool.TryGetTransformSlice(transforms, 2048, 2048) with
+      | ValueSome _ -> Tests.failtest "Different chunk count must not hit"
+      | ValueNone -> ()
+    }
+
+    test "ReleaseAll clears both memos" {
+      let pool = PaletteTexturePool()
+      let arr = Array.zeroCreate<Matrix4x4> 4096
+
+      pool.RememberUploaded(arr, 0, 100, tex)
+      pool.RememberTransformSlice(arr, 0, 100) |> ignore
+      pool.ReleaseAll()
+
+      match pool.TryGetUploaded(arr, 0, 100) with
+      | ValueSome _ -> Tests.failtest "Upload memo must be cleared"
+      | ValueNone -> ()
+
+      match pool.TryGetTransformSlice(arr, 0, 100) with
+      | ValueSome _ -> Tests.failtest "Slice memo must be cleared"
+      | ValueNone -> ()
     }
   ]
 
@@ -1966,4 +2017,5 @@ let tests =
     shadowConfigTests
     shadowAtlasTests
     preScanTests
+    paletteTexturePoolTests
   ]

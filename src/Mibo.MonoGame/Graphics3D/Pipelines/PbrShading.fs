@@ -113,6 +113,52 @@ type internal SkinnedInstancedDrawUnit = {
 }
 
 /// <summary>
+/// The static half of a skinned + instanced part: everything that depends only on the
+/// model's topology, the colors-presence, and the backend — resolved once per model per
+/// pipeline (see <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SkinnedInstancedModelEntry"/>).
+/// <c>World</c>/<c>NormalMatrix</c>/material still resolve per command: model bones and
+/// part effect state are game-mutable.
+/// </summary>
+[<Struct>]
+type internal SkinnedInstancedPartMeta = {
+  Part: ModelMeshPart
+  /// <summary>Pipeline iteration index (over ALL parts, including empty ones) — the
+  /// PerMesh material resolver input.</summary>
+  Index: int
+  /// <summary>The part's mesh's parent-bone index (the per-command <c>World</c> lookup).</summary>
+  ParentBoneIndex: int
+  IsSkinned: bool
+  UseGrouped: bool
+  Technique: EffectTechnique
+  /// <summary>The effect instance <c>IsSkinned</c>/<c>Technique</c> were derived
+  /// from. Validated on every cache use — a game swapping the part's effect
+  /// (a documented MonoGame pattern) forces an entry rebuild, so the skinned
+  /// flag and technique choice follow the new effect.</summary>
+  SourceEffect: Effect
+}
+
+/// <summary>
+/// Per-model cache entry for skinned + instanced draws: the static part metadata (both
+/// color modes), the part→merged-group map, and the part→info index — all built once per
+/// model per pipeline instead of rebuilt per command. Keyed by model reference in a
+/// ConditionalWeakTable, so entries die with the model. Validated on each use against
+/// the pipeline's current effect instances (a Shutdown + reload produces new instances
+/// and forces a rebuild) and against each part's current effect instance (a game
+/// swapping <c>part.Effect</c> forces a rebuild, so <c>IsSkinned</c> and the technique
+/// choice track the swap — see <see cref="F:Mibo.Elmish.Graphics3D.Pipelines.SkinnedInstancedPartMeta.SourceEffect"/>).
+/// </summary>
+type internal SkinnedInstancedModelEntry = {
+  /// <summary>Static part metadata for commands without per-instance colors.</summary>
+  Plain: SkinnedInstancedPartMeta[]
+  /// <summary>Static part metadata for commands with per-instance colors.</summary>
+  Colored: SkinnedInstancedPartMeta[]
+  MergedMap: System.Collections.Generic.Dictionary<ModelMeshPart, MergedPart>
+  InfoIndex: System.Collections.Generic.Dictionary<ModelMeshPart, int>
+  ForEffect: Effect voption
+  ForGroupedEffect: Effect voption
+}
+
+/// <summary>
 /// Owns the lazily-loaded PBR effect + cached params, the BasicEffect fallback, the instancing
 /// effect + growable instance vertex buffer + staging, the MaterialKey short-circuit cache, and
 /// the bone-transforms scratch — all reused across frames. Constructed once by the pipeline.
@@ -180,6 +226,11 @@ type internal PbrResources() =
   member val InstancePaletteColorStaging =
     Array.zeroCreate<VertexInstanceWorldPaletteColor> 64 with get, set
 
+  /// <summary>Cached 2-slot binding array for SetVertexBuffers on the instanced paths
+  /// (avoids the params-array allocation per call — thousands per frame on DX12).
+  /// Contents are rewritten per call and consumed immediately.</summary>
+  member val InstanceBindings = Array.zeroCreate<VertexBufferBinding> 2 with get
+
   /// <summary>Reusable bone-palette slice for the OpenGL / DX12-user-effect per-instance
   /// fallback of skinned + instanced draws. Grown on demand, reused across frames.</summary>
   member val BoneSliceScratch = Array.empty<Matrix> with get, set
@@ -188,6 +239,13 @@ type internal PbrResources() =
   /// with the shadow pass by ForwardPipeline so each frame's palettes are staged + uploaded
   /// once, not per pass — see <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>).</summary>
   member val PaletteChunks = new PaletteChunkCache() with get, set
+
+  /// <summary>Shared per-frame instance-world staging cache for skinned + instanced draws
+  /// (aliased with the shadow pass by ForwardPipeline so each frame's instance rows are
+  /// staged once, not per pass — DX11/Vulkan only; the DX12 grouped path stages per pass
+  /// because its forward/depth chunk plans differ — see
+  /// <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.InstanceWorldCache"/>).</summary>
+  member val InstanceWorlds = new InstanceWorldCache() with get, set
 
   /// <summary>Pooled bone-palette scratch for the grouped-uniform skinned + instanced path
   /// (the DX12 fallback — SkinnedInstancedGrouped techniques). Sized to
@@ -211,13 +269,15 @@ type internal PbrResources() =
   member val SkinnedInstancedUnits =
     ResizeArray<SkinnedInstancedDrawUnit>() with get
 
-  /// <summary>Scratch: original part → its merged group, rebuilt per command.</summary>
-  member val PartMergedMap =
-    System.Collections.Generic.Dictionary<ModelMeshPart, MergedPart>() with get
-
-  /// <summary>Scratch: original part → its partInfo index, rebuilt per command.</summary>
-  member val PartInfoIndex =
-    System.Collections.Generic.Dictionary<ModelMeshPart, int>() with get
+  /// <summary>Per-model cache of the static half of skinned + instanced part data
+  /// (technique refs, skinned/grouped flags, merged-group map, info index) — built once
+  /// per model per pipeline instead of rebuilt per command. Keyed by model reference;
+  /// validated against the current effect instances per use.</summary>
+  member val SkinnedInstancedModelCache =
+    System.Runtime.CompilerServices.ConditionalWeakTable<
+      Model,
+      SkinnedInstancedModelEntry
+     >() with get
 
   /// <summary>Scratch: handled flags for the merged-group fan-out; grown on demand,
   /// cleared per command.</summary>
@@ -231,8 +291,26 @@ type internal PbrResources() =
   /// (lights are stable within a frame — gathered once in the pre-scan).</summary>
   member val LightsDirty = true with get, set
 
+  /// <summary>Same gate as LightsDirty but for the isolated DX12 grouped effect
+  /// (ForwardPbrGrouped.fx). That effect is a separate instance with its own uniform
+  /// state, so it needs its own flag. Covers light uniforms AND the shadow-atlas
+  /// block: both are frame/block constants, and the shadow pass always completes
+  /// before any grouped draw in the same scope. Set at the same points as
+  /// LightsDirty; cleared after the first grouped draw that uploads them.</summary>
+  member val GroupedUniformsDirty = true with get, set
+
   /// <summary>The last draw's MaterialKey (valid when HasLastMaterial).</summary>
   member val LastKey: MaterialKey =
+    Unchecked.defaultof<MaterialKey> with get, set
+
+  /// <summary>MaterialKey short-circuit for the DX12 grouped effect (ForwardPbrGrouped.fx).
+  /// The grouped effect has its own uniform handles and is only driven by the
+  /// skinned-instanced grouped path, so it needs a dedicated tracker — the main
+  /// effect's HasLastMaterial/LastKey don't describe its state.</summary>
+  member val HasLastGroupedMaterial = false with get, set
+
+  /// <summary>The last grouped draw's MaterialKey (valid when HasLastGroupedMaterial).</summary>
+  member val LastGroupedKey: MaterialKey =
     Unchecked.defaultof<MaterialKey> with get, set
 
   // Reused each frame to avoid per-frame allocation. Sized generously; grows if a larger model is
@@ -295,6 +373,43 @@ type internal SkinnedInstancedTarget =
 
 /// <summary>The extracted PBR draw handlers + the user-effect scope shading path.</summary>
 module internal PbrShading =
+
+  /// <summary>Does a cached skinned + instanced entry still match the live state?
+  /// The pipeline's effect instances must be the ones the entry was built against,
+  /// and every part must still carry the effect instance its metadata derives from.
+  /// Module-level (no closure) so the per-command validation stays allocation-free;
+  /// the per-part loop is O(parts) reference compares.</summary>
+  let skinnedInstancedEntryMatches
+    (effect: Effect voption)
+    (groupedEffect: Effect voption)
+    (e: SkinnedInstancedModelEntry)
+    =
+    let effectMatches =
+      match e.ForEffect, effect with
+      | ValueSome a, ValueSome b -> obj.ReferenceEquals(a, b)
+      | ValueNone, ValueNone -> true
+      | _ -> false
+
+    let groupedMatches =
+      match e.ForGroupedEffect, groupedEffect with
+      | ValueSome a, ValueSome b -> obj.ReferenceEquals(a, b)
+      | ValueNone, ValueNone -> true
+      | _ -> false
+
+    // Plain and Colored hold the same parts with the same source effects — one
+    // array suffices for the per-part check.
+    let mutable partsMatch = true
+    let mutable i = 0
+
+    while partsMatch && i < e.Plain.Length do
+      let meta = e.Plain[i]
+
+      if obj.ReferenceEquals(meta.Part.Effect, meta.SourceEffect) then
+        i <- i + 1
+      else
+        partsMatch <- false
+
+    effectMatches && groupedMatches && partsMatch
 
   /// <summary>True on the OpenGL backend, which has no vertex texture fetch — skinned +
   /// instanced draws fall back to per-instance skinned draws there.</summary>
@@ -473,8 +588,8 @@ module internal PbrShading =
       matOverride: MaterialOverride voption
     ) =
     if ensureEffect(gd, res) then
-      match res.Effect, res.Params with
-      | ValueSome e, ValueSome p ->
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome e, ValueSome p) ->
         let boneCount = model.Bones.Count
 
         if res.BoneTransforms.Length < boneCount then
@@ -555,8 +670,8 @@ module internal PbrShading =
       tint: Color voption
     ) =
     if ensureEffect(gd, res) then
-      match res.Effect, res.Params with
-      | ValueSome e, ValueSome p ->
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome e, ValueSome p) ->
         let boneCount = model.Bones.Count
 
         if res.BoneTransforms.Length < boneCount then
@@ -688,8 +803,8 @@ module internal PbrShading =
       material: Material3D
     ) =
     if ensureEffect(gd, res) then
-      match res.Effect, res.Params with
-      | ValueSome e, ValueSome p ->
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome e, ValueSome p) ->
         e.CurrentTechnique <- e.Techniques["Standard"]
         let mutable t = transform
         let mutable inv = Matrix.Identity
@@ -821,10 +936,10 @@ module internal PbrShading =
 
       instVB.SetData(res.InstanceStaging, 0, instanceCount)
 
-      gd.SetVertexBuffers(
-        VertexBufferBinding(mesh.Vertices, 0, 0),
-        VertexBufferBinding(instVB, 0, 1)
-      )
+      let bindings = res.InstanceBindings
+      bindings[0] <- VertexBufferBinding(mesh.Vertices, 0, 0)
+      bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+      gd.SetVertexBuffers(bindings)
 
       struct (instanceCount, instVB)
 
@@ -903,10 +1018,10 @@ module internal PbrShading =
 
       instVB.SetData(res.InstanceColorStaging, 0, instanceCount)
 
-      gd.SetVertexBuffers(
-        VertexBufferBinding(mesh.Vertices, 0, 0),
-        VertexBufferBinding(instVB, 0, 1)
-      )
+      let bindings = res.InstanceBindings
+      bindings[0] <- VertexBufferBinding(mesh.Vertices, 0, 0)
+      bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+      gd.SetVertexBuffers(bindings)
 
       struct (instanceCount, instVB)
 
@@ -942,8 +1057,8 @@ module internal PbrShading =
       let viewProj = state.View * state.Projection
 
       if ensureEffect(gd, res) then
-        match res.Effect, res.Params with
-        | ValueSome e, ValueSome p ->
+        match struct (res.Effect, res.Params) with
+        | struct (ValueSome e, ValueSome p) ->
           e.CurrentTechnique <-
             e.Techniques[match colors with
                          | ValueSome _ -> "InstancedColor"
@@ -1082,6 +1197,9 @@ module internal PbrShading =
       res: PbrResources,
       transforms: Matrix[],
       colors: Color[] voption,
+      count: int,
+      chunks: struct (int * int * Texture2D)[],
+      chunkTotal: int,
       chunkStart: int,
       chunkCount: int
     ) : VertexBuffer =
@@ -1141,17 +1259,29 @@ module internal PbrShading =
       instVB.SetData(res.InstancePaletteColorStaging, 0, chunkCount)
       instVB
     | ValueNone ->
-      if res.InstancePaletteStaging.Length < chunkCount then
-        res.InstancePaletteStaging <-
-          Array.zeroCreate<VertexInstanceWorldPalette> chunkCount
+      let dx12 = isDirectX12Backend()
 
-      for i = 0 to chunkCount - 1 do
-        // PaletteOffset is chunk-local (see the colored branch above).
-        res.InstancePaletteStaging[i] <-
-          VertexInstanceWorldPalette.Create(
-            transforms[chunkStart + i],
-            float32 i
-          )
+      // DX11/Vulkan: one staging pass per frame serves both passes — the chunk plan
+      // is shared (PaletteChunkCache), so the shadow pass and this pass read the same
+      // staged rows (InstanceWorldCache). DX12 stages per pass instead: its
+      // forward/depth group budgets differ, so chunk-local offsets differ per pass.
+      let staged =
+        if dx12 then
+          if res.InstancePaletteStaging.Length < chunkCount then
+            res.InstancePaletteStaging <-
+              Array.zeroCreate<VertexInstanceWorldPalette> chunkCount
+
+          for i = 0 to chunkCount - 1 do
+            // PaletteOffset is chunk-local (see the colored branch above).
+            res.InstancePaletteStaging[i] <-
+              VertexInstanceWorldPalette.Create(
+                transforms[chunkStart + i],
+                float32 i
+              )
+
+          res.InstancePaletteStaging
+        else
+          res.InstanceWorlds.Obtain(transforms, count, chunks, chunkTotal)
 
       // Must stay a DynamicVertexBuffer (see the colored branch above).
       match res.InstancePaletteVertexBuffer with
@@ -1184,7 +1314,8 @@ module internal PbrShading =
         | ValueSome vb -> vb
         | ValueNone -> Unchecked.defaultof<DynamicVertexBuffer> // unreachable (created above)
 
-      instVB.SetData(res.InstancePaletteStaging, 0, chunkCount)
+      // Cached rows are command-global: this chunk's rows start at chunkStart.
+      instVB.SetData(staged, (if dx12 then 0 else chunkStart), chunkCount)
       instVB
 
   /// <summary>
@@ -1293,8 +1424,8 @@ module internal PbrShading =
         // the non-skinned parts under a user effect. Frame-global uniforms don't depend
         // on the mesh — set once per draw, not per mesh.
         if ensureEffect(gd, res) then
-          match res.Effect, res.Params with
-          | ValueSome e, ValueSome p ->
+          match struct (res.Effect, res.Params) with
+          | struct (ValueSome e, ValueSome p) ->
             PbrUniforms.setMatrix p.Matrix.ViewProj viewProj
 
             PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
@@ -1314,8 +1445,10 @@ module internal PbrShading =
         // same frame-global uniforms. The grouped effect has its own uniform handles
         // — the main effect's bonePaletteGroup params are null on DX12 (dropped by
         // mgfx reflection), so the grouped effect is the only one that can receive
-        // bone palette data. Lights are uploaded unconditionally (once per draw call,
-        // not per part — negligible cost vs. the per-instance fallback it replaces).
+        // bone palette data. Lights + the shadow block are frame/block constants and
+        // the shadow pass always completes before any grouped draw in the same scope,
+        // so both upload once per scope change (GroupedUniformsDirty), not per command.
+        // ViewProj/CameraPos stay per command: two small writes, always correct.
         if isDirectX12Backend() && ensureGroupedEffect(gd, res) then
           match res.GroupedParams with
           | ValueSome gp ->
@@ -1323,30 +1456,36 @@ module internal PbrShading =
 
             PbrUniforms.setVec3 gp.Matrix.CameraPos state.CurrentCamera.Position
 
-            PbrUniforms.uploadLights(
-              &gp,
-              frame.Lights,
-              frame.PointShadowSlots,
-              frame.SpotShadowSlots
-            )
+            if res.GroupedUniformsDirty then
+              PbrUniforms.uploadLights(
+                &gp,
+                frame.Lights,
+                frame.PointShadowSlots,
+                frame.SpotShadowSlots
+              )
 
-            match frame.Shadows with
-            | ValueSome s ->
-              PbrUniforms.setInt
-                gp.Shadow.DirLightCastsShadows
-                (if s.DirLightCastsShadows then 1 else 0)
+              match frame.Shadows with
+              | ValueSome s ->
+                PbrUniforms.setInt
+                  gp.Shadow.DirLightCastsShadows
+                  (if s.DirLightCastsShadows then 1 else 0)
 
-              PbrUniforms.setMatrixArray gp.Shadow.ShadowViewProjs s.ViewProjs
-              PbrUniforms.setVec4Array gp.Shadow.ShadowUVOffsets s.UVOffsets
-              PbrUniforms.setFloatArray gp.Shadow.ShadowBiases s.Biases
+                PbrUniforms.setMatrixArray gp.Shadow.ShadowViewProjs s.ViewProjs
+                PbrUniforms.setVec4Array gp.Shadow.ShadowUVOffsets s.UVOffsets
+                PbrUniforms.setFloatArray gp.Shadow.ShadowBiases s.Biases
 
-              PbrUniforms.setVec2
-                gp.Shadow.ShadowTexelSize
-                (Vector2(s.TexelSize, s.TexelSize))
+                PbrUniforms.setVec2
+                  gp.Shadow.ShadowTexelSize
+                  (Vector2(s.TexelSize, s.TexelSize))
 
-              if not(obj.ReferenceEquals(gp.Shadow.ShadowAtlasTex, null)) then
-                gp.Shadow.ShadowAtlasTex.SetValue(s.Atlas)
-            | ValueNone -> PbrUniforms.setInt gp.Shadow.DirLightCastsShadows 0
+                if not(obj.ReferenceEquals(gp.Shadow.ShadowAtlasTex, null)) then
+                  gp.Shadow.ShadowAtlasTex.SetValue(s.Atlas)
+              | ValueNone -> PbrUniforms.setInt gp.Shadow.DirLightCastsShadows 0
+
+              res.GroupedUniformsDirty <- false
+
+            // Command-invariant: the group's bone stride never changes across chunks.
+            PbrUniforms.setInt gp.Matrix.GroupBoneCount boneCount
           | ValueNone -> ()
 
         // A user-effect target selects its SkinnedInstanced technique once around the
@@ -1371,13 +1510,21 @@ module internal PbrShading =
             if isDirectX12Backend() then
               // boneCount <= MaxMatrices here — larger skeletons took the
               // per-instance fallback above.
-              let needed = PaletteGroup.groupCountFor count boneCount
+              let needed =
+                PaletteGroup.groupCountFor
+                  PaletteGroup.MaxMatrices
+                  count
+                  boneCount
 
               if res.GroupChunkScratch.Length < needed then
                 res.GroupChunkScratch <- Array.zeroCreate needed
 
               (res.GroupChunkScratch,
-               PaletteGroup.planGroups count boneCount res.GroupChunkScratch)
+               PaletteGroup.planGroups
+                 PaletteGroup.MaxMatrices
+                 count
+                 boneCount
+                 res.GroupChunkScratch)
             else
               let obtained =
                 res.PaletteChunks.Obtain(gd, palettes, boneCount, count)
@@ -1385,67 +1532,142 @@ module internal PbrShading =
               (obtained, obtained.Length)
 
           // Per-part invariants hoisted out of the chunk loop: technique,
-          // material, and matModel don't vary across chunks. PerMesh material
-          // resolvers index the model's parts in pipeline iteration order — the
-          // resolver now runs once per part per command instead of per chunk.
+          // material, and matModel don't vary across chunks. The static half (part
+          // enumeration, technique refs, skinned/grouped flags) comes from the
+          // per-model cache — built once per model per pipeline; only the
+          // game-mutable parts (world from the current bone transforms, material,
+          // normal matrix) resolve per command.
+          let entry =
+            match res.SkinnedInstancedModelCache.TryGetValue model with
+            | true, e when
+              skinnedInstancedEntryMatches res.Effect res.GroupedEffect e
+              ->
+              e
+            | _ ->
+              let plain = ResizeArray<SkinnedInstancedPartMeta>()
+              let colored = ResizeArray<SkinnedInstancedPartMeta>()
+
+              let infoIndex =
+                System.Collections.Generic.Dictionary<ModelMeshPart, int>()
+
+              let mutable partIndex = 0
+
+              for mesh in model.Meshes do
+                for part in mesh.MeshParts do
+                  let isSkinned =
+                    match part.Effect with
+                    | :? SkinnedEffect -> true
+                    | _ -> false
+
+                  if part.PrimitiveCount > 0 then
+                    // The grouped effect exists only on DX12 (paletteTex is null
+                    // for every chunk there, non-null everywhere else).
+                    let useGrouped = isSkinned && isDirectX12Backend()
+
+                    let resolve hasColors =
+                      let name =
+                        match isSkinned, hasColors, useGrouped with
+                        | true, true, true -> "SkinnedInstancedGroupedColor"
+                        | true, false, true -> "SkinnedInstancedGrouped"
+                        | true, true, false -> "SkinnedInstancedColor"
+                        | true, false, false -> "SkinnedInstanced"
+                        | false, true, _ -> "InstancedColor"
+                        | false, false, _ -> "Instanced"
+
+                      match
+                        (if useGrouped then res.GroupedEffect else res.Effect)
+                      with
+                      | ValueSome e -> e.Techniques[name]
+                      | ValueNone -> null
+
+                    plain.Add {
+                      Part = part
+                      Index = partIndex
+                      ParentBoneIndex = mesh.ParentBone.Index
+                      IsSkinned = isSkinned
+                      UseGrouped = useGrouped
+                      Technique = resolve false
+                      SourceEffect = part.Effect
+                    }
+
+                    colored.Add {
+                      Part = part
+                      Index = partIndex
+                      ParentBoneIndex = mesh.ParentBone.Index
+                      IsSkinned = isSkinned
+                      UseGrouped = useGrouped
+                      Technique = resolve true
+                      SourceEffect = part.Effect
+                    }
+
+                    infoIndex[part] <- plain.Count - 1
+
+                  partIndex <- partIndex + 1
+
+              let mergedMap =
+                System.Collections.Generic.Dictionary<ModelMeshPart, MergedPart>()
+
+              // The map is plain data — always built from the model's merged groups;
+              // the units build below decides per command whether merging applies.
+              match MergedModelParts.tryGet(gd, model) with
+              | ValueSome merged ->
+                for mp in merged do
+                  for sp in mp.SourceParts do
+                    mergedMap[sp] <- mp
+              | ValueNone -> ()
+
+              let e': SkinnedInstancedModelEntry = {
+                Plain = plain.ToArray()
+                Colored = colored.ToArray()
+                MergedMap = mergedMap
+                InfoIndex = infoIndex
+                ForEffect = res.Effect
+                ForGroupedEffect = res.GroupedEffect
+              }
+
+              // Cache only with the main effect loaded — an entry built without it
+              // holds null techniques, which must not become the cached state.
+              match res.Effect with
+              | ValueSome _ ->
+                res.SkinnedInstancedModelCache.Remove model |> ignore
+                res.SkinnedInstancedModelCache.Add(model, e')
+              | ValueNone -> ()
+
+              e'
+
+          let metas =
+            match colors with
+            | ValueSome _ -> entry.Colored
+            | ValueNone -> entry.Plain
+
           let partInfos = res.SkinnedInstancedPartInfos
           partInfos.Clear()
-          let mutable partIndex = 0
 
-          for mesh in model.Meshes do
-            let world = res.BoneTransforms[mesh.ParentBone.Index]
+          for meta in metas do
+            let world = res.BoneTransforms[meta.ParentBoneIndex]
 
-            for part in mesh.MeshParts do
-              let isSkinned =
-                match part.Effect with
-                | :? SkinnedEffect -> true
-                | _ -> false
+            let mat =
+              match matOverride with
+              | ValueNone -> Material3D.fromModelMeshPart meta.Part
+              | ValueSome(MaterialOverride.All m) -> m
+              | ValueSome(MaterialOverride.PerMesh f) -> f meta.Index
 
-              let mat =
-                match matOverride with
-                | ValueNone -> Material3D.fromModelMeshPart part
-                | ValueSome(MaterialOverride.All m) -> m
-                | ValueSome(MaterialOverride.PerMesh f) -> f partIndex
+            let mutable t = world
+            let mutable inv = Matrix.Identity
+            Matrix.Invert(&t, &inv) |> ignore
 
-              partIndex <- partIndex + 1
-
-              if part.PrimitiveCount > 0 then
-                // The grouped effect exists only on DX12 (paletteTex is null
-                // for every chunk there, non-null everywhere else).
-                let useGrouped = isSkinned && isDirectX12Backend()
-
-                let techniqueName =
-                  match isSkinned, colors, useGrouped with
-                  | true, ValueSome _, true -> "SkinnedInstancedGroupedColor"
-                  | true, ValueNone, true -> "SkinnedInstancedGrouped"
-                  | true, ValueSome _, false -> "SkinnedInstancedColor"
-                  | true, ValueNone, false -> "SkinnedInstanced"
-                  | false, ValueSome _, _ -> "InstancedColor"
-                  | false, ValueNone, _ -> "Instanced"
-
-                let technique =
-                  match
-                    (if useGrouped then res.GroupedEffect else res.Effect)
-                  with
-                  | ValueSome e -> e.Techniques[techniqueName]
-                  | ValueNone -> null
-
-                let mutable t = world
-                let mutable inv = Matrix.Identity
-                Matrix.Invert(&t, &inv) |> ignore
-
-                partInfos.Add(
-                  {
-                    Part = part
-                    IsSkinned = isSkinned
-                    World = world
-                    NormalMatrix = Matrix.Transpose inv
-                    Mat = mat
-                    MatKey = materialKey &mat
-                    UseGrouped = useGrouped
-                    Technique = technique
-                  }
-                )
+            partInfos.Add(
+              {
+                Part = meta.Part
+                IsSkinned = meta.IsSkinned
+                World = world
+                NormalMatrix = Matrix.Transpose inv
+                Mat = mat
+                MatKey = materialKey &mat
+                UseGrouped = meta.UseGrouped
+                Technique = meta.Technique
+              }
+            )
 
           // Draw units: one per original part — or one per MERGED part group when
           // the model has mergeable parts (MergedModelParts) and every source part
@@ -1473,16 +1695,7 @@ module internal PbrShading =
              | UserEffectTarget _ -> ValueNone)
           with
           | ValueSome merged ->
-            res.PartMergedMap.Clear()
-            res.PartInfoIndex.Clear()
-
-            for mp in merged do
-              for sp in mp.SourceParts do
-                res.PartMergedMap[sp] <- mp
-
-            for i = 0 to partInfos.Count - 1 do
-              res.PartInfoIndex[partInfos[i].Part] <- i
-
+            // The part→group and part→index maps come pre-built from the cache entry.
             if res.SkinnedInstancedHandled.Length < partInfos.Count then
               res.SkinnedInstancedHandled <- Array.zeroCreate partInfos.Count
             else
@@ -1494,7 +1707,7 @@ module internal PbrShading =
               if not handled[i] then
                 let info = partInfos[i]
 
-                match res.PartMergedMap.TryGetValue info.Part with
+                match entry.MergedMap.TryGetValue info.Part with
                 | true, mp ->
                   // Group members all share parent bone / declaration / skinned
                   // flag by construction, so the first member's info (world,
@@ -1502,7 +1715,7 @@ module internal PbrShading =
                   let mutable uniform = true
 
                   for sp in mp.SourceParts do
-                    match res.PartInfoIndex.TryGetValue sp with
+                    match entry.InfoIndex.TryGetValue sp with
                     | true, memberIdx ->
                       handled[memberIdx] <- true
 
@@ -1522,7 +1735,7 @@ module internal PbrShading =
                     }
                   else
                     for sp in mp.SourceParts do
-                      match res.PartInfoIndex.TryGetValue sp with
+                      match entry.InfoIndex.TryGetValue sp with
                       | true, memberIdx -> addPartUnit partInfos[memberIdx]
                       | _ -> ()
                 | _ -> addPartUnit info
@@ -1541,6 +1754,9 @@ module internal PbrShading =
                 res,
                 transforms,
                 colors,
+                count,
+                chunks,
+                chunkTotal,
                 chunkStart,
                 chunkCount
               )
@@ -1570,8 +1786,6 @@ module internal PbrShading =
                 PbrUniforms.setMatrixArray
                   gp.Matrix.BonePaletteGroup
                   res.GroupPaletteScratch
-
-                PbrUniforms.setInt gp.Matrix.GroupBoneCount boneCount
               | ValueNone -> ()
             else
               match res.Params with
@@ -1621,10 +1835,10 @@ module internal PbrShading =
                     Vector2(float32(boneCount * 4), float32 chunkCount)
                   )
 
-                gd.SetVertexBuffers(
-                  VertexBufferBinding(unit.VB, 0, 0),
-                  VertexBufferBinding(instVB, 0, 1)
-                )
+                let bindings = res.InstanceBindings
+                bindings[0] <- VertexBufferBinding(unit.VB, 0, 0)
+                bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+                gd.SetVertexBuffers(bindings)
 
                 gd.Indices <- unit.IB
 
@@ -1646,27 +1860,33 @@ module internal PbrShading =
                 // are simply unread). On DX12 the grouped-uniform skinned path
                 // uses the isolated ForwardPbrGrouped effect (the main effect's
                 // bonePaletteGroup params are null on DX12).
-                let drawEffect, drawParams =
+                let struct (drawEffect, drawParams) =
                   if info.UseGrouped then
-                    res.GroupedEffect, res.GroupedParams
+                    struct (res.GroupedEffect, res.GroupedParams)
                   else
-                    res.Effect, res.Params
+                    struct (res.Effect, res.Params)
 
-                match drawEffect, drawParams with
-                | ValueSome e, ValueSome p ->
+                match struct (drawEffect, drawParams) with
+                | struct (ValueSome e, ValueSome p) ->
                   e.CurrentTechnique <- info.Technique
 
                   PbrUniforms.setMatrix p.Matrix.MatModel info.World
 
                   // The grouped effect has separate uniform handles from the
-                  // main effect, so the HasLastMaterial short-circuit (keyed
-                  // on the main effect's uploads) doesn't apply — always upload
-                  // material + textures on the grouped path.
+                  // main effect, so it gets its own MaterialKey short-circuit
+                  // (HasLastGroupedMaterial/LastGroupedKey) — same pattern, keyed
+                  // on the grouped effect's uploads.
                   let mat = info.Mat
 
                   if info.UseGrouped then
-                    PbrUniforms.uploadMaterial(&p, &mat)
-                    PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                    if
+                      not res.HasLastGroupedMaterial
+                      || info.MatKey <> res.LastGroupedKey
+                    then
+                      PbrUniforms.uploadMaterial(&p, &mat)
+                      PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                      res.LastGroupedKey <- info.MatKey
+                      res.HasLastGroupedMaterial <- true
                   else if
                     not res.HasLastMaterial || info.MatKey <> res.LastKey
                   then
@@ -1675,10 +1895,10 @@ module internal PbrShading =
                     res.LastKey <- info.MatKey
                     res.HasLastMaterial <- true
 
-                  gd.SetVertexBuffers(
-                    VertexBufferBinding(unit.VB, 0, 0),
-                    VertexBufferBinding(instVB, 0, 1)
-                  )
+                  let bindings = res.InstanceBindings
+                  bindings[0] <- VertexBufferBinding(unit.VB, 0, 0)
+                  bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+                  gd.SetVertexBuffers(bindings)
 
                   gd.Indices <- unit.IB
 

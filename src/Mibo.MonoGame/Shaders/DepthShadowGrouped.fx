@@ -20,7 +20,7 @@
 float4x4 matModel;
 float4x4 viewProj;
 
-#define MAX_GROUP_PALETTES 320
+#define MAX_GROUP_PALETTES 500
 float4x4 bonePaletteGroup[MAX_GROUP_PALETTES];
 int groupBoneCount;
 
