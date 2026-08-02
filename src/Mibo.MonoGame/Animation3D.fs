@@ -713,47 +713,79 @@ module Animation3DState =
   /// dictionary — the per-frame pose loop then samples by bone index instead
   /// of paying a dictionary lookup per bone per instance. A clip shared across
   /// meshes keeps every mesh's entry instead of evicting and rebuilding the
-  /// resolved array per frame. The hit path is allocation-free.
+  /// resolved array per frame. The hit path is allocation-free and lock-free.
   type private BoneChannelCache() =
-    let entries = ResizeArray<struct (string[] * Animation3DChannel[])>(2)
+    // Append-only entries, published as an immutable snapshot array. The pose
+    // loop calls GetChannels per instance per frame (possibly in parallel via
+    // Parallel.For), so the read path scans the snapshot WITHOUT a lock —
+    // entries are only ever appended, so a reader that misses a concurrent
+    // append simply takes the build path and finds the entry there. Writers
+    // (rare: once per (clip, mesh) pair) append copy-on-write under a lock.
+    let mutable entries: struct (string[] * Animation3DChannel[])[] = [||]
 
     /// <summary>The resolved channel array for <paramref name="boneNames"/>
     /// (mesh identity is the <c>BoneNames</c> array reference), built and
-    /// appended on first use. Locked (explicit Monitor — an F# <c>lock</c>
-    /// closure would allocate per call) because ConditionalWeakTable factories
-    /// and pose evaluation may run on several threads.</summary>
+    /// appended on first use. Safe for concurrent use: the hit path is
+    /// lock-free; only a first-seen mesh takes the Monitor.</summary>
     member this.GetChannels
       (
         boneNames: string[],
         channels: IReadOnlyDictionary<string, Animation3DChannel>
       ) : Animation3DChannel[] =
-      System.Threading.Monitor.Enter this
+      let snapshot = System.Threading.Volatile.Read(&entries)
 
-      try
-        let mutable resolved = Unchecked.defaultof<Animation3DChannel[]>
-        let mutable i = 0
+      let mutable resolved = Unchecked.defaultof<Animation3DChannel[]>
+      let mutable i = 0
 
-        while isNull resolved && i < entries.Count do
-          let struct (names, cached) = entries[i]
+      while isNull resolved && i < snapshot.Length do
+        let struct (names, cached) = snapshot[i]
 
-          if obj.ReferenceEquals(names, boneNames) then
-            resolved <- cached
-          else
-            i <- i + 1
-
-        if isNull resolved then
-          let built =
-            Array.init boneNames.Length (fun i ->
-              match channels.TryGetValue boneNames[i] with
-              | true, ch -> ch
-              | _ -> emptyChannel)
-
-          entries.Add(struct (boneNames, built))
-          built
+        if obj.ReferenceEquals(names, boneNames) then
+          resolved <- cached
         else
-          resolved
-      finally
-        System.Threading.Monitor.Exit this
+          i <- i + 1
+
+      if not(isNull resolved) then
+        resolved
+      else
+        System.Threading.Monitor.Enter this
+
+        try
+          // Re-check under the lock: a racing builder may have published the
+          // entry between the snapshot read and here.
+          let current = entries
+          let mutable j = 0
+
+          while isNull resolved && j < current.Length do
+            let struct (names, cached) = current[j]
+
+            if obj.ReferenceEquals(names, boneNames) then
+              resolved <- cached
+            else
+              j <- j + 1
+
+          if not(isNull resolved) then
+            resolved
+          else
+            let built =
+              Array.init boneNames.Length (fun i ->
+                match channels.TryGetValue boneNames[i] with
+                | true, ch -> ch
+                | _ -> emptyChannel)
+
+            let grown =
+              Array.zeroCreate<struct (string[] * Animation3DChannel[])>(
+                current.Length + 1
+              )
+
+            System.Array.Copy(current, grown, current.Length)
+            grown[current.Length] <- struct (boneNames, built)
+            // Publish last: the new array is fully initialized before any
+            // reader can see the reference (the lock exit orders the write).
+            entries <- grown
+            built
+        finally
+          System.Threading.Monitor.Exit this
 
   /// Keyed by each clip's <c>Channels</c> dictionary (a unique reference per
   /// clip), so no public surface changes. Each cache holds one entry per mesh
