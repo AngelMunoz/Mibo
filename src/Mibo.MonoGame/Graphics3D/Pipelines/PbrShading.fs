@@ -113,6 +113,45 @@ type internal SkinnedInstancedDrawUnit = {
 }
 
 /// <summary>
+/// The static half of a skinned + instanced part: everything that depends only on the
+/// model's topology, the colors-presence, and the backend — resolved once per model per
+/// pipeline (see <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.SkinnedInstancedModelEntry"/>).
+/// <c>World</c>/<c>NormalMatrix</c>/material still resolve per command: model bones and
+/// part effect state are game-mutable.
+/// </summary>
+[<Struct>]
+type internal SkinnedInstancedPartMeta = {
+  Part: ModelMeshPart
+  /// <summary>Pipeline iteration index (over ALL parts, including empty ones) — the
+  /// PerMesh material resolver input.</summary>
+  Index: int
+  /// <summary>The part's mesh's parent-bone index (the per-command <c>World</c> lookup).</summary>
+  ParentBoneIndex: int
+  IsSkinned: bool
+  UseGrouped: bool
+  Technique: EffectTechnique
+}
+
+/// <summary>
+/// Per-model cache entry for skinned + instanced draws: the static part metadata (both
+/// color modes), the part→merged-group map, and the part→info index — all built once per
+/// model per pipeline instead of rebuilt per command. Keyed by model reference in a
+/// ConditionalWeakTable, so entries die with the model. Validated against the pipeline's
+/// current effect instances on each use — a Shutdown + reload produces new instances and
+/// forces a rebuild.
+/// </summary>
+type internal SkinnedInstancedModelEntry = {
+  /// <summary>Static part metadata for commands without per-instance colors.</summary>
+  Plain: SkinnedInstancedPartMeta[]
+  /// <summary>Static part metadata for commands with per-instance colors.</summary>
+  Colored: SkinnedInstancedPartMeta[]
+  MergedMap: System.Collections.Generic.Dictionary<ModelMeshPart, MergedPart>
+  InfoIndex: System.Collections.Generic.Dictionary<ModelMeshPart, int>
+  ForEffect: Effect voption
+  ForGroupedEffect: Effect voption
+}
+
+/// <summary>
 /// Owns the lazily-loaded PBR effect + cached params, the BasicEffect fallback, the instancing
 /// effect + growable instance vertex buffer + staging, the MaterialKey short-circuit cache, and
 /// the bone-transforms scratch — all reused across frames. Constructed once by the pipeline.
@@ -223,13 +262,15 @@ type internal PbrResources() =
   member val SkinnedInstancedUnits =
     ResizeArray<SkinnedInstancedDrawUnit>() with get
 
-  /// <summary>Scratch: original part → its merged group, rebuilt per command.</summary>
-  member val PartMergedMap =
-    System.Collections.Generic.Dictionary<ModelMeshPart, MergedPart>() with get
-
-  /// <summary>Scratch: original part → its partInfo index, rebuilt per command.</summary>
-  member val PartInfoIndex =
-    System.Collections.Generic.Dictionary<ModelMeshPart, int>() with get
+  /// <summary>Per-model cache of the static half of skinned + instanced part data
+  /// (technique refs, skinned/grouped flags, merged-group map, info index) — built once
+  /// per model per pipeline instead of rebuilt per command. Keyed by model reference;
+  /// validated against the current effect instances per use.</summary>
+  member val SkinnedInstancedModelCache =
+    System.Runtime.CompilerServices.ConditionalWeakTable<
+      Model,
+      SkinnedInstancedModelEntry
+     >() with get
 
   /// <summary>Scratch: handled flags for the merged-group fan-out; grown on demand,
   /// cleared per command.</summary>
@@ -1447,67 +1488,147 @@ module internal PbrShading =
               (obtained, obtained.Length)
 
           // Per-part invariants hoisted out of the chunk loop: technique,
-          // material, and matModel don't vary across chunks. PerMesh material
-          // resolvers index the model's parts in pipeline iteration order — the
-          // resolver now runs once per part per command instead of per chunk.
+          // material, and matModel don't vary across chunks. The static half (part
+          // enumeration, technique refs, skinned/grouped flags) comes from the
+          // per-model cache — built once per model per pipeline; only the
+          // game-mutable parts (world from the current bone transforms, material,
+          // normal matrix) resolve per command.
+          let entry =
+            let isValid(e: SkinnedInstancedModelEntry) =
+              (match e.ForEffect, res.Effect with
+               | ValueSome a, ValueSome b -> obj.ReferenceEquals(a, b)
+               | ValueNone, ValueNone -> true
+               | _ -> false)
+              && (match e.ForGroupedEffect, res.GroupedEffect with
+                  | ValueSome a, ValueSome b -> obj.ReferenceEquals(a, b)
+                  | ValueNone, ValueNone -> true
+                  | _ -> false)
+
+            match res.SkinnedInstancedModelCache.TryGetValue model with
+            | true, e when isValid e -> e
+            | _ ->
+              let plain = ResizeArray<SkinnedInstancedPartMeta>()
+              let colored = ResizeArray<SkinnedInstancedPartMeta>()
+
+              let infoIndex =
+                System.Collections.Generic.Dictionary<ModelMeshPart, int>()
+
+              let mutable partIndex = 0
+
+              for mesh in model.Meshes do
+                for part in mesh.MeshParts do
+                  let isSkinned =
+                    match part.Effect with
+                    | :? SkinnedEffect -> true
+                    | _ -> false
+
+                  if part.PrimitiveCount > 0 then
+                    // The grouped effect exists only on DX12 (paletteTex is null
+                    // for every chunk there, non-null everywhere else).
+                    let useGrouped = isSkinned && isDirectX12Backend()
+
+                    let resolve hasColors =
+                      let name =
+                        match isSkinned, hasColors, useGrouped with
+                        | true, true, true -> "SkinnedInstancedGroupedColor"
+                        | true, false, true -> "SkinnedInstancedGrouped"
+                        | true, true, false -> "SkinnedInstancedColor"
+                        | true, false, false -> "SkinnedInstanced"
+                        | false, true, _ -> "InstancedColor"
+                        | false, false, _ -> "Instanced"
+
+                      match
+                        (if useGrouped then res.GroupedEffect else res.Effect)
+                      with
+                      | ValueSome e -> e.Techniques[name]
+                      | ValueNone -> null
+
+                    plain.Add {
+                      Part = part
+                      Index = partIndex
+                      ParentBoneIndex = mesh.ParentBone.Index
+                      IsSkinned = isSkinned
+                      UseGrouped = useGrouped
+                      Technique = resolve false
+                    }
+
+                    colored.Add {
+                      Part = part
+                      Index = partIndex
+                      ParentBoneIndex = mesh.ParentBone.Index
+                      IsSkinned = isSkinned
+                      UseGrouped = useGrouped
+                      Technique = resolve true
+                    }
+
+                    infoIndex[part] <- plain.Count - 1
+
+                  partIndex <- partIndex + 1
+
+              let mergedMap =
+                System.Collections.Generic.Dictionary<ModelMeshPart, MergedPart>()
+
+              // The map is plain data — always built from the model's merged groups;
+              // the units build below decides per command whether merging applies.
+              match MergedModelParts.tryGet(gd, model) with
+              | ValueSome merged ->
+                for mp in merged do
+                  for sp in mp.SourceParts do
+                    mergedMap[sp] <- mp
+              | ValueNone -> ()
+
+              let e': SkinnedInstancedModelEntry = {
+                Plain = plain.ToArray()
+                Colored = colored.ToArray()
+                MergedMap = mergedMap
+                InfoIndex = infoIndex
+                ForEffect = res.Effect
+                ForGroupedEffect = res.GroupedEffect
+              }
+
+              // Cache only with the main effect loaded — an entry built without it
+              // holds null techniques, which must not become the cached state.
+              match res.Effect with
+              | ValueSome _ ->
+                res.SkinnedInstancedModelCache.Remove model
+                res.SkinnedInstancedModelCache.Add(model, e')
+              | ValueNone -> ()
+
+              e'
+
+          let metas =
+            match colors with
+            | ValueSome _ -> entry.Colored
+            | ValueNone -> entry.Plain
+
           let partInfos = res.SkinnedInstancedPartInfos
           partInfos.Clear()
-          let mutable partIndex = 0
 
-          for mesh in model.Meshes do
-            let world = res.BoneTransforms[mesh.ParentBone.Index]
+          for meta in metas do
+            let world = res.BoneTransforms[meta.ParentBoneIndex]
 
-            for part in mesh.MeshParts do
-              let isSkinned =
-                match part.Effect with
-                | :? SkinnedEffect -> true
-                | _ -> false
+            let mat =
+              match matOverride with
+              | ValueNone -> Material3D.fromModelMeshPart meta.Part
+              | ValueSome(MaterialOverride.All m) -> m
+              | ValueSome(MaterialOverride.PerMesh f) -> f meta.Index
 
-              let mat =
-                match matOverride with
-                | ValueNone -> Material3D.fromModelMeshPart part
-                | ValueSome(MaterialOverride.All m) -> m
-                | ValueSome(MaterialOverride.PerMesh f) -> f partIndex
+            let mutable t = world
+            let mutable inv = Matrix.Identity
+            Matrix.Invert(&t, &inv) |> ignore
 
-              partIndex <- partIndex + 1
-
-              if part.PrimitiveCount > 0 then
-                // The grouped effect exists only on DX12 (paletteTex is null
-                // for every chunk there, non-null everywhere else).
-                let useGrouped = isSkinned && isDirectX12Backend()
-
-                let techniqueName =
-                  match isSkinned, colors, useGrouped with
-                  | true, ValueSome _, true -> "SkinnedInstancedGroupedColor"
-                  | true, ValueNone, true -> "SkinnedInstancedGrouped"
-                  | true, ValueSome _, false -> "SkinnedInstancedColor"
-                  | true, ValueNone, false -> "SkinnedInstanced"
-                  | false, ValueSome _, _ -> "InstancedColor"
-                  | false, ValueNone, _ -> "Instanced"
-
-                let technique =
-                  match
-                    (if useGrouped then res.GroupedEffect else res.Effect)
-                  with
-                  | ValueSome e -> e.Techniques[techniqueName]
-                  | ValueNone -> null
-
-                let mutable t = world
-                let mutable inv = Matrix.Identity
-                Matrix.Invert(&t, &inv) |> ignore
-
-                partInfos.Add(
-                  {
-                    Part = part
-                    IsSkinned = isSkinned
-                    World = world
-                    NormalMatrix = Matrix.Transpose inv
-                    Mat = mat
-                    MatKey = materialKey &mat
-                    UseGrouped = useGrouped
-                    Technique = technique
-                  }
-                )
+            partInfos.Add(
+              {
+                Part = meta.Part
+                IsSkinned = meta.IsSkinned
+                World = world
+                NormalMatrix = Matrix.Transpose inv
+                Mat = mat
+                MatKey = materialKey &mat
+                UseGrouped = meta.UseGrouped
+                Technique = meta.Technique
+              }
+            )
 
           // Draw units: one per original part — or one per MERGED part group when
           // the model has mergeable parts (MergedModelParts) and every source part
@@ -1535,16 +1656,7 @@ module internal PbrShading =
              | UserEffectTarget _ -> ValueNone)
           with
           | ValueSome merged ->
-            res.PartMergedMap.Clear()
-            res.PartInfoIndex.Clear()
-
-            for mp in merged do
-              for sp in mp.SourceParts do
-                res.PartMergedMap[sp] <- mp
-
-            for i = 0 to partInfos.Count - 1 do
-              res.PartInfoIndex[partInfos[i].Part] <- i
-
+            // The part→group and part→index maps come pre-built from the cache entry.
             if res.SkinnedInstancedHandled.Length < partInfos.Count then
               res.SkinnedInstancedHandled <- Array.zeroCreate partInfos.Count
             else
@@ -1556,7 +1668,7 @@ module internal PbrShading =
               if not handled[i] then
                 let info = partInfos[i]
 
-                match res.PartMergedMap.TryGetValue info.Part with
+                match entry.MergedMap.TryGetValue info.Part with
                 | true, mp ->
                   // Group members all share parent bone / declaration / skinned
                   // flag by construction, so the first member's info (world,
@@ -1564,7 +1676,7 @@ module internal PbrShading =
                   let mutable uniform = true
 
                   for sp in mp.SourceParts do
-                    match res.PartInfoIndex.TryGetValue sp with
+                    match entry.InfoIndex.TryGetValue sp with
                     | true, memberIdx ->
                       handled[memberIdx] <- true
 
@@ -1584,7 +1696,7 @@ module internal PbrShading =
                     }
                   else
                     for sp in mp.SourceParts do
-                      match res.PartInfoIndex.TryGetValue sp with
+                      match entry.InfoIndex.TryGetValue sp with
                       | true, memberIdx -> addPartUnit partInfos[memberIdx]
                       | _ -> ()
                 | _ -> addPartUnit info
