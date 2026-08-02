@@ -304,6 +304,29 @@ type internal ShaderVariants() =
   [<DefaultValue>]
   val mutable SkinnedInstanced: ShaderVariant
 
+/// <summary>Which PBR shader variants the current frame's buffer draws through — set
+/// during the pre-scan, cleared at frame start. The shadow-uniform upload skips
+/// variants no draw uses this frame (their shader state persists from the last frame
+/// that did).</summary>
+type internal ShaderUsage() =
+  [<DefaultValue>]
+  val mutable Forward: bool
+
+  [<DefaultValue>]
+  val mutable Instanced: bool
+
+  [<DefaultValue>]
+  val mutable Skinned: bool
+
+  [<DefaultValue>]
+  val mutable SkinnedInstanced: bool
+
+  member this.Clear() =
+    this.Forward <- false
+    this.Instanced <- false
+    this.Skinned <- false
+    this.SkinnedInstanced <- false
+
 // ------------------------------------------------------------------
 // Shadow Depth Resources (immutable — bundles shadow shader + material)
 // ------------------------------------------------------------------
@@ -393,6 +416,13 @@ type internal PaletteTexturePool() =
   let uploaded = Dictionary<struct (Matrix4x4[] * int), Texture2D>()
   let mutable transformScratch = Array.zeroCreate<Matrix4x4> 64
 
+  // Per-frame memo of sliced per-chunk transform runs: both passes chunk the same
+  // command arrays, so each slice would otherwise be re-copied per pass. Keyed by
+  // (transforms array reference, chunk start) → pooled slot; cleared by ReleaseAll.
+  let slices = Dictionary<struct (Matrix4x4[] * int), int>()
+  let slicePool = ResizeArray<Matrix4x4[]>()
+  let mutable slicesUsed = 0
+
   member _.Acquire(width: int, height: int) : Texture2D =
     let key = struct (width, height)
 
@@ -427,6 +457,32 @@ type internal PaletteTexturePool() =
 
     transformScratch
 
+  /// Sliced transform run for a chunk already cut this frame, if any.
+  member _.TryGetTransformSlice
+    (transforms: Matrix4x4[], chunkStart: int)
+    : Matrix4x4[] voption =
+    match slices.TryGetValue(struct (transforms, chunkStart)) with
+    | true, slot -> ValueSome slicePool[slot]
+    | false, _ -> ValueNone
+
+  /// Cut a chunk's transform slice into a pooled array and record it for this frame.
+  member _.RememberTransformSlice
+    (transforms: Matrix4x4[], chunkStart: int, chunkCount: int)
+    : Matrix4x4[] =
+    let slot = slicesUsed
+    slicesUsed <- slicesUsed + 1
+
+    if slicePool.Count <= slot then
+      slicePool.Add [||]
+
+    if slicePool[slot].Length < chunkCount then
+      slicePool[slot] <- Array.zeroCreate chunkCount
+
+    let arr = slicePool[slot]
+    Array.Copy(transforms, chunkStart, arr, 0, chunkCount)
+    slices[struct (transforms, chunkStart)] <- slot
+    arr
+
   member _.ReleaseAll() =
     for tex in inUse do
       let key = struct (tex.Width, tex.Height)
@@ -440,6 +496,8 @@ type internal PaletteTexturePool() =
 
     inUse.Clear()
     uploaded.Clear()
+    slices.Clear()
+    slicesUsed <- 0
 
   member _.UnloadAll() =
     for tex in inUse do
@@ -1295,11 +1353,12 @@ module internal PipelineFunctions =
     else
       ValueNone
 
-  /// Upload shadow atlas uniforms to all four shader variants.
+  /// Upload shadow atlas uniforms to the shader variants the frame actually uses.
   let uploadShadowUniforms
     (
       hasCasters: bool,
       variants: ShaderVariants,
+      usage: ShaderUsage,
       atlas: ShadowAtlas,
       cameraPos: Vector3,
       maxCasters: int
@@ -1311,41 +1370,47 @@ module internal PipelineFunctions =
       let sk = variants.Skinned.Locs
       let skInst = variants.SkinnedInstanced.Locs
 
-      uploadShadowUniformsForShader(
-        fwd.Shader,
-        &fwd.Shadow,
-        fwd.CameraPos,
-        atlas,
-        cameraPos,
-        maxCasters
-      )
+      // Variants no draw uses this frame keep last frame's uniforms (their shaders
+      // go unused) and skip the upload + GL state churn.
+      if usage.Forward then
+        uploadShadowUniformsForShader(
+          fwd.Shader,
+          &fwd.Shadow,
+          fwd.CameraPos,
+          atlas,
+          cameraPos,
+          maxCasters
+        )
 
-      uploadShadowUniformsForShader(
-        inst.Shader,
-        &inst.Shadow,
-        inst.CameraPos,
-        atlas,
-        cameraPos,
-        maxCasters
-      )
+      if usage.Instanced then
+        uploadShadowUniformsForShader(
+          inst.Shader,
+          &inst.Shadow,
+          inst.CameraPos,
+          atlas,
+          cameraPos,
+          maxCasters
+        )
 
-      uploadShadowUniformsForShader(
-        sk.Shader,
-        &sk.Shadow,
-        sk.CameraPos,
-        atlas,
-        cameraPos,
-        maxCasters
-      )
+      if usage.Skinned then
+        uploadShadowUniformsForShader(
+          sk.Shader,
+          &sk.Shadow,
+          sk.CameraPos,
+          atlas,
+          cameraPos,
+          maxCasters
+        )
 
-      uploadShadowUniformsForShader(
-        skInst.Shader,
-        &skInst.Shadow,
-        skInst.CameraPos,
-        atlas,
-        cameraPos,
-        maxCasters
-      )
+      if usage.SkinnedInstanced then
+        uploadShadowUniformsForShader(
+          skInst.Shader,
+          &skInst.Shadow,
+          skInst.CameraPos,
+          atlas,
+          cameraPos,
+          maxCasters
+        )
 
   /// Upload bone matrices to skinned shader — uses ReadOnlySpan for no-copy.
   /// Palettes arrive in plain System.Numerics row-major layout
@@ -1429,15 +1494,17 @@ module internal PipelineFunctions =
 
         // raylib draws instances 0..count-1 of the array, so a chunk past the first
         // needs a sliced transforms array. The unchunked case passes it through
-        // untouched (no allocation on the common path); chunked slices copy into
-        // a pooled scratch buffer instead of allocating per chunk.
+        // untouched (no allocation on the common path); chunked slices are cut once
+        // per frame into pooled arrays — both passes share the memo (same command
+        // arrays), so the second pass no longer re-copies every chunk.
         let chunkTransforms =
           if chunkCount = instanceCount then
             transforms
           else
-            let scratch = pool.GetTransformScratch chunkCount
-            Array.Copy(transforms, start, scratch, 0, chunkCount)
-            scratch
+            match pool.TryGetTransformSlice(transforms, start) with
+            | ValueSome slice -> slice
+            | ValueNone ->
+              pool.RememberTransformSlice(transforms, start, chunkCount)
 
         Raylib.DrawMeshInstanced(mesh, mat, chunkTransforms, chunkCount)
         start <- start + chunkCount
@@ -1451,6 +1518,7 @@ module internal PipelineFunctions =
   /// through the ctx land in place.</summary>
   type internal PreScanContext = {
     Variants: ShaderVariants
+    Usage: ShaderUsage
     Lights: LightBuffers
     GatherLights: bool
     ForwardShader: Shader
@@ -1920,6 +1988,8 @@ module internal PipelineFunctions =
         if ctx.GatherLights then
           ctx.Lights.SpotLights.Add l
       | Command3D.DrawMesh(_, _, mat) ->
+        ctx.Usage.Forward <- true
+
         warmMaterial(
           ctx.Variants,
           ctx.ForwardShader,
@@ -1929,6 +1999,8 @@ module internal PipelineFunctions =
           1
         )
       | Command3D.DrawModel(model, transform) ->
+        ctx.Usage.Forward <- true
+
         for mi = 0 to model.MeshCount - 1 do
           let matIdx = NativePtr.get model.MeshMaterial mi
           let raylibMat = NativePtr.get model.Materials matIdx
@@ -1943,6 +2015,8 @@ module internal PipelineFunctions =
             1
           )
       | Command3D.DrawModelWith(model, _, matOverride) ->
+        ctx.Usage.Forward <- true
+
         match matOverride with
         | MaterialOverride.All m ->
           warmMaterial(
@@ -1966,6 +2040,8 @@ module internal PipelineFunctions =
               1
             )
       | Command3D.DrawSkinnedMesh(_, _, mat, _) ->
+        ctx.Usage.Skinned <- true
+
         warmMaterial(
           ctx.Variants,
           ctx.ForwardShader,
@@ -1975,6 +2051,8 @@ module internal PipelineFunctions =
           3
         )
       | Command3D.DrawMeshInstanced(_, _, mat, _) ->
+        ctx.Usage.Instanced <- true
+
         warmMaterial(
           ctx.Variants,
           ctx.ForwardShader,
@@ -1984,6 +2062,7 @@ module internal PipelineFunctions =
           2
         )
       | Command3D.DrawSkinnedMeshInstanced(_, _, _, mat, _, _) ->
+        ctx.Usage.SkinnedInstanced <- true
         // The skinned-instanced variant is warmed directly — warmMaterial only
         // covers the original three variants.
         let key = MaterialKey.fromMaterial3D &mat
@@ -2426,6 +2505,10 @@ type ForwardPipelineBase
   // the pipeline shaders load (see below).
   let variants = ShaderVariants()
 
+  // Which variants the current frame's draws use — cleared and rebuilt by the
+  // pre-scan each frame; the shadow-uniform upload reads it to skip unused variants.
+  let shaderUsage = ShaderUsage()
+
   // Pooled RGBA32F bone-palette textures for skinned-instanced draws (both the
   // forward pass and the shadow pass). Acquired per chunk, released once per
   // frame at the end of Execute.
@@ -2572,6 +2655,7 @@ type ForwardPipelineBase
       uploadShadowUniforms(
         hasCasters,
         variants,
+        shaderUsage,
         shadowAtlas,
         cam.Position,
         atlasCfg.MaxCasters
@@ -2658,6 +2742,7 @@ type ForwardPipelineBase
       uploadShadowUniforms(
         hasC,
         variants,
+        shaderUsage,
         shadowAtlas,
         camera.Position,
         atlasCfg.MaxCasters
@@ -3307,11 +3392,14 @@ type ForwardPipelineBase
     if collectInline then
       drawCollection.Begin true
 
+    shaderUsage.Clear()
+
     let frameState =
       preScan(
         buffer,
         {
           Variants = variants
+          Usage = shaderUsage
           Lights = lights
           GatherLights = not multiBlock
           ForwardShader = forwardShader

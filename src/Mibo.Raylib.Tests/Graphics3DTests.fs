@@ -1770,6 +1770,7 @@ let preScanTests =
           buffer,
           {
             Variants = variants
+            Usage = ShaderUsage()
             Lights = lights
             GatherLights = true
             ForwardShader = Unchecked.defaultof<_>
@@ -1801,6 +1802,7 @@ let preScanTests =
           buffer,
           {
             Variants = variants
+            Usage = ShaderUsage()
             Lights = lights
             GatherLights = true
             ForwardShader = Unchecked.defaultof<_>
@@ -1828,6 +1830,7 @@ let preScanTests =
           buffer,
           {
             Variants = variants
+            Usage = ShaderUsage()
             Lights = lights
             GatherLights = true
             ForwardShader = Unchecked.defaultof<_>
@@ -1862,6 +1865,7 @@ let preScanTests =
           buffer,
           {
             Variants = variants
+            Usage = ShaderUsage()
             Lights = lights
             GatherLights = true
             ForwardShader = Unchecked.defaultof<_>
@@ -1891,6 +1895,7 @@ let preScanTests =
           buffer,
           {
             Variants = variants
+            Usage = ShaderUsage()
             Lights = lights
             GatherLights = false
             ForwardShader = Unchecked.defaultof<_>
@@ -1916,6 +1921,7 @@ let preScanTests =
           buffer,
           {
             Variants = variants
+            Usage = ShaderUsage()
             Lights = lights
             GatherLights = true
             ForwardShader = Unchecked.defaultof<_>
