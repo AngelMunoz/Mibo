@@ -691,6 +691,35 @@ let renderBuffer3DTests =
       | _ -> Tests.failtest "Expected DrawLine3D"
     }
 
+    test
+      "AddDrawInstanced copies transforms at record time and clamps the count" {
+      use buf = new RenderBuffer3D()
+      let transforms = [| identity; Matrix4x4.CreateTranslation(v3a) |]
+
+      buf.AddDrawInstanced(mesh, transforms, Material3D.defaults, 5, ValueNone)
+
+      // Simulate the caller refilling its persistent array before execution.
+      transforms[0] <- Matrix4x4.CreateTranslation(v3b)
+
+      Expect.equal buf.Count 1 "Expected exactly one command"
+
+      match buf.Item 0 with
+      | Command3D.DrawMeshInstanced(_, t, _, count) ->
+        Expect.equal count 2 "Count clamps to transforms.Length (was 5)"
+
+        Expect.isFalse
+          (Object.ReferenceEquals(t, transforms))
+          "Transforms are copied at record time"
+
+        Expect.equal
+          t[0]
+          identity
+          "Mutating the caller's array must not affect the recorded command"
+
+        Expect.equal t[1] transforms[1] "Transform 1 copied"
+      | _ -> Tests.failtest "Expected DrawMeshInstanced"
+    }
+
     test "Clear resets count to 0" {
       use buf = new RenderBuffer3D()
       buf.Add(Command3D.drawLine3D v3a v3b Color.White)

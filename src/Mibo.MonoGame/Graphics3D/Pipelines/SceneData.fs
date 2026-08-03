@@ -331,7 +331,8 @@ type PaletteChunkCache() =
 /// </summary>
 /// <remarks>
 /// Memo validity is per frame, same as <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/>:
-/// transforms arrays are game-owned and stable for the duration of the render flush, and
+/// the buffer copies caller transforms into per-frame rented arrays at record time, so each
+/// command's array is stable for the duration of the render flush, and
 /// <c>ReleaseAll</c> — called once per frame alongside the palette cache's — drops every
 /// memo. Keyed by array reference + count. The DX12 grouped path does NOT use this cache:
 /// its forward/depth group budgets differ (PaletteGroup.MaxMatrices vs MaxMatricesDepth),

@@ -1228,9 +1228,12 @@ let animatedInstancedWitnessTests =
         | Command3D.DrawSkinnedMeshInstanced(_, t, palettes, _, count, _) ->
           Expect.equal count 2 "Two instances"
 
-          Expect.isTrue
+          Expect.isFalse
             (Object.ReferenceEquals(t, transforms))
-            "Transforms array should be forwarded untouched"
+            "Transforms are copied at record time (the caller may reuse its array)"
+
+          Expect.equal t[0] transforms[0] "Transform 0 copied"
+          Expect.equal t[1] transforms[1] "Transform 1 copied"
 
           // ArrayPool may return a larger array than requested.
           Expect.isTrue
@@ -1240,6 +1243,35 @@ let animatedInstancedWitnessTests =
           Expect.equal palettes[0] poseA.Palette[0] "Instance 0 palette first"
           Expect.equal palettes[1] poseB.Palette[0] "Instance 1 palette second"
         | _ -> Tests.failtest "Expected DrawSkinnedMeshInstanced"
+    }
+
+    test
+      "mutating the caller's transforms after Add does not affect the command" {
+      let am = makeAnimatedModel 1
+      use buffer = new RenderBuffer3D()
+      let localTransforms = [| Matrix4x4.Identity |]
+
+      buffer.AddAnimatedModelInstanced(
+        am,
+        localTransforms,
+        [| poseA |],
+        ValueNone,
+        ValueNone
+      )
+
+      // Simulate the caller refilling its persistent array (e.g. for the
+      // next camera block) before the buffer executes.
+      localTransforms[0] <- Raymath.MatrixTranslate(9.0f, 9.0f, 9.0f)
+
+      match buffer[0] with
+      | Command3D.DrawSkinnedMeshInstanced(_, t, _, _, count, _) ->
+        Expect.equal count 1 "One instance"
+
+        Expect.equal
+          t[0]
+          Matrix4x4.Identity
+          "The recorded command must keep the values from record time"
+      | _ -> Tests.failtest "Expected DrawSkinnedMeshInstanced"
     }
 
     test "instance count clamps to the shorter array" {
