@@ -1186,9 +1186,12 @@ module internal PbrShading =
   /// vertex buffer. The palette data itself does NOT flow through here — it rides the
   /// shared <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.PaletteChunkCache"/> textures
   /// (SkinnedInstanced) or the <c>bonePaletteGroup</c> constant array (SkinnedInstancedGrouped,
-  /// the DX12 path). Does NOT bind — the caller binds stream 0 per mesh part. Instances
-  /// past <paramref name="colors"/>' length are clamped to <c>Color.White</c> (identity
-  /// multiplier), matching
+  /// the DX12 path). On DX12 the palette index is PRE-MULTIPLIED by
+  /// <paramref name="boneCount"/> (the grouped shaders take the offset directly — the
+  /// DX12 mgfx reflection parser drops a groupBoneCount uniform); everywhere else it
+  /// stays a texture row. Does NOT bind — the caller binds stream 0 per mesh part.
+  /// Instances past <paramref name="colors"/>' length are clamped to <c>Color.White</c>
+  /// (identity multiplier), matching
   /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PbrShading.stageInstanceColorData"/>.
   /// </summary>
   let private stagePaletteInstanceVB
@@ -1198,6 +1201,7 @@ module internal PbrShading =
       transforms: Matrix[],
       colors: Color[] voption,
       count: int,
+      boneCount: int,
       chunks: struct (int * int * Texture2D)[],
       chunkTotal: int,
       chunkStart: int,
@@ -1211,17 +1215,21 @@ module internal PbrShading =
 
       let colorCount = if isNull cs then 0 else cs.Length
 
+      // PaletteOffset is chunk-local: palette storage (texture chunk or uniform
+      // group on the DX12 path) holds this chunk only. DX12 pre-multiplies by
+      // boneCount (the grouped shader takes the offset directly — a
+      // groupBoneCount uniform would not survive DX12 mgfx reflection).
+      let dx12 = isDirectX12Backend()
+
       for i = 0 to chunkCount - 1 do
         let gi = chunkStart + i
         let color = if gi < colorCount then cs[gi] else Color.White
 
-        // PaletteOffset is chunk-local: palette storage (texture chunk or uniform
-        // group on the DX12 path) holds this chunk only.
         res.InstancePaletteColorStaging[i] <-
           VertexInstanceWorldPaletteColor.Create(
             transforms[gi],
             color,
-            float32 i
+            (if dx12 then float32(i * boneCount) else float32 i)
           )
 
       // Must stay a DynamicVertexBuffer for the same reason as stageInstanceData:
@@ -1272,11 +1280,12 @@ module internal PbrShading =
               Array.zeroCreate<VertexInstanceWorldPalette> chunkCount
 
           for i = 0 to chunkCount - 1 do
-            // PaletteOffset is chunk-local (see the colored branch above).
+            // PaletteOffset is chunk-local AND pre-multiplied by boneCount:
+            // the DX12 grouped shader uses it as the palette base directly.
             res.InstancePaletteStaging[i] <-
               VertexInstanceWorldPalette.Create(
                 transforms[chunkStart + i],
-                float32 i
+                float32(i * boneCount)
               )
 
           res.InstancePaletteStaging
@@ -1483,9 +1492,6 @@ module internal PbrShading =
               | ValueNone -> PbrUniforms.setInt gp.Shadow.DirLightCastsShadows 0
 
               res.GroupedUniformsDirty <- false
-
-            // Command-invariant: the group's bone stride never changes across chunks.
-            PbrUniforms.setInt gp.Matrix.GroupBoneCount boneCount
           | ValueNone -> ()
 
         // A user-effect target selects its SkinnedInstanced technique once around the
@@ -1755,6 +1761,7 @@ module internal PbrShading =
                 transforms,
                 colors,
                 count,
+                boneCount,
                 chunks,
                 chunkTotal,
                 chunkStart,

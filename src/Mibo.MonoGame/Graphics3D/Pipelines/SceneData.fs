@@ -88,7 +88,7 @@ module internal PaletteGroup =
 
   /// <summary>Bone matrices per group for the DEPTH grouped effect — the shader's
   /// <c>bonePaletteGroup[500]</c>. The depth effect's non-palette $Globals cost is only
-  /// 132B (matModel + viewProj + groupBoneCount), so 500×64+132 = 32132B fits the Int16
+  /// 128B (matModel + viewProj), so 500×64+128 = 32128B fits the Int16
   /// cap. Larger depth groups mean fewer shadow-pass draws per frame.</summary>
   [<Literal>]
   let MaxMatricesDepth = 500

@@ -22,7 +22,6 @@ float4x4 viewProj;
 
 #define MAX_GROUP_PALETTES 500
 float4x4 bonePaletteGroup[MAX_GROUP_PALETTES];
-int groupBoneCount;
 
 struct VS_INPUT_SKINNED_INSTANCED {
   float3 Position    : POSITION0;
@@ -43,7 +42,11 @@ struct VS_OUTPUT {
 VS_OUTPUT VS_SkinnedInstancedGrouped(VS_INPUT_SKINNED_INSTANCED input) {
   VS_OUTPUT output;
 
-  int base = (int)input.PaletteOffset * groupBoneCount;
+  // PaletteOffset arrives PRE-MULTIPLIED by boneCount from the CPU (the
+  // DX12 mgfx reflection parser drops a groupBoneCount uniform from the
+  // compiled effect — a missing int reads 0 and collapses every instance
+  // to palette row 0), so the group base is the offset itself.
+  int base = (int)input.PaletteOffset;
 
   float4x4 skin =
     input.BoneWeights.x * bonePaletteGroup[base + input.BoneIndices.x] +

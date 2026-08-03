@@ -134,10 +134,11 @@ type ShadowEffectParams = {
   PaletteTex: EffectParameter
   PaletteTexSize: EffectParameter
   // Grouped-uniform skinned + instanced (DepthSkinnedInstancedGrouped technique — the
-  // DX12 fallback): one group of bone palettes as a constant array + the bone count
-  // per instance. null on the OpenGL effect; unused on DX11/Vulkan.
+  // DX12 fallback): one group of bone palettes as a constant array. The bone stride
+  // arrives pre-multiplied in the instance PaletteOffset (a groupBoneCount uniform
+  // does not survive DX12 mgfx reflection). null on the OpenGL effect; unused on
+  // DX11/Vulkan.
   BonePaletteGroup: EffectParameter
-  GroupBoneCount: EffectParameter
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -310,7 +311,6 @@ module internal ShadowPass =
     PaletteTex = e.Parameters["paletteTex"]
     PaletteTexSize = e.Parameters["paletteTexSize"]
     BonePaletteGroup = e.Parameters["bonePaletteGroup"]
-    GroupBoneCount = e.Parameters["groupBoneCount"]
   }
 
   /// <summary>
@@ -1127,11 +1127,6 @@ module internal ShadowPass =
 
                     (obtained, obtained.Length)
 
-                // Command-invariant on DX12: the group's bone stride never
-                // changes across this draw's chunks.
-                if isDX12 then
-                  PbrUniforms.setInt shadowEffectParams.GroupBoneCount boneCount
-
                 let mutable chunkIdx = 0
 
                 while chunkIdx < chunkTotal do
@@ -1153,7 +1148,10 @@ module internal ShadowPass =
                         res.SkinnedInstancedStaging[i] <-
                           VertexInstanceWorldPalette.Create(
                             draw.Transforms[chunkStart + i],
-                            float32 i // palette row is chunk-local (texture holds this chunk only)
+                            // chunk-local AND pre-multiplied by boneCount: the
+                            // DX12 grouped depth shader uses the offset as the
+                            // palette base directly (no groupBoneCount uniform).
+                            float32(i * boneCount)
                           )
 
                       res.SkinnedInstancedStaging
