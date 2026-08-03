@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.0.0-rc-002] - 2026-08-02
+
 ### Fixed
 
 - **MonoGame 3D, Raylib 3D:** instanced draws (`instanced`, `animatedModelInstanced`) now copy the caller's `transforms` array when the draw is recorded. A frame's draws execute only after the whole view is recorded, so reusing one array across camera blocks previously rendered the earlier block with the later block's transforms. Keeping one persistent array per group and refilling it between blocks or frames is now safe, with zero steady-state allocation beyond one pooled copy per instanced command.
