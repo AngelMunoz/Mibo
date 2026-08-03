@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.0.0-rc-003] - 2026-08-02
+
 ### Fixed
 
 - **MonoGame 3D (DX12):** skinned + instanced draws now animate every instance with its own pose on the DX12 backend. The `groupBoneCount` uniform did not survive the DX12 mgfx reflection parser even in the isolated grouped effects, so the shaders read a zero bone stride and every instance rendered with the first instance's bone palette — all instances shared one pose, and shadows could play a different clip than the body. The bone stride is now pre-multiplied into the per-instance palette offset at staging time and the grouped shaders index the palette directly, with no uniform involved.
