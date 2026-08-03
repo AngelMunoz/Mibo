@@ -297,13 +297,15 @@ float4 paletteBoneRow(int boneIndex, int row, float instance) {
 > framework loads an isolated `ForwardPbrGrouped.fx` (DX12-only) whose
 > `SkinnedInstancedGrouped` / `SkinnedInstancedGroupedColor` techniques read
 > bone palettes from a `bonePaletteGroup[448]` constant array in `$Globals`,
-> indexed by the per-instance `PaletteOffset`. The main `ForwardPbr.fx` cannot
-> serve these techniques on DX12 because the mgfx reflection parser drops the
-> `bonePaletteGroup` / `groupBoneCount` params when all 8 techniques are
-> present in one file. User effects that declare a `SkinnedInstanced`
-> technique fall back to per-instance `Skinned` draws on DX12 (the grouped
-> path is framework-PBR-only). A model with more than 448 bones exceeds the
-> group budget and takes the same per-instance fallback.
+> indexed by the per-instance `PaletteOffset` **pre-multiplied by the bone
+> count** (a `groupBoneCount` uniform does not survive DX12 mgfx reflection,
+> so the stride multiply happens at staging time). The main `ForwardPbr.fx`
+> cannot serve these techniques on DX12 because the mgfx reflection parser
+> drops the `bonePaletteGroup` param when all 8 techniques are present in
+> one file. User effects that declare a `SkinnedInstanced` technique fall
+> back to per-instance `Skinned` draws on DX12 (the grouped path is
+> framework-PBR-only). A model with more than 448 bones exceeds the group
+> budget and takes the same per-instance fallback.
 
 ## `drawMeshEffect` (MonoGame only)
 

@@ -39,10 +39,11 @@ type internal MatrixUniforms = {
   PaletteTex: EffectParameter
   PaletteTexSize: EffectParameter
   // Grouped-uniform skinned + instanced (SkinnedInstancedGrouped techniques — the
-  // DX12 fallback): one group of bone palettes as a constant array + the bone
-  // count per instance. null on the OpenGL effect; unused on DX11/Vulkan.
+  // DX12 fallback): one group of bone palettes as a constant array. The bone stride
+  // arrives pre-multiplied in the instance PaletteOffset (a groupBoneCount uniform
+  // does not survive DX12 mgfx reflection). null on the OpenGL effect; unused on
+  // DX11/Vulkan.
   BonePaletteGroup: EffectParameter
-  GroupBoneCount: EffectParameter
 }
 
 /// <summary>Material uniforms: scalar/color PBR factors + the 5 sampler textures.
@@ -156,7 +157,6 @@ module internal PbrUniforms =
     PaletteTex = param e "paletteTex"
     PaletteTexSize = param e "paletteTexSize"
     BonePaletteGroup = param e "bonePaletteGroup"
-    GroupBoneCount = param e "groupBoneCount"
   }
 
   let private buildMaterial(e: Effect) : MaterialUniforms = {

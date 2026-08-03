@@ -2,10 +2,12 @@
 //
 // This is the full ForwardPbr.fx shader with ONLY the grouped-uniform skinned +
 // instanced techniques. It exists as a separate .fx file because the MonoGame DX12
-// mgfx reflection parser (ShaderProfile.DirectX12.cs) drops bonePaletteGroup,
-// groupBoneCount, and paletteTexSize from the compiled effect when all 8 techniques
-// are present in one file. Isolating the grouped techniques into this file makes
-// the params survive reflection on DX12.
+// mgfx reflection parser (ShaderProfile.DirectX12.cs) drops bonePaletteGroup and
+// paletteTexSize from the compiled effect when all 8 techniques are present in one
+// file. Isolating the grouped techniques into this file makes bonePaletteGroup
+// survive reflection on DX12. (groupBoneCount was dropped even here, so the bone
+// stride now arrives pre-multiplied in the instance PaletteOffset — see
+// groupBoneMatrix.)
 //
 // On DX11/Vulkan/OpenGL the grouped techniques in ForwardPbr.fx are used directly;
 // this file is loaded ONLY on DX12.
@@ -163,10 +165,13 @@ float4x4 normalMatrix;
 
 #define MAX_GROUP_PALETTES 448
 float4x4 bonePaletteGroup[MAX_GROUP_PALETTES];
-int groupBoneCount;
 
+// `instance` arrives PRE-MULTIPLIED by boneCount from the CPU: the DX12
+// mgfx reflection parser drops a groupBoneCount uniform from the compiled
+// effect (a missing int reads 0, collapsing every instance to palette
+// row 0), so the stride multiply happens at staging time instead.
 float4x4 groupBoneMatrix(int boneIndex, float instance) {
-  return bonePaletteGroup[(int)instance * groupBoneCount + boneIndex];
+  return bonePaletteGroup[(int)instance + boneIndex];
 }
 
 // ------------------------------------------------------------------
