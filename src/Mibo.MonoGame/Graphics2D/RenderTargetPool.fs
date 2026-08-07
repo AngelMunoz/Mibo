@@ -2,6 +2,7 @@ namespace Mibo.Elmish.Graphics2D
 
 open System.Collections.Generic
 open Microsoft.Xna.Framework.Graphics
+open Mibo.Elmish
 
 /// <summary>
 /// Provides pooled render targets to avoid per-frame allocation and disposal
@@ -52,8 +53,8 @@ type RenderTargetPool(gd: GraphicsDevice, ?maxIdlePerDimension: int) =
     member _.Acquire(width, height) =
       let key = struct (width, height)
 
-      match pool.TryGetValue(key) with
-      | true, queue when queue.Count > 0 ->
+      match Dictionary.tryGetValue key pool with
+      | ValueSome queue when queue.Count > 0 ->
         let rt = queue.Dequeue()
         inUse.Add(rt)
         rt
@@ -77,14 +78,14 @@ type RenderTargetPool(gd: GraphicsDevice, ?maxIdlePerDimension: int) =
       for rt in inUse do
         let key = struct (rt.Width, rt.Height)
 
-        match pool.TryGetValue(key) with
-        | true, queue when queue.Count < maxIdle -> queue.Enqueue(rt)
-        | true, _ ->
+        match Dictionary.tryGetValue key pool with
+        | ValueSome queue when queue.Count < maxIdle -> queue.Enqueue(rt)
+        | ValueSome _ ->
           // Per-dimension idle cap reached: dispose the excess rather than
           // retaining it, so dimensions seen only during transient resizes
           // don't leak GPU memory.
           rt.Dispose()
-        | false, _ ->
+        | ValueNone ->
           let queue = Queue<RenderTarget2D>()
           queue.Enqueue(rt)
           pool[key] <- queue
@@ -98,7 +99,7 @@ type RenderTargetPool(gd: GraphicsDevice, ?maxIdlePerDimension: int) =
 
       inUse.Clear()
 
-      for KeyValue(_, queue) in pool do
+      for KeyValueV(_, queue) in pool do
         for rt in queue do
           rt.Dispose()
 

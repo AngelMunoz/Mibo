@@ -1,5 +1,6 @@
 namespace Mibo.Elmish.Graphics2D
 
+open Mibo.Elmish
 open System.Collections.Generic
 open Raylib_cs
 
@@ -44,8 +45,8 @@ type RenderTargetPool() =
     member _.Acquire(width, height) =
       let key = struct (width, height)
 
-      match pool.TryGetValue(key) with
-      | true, queue when queue.Count > 0 ->
+      match Dictionary.tryGetValue key pool with
+      | ValueSome queue when queue.Count > 0 ->
         let rt = queue.Dequeue()
         inUse.Add(rt)
         rt
@@ -58,9 +59,9 @@ type RenderTargetPool() =
       for rt in inUse do
         let key = struct (rt.Texture.Width, rt.Texture.Height)
 
-        match pool.TryGetValue(key) with
-        | true, queue -> queue.Enqueue(rt)
-        | false, _ ->
+        match Dictionary.tryGetValue key pool with
+        | ValueSome queue -> queue.Enqueue(rt)
+        | ValueNone ->
           let queue = Queue<RenderTexture2D>()
           queue.Enqueue(rt)
           pool[key] <- queue
@@ -74,7 +75,7 @@ type RenderTargetPool() =
 
       inUse.Clear()
 
-      for KeyValue(_, queue) in pool do
+      for KeyValueV(_, queue) in pool do
         for rt in queue do
           Raylib.UnloadRenderTexture(rt)
 

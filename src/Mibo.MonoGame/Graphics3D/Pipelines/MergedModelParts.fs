@@ -5,6 +5,7 @@ open System.Collections.Generic
 open System.Runtime.CompilerServices
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open Mibo.Elmish
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MergedModelParts — automatic mesh-part merging for skinned + instanced draws.
@@ -80,9 +81,9 @@ module internal MergedModelParts =
       let key =
         struct (p.TransformId, p.DeclarationId, p.TextureId, p.IsSkinned)
 
-      match groups.TryGetValue key with
-      | true, bucket -> bucket.Add i
-      | _ ->
+      match Dictionary.tryGetValue key groups with
+      | ValueSome bucket -> bucket.Add i
+      | ValueNone ->
         let bucket = ResizeArray<int>()
         bucket.Add i
         groups[key] <- bucket
@@ -133,9 +134,9 @@ module internal MergedModelParts =
       let boneWorld = boneWorlds[mesh.ParentBone.Index]
 
       let transformId =
-        match transformIds.TryGetValue boneWorld with
-        | true, id -> id
-        | _ ->
+        match Dictionary.tryGetValue boneWorld transformIds with
+        | ValueSome id -> id
+        | ValueNone ->
           let id = transformIds.Count
           transformIds[boneWorld] <- id
           id
@@ -144,9 +145,9 @@ module internal MergedModelParts =
         let declaration = part.VertexBuffer.VertexDeclaration
 
         let declId =
-          match declarations.TryGetValue declaration with
-          | true, id -> id
-          | _ ->
+          match Dictionary.tryGetValue declaration declarations with
+          | ValueSome id -> id
+          | ValueNone ->
             let id = declarations.Count
             declarations[declaration] <- id
             id
@@ -161,9 +162,9 @@ module internal MergedModelParts =
           if isNull texture then
             0
           else
-            match textures.TryGetValue texture with
-            | true, id -> id
-            | _ ->
+            match Dictionary.tryGetValue texture textures with
+            | ValueSome id -> id
+            | ValueNone ->
               let id = textures.Count + 1 // 0 reserved for "no known texture"
               textures[texture] <- id
               id

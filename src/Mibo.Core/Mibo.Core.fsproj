@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <Compile Include="Properties/AssemblyInfo.fs" />
+    <Compile Include="Collections.fs" />
     <Compile Include="Color.fs" />
     <Compile Include="Animation3D.fs" />
     <Compile Include="Elmish.Time.fs" />

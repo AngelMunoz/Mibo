@@ -4,6 +4,7 @@ open System
 open System.Runtime.InteropServices
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open Mibo.Elmish
 open Mibo.Elmish.Graphics3D
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,16 +178,16 @@ type PaletteTexturePool(?maxIdlePerSize: int) =
   member _.Acquire(gd: GraphicsDevice, width: int, height: int) : Texture2D =
     let key = struct (width, height)
 
-    match usedThisFrame.TryGetValue(key) with
-    | true, n -> usedThisFrame[key] <- n + 1
-    | _ -> usedThisFrame[key] <- 1
+    match Dictionary.tryGetValue key usedThisFrame with
+    | ValueSome n -> usedThisFrame[key] <- n + 1
+    | ValueNone -> usedThisFrame[key] <- 1
 
-    match pool.TryGetValue(key) with
-    | true, queue when queue.Count > 0 ->
+    match Dictionary.tryGetValue key pool with
+    | ValueSome queue when queue.Count > 0 ->
       let tex = queue.Dequeue()
       inUse.Add(tex)
       tex
-    | _ ->
+    | ValueNone ->
       let tex = new Texture2D(gd, width, height, false, SurfaceFormat.Vector4)
 
       inUse.Add(tex)
@@ -201,25 +202,25 @@ type PaletteTexturePool(?maxIdlePerSize: int) =
       let key = struct (tex.Width, tex.Height)
 
       let keep =
-        match usedThisFrame.TryGetValue(key) with
-        | true, n -> max maxIdle n
-        | _ -> maxIdle
+        match Dictionary.tryGetValue key usedThisFrame with
+        | ValueSome n -> max maxIdle n
+        | ValueNone -> maxIdle
 
-      match pool.TryGetValue(key) with
-      | true, queue when queue.Count < keep -> queue.Enqueue(tex)
-      | true, _ -> tex.Dispose()
-      | false, _ ->
+      match Dictionary.tryGetValue key pool with
+      | ValueSome queue when queue.Count < keep -> queue.Enqueue(tex)
+      | ValueSome _ -> tex.Dispose()
+      | ValueNone ->
         let queue = System.Collections.Generic.Queue<Texture2D>()
         queue.Enqueue(tex)
         pool[key] <- queue
 
     // Trim idle overflow back toward this frame's demand, so a one-frame spike
     // doesn't pin the pool at spike size forever.
-    for KeyValue(key, queue) in pool do
+    for KeyValueV(key, queue) in pool do
       let keep =
-        match usedThisFrame.TryGetValue(key) with
-        | true, n -> max maxIdle n
-        | _ -> maxIdle
+        match Dictionary.tryGetValue key usedThisFrame with
+        | ValueSome n -> max maxIdle n
+        | ValueNone -> maxIdle
 
       while queue.Count > keep do
         queue.Dequeue().Dispose()
@@ -234,7 +235,7 @@ type PaletteTexturePool(?maxIdlePerSize: int) =
 
       inUse.Clear()
 
-      for KeyValue(_, queue) in pool do
+      for KeyValueV(_, queue) in pool do
         for tex in queue do
           tex.Dispose()
 
@@ -281,9 +282,9 @@ type PaletteChunkCache() =
   member this.Obtain
     (gd: GraphicsDevice, palettes: Matrix[], boneCount: int, count: int)
     : struct (int * int * Texture2D)[] =
-    match memo.TryGetValue(palettes) with
-    | true, (b, c, chunks) when b = boneCount && c = count -> chunks
-    | _ ->
+    match Dictionary.tryGetValue palettes memo with
+    | ValueSome(b, c, chunks) when b = boneCount && c = count -> chunks
+    | ValueNone ->
       let chunkTotal =
         (count + PaletteTexture.MaxHeight - 1) / PaletteTexture.MaxHeight
 
@@ -366,9 +367,9 @@ type InstanceWorldCache() =
       chunks: struct (int * int * 'T)[],
       chunkTotal: int
     ) : VertexInstanceWorldPalette[] =
-    match memo.TryGetValue(transforms) with
-    | true, (c, slot) when c = count -> pool[slot]
-    | _ ->
+    match Dictionary.tryGetValue transforms memo with
+    | ValueSome(c, slot) when c = count -> pool[slot]
+    | ValueNone ->
       let slot = used
       used <- used + 1
 

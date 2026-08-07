@@ -9,6 +9,7 @@ open System.Numerics
 open System.Runtime.InteropServices
 open FSharp.NativeInterop
 open Raylib_cs
+open Mibo.Elmish
 
 /// <summary>
 /// A loaded set of 3D animation clips extracted from a model file.
@@ -836,10 +837,11 @@ module AnimatedMesh =
   /// Try to find the index of a bone by its authored name.
   /// Returns <c>ValueNone</c> when the mesh has no bone with that name.
   /// </summary>
-  let tryFindBoneIndex (name: string) (mesh: AnimatedMesh) : int voption =
-    match mesh.BoneLookup.TryGetValue name with
-    | true, index -> ValueSome index
-    | false, _ -> ValueNone
+  let inline tryFindBoneIndex
+    (name: string)
+    (mesh: AnimatedMesh)
+    : int voption =
+    ReadOnlyDict.tryGetValue name mesh.BoneLookup
 
   /// <summary>
   /// Compute bone matrices for a given animation clip and frame.

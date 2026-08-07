@@ -4,6 +4,7 @@ open System.Buffers
 open System.Collections.Generic
 open System.Numerics
 open System.Runtime.InteropServices
+open Mibo.Elmish
 open Mibo.Elmish.Graphics3D
 
 /// <summary>
@@ -85,7 +86,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
     let groups = this.Storage
     let snapshots = this.SnapshotPool
 
-    for KeyValue(_, struct (transforms, sample)) in groups do
+    for KeyValueV(_, struct (transforms, sample)) in groups do
       if transforms.Count > 0 then
         let count = transforms.Count
         let snapshot = ArrayPool<Matrix4x4>.Shared.Rent count
@@ -138,7 +139,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
     let groups = this.Storage
     let snapshots = this.SnapshotPool
 
-    for KeyValue(key, struct (transforms, sample)) in groups do
+    for KeyValueV(key, struct (transforms, sample)) in groups do
       if transforms.Count > 0 then
         let count = transforms.Count
         let snapshot = ArrayPool<Matrix4x4>.Shared.Rent count
@@ -230,9 +231,9 @@ module CellGridRenderer3D =
       let key = ctx.GetKey content
       let transform = ctx.GetTransform worldPos content
 
-      match groups.TryGetValue key with
-      | true, struct (transforms, _) -> transforms.Add transform
-      | false, _ ->
+      match Dictionary.tryGetValue key groups with
+      | ValueSome struct (transforms, _) -> transforms.Add transform
+      | ValueNone ->
         let list = ResizeArray<Matrix4x4>()
         list.Add transform
         groups[key] <- struct (list, content))
@@ -260,9 +261,9 @@ module CellGridRenderer3D =
       let key = ctx.GetKey content
       let transform = ctx.GetTransform worldPos content
 
-      match groups.TryGetValue key with
-      | true, struct (transforms, _) -> transforms.Add transform
-      | false, _ ->
+      match Dictionary.tryGetValue key groups with
+      | ValueSome struct (transforms, _) -> transforms.Add transform
+      | ValueNone ->
         let list = ResizeArray<Matrix4x4>()
         list.Add transform
         groups[key] <- struct (list, content))
@@ -293,9 +294,9 @@ module CellGridRenderer3D =
       let key = ctx.GetKey content
       let transform = ctx.GetTransform worldPos content
 
-      match groups.TryGetValue key with
-      | true, struct (transforms, _) -> transforms.Add transform
-      | false, _ ->
+      match Dictionary.tryGetValue key groups with
+      | ValueSome struct (transforms, _) -> transforms.Add transform
+      | ValueNone ->
         let list = ResizeArray<Matrix4x4>()
         list.Add transform
         groups[key] <- struct (list, content))
@@ -326,9 +327,9 @@ module CellGridRenderer3D =
       let key = ctx.GetKey content
       let transform = ctx.GetTransform worldPos content
 
-      match groups.TryGetValue key with
-      | true, struct (transforms, _) -> transforms.Add transform
-      | false, _ ->
+      match Dictionary.tryGetValue key groups with
+      | ValueSome struct (transforms, _) -> transforms.Add transform
+      | ValueNone ->
         let list = ResizeArray<Matrix4x4>()
         list.Add transform
         groups[key] <- struct (list, content))
@@ -386,9 +387,9 @@ module HexGrid3DRenderer =
       let key = ctx.GetKey content
       let transform = ctx.GetTransform worldPos content
 
-      match groups.TryGetValue key with
-      | true, struct (transforms, _) -> transforms.Add transform
-      | false, _ ->
+      match Dictionary.tryGetValue key groups with
+      | ValueSome struct (transforms, _) -> transforms.Add transform
+      | ValueNone ->
         let list = ResizeArray<Matrix4x4>()
         list.Add transform
         groups[key] <- struct (list, content))
@@ -416,9 +417,9 @@ module HexGrid3DRenderer =
       let key = ctx.GetKey content
       let transform = ctx.GetTransform worldPos content
 
-      match groups.TryGetValue key with
-      | true, struct (transforms, _) -> transforms.Add transform
-      | false, _ ->
+      match Dictionary.tryGetValue key groups with
+      | ValueSome struct (transforms, _) -> transforms.Add transform
+      | ValueNone ->
         let list = ResizeArray<Matrix4x4>()
         list.Add transform
         groups[key] <- struct (list, content))
@@ -449,9 +450,9 @@ module HexGrid3DRenderer =
       let key = ctx.GetKey content
       let transform = ctx.GetTransform worldPos content
 
-      match groups.TryGetValue key with
-      | true, struct (transforms, _) -> transforms.Add transform
-      | false, _ ->
+      match Dictionary.tryGetValue key groups with
+      | ValueSome struct (transforms, _) -> transforms.Add transform
+      | ValueNone ->
         let list = ResizeArray<Matrix4x4>()
         list.Add transform
         groups[key] <- struct (list, content))
@@ -482,9 +483,9 @@ module HexGrid3DRenderer =
       let key = ctx.GetKey content
       let transform = ctx.GetTransform worldPos content
 
-      match groups.TryGetValue key with
-      | true, struct (transforms, _) -> transforms.Add transform
-      | false, _ ->
+      match Dictionary.tryGetValue key groups with
+      | ValueSome struct (transforms, _) -> transforms.Add transform
+      | ValueNone ->
         let list = ResizeArray<Matrix4x4>()
         list.Add transform
         groups[key] <- struct (list, content))

@@ -5,6 +5,7 @@ open System.Collections.Generic
 open System.Collections.Frozen
 open Assimp
 open Microsoft.Xna.Framework
+open Mibo.Elmish
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MonoGame 3D skeletal animation — runtime clip/state API.
@@ -198,9 +199,9 @@ module BonePose =
     (mesh: AnimatedMesh)
     (pose: BonePose)
     : Matrix voption =
-    match mesh.BoneLookup.TryGetValue(name) with
-    | true, index -> worldAt index pose
-    | false, _ -> ValueNone
+    match ReadOnlyDict.tryGetValue name mesh.BoneLookup with
+    | ValueSome index -> worldAt index pose
+    | ValueNone -> ValueNone
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers (internal)
@@ -769,9 +770,9 @@ module Animation3DState =
           else
             let built =
               Array.init boneNames.Length (fun i ->
-                match channels.TryGetValue boneNames[i] with
-                | true, ch -> ch
-                | _ -> emptyChannel)
+                match ReadOnlyDict.tryGetValue boneNames[i] channels with
+                | ValueSome ch -> ch
+                | ValueNone -> emptyChannel)
 
             let grown =
               Array.zeroCreate<struct (string[] * Animation3DChannel[])>(
@@ -1109,9 +1110,7 @@ module AnimatedMesh =
     (name: string)
     (mesh: AnimatedMesh)
     : int voption =
-    match mesh.BoneLookup.TryGetValue(name) with
-    | true, index -> ValueSome index
-    | false, _ -> ValueNone
+    ReadOnlyDict.tryGetValue name mesh.BoneLookup
 
   /// <summary>
   /// Compute bone matrices for a given animation clip and frame.
@@ -1144,9 +1143,9 @@ module AnimatedMesh =
       for i = 0 to boneCount - 1 do
         let boneName = mesh.BoneNames.[i]
 
-        match clip.Channels.TryGetValue(boneName) with
-        | false, _ -> matrices[i] <- mesh.InverseBindPose[i]
-        | true, ch ->
+        match ReadOnlyDict.tryGetValue boneName clip.Channels with
+        | ValueNone -> matrices[i] <- mesh.InverseBindPose[i]
+        | ValueSome ch ->
           if ch.Keyframes.Length = 0 then
             matrices[i] <- mesh.InverseBindPose[i]
           elif ch.Keyframes.Length = 1 then
