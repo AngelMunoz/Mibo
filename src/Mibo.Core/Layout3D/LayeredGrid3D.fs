@@ -33,10 +33,12 @@ module LayeredGrid3D =
   let getOrAddLayer
     index
     (grid: LayeredGrid3D<'T>)
-    : CellGrid3D<'T> * LayeredGrid3D<'T> =
-    match grid.Layers.TryGetValue index with
-    | true, thing -> thing, grid
-    | _ ->
+    : struct (CellGrid3D<'T> * LayeredGrid3D<'T>) =
+    let mutable existing = Unchecked.defaultof<CellGrid3D<'T>>
+
+    if grid.Layers.TryGetValue(index, &existing) then
+      struct (existing, grid)
+    else
       let newGrid =
         CellGrid3D.create
           grid.Width
@@ -46,7 +48,7 @@ module LayeredGrid3D =
           grid.Origin
 
       grid.Layers.Add(index, newGrid)
-      newGrid, grid
+      struct (newGrid, grid)
 
 module LayeredLayout3D =
   let inline layer
@@ -54,7 +56,8 @@ module LayeredLayout3D =
     ([<InlineIfLambda>] f: GridSection3D<'T> -> GridSection3D<'T>)
     (grid: LayeredGrid3D<'T>)
     : LayeredGrid3D<'T> =
-    let targetGrid, updatedContainer = LayeredGrid3D.getOrAddLayer index grid
+    let struct (targetGrid, updatedContainer) =
+      LayeredGrid3D.getOrAddLayer index grid
 
     Layout3D.run f targetGrid |> ignore
 

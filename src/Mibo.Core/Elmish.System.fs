@@ -39,7 +39,7 @@ module System =
     model, Cmd.none
 
   let inline private combine (a: Cmd<'Msg>) (b: Cmd<'Msg>) : Cmd<'Msg> =
-    match a, b with
+    match struct (a, b) with
     | Cmd.Empty, x -> x
     | x, Cmd.Empty -> x
     | _ -> Cmd.batch2(a, b)

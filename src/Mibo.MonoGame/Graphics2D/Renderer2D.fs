@@ -261,7 +261,7 @@ module internal LitBatchTessellation =
     not hasBatch
     || not(obj.ReferenceEquals(curEffect, effect))
     || not(obj.ReferenceEquals(curTexture, texture))
-    || (match curNormalMap, normalMap with
+    || (match struct (curNormalMap, normalMap) with
         | ValueSome a, ValueSome b -> not(obj.ReferenceEquals(a, b))
         | ValueSome _, ValueNone -> true
         | ValueNone, ValueSome _ -> true

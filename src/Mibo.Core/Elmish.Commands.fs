@@ -245,7 +245,7 @@ module Cmd =
       NowAndDeferNextFrame(nowArr, nextArr)
 
   let batch2(a: Cmd<'Msg>, b: Cmd<'Msg>) : Cmd<'Msg> =
-    match a, b with
+    match struct (a, b) with
     | Quit, _
     | _, Quit -> Quit
     | Empty, x -> x

@@ -23,8 +23,8 @@ let tests =
           |> LayeredHexLayout3D.layer 0 (HexLayout3D.set 1 1 1 10)
           |> LayeredHexLayout3D.layer 1 (HexLayout3D.set 2 2 2 20)
 
-        let (layer0, _) = LayeredHexGrid3D.getOrAddLayer 0 layered
-        let (layer1, _) = LayeredHexGrid3D.getOrAddLayer 1 layered
+        let struct (layer0, _) = LayeredHexGrid3D.getOrAddLayer 0 layered
+        let struct (layer1, _) = LayeredHexGrid3D.getOrAddLayer 1 layered
 
         Expect.equal
           (HexGrid3D.get 1 1 1 layer0)
@@ -62,8 +62,8 @@ let tests =
           |> LayeredHexLayout3D.layer 0 (HexLayout3D.set 1 1 1 10)
           |> LayeredHexLayout3D.layer 1 (HexLayout3D.set 2 2 2 20)
 
-        let (layer0, _) = LayeredHexGrid3D.getOrAddLayer 0 layered
-        let (layer1, _) = LayeredHexGrid3D.getOrAddLayer 1 layered
+        let struct (layer0, _) = LayeredHexGrid3D.getOrAddLayer 0 layered
+        let struct (layer1, _) = LayeredHexGrid3D.getOrAddLayer 1 layered
 
         Expect.equal
           (HexGrid3D.get 1 1 1 layer0)
