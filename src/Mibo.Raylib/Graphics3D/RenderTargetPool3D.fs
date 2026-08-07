@@ -5,6 +5,7 @@ namespace Mibo.Elmish.Graphics3D
 open System.Collections.Generic
 open Microsoft.FSharp.NativeInterop
 open Raylib_cs
+open Mibo.Elmish
 
 /// <summary>
 /// Provides pooled render textures to avoid per-frame allocation and disposal
@@ -133,8 +134,8 @@ type RenderTargetPool3D() =
     member _.Acquire(width, height) =
       let key = struct (width, height)
 
-      match pool.TryGetValue(key) with
-      | true, queue when queue.Count > 0 ->
+      match Dictionary.tryGetValue key pool with
+      | ValueSome queue when queue.Count > 0 ->
         let rt = queue.Dequeue()
         inUse.Add(rt)
         rt
@@ -146,8 +147,8 @@ type RenderTargetPool3D() =
     member _.AcquireWithDepth(width, height) =
       let key = struct (width, height)
 
-      match depthPool.TryGetValue(key) with
-      | true, queue when queue.Count > 0 ->
+      match Dictionary.tryGetValue key depthPool with
+      | ValueSome queue when queue.Count > 0 ->
         let rt = queue.Dequeue()
         depthInUse.Add(rt)
         rt
@@ -160,10 +161,10 @@ type RenderTargetPool3D() =
       for rt in inUse do
         let key = struct (rt.Texture.Width, rt.Texture.Height)
 
-        match pool.TryGetValue(key) with
-        | true, queue when queue.Count < maxIdle -> queue.Enqueue(rt)
-        | true, _ -> Raylib.UnloadRenderTexture(rt)
-        | false, _ ->
+        match Dictionary.tryGetValue key pool with
+        | ValueSome queue when queue.Count < maxIdle -> queue.Enqueue(rt)
+        | ValueSome _ -> Raylib.UnloadRenderTexture(rt)
+        | ValueNone ->
           let queue = Queue<RenderTexture2D>()
           queue.Enqueue(rt)
           pool[key] <- queue
@@ -173,13 +174,13 @@ type RenderTargetPool3D() =
       for rt in depthInUse do
         let key = struct (rt.Texture.Width, rt.Texture.Height)
 
-        match depthPool.TryGetValue(key) with
-        | true, queue when queue.Count < maxIdle -> queue.Enqueue(rt)
-        | true, _ ->
+        match Dictionary.tryGetValue key depthPool with
+        | ValueSome queue when queue.Count < maxIdle -> queue.Enqueue(rt)
+        | ValueSome _ ->
           Rlgl.UnloadTexture(rt.Texture.Id)
           Rlgl.UnloadTexture(rt.Depth.Id)
           Rlgl.UnloadFramebuffer(rt.Id)
-        | false, _ ->
+        | ValueNone ->
           let queue = Queue<RenderTexture2D>()
           queue.Enqueue(rt)
           depthPool[key] <- queue
@@ -193,7 +194,7 @@ type RenderTargetPool3D() =
 
       inUse.Clear()
 
-      for KeyValue(_, queue) in pool do
+      for KeyValueV(_, queue) in pool do
         for rt in queue do
           Raylib.UnloadRenderTexture(rt)
 
@@ -210,7 +211,7 @@ type RenderTargetPool3D() =
 
       depthInUse.Clear()
 
-      for KeyValue(_, queue) in depthPool do
+      for KeyValueV(_, queue) in depthPool do
         for rt in queue do
           Rlgl.UnloadTexture(rt.Texture.Id)
           Rlgl.UnloadTexture(rt.Depth.Id)

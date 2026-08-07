@@ -420,8 +420,8 @@ let tests =
           |> LayeredLayout.layer 0 (Layout.set 1 1 10)
           |> LayeredLayout.layer 1 (Layout.set 2 2 20)
 
-        let (layer0, _) = LayeredGrid2D.getOrAddLayer 0 layered
-        let (layer1, _) = LayeredGrid2D.getOrAddLayer 1 layered
+        let struct (layer0, _) = LayeredGrid2D.getOrAddLayer 0 layered
+        let struct (layer1, _) = LayeredGrid2D.getOrAddLayer 1 layered
 
         Expect.equal
           (CellGrid2D.get 1 1 layer0)

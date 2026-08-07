@@ -1478,7 +1478,7 @@ type ForwardPipelineBase
           // Reuse the camera VP the forward pass computed (correct viewport aspect). The forward
           // pass captured it in state.View * state.Projection during BeginCamera — in multi-block
           // frames that is the LAST block's camera.
-          match shadowRes.Effect, shadowRes.Params, sceneDepthRT with
+          match struct (shadowRes.Effect, shadowRes.Params, sceneDepthRT) with
           | ValueSome eff, ValueSome prms, ValueSome rt ->
             ShadowPass.renderSceneDepth
               gd
@@ -1494,7 +1494,7 @@ type ForwardPipelineBase
           ValueNone
 
       // ── Post-process: ping-pong the scene through each action ──
-      match sceneRT, ppActions with
+      match struct (sceneRT, ppActions) with
       | ValueNone, _ -> ()
       | ValueSome _, ValueNone -> ()
       | ValueSome sceneTarget, ValueSome actions ->

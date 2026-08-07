@@ -1,6 +1,6 @@
-#nowarn 9
-
 namespace Mibo.Elmish.Graphics3D.Pipelines
+
+#nowarn 9
 
 open System
 open System.Buffers
@@ -434,8 +434,8 @@ type internal PaletteTexturePool() =
   member _.Acquire(width: int, height: int) : Texture2D =
     let key = struct (width, height)
 
-    match pool.TryGetValue key with
-    | true, queue when queue.Count > 0 ->
+    match Dictionary.tryGetValue key pool with
+    | ValueSome queue when queue.Count > 0 ->
       let tex = queue.Dequeue()
       inUse.Add tex
       tex
@@ -448,9 +448,13 @@ type internal PaletteTexturePool() =
   member _.TryGetUploaded
     (palettes: Matrix4x4[], chunkStart: int, chunkCount: int)
     : Texture2D voption =
-    match uploaded.TryGetValue(struct (palettes, chunkStart, chunkCount)) with
-    | true, tex -> ValueSome tex
-    | false, _ -> ValueNone
+    match
+      Dictionary.tryGetValue
+        (struct (palettes, chunkStart, chunkCount))
+        uploaded
+    with
+    | ValueSome tex -> ValueSome tex
+    | ValueNone -> ValueNone
 
   /// Record a chunk's freshly uploaded texture for this frame.
   member _.RememberUploaded
@@ -469,9 +473,11 @@ type internal PaletteTexturePool() =
   member _.TryGetTransformSlice
     (transforms: Matrix4x4[], chunkStart: int, chunkCount: int)
     : Matrix4x4[] voption =
-    match slices.TryGetValue(struct (transforms, chunkStart, chunkCount)) with
-    | true, slot -> ValueSome slicePool[slot]
-    | false, _ -> ValueNone
+    match
+      Dictionary.tryGetValue struct (transforms, chunkStart, chunkCount) slices
+    with
+    | ValueSome slot -> ValueSome slicePool[slot]
+    | ValueNone -> ValueNone
 
   /// Cut a chunk's transform slice into a pooled array and record it for this frame.
   member _.RememberTransformSlice
@@ -495,9 +501,9 @@ type internal PaletteTexturePool() =
     for tex in inUse do
       let key = struct (tex.Width, tex.Height)
 
-      match pool.TryGetValue key with
-      | true, queue -> queue.Enqueue tex
-      | false, _ ->
+      match Dictionary.tryGetValue key pool with
+      | ValueSome queue -> queue.Enqueue tex
+      | ValueNone ->
         let queue = Queue<Texture2D>()
         queue.Enqueue tex
         pool[key] <- queue
@@ -513,7 +519,7 @@ type internal PaletteTexturePool() =
 
     inUse.Clear()
 
-    for KeyValue(_, queue) in pool do
+    for KeyValueV(_, queue) in pool do
       for tex in queue do
         Raylib.UnloadTexture tex
 
@@ -1265,13 +1271,13 @@ module internal PipelineFunctions =
     if mc.HasLast && key = mc.LastKey then
       mc.LastMaterial
     else
-      match mc.cache.TryGetValue key with
-      | true, mat ->
+      match Dictionary.tryGetValue key mc.cache with
+      | ValueSome mat ->
         variant.MaterialCache.LastKey <- key
         variant.MaterialCache.LastMaterial <- mat
         variant.MaterialCache.HasLast <- true
         mat
-      | false, _ ->
+      | ValueNone ->
         let mutable mat = Raylib.LoadMaterialDefault()
         mat.Shader <- shader
 
@@ -3085,9 +3091,9 @@ type ForwardPipelineBase
       // instancing under a user scope. A shader that declares it shades its own instances; one
       // that doesn't falls back to the PBR instanced path.
       let attrLoc =
-        match instanceAttrLocs.TryGetValue userShader with
-        | true, loc -> loc
-        | false, _ ->
+        match Dictionary.tryGetValue userShader instanceAttrLocs with
+        | ValueSome loc -> loc
+        | ValueNone ->
           let loc =
             Raylib.GetShaderLocationAttrib(userShader, "instanceTransform")
 
@@ -3140,9 +3146,9 @@ type ForwardPipelineBase
       // and a `bonePalette` sampler (bonePaletteSize is optional). Otherwise the
       // draws fall back to the built-in skinned-instanced variant.
       let struct (paletteLoc, paletteSizeLoc) =
-        match skinnedInstancedLocs.TryGetValue userShader with
-        | true, locs -> locs
-        | false, _ ->
+        match Dictionary.tryGetValue userShader skinnedInstancedLocs with
+        | ValueSome locs -> locs
+        | ValueNone ->
           let paletteLoc =
             if
               Raylib.GetShaderLocationAttrib(userShader, "instanceTransform")

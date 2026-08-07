@@ -32,10 +32,12 @@ module LayeredHexGrid =
   let getOrAddLayer
     index
     (grid: LayeredHexGrid<'T>)
-    : HexGrid<'T> * LayeredHexGrid<'T> =
-    match grid.Layers.TryGetValue index with
-    | true, thing -> thing, grid
-    | _ ->
+    : struct (HexGrid<'T> * LayeredHexGrid<'T>) =
+    let mutable existing = Unchecked.defaultof<HexGrid<'T>>
+
+    if grid.Layers.TryGetValue(index, &existing) then
+      struct (existing, grid)
+    else
       let newGrid =
         HexGrid.create
           grid.Width
@@ -45,7 +47,7 @@ module LayeredHexGrid =
           grid.Orientation
 
       grid.Layers.Add(index, newGrid)
-      newGrid, grid
+      struct (newGrid, grid)
 
 module LayeredHexLayout =
   let inline layer
@@ -53,7 +55,8 @@ module LayeredHexLayout =
     ([<InlineIfLambda>] f: HexGridSection<'T> -> HexGridSection<'T>)
     (grid: LayeredHexGrid<'T>)
     : LayeredHexGrid<'T> =
-    let targetGrid, updatedContainer = LayeredHexGrid.getOrAddLayer index grid
+    let struct (targetGrid, updatedContainer) =
+      LayeredHexGrid.getOrAddLayer index grid
 
     HexLayout.run f targetGrid |> ignore
 

@@ -589,7 +589,7 @@ module Layout3D =
     let sz = if z1 < z2 then 1 else -1
 
     let dm = max dx (max dy dz)
-    let mutable x, y, z = x1, y1, z1
+    let mutable struct (x, y, z) = x1, y1, z1
     let mutable ex = dm / 2
     let mutable ey = dm / 2
     let mutable ez = dm / 2

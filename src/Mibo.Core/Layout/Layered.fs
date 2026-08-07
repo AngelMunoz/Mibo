@@ -23,15 +23,17 @@ module LayeredGrid2D =
   let getOrAddLayer
     index
     (grid: LayeredGrid2D<'T>)
-    : CellGrid2D<'T> * LayeredGrid2D<'T> =
-    match grid.Layers.TryGetValue index with
-    | true, thing -> thing, grid
-    | _ ->
+    : struct (CellGrid2D<'T> * LayeredGrid2D<'T>) =
+    let mutable existing = Unchecked.defaultof<CellGrid2D<'T>>
+
+    if grid.Layers.TryGetValue(index, &existing) then
+      struct (existing, grid)
+    else
       let newGrid =
         CellGrid2D.create grid.Width grid.Height grid.CellSize grid.Origin
 
       grid.Layers.Add(index, newGrid)
-      newGrid, grid
+      struct (newGrid, grid)
 
 module LayeredLayout =
   let inline layer
@@ -39,7 +41,8 @@ module LayeredLayout =
     ([<InlineIfLambda>] f: GridSection2D<'T> -> GridSection2D<'T>)
     (grid: LayeredGrid2D<'T>)
     : LayeredGrid2D<'T> =
-    let targetGrid, updatedContainer = LayeredGrid2D.getOrAddLayer index grid
+    let struct (targetGrid, updatedContainer) =
+      LayeredGrid2D.getOrAddLayer index grid
 
     Layout.run f targetGrid |> ignore
 

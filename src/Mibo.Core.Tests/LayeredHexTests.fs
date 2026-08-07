@@ -15,8 +15,8 @@ let tests =
           |> LayeredHexLayout.layer 0 (HexLayout.set 1 1 10)
           |> LayeredHexLayout.layer 1 (HexLayout.set 2 2 20)
 
-        let (layer0, _) = LayeredHexGrid.getOrAddLayer 0 layered
-        let (layer1, _) = LayeredHexGrid.getOrAddLayer 1 layered
+        let struct (layer0, _) = LayeredHexGrid.getOrAddLayer 0 layered
+        let struct (layer1, _) = LayeredHexGrid.getOrAddLayer 1 layered
 
         Expect.equal (HexGrid.get 1 1 layer0) (ValueSome 10) "Layer 0 content"
 
@@ -41,8 +41,8 @@ let tests =
           |> LayeredHexLayout.layer 0 (HexLayout.set 1 1 10)
           |> LayeredHexLayout.layer 1 (HexLayout.set 2 2 20)
 
-        let (layer0, _) = LayeredHexGrid.getOrAddLayer 0 layered
-        let (layer1, _) = LayeredHexGrid.getOrAddLayer 1 layered
+        let struct (layer0, _) = LayeredHexGrid.getOrAddLayer 0 layered
+        let struct (layer1, _) = LayeredHexGrid.getOrAddLayer 1 layered
 
         Expect.equal (HexGrid.get 1 1 layer0) (ValueSome 10) "Layer 0 content"
 

@@ -387,15 +387,15 @@ module private InputPolling =
     // mouse movement for FPS-style look without the cursor reaching the edge,
     // while keeping deltas smooth (re-centering every frame can cause jitter
     // on WinForms where Mouse.SetPosition is asynchronous via the message pump).
-    let (deltaX, deltaY, reportedX, reportedY, newPrevX, newPrevY) =
+    let struct (deltaX, deltaY, reportedX, reportedY, newPrevX, newPrevY) =
       match captureMode with
       | MouseCapture.Captured when game.IsActive ->
         let w = game.Window.ClientBounds.Width
         let h = game.Window.ClientBounds.Height
-        let cx, cy = w / 2, h / 2
+        let struct (cx, cy) = w / 2, h / 2
         let margin = 50 // pixels from edge before re-centering
 
-        let dx, dy = curr.X - prevMouse.X, curr.Y - prevMouse.Y
+        let struct (dx, dy) = curr.X - prevMouse.X, curr.Y - prevMouse.Y
 
         // Re-center only when near the edge to avoid jitter from async SetPosition
         let nearEdge =
@@ -410,7 +410,7 @@ module private InputPolling =
         else
           dx, dy, curr.X, curr.Y, curr.X, curr.Y
       | _ ->
-        let dx, dy = curr.X - prevMouse.X, curr.Y - prevMouse.Y
+        let struct (dx, dy) = curr.X - prevMouse.X, curr.Y - prevMouse.Y
         dx, dy, curr.X, curr.Y, curr.X, curr.Y
 
     let posChanged = deltaX <> 0 || deltaY <> 0

@@ -385,13 +385,13 @@ module internal PbrShading =
     (e: SkinnedInstancedModelEntry)
     =
     let effectMatches =
-      match e.ForEffect, effect with
+      match struct (e.ForEffect, effect) with
       | ValueSome a, ValueSome b -> obj.ReferenceEquals(a, b)
       | ValueNone, ValueNone -> true
       | _ -> false
 
     let groupedMatches =
-      match e.ForGroupedEffect, groupedEffect with
+      match struct (e.ForGroupedEffect, groupedEffect) with
       | ValueSome a, ValueSome b -> obj.ReferenceEquals(a, b)
       | ValueNone, ValueNone -> true
       | _ -> false
@@ -1572,7 +1572,7 @@ module internal PbrShading =
 
                     let resolve hasColors =
                       let name =
-                        match isSkinned, hasColors, useGrouped with
+                        match struct (isSkinned, hasColors, useGrouped) with
                         | true, true, true -> "SkinnedInstancedGroupedColor"
                         | true, false, true -> "SkinnedInstancedGrouped"
                         | true, true, false -> "SkinnedInstancedColor"

@@ -140,7 +140,7 @@ module Sub =
       BatchSub arr
 
   let inline batch2(a: Sub<'Msg>, b: Sub<'Msg>) : Sub<'Msg> =
-    match a, b with
+    match struct (a, b) with
     | NoSub, x
     | x, NoSub -> x
     | BatchSub aa, BatchSub bb ->

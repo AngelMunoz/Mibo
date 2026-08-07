@@ -654,7 +654,7 @@ module HexLayout3D =
     let sl = if l1 < l2 then 1 else -1
 
     let dm = max dc (max dr dl)
-    let mutable c, r, l = c1, r1, l1
+    let mutable struct (c, r, l) = c1, r1, l1
     let mutable ec = dm / 2
     let mutable er = dm / 2
     let mutable el = dm / 2

@@ -141,18 +141,18 @@ type ElmishLoop<'Model, 'Msg> internal (core: LoopCore<'Model, 'Msg>) =
         with ex ->
           Console.WriteLine($"Error starting sub {SubId.value id}: {ex}")
 
-    for KeyValue(key, _disp) in activeSubs do
+    for KeyValueV(key, _disp) in activeSubs do
       if not(subIdsInUse.Contains(key)) then
         subIdsToRemove.Add(key)
 
     for i = 0 to subIdsToRemove.Count - 1 do
       let key = subIdsToRemove[i]
 
-      match activeSubs.TryGetValue(key) with
-      | true, disp ->
+      match Dictionary.tryGetValue key activeSubs with
+      | ValueSome disp ->
         disp.Dispose()
         activeSubs.Remove(key) |> ignore
-      | _ -> ()
+      | ValueNone -> ()
 
   /// <summary>Whether the loop has received a <c>Cmd.Quit</c> signal.</summary>
   member _.ShouldQuit = shouldQuit
@@ -248,7 +248,7 @@ type ElmishLoop<'Model, 'Msg> internal (core: LoopCore<'Model, 'Msg>) =
   /// Dispose all active subscriptions. Hosts should call this on shutdown.
   /// </summary>
   member _.DisposeSubs() =
-    for KeyValue(_key, disp) in activeSubs do
+    for KeyValueV(_key, disp) in activeSubs do
       disp.Dispose()
 
     activeSubs.Clear()
