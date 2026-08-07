@@ -758,6 +758,59 @@ let tests =
         | ValueSome path -> Expect.equal path.Length 1 "FT Single cell"
         | ValueNone -> failwith "Expected FT single cell"
 
+      testCase "A* returns optimal-length path (matches BFS)"
+      <| fun _ ->
+        let grid =
+          HexGrid3D.create 5 5 5 32f 1f Vector3.Zero HexOrientation.PointyTop
+
+        HexGrid3D.set 2 2 2 1 grid
+        HexGrid3D.set 2 2 1 1 grid
+        HexGrid3D.set 3 3 3 1 grid
+
+        let passable c r l =
+          match HexGrid3D.get c r l grid with
+          | ValueNone -> true
+          | ValueSome _ -> false
+
+        let cost _ _ _ _ _ _ = 1f
+
+        let bfsDist =
+          let w, d = 5, 5
+          let visited = Array.create (5 * 5 * 5) false
+
+          let queue =
+            System.Collections.Generic.Queue<struct (int * int * int * int)>()
+
+          queue.Enqueue(struct (0, 0, 0, 0))
+          visited.[0] <- true
+          let mutable result = -1
+
+          while queue.Count > 0 && result < 0 do
+            let struct (c, r, l, dist) = queue.Dequeue()
+
+            if c = 4 && r = 4 && l = 4 then
+              result <- dist
+            else
+              let nbrs = Hex3DSpatial.neighbors c r l grid
+
+              for i in 0 .. nbrs.Length - 1 do
+                let struct (nc, nr, nl) = nbrs.[i]
+                let idx = nc + nr * w + nl * w * d
+
+                if not visited.[idx] && passable nc nr nl then
+                  visited.[idx] <- true
+                  queue.Enqueue(struct (nc, nr, nl, dist + 1))
+
+          result
+
+        match Hex3DSpatial.findPath 0 0 0 4 4 4 passable cost grid with
+        | ValueSome path ->
+          Expect.equal
+            (path.Length - 1)
+            bfsDist
+            "Hex3D A* path length matches BFS optimal"
+        | ValueNone -> failwith "Expected path"
+
       testCase "unreachable returns ValueNone (PointyTop)"
       <| fun _ ->
         let grid =

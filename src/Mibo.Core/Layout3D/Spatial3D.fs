@@ -1128,7 +1128,9 @@ module Hex3DSpatial =
         l
         : float32 =
         let struct (q, rc, _) = Hex2DSpatial.offsetToCube c r orientation
-        let hexDist = float32(abs(gq - q) + abs(gr - rc)) / 2f
+        let dq = gq - q
+        let dr = gr - rc
+        let hexDist = float32(abs dq + abs dr + abs(dq + dr)) / 2f
         hexDist + float32(abs(gl - l))
 
       let total = w * h * d

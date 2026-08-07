@@ -1152,7 +1152,9 @@ module Hex2DSpatial =
         r
         : float32 =
         let struct (q, rc, _) = offsetToCube c r orientation
-        float32(abs(gq - q) + abs(gr - rc)) / 2f
+        let dq = gq - q
+        let dr = gr - rc
+        float32(abs dq + abs dr + abs(dq + dr)) / 2f
 
       let total = w * h
       let gScore = ArrayPool.Shared.Rent(total)
