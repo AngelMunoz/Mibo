@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-08-07
+
 ### Changed
 
 - **Core:** spatial grid queries are now allocation-free apart from the single result array they return. `neighbors*`, `inRange`, `ring`, `spiral`, `lineOfSightCells`, `floodFill` and `findPath` on `Grid2DSpatial`, `Hex2DSpatial`, `Grid3DSpatial` and `Hex3DSpatial` no longer allocate intermediate collections, queues, heaps or throwaway grids per call — 3D hex distance and neighbor queries previously allocated a full grid-sized array per call. Hex A\* now uses the exact hex-distance heuristic (was an underestimate that expanded extra nodes). Public signatures are unchanged.
