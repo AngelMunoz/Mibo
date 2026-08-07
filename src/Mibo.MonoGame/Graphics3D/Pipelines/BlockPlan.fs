@@ -2,6 +2,7 @@ namespace Mibo.Elmish.Graphics3D.Pipelines
 
 open Microsoft.Xna.Framework
 open Mibo.Elmish.Graphics3D
+open Mibo.Elmish
 
 /// <summary>
 /// An immutable snapshot of a light set: the ambient slot plus the directional, point, and
@@ -143,12 +144,9 @@ module private BlockPlanWalk =
       match own.Ambient with
       | ValueSome _ -> own.Ambient
       | ValueNone -> defaults.Ambient
-    DirLights =
-      Array.append (defaults.DirLights.ToArray()) (own.DirLights.ToArray())
-    PointLights =
-      Array.append (defaults.PointLights.ToArray()) (own.PointLights.ToArray())
-    SpotLights =
-      Array.append (defaults.SpotLights.ToArray()) (own.SpotLights.ToArray())
+    DirLights = ResizeArray.mergeToArray defaults.DirLights own.DirLights
+    PointLights = ResizeArray.mergeToArray defaults.PointLights own.PointLights
+    SpotLights = ResizeArray.mergeToArray defaults.SpotLights own.SpotLights
   }
 
   let inline finalizeBlock
@@ -231,12 +229,12 @@ module BlockPlan =
   /// </summary>
   let empty: BlockPlan = {
     BlockCount = 0
-    Blocks = [||]
+    Blocks = Array.empty
     FrameDefaults = {
       Ambient = ValueNone
-      DirLights = [||]
-      PointLights = [||]
-      SpotLights = [||]
+      DirLights = Array.empty
+      PointLights = Array.empty
+      SpotLights = Array.empty
     }
   }
 

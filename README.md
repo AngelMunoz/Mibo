@@ -31,6 +31,7 @@ Mibo aims to solve 80/20 of use cases for enabling developers to focus on game l
 - **Layout3D** — 3D voxel-style grid layout (`CellGrid3D`) with terrain, interior rooms, corridors, stairs, and procedural generation
 - **Animation** — sprite sheet slicing, `AnimatedSprite` state machines, and grid-based animation definitions
 - **Input Mapper** — Listen to raw input and map it to semantic actions
+- **Performance** — zero-allocation hot paths: spatial grid queries return a single result array per call, and per-frame dictionary lookups, light merging, and render-pipeline bookkeeping allocate nothing
 
 ## Getting started
 

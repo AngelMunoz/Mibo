@@ -41,3 +41,13 @@ module ReadOnlyDict =
       ValueSome value
     else
       ValueNone
+
+module ResizeArray =
+
+  /// Merges two ResizeArrays into one exact-size array: a single allocation
+  /// and two memcpy-class copies, with no intermediate arrays or growth.
+  let inline mergeToArray (a: ResizeArray<'T>) (b: ResizeArray<'T>) : 'T[] =
+    let result = Array.zeroCreate(a.Count + b.Count)
+    a.CopyTo(0, result, 0, a.Count)
+    b.CopyTo(0, result, a.Count, b.Count)
+    result
