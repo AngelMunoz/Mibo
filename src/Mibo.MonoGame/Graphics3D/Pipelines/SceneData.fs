@@ -182,15 +182,18 @@ type PaletteTexturePool(?maxIdlePerSize: int) =
     | ValueSome n -> usedThisFrame[key] <- n + 1
     | ValueNone -> usedThisFrame[key] <- 1
 
-    match Dictionary.tryGetValue key pool with
-    | ValueSome queue when queue.Count > 0 ->
+    match
+      Dictionary.tryGetValue key pool
+      |> ValueOption.filter(fun queue -> queue.Count > 0)
+    with
+    | ValueSome queue ->
       let tex = queue.Dequeue()
-      inUse.Add(tex)
+      inUse.Add tex
       tex
     | ValueNone ->
       let tex = new Texture2D(gd, width, height, false, SurfaceFormat.Vector4)
 
-      inUse.Add(tex)
+      inUse.Add tex
       tex
 
   /// <summary>Returns all checked-out textures to the pool. Call once per frame, before the
@@ -259,7 +262,7 @@ type PaletteTexturePool(?maxIdlePerSize: int) =
 /// </remarks>
 type PaletteChunkCache() =
   let pool = new PaletteTexturePool()
-  let mutable staging: Vector4[] = [||]
+  let mutable staging: Vector4[] = Array.empty
 
   // (boneCount, count, chunks) per source palettes array, keyed by reference identity.
   let memo =
@@ -282,8 +285,11 @@ type PaletteChunkCache() =
   member this.Obtain
     (gd: GraphicsDevice, palettes: Matrix[], boneCount: int, count: int)
     : struct (int * int * Texture2D)[] =
-    match Dictionary.tryGetValue palettes memo with
-    | ValueSome(b, c, chunks) when b = boneCount && c = count -> chunks
+    match
+      Dictionary.tryGetValue palettes memo
+      |> ValueOption.filter(fun (b, c, _) -> b = boneCount && c = count)
+    with
+    | ValueSome(_, _, chunks) -> chunks
     | ValueNone ->
       let chunkTotal =
         (count + PaletteTexture.MaxHeight - 1) / PaletteTexture.MaxHeight
@@ -367,14 +373,17 @@ type InstanceWorldCache() =
       chunks: struct (int * int * 'T)[],
       chunkTotal: int
     ) : VertexInstanceWorldPalette[] =
-    match Dictionary.tryGetValue transforms memo with
-    | ValueSome(c, slot) when c = count -> pool[slot]
+    match
+      Dictionary.tryGetValue transforms memo
+      |> ValueOption.filter(fun (c, _) -> c = count)
+    with
+    | ValueSome(_, slot) -> pool[slot]
     | ValueNone ->
       let slot = used
       used <- used + 1
 
       if pool.Count <= slot then
-        pool.Add([||])
+        pool.Add Array.empty
 
       if pool[slot].Length < count then
         pool[slot] <- Array.zeroCreate count
