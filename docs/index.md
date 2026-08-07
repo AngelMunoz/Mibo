@@ -31,7 +31,7 @@ Mibo.MonoGame      ← the MonoGame backend (host: MiboGame, HLSL .fx shaders)
 | Mibo.Raylib | RaylibGame<'Model,'Msg> | GLSL | Cross-platform Desktop OpenGL; lean, no content pipeline |
 | Mibo.MonoGame | MiboGame<'Model,'Msg> | HLSL (.fx → .mgfx) | Windows Desktop DirectX 11, plus OpenGL cross-platform via MonoGame |
 
-Both backends ship the same rendering surface: a 2D batch renderer and a 3D **Forward PBR pipeline** with a shadow atlas, post-processing, and built-in shaders — so your Draw/Draw3D view code is portable between them.
+Both backends ship the same rendering surface: a 2D batch renderer and a 3D **Forward PBR pipeline** with a shadow atlas, post-processing, and built-in shaders — so the same fluent view code drives both backends.
 
 ## Getting Started
 

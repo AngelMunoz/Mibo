@@ -531,8 +531,8 @@ let update msg model =
 | `RenderBuffer<RenderCmd2D>` (= `RenderBuffer<int<RenderLayer>, RenderCmd2D>`)                               | `RenderBuffer2D` (= `RenderBuffer<int<RenderLayer>, Command2D>`)                                               |
 | `RenderCmd2D` DU (`DrawSprite`, `DrawText`, `DrawLine2D`, …)                                                | `Command2D` DU (same cases, renamed)                                                                           |
 | `RenderLayer` measure                                                                                       | `RenderLayer` measure (unchanged)                                                                              |
-| `sprite { }` / `text { }` CEs + `Buffer2D` extensions (`buffer.Sprite(...)`)                                | `SpriteState` / `TextState` records + the `Draw` module (`Draw.sprite state buffer`, `Draw.text state buffer`) |
-| `Draw2D` fluent module                                                                                      | `Draw` module (sprites, text, shapes, lines, triangles, polys, cameras, shaders, targets, particles)           |
+| `sprite { }` / `text { }` CEs + `Buffer2D` extensions (`buffer.Sprite(...)`)                                | `SpriteState` / `TextState` records + the fluent draw DSL (`buffer.sprite state`, `buffer.text state`) |
+| `Draw2D` fluent module                                                                                      | The fluent draw DSL on the buffer (sprites, text, shapes, lines, triangles, polys, cameras, shaders, targets, particles) |
 | `Lighting2DConfig`, `PointLight2D`, `DirectionalLight2D`, `AmbientLight2D`, `Occluder2D`, `Shadows2DConfig` | `LightContext2D` + the same light/occluder records under `Mibo.Elmish.Graphics2D.Lighting`                     |
 | 2D post-process (`VignetteConfig`, `BloomConfig2D`, `ColorGradeConfig`, `PostProcess2DConfig`)              | `PostProcess2D` module + `PostProcessPass`                                                                     |
 

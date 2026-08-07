@@ -12,10 +12,11 @@ and v4 (`4.0.0`), with the exact steps to update your code. Work through the
 sections that match your code — most games are affected by none of them.
 
 > _**The short answer for most games:** upgrade the package, recompile, done.
-> Every source-level break is in 3D skeletal-animation internals or in
-> multi-camera-block lighting. If your game draws animated models through
-> `buffer.animatedModel(...)` and uses a single camera, v4 is a drop-in
-> recompile._
+> Every source-level break is in 3D skeletal-animation internals,
+> multi-camera-block lighting, or the layered-grid `getOrAddLayer`
+> destructuring. If your game draws animated models through
+> `buffer.animatedModel(...)`, uses a single camera, and does not call
+> `getOrAddLayer`, v4 is a drop-in recompile._
 
 The headline features of v4 — bone pose queries and attachment draws, skinned +
 instanced draws, and one shared `BonePose` evaluation per frame — are additive
@@ -136,6 +137,28 @@ The full mapping, including lighting, particles, and grid rendering, is in
 To silence the warnings until you migrate, add FS0044 to your project's
 `NoWarn` — but prefer migrating, since the modules will be removed in a future
 release.
+
+## 7. Layered grids: `getOrAddLayer` returns a struct tuple
+
+**Who is affected:** code that calls `getOrAddLayer` on `LayeredGrid2D`,
+`LayeredHexGrid`, `LayeredGrid3D`, or `LayeredHexGrid3D`.
+
+**Symptom after upgrading:** the call no longer compiles — the returned tuple
+can no longer be destructured with the plain `let a, b = ...` form.
+
+`getOrAddLayer` now returns a **struct tuple** (allocation-free). Destructure
+with `let struct` instead:
+
+```fsharp
+// v3 — no longer compiles
+let terrainGrid, _ = LayeredGrid2D.getOrAddLayer Layer.Terrain chunk.Grids
+
+// v4
+let struct (terrainGrid, _) = LayeredGrid2D.getOrAddLayer Layer.Terrain chunk.Grids
+```
+
+There is no runtime behavior change — the layer is created on demand and
+returned exactly as before.
 
 ## See also
 

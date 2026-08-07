@@ -83,9 +83,9 @@ This declarative approach makes managing complex event logic trivial. You don't 
 In Mibo, the **View** doesn't return a visual tree like in web apps. Instead, it receives a `RenderBuffer` and submits drawing commands to it. (The buffer type is backend-specific — e.g. `RenderBuffer2D` — but the shape is the same across backends.)
 
 ```fsharp
-let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
-    Draw2D.sprite texture model.PlayerPos
-    |> Draw2D.submit buffer
+let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
+    let player = SpriteState.create(texture, model.PlayerPos, sourceRect)
+    buffer.sprite(player).drop()
 ```
 
 ## Why MVU for Games?

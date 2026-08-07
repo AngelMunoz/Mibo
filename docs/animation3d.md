@@ -447,7 +447,7 @@ All query results are **model-space** world transforms — row-vector convention
 
 ### Attachment draws
 
-`Draw.attachedMesh` draws a static mesh parented to a bone of an animated model — swords in hands, hats on heads, muzzle-flash anchors:
+`buffer.attachedMesh` draws a static mesh parented to a bone of an animated model — swords in hands, hats on heads, muzzle-flash anchors:
 
 ```fsharp
 buffer.attachedMesh(animModel, bone, localTransform, mesh, material, transform, pose = pose)

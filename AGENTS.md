@@ -2,7 +2,7 @@
 
 Mibo is an Elmish-based F# game framework with two interchangeable backends — raylib-cs (`Mibo.Raylib`) and MonoGame (`Mibo.MonoGame`, DesktopGL/OpenGL and WindowsDX/DirectX) — designed to allow F# developers to write games using familiar patterns for all kinds of game genres and sizes.
 
-Mibo aims to solve 90% of use cases for enabling developers to focus on game logic rather than boilerplate code, providing guidelines and architecture for structuring game game code, handling input, rendering, asset management, and time management among others.
+Mibo aims to solve 80/20 of use cases for enabling developers to focus on game logic rather than boilerplate code, providing guidelines and architecture for structuring game game code, handling input, rendering, asset management, and time management among others.
 
 General setup and usage instructions can be found in the [README.md](README.md) file.
 
