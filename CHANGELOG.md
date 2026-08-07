@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Core:** spatial grid queries are now allocation-free apart from the single result array they return. `Grid2DSpatial`/`Hex2DSpatial`/`Grid3DSpatial`/`Hex3DSpatial` `neighbors*`, `inRange`, `ring`, `spiral` and `lineOfSightCells` count-then-allocate exactly (or collect into pooled scratch and copy) instead of building a `ResizeArray`; `floodFill` replaces its per-call `Queue` with a pooled ring over the rented scratch; `findPath` replaces its per-call heap class with a pooled-backed min-heap and reconstructs the path by walking parents twice, so no `ResizeArray`/`Reverse` is needed. Every local destructuring now uses value tuples (`struct (a, b)`) and the A\* heuristic is capture-free, so no reference `Tuple` or closure is allocated per query. `Hex3DSpatial` no longer builds throwaway `HexGrid` instances — its `neighbors`/`neighborsHex`/`distance`/`inRange`/`floodFill`/`findPath` previously allocated a full width×depth `Cells` array per call just to carry dimensions and orientation into the 2D helpers (pure `distance` was the worst offender). All public signatures are unchanged; the only API-visible change is `Grid2DSpatial.Internal.MinHeap`/`Hex2DSpatial.Internal.MinHeap`/`Grid3DSpatial.Internal.MinHeap` becoming structs over pooled backing arrays (internal helpers, not intended for direct use).
+
 ## [4.0.0-rc-003] - 2026-08-02
 
 ### Fixed

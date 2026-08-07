@@ -2,7 +2,6 @@ namespace Mibo.Layout
 
 open System
 open System.Buffers
-open System.Collections.Generic
 open System.Numerics
 
 // ── Square grid spatial helpers ─────────────────────────────────────────
@@ -21,108 +20,149 @@ module Grid2DSpatial =
       Priority: float32
     }
 
-    /// Min-heap priority queue for A* pathfinding.
-    [<Sealed>]
-    type MinHeap() =
-      let mutable items = Array.zeroCreate<AStarNode> 16
-      let mutable count = 0
+    /// Min-heap priority queue for A* pathfinding over a pooled backing array.
+    [<Struct>]
+    type MinHeap = {
+      mutable Items: AStarNode[]
+      mutable Count: int
+    }
 
-      member _.Count = count
+    let inline internal create(capacity: int) : MinHeap = {
+      Items = ArrayPool.Shared.Rent capacity
+      Count = 0
+    }
 
-      member _.Push(node: AStarNode) =
-        if count = items.Length then
-          let newArr = Array.zeroCreate<AStarNode>(count * 2)
-          Array.blit items 0 newArr 0 count
-          items <- newArr
+    let inline internal count(heap: MinHeap) : int = heap.Count
 
-        items.[count] <- node
-        count <- count + 1
-        let mutable i = count - 1
+    let inline internal push (heap: byref<MinHeap>) (node: AStarNode) =
+      if heap.Count = heap.Items.Length then
+        let newArr = ArrayPool.Shared.Rent(heap.Items.Length * 2)
+        Array.blit heap.Items 0 newArr 0 heap.Count
+        ArrayPool.Shared.Return(heap.Items)
+        heap.Items <- newArr
 
-        while i > 0 do
-          let parent = (i - 1) / 2
+      heap.Items.[heap.Count] <- node
+      heap.Count <- heap.Count + 1
+      let mutable i = heap.Count - 1
 
-          if items.[i].Priority < items.[parent].Priority then
-            let tmp = items.[i]
-            items.[i] <- items.[parent]
-            items.[parent] <- tmp
-            i <- parent
-          else
-            i <- 0
+      while i > 0 do
+        let parent = (i - 1) / 2
 
-      member _.TryPop() =
-        if count = 0 then
-          ValueNone
+        if heap.Items.[i].Priority < heap.Items.[parent].Priority then
+          let tmp = heap.Items.[i]
+          heap.Items.[i] <- heap.Items.[parent]
+          heap.Items.[parent] <- tmp
+          i <- parent
         else
-          let result = items.[0]
-          count <- count - 1
+          i <- 0
 
-          if count > 0 then
-            items.[0] <- items.[count]
+    let inline internal tryPop(heap: byref<MinHeap>) : AStarNode voption =
+      if heap.Count = 0 then
+        ValueNone
+      else
+        let result = heap.Items.[0]
+        heap.Count <- heap.Count - 1
 
-            let mutable i = 0
-            let mutable looping = true
+        if heap.Count > 0 then
+          heap.Items.[0] <- heap.Items.[heap.Count]
 
-            while looping do
-              let left = 2 * i + 1
-              let right = 2 * i + 2
-              let mutable smallest = i
+          let mutable i = 0
+          let mutable looping = true
 
-              if
-                left < count
-                && items.[left].Priority < items.[smallest].Priority
-              then
-                smallest <- left
+          while looping do
+            let left = 2 * i + 1
+            let right = 2 * i + 2
+            let mutable smallest = i
 
-              if
-                right < count
-                && items.[right].Priority < items.[smallest].Priority
-              then
-                smallest <- right
+            if
+              left < heap.Count
+              && heap.Items.[left].Priority < heap.Items.[smallest].Priority
+            then
+              smallest <- left
 
-              if smallest <> i then
-                let tmp = items.[i]
-                items.[i] <- items.[smallest]
-                items.[smallest] <- tmp
-                i <- smallest
-              else
-                looping <- false
+            if
+              right < heap.Count
+              && heap.Items.[right].Priority < heap.Items.[smallest].Priority
+            then
+              smallest <- right
 
-          ValueSome result
+            if smallest <> i then
+              let tmp = heap.Items.[i]
+              heap.Items.[i] <- heap.Items.[smallest]
+              heap.Items.[smallest] <- tmp
+              i <- smallest
+            else
+              looping <- false
+
+        ValueSome result
+
+    let inline internal dispose(heap: byref<MinHeap>) =
+      ArrayPool.Shared.Return(heap.Items)
 
   /// Returns the 4 cardinal (N/S/E/W) neighbors of (x, y), filtered to grid bounds.
   let inline neighbors4 x y (grid: CellGrid2D<'T>) : struct (int * int)[] =
-    let w, h = grid.Width, grid.Height
-    let result = ResizeArray<struct (int * int)> 4
+    let struct (w, h) = struct (grid.Width, grid.Height)
+    let mutable n = 0
 
     if x > 0 then
-      result.Add(struct (x - 1, y))
+      n <- n + 1
 
     if x < w - 1 then
-      result.Add(struct (x + 1, y))
+      n <- n + 1
 
     if y > 0 then
-      result.Add(struct (x, y - 1))
+      n <- n + 1
 
     if y < h - 1 then
-      result.Add(struct (x, y + 1))
+      n <- n + 1
 
-    result.ToArray()
+    let result = Array.zeroCreate<struct (int * int)> n
+    let mutable i = 0
+
+    if x > 0 then
+      result.[i] <- struct (x - 1, y)
+      i <- i + 1
+
+    if x < w - 1 then
+      result.[i] <- struct (x + 1, y)
+      i <- i + 1
+
+    if y > 0 then
+      result.[i] <- struct (x, y - 1)
+      i <- i + 1
+
+    if y < h - 1 then
+      result.[i] <- struct (x, y + 1)
+      i <- i + 1
+
+    result
 
   /// Returns the 8 surrounding neighbors (cardinal + diagonal), filtered to grid bounds.
   let inline neighbors8 x y (grid: CellGrid2D<'T>) : struct (int * int)[] =
-    let w, h = grid.Width, grid.Height
-    let result = ResizeArray<struct (int * int)> 8
+    let struct (w, h) = struct (grid.Width, grid.Height)
+    let mutable n = 0
 
     for dy in -1 .. 1 do
       for dx in -1 .. 1 do
         if dx <> 0 || dy <> 0 then
-          let nx, ny = x + dx, y + dy
+          let struct (nx, ny) = struct (x + dx, y + dy)
 
           if nx >= 0 && nx < w && ny >= 0 && ny < h then
-            result.Add(struct (nx, ny))
+            n <- n + 1
 
-    result.ToArray()
+    let result = Array.zeroCreate<struct (int * int)> n
+    let mutable i = 0
+
+    for dy in -1 .. 1 do
+      for dx in -1 .. 1 do
+        if dx <> 0 || dy <> 0 then
+          let struct (nx, ny) = struct (x + dx, y + dy)
+
+          if nx >= 0 && nx < w && ny >= 0 && ny < h then
+            result.[i] <- struct (nx, ny)
+            i <- i + 1
+
+    result
 
   /// Manhattan distance: cost of moving in 4 directions.
   let inline distanceManhattan x1 y1 x2 y2 : int = abs(x2 - x1) + abs(y2 - y1)
@@ -159,20 +199,28 @@ module Grid2DSpatial =
     if range < 0 then
       Array.empty
     else
-      let w, h = grid.Width, grid.Height
-      let result = ResizeArray<struct (int * int)>()
-
+      let struct (w, h) = struct (grid.Width, grid.Height)
       let x1 = max 0 (x - range)
       let x2 = min (w - 1) (x + range)
       let y1 = max 0 (y - range)
       let y2 = min (h - 1) (y + range)
+      let mutable n = 0
 
       for cy in y1..y2 do
         for cx in x1..x2 do
           if max (abs(cx - x)) (abs(cy - y)) <= range then
-            result.Add(struct (cx, cy))
+            n <- n + 1
 
-      result.ToArray()
+      let result = Array.zeroCreate<struct (int * int)> n
+      let mutable i = 0
+
+      for cy in y1..y2 do
+        for cx in x1..x2 do
+          if max (abs(cx - x)) (abs(cy - y)) <= range then
+            result.[i] <- struct (cx, cy)
+            i <- i + 1
+
+      result
 
   /// Returns true if a straight line from (x1,y1) to (x2,y2) is clear of
   /// blocked cells. Uses Bresenham's algorithm. The start cell is not checked;
@@ -185,7 +233,7 @@ module Grid2DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> bool)
     (grid: CellGrid2D<'T>)
     : bool =
-    let w, h = grid.Width, grid.Height
+    let struct (w, h) = struct (grid.Width, grid.Height)
     let dx = abs(x2 - x1)
     let dy = -abs(y2 - y1)
     let sx = if x1 < x2 then 1 else -1
@@ -224,11 +272,14 @@ module Grid2DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> bool)
     (grid: CellGrid2D<'T>)
     : struct (int * int)[] =
-    let w, h = grid.Width, grid.Height
-    let result = ResizeArray<struct (int * int)>()
+    let struct (w, h) = struct (grid.Width, grid.Height)
+    let scratch = ArrayPool.Shared.Rent(max (abs(x2 - x1)) (abs(y2 - y1)) + 1)
+
+    let mutable count = 0
 
     if x1 >= 0 && x1 < w && y1 >= 0 && y1 < h && not(isBlocked x1 y1) then
-      result.Add(struct (x1, y1))
+      scratch.[count] <- struct (x1, y1)
+      count <- count + 1
 
       let dx = abs(x2 - x1)
       let dy = -abs(y2 - y1)
@@ -254,11 +305,15 @@ module Grid2DSpatial =
           if isBlocked cx cy then
             stopped <- true
           else
-            result.Add(struct (cx, cy))
+            scratch.[count] <- struct (cx, cy)
+            count <- count + 1
         else
           stopped <- true
 
-    result.ToArray()
+    let result = Array.zeroCreate<struct (int * int)> count
+    Array.blit scratch 0 result 0 count
+    ArrayPool.Shared.Return(scratch)
+    result
 
   /// Flood fill from (x, y) using BFS. Returns all reachable cells for which
   /// `predicate` returns true. Does not cross cells where predicate is false.
@@ -268,7 +323,7 @@ module Grid2DSpatial =
     ([<InlineIfLambda>] predicate: int -> int -> bool)
     (grid: CellGrid2D<'T>)
     : struct (int * int)[] =
-    let w, h = grid.Width, grid.Height
+    let struct (w, h) = struct (grid.Width, grid.Height)
 
     if w = 0 || h = 0 then
       Array.empty
@@ -280,14 +335,16 @@ module Grid2DSpatial =
       let totalCells = w * h
       let visited = ArrayPool.Shared.Rent(totalCells)
       Array.Clear(visited, 0, totalCells)
-      let result = ResizeArray<struct (int * int)>()
-      let queue = Queue<struct (int * int)>()
-      queue.Enqueue(struct (x, y))
+      let queue = ArrayPool.Shared.Rent(totalCells)
+      let mutable head = 0
+      let mutable tail = 0
+      queue.[tail] <- struct (x, y)
+      tail <- tail + 1
       visited.[toIndex x y w] <- 1
 
-      while queue.Count > 0 do
-        let struct (cx, cy) = queue.Dequeue()
-        result.Add(struct (cx, cy))
+      while head < tail do
+        let struct (cx, cy) = queue.[head]
+        head <- head + 1
 
         if cx > 0 then
           let nx = cx - 1
@@ -295,7 +352,8 @@ module Grid2DSpatial =
 
           if visited.[idx] = 0 && predicate nx cy then
             visited.[idx] <- 1
-            queue.Enqueue(struct (nx, cy))
+            queue.[tail] <- struct (nx, cy)
+            tail <- tail + 1
 
         if cx < w - 1 then
           let nx = cx + 1
@@ -303,7 +361,8 @@ module Grid2DSpatial =
 
           if visited.[idx] = 0 && predicate nx cy then
             visited.[idx] <- 1
-            queue.Enqueue(struct (nx, cy))
+            queue.[tail] <- struct (nx, cy)
+            tail <- tail + 1
 
         if cy > 0 then
           let ny = cy - 1
@@ -311,7 +370,8 @@ module Grid2DSpatial =
 
           if visited.[idx] = 0 && predicate cx ny then
             visited.[idx] <- 1
-            queue.Enqueue(struct (cx, ny))
+            queue.[tail] <- struct (cx, ny)
+            tail <- tail + 1
 
         if cy < h - 1 then
           let ny = cy + 1
@@ -319,10 +379,14 @@ module Grid2DSpatial =
 
           if visited.[idx] = 0 && predicate cx ny then
             visited.[idx] <- 1
-            queue.Enqueue(struct (cx, ny))
+            queue.[tail] <- struct (cx, ny)
+            tail <- tail + 1
 
+      let result = Array.zeroCreate<struct (int * int)> tail
+      Array.blit queue 0 result 0 tail
+      ArrayPool.Shared.Return(queue)
       ArrayPool.Shared.Return(visited)
-      result.ToArray()
+      result
 
   /// A* pathfinding on a square grid. Returns the shortest path from
   /// (startX, startY) to (goalX, goalY) as an array of coordinates, or
@@ -339,7 +403,7 @@ module Grid2DSpatial =
     ([<InlineIfLambda>] costFn: int -> int -> int -> int -> float32)
     (grid: CellGrid2D<'T>)
     : struct (int * int)[] voption =
-    let w, h = grid.Width, grid.Height
+    let struct (w, h) = struct (grid.Width, grid.Height)
 
     if
       startX < 0
@@ -369,27 +433,27 @@ module Grid2DSpatial =
         parentY.[i] <- -1
         closed.[i] <- 0
 
-      let inline hCost x y : float32 =
-        float32(abs(goalX - x) + abs(goalY - y))
+      let inline hCost (gx: int) (gy: int) x y : float32 =
+        float32(abs(gx - x) + abs(gy - y))
 
       gScore.[toIndex startX startY w] <- 0f
-      let queue = Internal.MinHeap()
+      let mutable heap = Internal.create totalCells
 
-      queue.Push(
-        {
+      Internal.push
+        &heap
+        ({
           Internal.Col = startX
           Internal.Row = startY
-          Internal.Priority = hCost startX startY
-        }
-      )
+          Internal.Priority = hCost goalX goalY startX startY
+        })
 
       let mutable found = false
 
-      while queue.Count > 0 && not found do
-        match queue.TryPop() with
+      while Internal.count heap > 0 && not found do
+        match Internal.tryPop &heap with
         | ValueNone -> ()
         | ValueSome current ->
-          let cx, cy = current.Col, current.Row
+          let struct (cx, cy) = struct (current.Col, current.Row)
           let idx = toIndex cx cy w
 
           if closed.[idx] <> 0 then
@@ -410,13 +474,13 @@ module Grid2DSpatial =
                 parentX.[nIdx] <- cx
                 parentY.[nIdx] <- cy
 
-                queue.Push(
-                  {
+                Internal.push
+                  &heap
+                  ({
                     Internal.Col = nx
                     Internal.Row = ny
-                    Internal.Priority = tentative + hCost nx ny
-                  }
-                )
+                    Internal.Priority = tentative + hCost goalX goalY nx ny
+                  })
 
             nx <- cx + 1
             ny <- cy
@@ -430,13 +494,13 @@ module Grid2DSpatial =
                 parentX.[nIdx] <- cx
                 parentY.[nIdx] <- cy
 
-                queue.Push(
-                  {
+                Internal.push
+                  &heap
+                  ({
                     Internal.Col = nx
                     Internal.Row = ny
-                    Internal.Priority = tentative + hCost nx ny
-                  }
-                )
+                    Internal.Priority = tentative + hCost goalX goalY nx ny
+                  })
 
             nx <- cx
             ny <- cy - 1
@@ -450,13 +514,13 @@ module Grid2DSpatial =
                 parentX.[nIdx] <- cx
                 parentY.[nIdx] <- cy
 
-                queue.Push(
-                  {
+                Internal.push
+                  &heap
+                  ({
                     Internal.Col = nx
                     Internal.Row = ny
-                    Internal.Priority = tentative + hCost nx ny
-                  }
-                )
+                    Internal.Priority = tentative + hCost goalX goalY nx ny
+                  })
 
             nx <- cx
             ny <- cy + 1
@@ -470,31 +534,41 @@ module Grid2DSpatial =
                 parentX.[nIdx] <- cx
                 parentY.[nIdx] <- cy
 
-                queue.Push(
-                  {
+                Internal.push
+                  &heap
+                  ({
                     Internal.Col = nx
                     Internal.Row = ny
-                    Internal.Priority = tentative + hCost nx ny
-                  }
-                )
+                    Internal.Priority = tentative + hCost goalX goalY nx ny
+                  })
 
       let result =
         if found then
-          let path = ResizeArray<struct (int * int)>()
+          let mutable n = 0
           let mutable cx = goalX
           let mutable cy = goalY
 
           while cx <> startX || cy <> startY do
-            path.Add(struct (cx, cy))
+            n <- n + 1
             let idx = toIndex cx cy w
-            let px = parentX.[idx]
-            let py = parentY.[idx]
-            cx <- px
-            cy <- py
+            cx <- parentX.[idx]
+            cy <- parentY.[idx]
 
-          path.Add(struct (startX, startY))
-          path.Reverse()
-          ValueSome(path.ToArray())
+          n <- n + 1
+          let path = Array.zeroCreate<struct (int * int)> n
+          let mutable i = n - 1
+          cx <- goalX
+          cy <- goalY
+
+          while cx <> startX || cy <> startY do
+            path.[i] <- struct (cx, cy)
+            i <- i - 1
+            let idx = toIndex cx cy w
+            cx <- parentX.[idx]
+            cy <- parentY.[idx]
+
+          path.[0] <- struct (startX, startY)
+          ValueSome path
         else
           ValueNone
 
@@ -502,6 +576,7 @@ module Grid2DSpatial =
       ArrayPool.Shared.Return(parentX)
       ArrayPool.Shared.Return(parentY)
       ArrayPool.Shared.Return(closed)
+      Internal.dispose &heap
       result
 
 // ── Hex grid spatial helpers ────────────────────────────────────────────
@@ -558,92 +633,102 @@ module Hex2DSpatial =
       Priority: float32
     }
 
-    /// Min-heap priority queue for hex A* pathfinding.
-    [<Sealed>]
-    type MinHeap() =
-      let mutable items = Array.zeroCreate<AStarNode> 16
-      let mutable count = 0
+    /// Min-heap priority queue for hex A* pathfinding over a pooled backing array.
+    [<Struct>]
+    type MinHeap = {
+      mutable Items: AStarNode[]
+      mutable Count: int
+    }
 
-      member _.Count = count
+    let inline internal create(capacity: int) : MinHeap = {
+      Items = ArrayPool.Shared.Rent capacity
+      Count = 0
+    }
 
-      member _.Push(node: AStarNode) =
-        if count = items.Length then
-          let newArr = Array.zeroCreate<AStarNode>(count * 2)
-          Array.blit items 0 newArr 0 count
-          items <- newArr
+    let inline internal count(heap: MinHeap) : int = heap.Count
 
-        items.[count] <- node
-        count <- count + 1
-        let mutable i = count - 1
+    let inline internal push (heap: byref<MinHeap>) (node: AStarNode) =
+      if heap.Count = heap.Items.Length then
+        let newArr = ArrayPool.Shared.Rent(heap.Items.Length * 2)
+        Array.blit heap.Items 0 newArr 0 heap.Count
+        ArrayPool.Shared.Return(heap.Items)
+        heap.Items <- newArr
 
-        while i > 0 do
-          let parent = (i - 1) / 2
+      heap.Items.[heap.Count] <- node
+      heap.Count <- heap.Count + 1
+      let mutable i = heap.Count - 1
 
-          if items.[i].Priority < items.[parent].Priority then
-            let tmp = items.[i]
-            items.[i] <- items.[parent]
-            items.[parent] <- tmp
-            i <- parent
-          else
-            i <- 0
+      while i > 0 do
+        let parent = (i - 1) / 2
 
-      member _.TryPop() =
-        if count = 0 then
-          ValueNone
+        if heap.Items.[i].Priority < heap.Items.[parent].Priority then
+          let tmp = heap.Items.[i]
+          heap.Items.[i] <- heap.Items.[parent]
+          heap.Items.[parent] <- tmp
+          i <- parent
         else
-          let result = items.[0]
-          count <- count - 1
+          i <- 0
 
-          if count > 0 then
-            items.[0] <- items.[count]
+    let inline internal tryPop(heap: byref<MinHeap>) : AStarNode voption =
+      if heap.Count = 0 then
+        ValueNone
+      else
+        let result = heap.Items.[0]
+        heap.Count <- heap.Count - 1
 
-            let mutable i = 0
-            let mutable looping = true
+        if heap.Count > 0 then
+          heap.Items.[0] <- heap.Items.[heap.Count]
 
-            while looping do
-              let left = 2 * i + 1
-              let right = 2 * i + 2
-              let mutable smallest = i
+          let mutable i = 0
+          let mutable looping = true
 
-              if
-                left < count
-                && items.[left].Priority < items.[smallest].Priority
-              then
-                smallest <- left
+          while looping do
+            let left = 2 * i + 1
+            let right = 2 * i + 2
+            let mutable smallest = i
 
-              if
-                right < count
-                && items.[right].Priority < items.[smallest].Priority
-              then
-                smallest <- right
+            if
+              left < heap.Count
+              && heap.Items.[left].Priority < heap.Items.[smallest].Priority
+            then
+              smallest <- left
 
-              if smallest <> i then
-                let tmp = items.[i]
-                items.[i] <- items.[smallest]
-                items.[smallest] <- tmp
-                i <- smallest
-              else
-                looping <- false
+            if
+              right < heap.Count
+              && heap.Items.[right].Priority < heap.Items.[smallest].Priority
+            then
+              smallest <- right
 
-          ValueSome result
+            if smallest <> i then
+              let tmp = heap.Items.[i]
+              heap.Items.[i] <- heap.Items.[smallest]
+              heap.Items.[smallest] <- tmp
+              i <- smallest
+            else
+              looping <- false
+
+        ValueSome result
+
+    let inline internal dispose(heap: byref<MinHeap>) =
+      ArrayPool.Shared.Return(heap.Items)
 
     /// Iterates hex neighbors via callback. Zero allocation.
     let inline internal forEachNeighbor
       col
       row
-      (grid: HexGrid<'T>)
+      w
+      h
+      (orientation: HexOrientation)
       ([<InlineIfLambda>] action: int -> int -> unit)
       : unit =
-      let w, h = grid.Width, grid.Height
-
       let offsets =
-        match grid.Orientation with
+        match orientation with
         | PointyTop -> if row % 2 = 0 then pointyTopEvenRow else pointyTopOddRow
         | FlatTop -> if col % 2 = 0 then flatTopEvenCol else flatTopOddCol
 
       for i in 0..5 do
         let struct (dc, dr) = offsets.[i]
-        let nc, nr = col + dc, row + dr
+        let struct (nc, nr) = struct (col + dc, row + dr)
 
         if nc >= 0 && nc < w && nr >= 0 && nr < h then
           action nc nr
@@ -698,33 +783,87 @@ module Hex2DSpatial =
 
     struct (rq, rr, rs)
 
+  /// Iterates the ring cells at `radius` via callback. Zero allocation.
+  let inline internal forEachRing
+    col
+    row
+    radius
+    w
+    h
+    (orientation: HexOrientation)
+    ([<InlineIfLambda>] action: int -> int -> unit)
+    : unit =
+    if radius > 0 then
+      let struct (cq, cr, _) = offsetToCube col row orientation
+
+      // Start at direction 4 corner: center + (0, radius, -radius)
+      let mutable q = cq
+      let mutable r = cr + radius
+
+      // Walk each of 6 sides
+      for side in 0..5 do
+        for _ in 1..radius do
+          let struct (oc, oR) = cubeToOffset q r orientation
+
+          if oc >= 0 && oc < w && oR >= 0 && oR < h then
+            action oc oR
+
+          // Step to next neighbor along this side
+          // Directions: 0:(1,-1,0) 1:(0,-1,1) 2:(-1,0,1) 3:(-1,1,0) 4:(0,1,-1) 5:(1,0,-1)
+          match side with
+          | 0 ->
+            q <- q + 1
+            r <- r - 1
+          | 1 -> r <- r - 1
+          | 2 -> q <- q - 1
+          | 3 ->
+            q <- q - 1
+            r <- r + 1
+          | 4 -> r <- r + 1
+          | 5 -> q <- q + 1
+          | _ -> ()
+
+  /// Iterates the cells within `range` hex steps via callback. Zero allocation.
+  let inline internal forEachInRange
+    col
+    row
+    range
+    w
+    h
+    (orientation: HexOrientation)
+    ([<InlineIfLambda>] action: int -> int -> unit)
+    : unit =
+    if range >= 0 then
+      let struct (cq, cr, _) = offsetToCube col row orientation
+
+      for dq in -range .. range do
+        let r1 = max -range (-dq - range)
+        let r2 = min range (-dq + range)
+
+        for dr in r1..r2 do
+          let q = cq + dq
+          let r = cr + dr
+          let struct (oc, oR) = cubeToOffset q r orientation
+
+          if oc >= 0 && oc < w && oR >= 0 && oR < h then
+            action oc oR
+
   /// Returns the 6 hex neighbors of (col, row), filtered to grid bounds.
   let inline neighbors col row (grid: HexGrid<'T>) : struct (int * int)[] =
-    let w, h = grid.Width, grid.Height
+    let struct (w, h) = struct (grid.Width, grid.Height)
+    let mutable n = 0
 
-    let offsets =
-      match grid.Orientation with
-      | PointyTop ->
-        if row % 2 = 0 then
-          Internal.pointyTopEvenRow
-        else
-          Internal.pointyTopOddRow
-      | FlatTop ->
-        if col % 2 = 0 then
-          Internal.flatTopEvenCol
-        else
-          Internal.flatTopOddCol
+    Internal.forEachNeighbor col row w h grid.Orientation (fun _ _ ->
+      n <- n + 1)
 
-    let result = ResizeArray<struct (int * int)> 6
+    let result = Array.zeroCreate<struct (int * int)> n
+    let mutable i = 0
 
-    for i in 0..5 do
-      let struct (dc, dr) = offsets.[i]
-      let nc, nr = col + dc, row + dr
+    Internal.forEachNeighbor col row w h grid.Orientation (fun nc nr ->
+      result.[i] <- struct (nc, nr)
+      i <- i + 1)
 
-      if nc >= 0 && nc < w && nr >= 0 && nr < h then
-        result.Add(struct (nc, nr))
-
-    result.ToArray()
+    result
 
   /// Hex distance using cube coordinates.
   let inline distance c1 r1 c2 r2 (grid: HexGrid<'T>) : int =
@@ -779,68 +918,42 @@ module Hex2DSpatial =
     if range < 0 then
       Array.empty
     else
-      let w, h = grid.Width, grid.Height
-      let result = ResizeArray<struct (int * int)>()
-      let struct (cq, cr, _) = offsetToCube col row grid.Orientation
+      let struct (w, h) = struct (grid.Width, grid.Height)
+      let mutable n = 0
+      forEachInRange col row range w h grid.Orientation (fun _ _ -> n <- n + 1)
+      let result = Array.zeroCreate<struct (int * int)> n
+      let mutable i = 0
 
-      for dq in -range .. range do
-        let r1 = max -range (-dq - range)
-        let r2 = min range (-dq + range)
+      forEachInRange col row range w h grid.Orientation (fun oc oR ->
+        result.[i] <- struct (oc, oR)
+        i <- i + 1)
 
-        for dr in r1..r2 do
-          let q = cq + dq
-          let r = cr + dr
-          let struct (oc, oR) = cubeToOffset q r grid.Orientation
-
-          if oc >= 0 && oc < w && oR >= 0 && oR < h then
-            result.Add(struct (oc, oR))
-
-      result.ToArray()
+      result
 
   /// Returns all hex cells exactly `radius` hex steps from (col, row).
   let inline ring col row radius (grid: HexGrid<'T>) : struct (int * int)[] =
     if radius < 0 then
       Array.empty
     elif radius = 0 then
-      let w, h = grid.Width, grid.Height
+      let struct (w, h) = struct (grid.Width, grid.Height)
 
       if col >= 0 && col < w && row >= 0 && row < h then
         [| struct (col, row) |]
       else
         Array.empty
     else
-      let w, h = grid.Width, grid.Height
-      let result = ResizeArray<struct (int * int)>()
-      let struct (cq, cr, cs) = offsetToCube col row grid.Orientation
+      let struct (w, h) = struct (grid.Width, grid.Height)
+      let scratch = ArrayPool.Shared.Rent(6 * radius)
+      let mutable count = 0
 
-      // Start at direction 4 corner: center + (0, radius, -radius)
-      let mutable q = cq
-      let mutable r = cr + radius
+      forEachRing col row radius w h grid.Orientation (fun oc oR ->
+        scratch.[count] <- struct (oc, oR)
+        count <- count + 1)
 
-      // Walk each of 6 sides
-      for side in 0..5 do
-        for _ in 1..radius do
-          let struct (oc, oR) = cubeToOffset q r grid.Orientation
-
-          if oc >= 0 && oc < w && oR >= 0 && oR < h then
-            result.Add(struct (oc, oR))
-
-          // Step to next neighbor along this side
-          // Directions: 0:(1,-1,0) 1:(0,-1,1) 2:(-1,0,1) 3:(-1,1,0) 4:(0,1,-1) 5:(1,0,-1)
-          match side with
-          | 0 ->
-            q <- q + 1
-            r <- r - 1
-          | 1 -> r <- r - 1
-          | 2 -> q <- q - 1
-          | 3 ->
-            q <- q - 1
-            r <- r + 1
-          | 4 -> r <- r + 1
-          | 5 -> q <- q + 1
-          | _ -> ()
-
-      result.ToArray()
+      let result = Array.zeroCreate<struct (int * int)> count
+      Array.blit scratch 0 result 0 count
+      ArrayPool.Shared.Return(scratch)
+      result
 
   /// Returns all hex cells within `radius` hex steps, in spiral order
   /// (center first, then ring 1, ring 2, ...).
@@ -848,17 +961,23 @@ module Hex2DSpatial =
     if radius < 0 then
       Array.empty
     else
-      let w, h = grid.Width, grid.Height
-      let result = ResizeArray<struct (int * int)>()
+      let struct (w, h) = struct (grid.Width, grid.Height)
+      let scratch = ArrayPool.Shared.Rent(1 + 3 * radius * (radius + 1))
+      let mutable count = 0
 
       if col >= 0 && col < w && row >= 0 && row < h then
-        result.Add(struct (col, row))
+        scratch.[0] <- struct (col, row)
+        count <- 1
 
       for r in 1..radius do
-        let ringCells = ring col row r grid
-        result.AddRange(ringCells)
+        forEachRing col row r w h grid.Orientation (fun oc oR ->
+          scratch.[count] <- struct (oc, oR)
+          count <- count + 1)
 
-      result.ToArray()
+      let result = Array.zeroCreate<struct (int * int)> count
+      Array.blit scratch 0 result 0 count
+      ArrayPool.Shared.Return(scratch)
+      result
 
   /// Returns true if a hex line from (c1,r1) to (c2,r2) is clear of blocked cells.
   /// The start cell is not checked; the goal IS checked.
@@ -870,7 +989,7 @@ module Hex2DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> bool)
     (grid: HexGrid<'T>)
     : bool =
-    let w, h = grid.Width, grid.Height
+    let struct (w, h) = struct (grid.Width, grid.Height)
     let struct (q1, r1c, s1) = offsetToCube c1 r1 grid.Orientation
     let struct (q2, r2c, s2) = offsetToCube c2 r2 grid.Orientation
     let n = max (abs(q2 - q1)) (max (abs(r2c - r1c)) (abs(s2 - s1)))
@@ -909,15 +1028,17 @@ module Hex2DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> bool)
     (grid: HexGrid<'T>)
     : struct (int * int)[] =
-    let w, h = grid.Width, grid.Height
-    let result = ResizeArray<struct (int * int)>()
+    let struct (w, h) = struct (grid.Width, grid.Height)
+    let struct (q1, r1c, s1) = offsetToCube c1 r1 grid.Orientation
+    let struct (q2, r2c, s2) = offsetToCube c2 r2 grid.Orientation
+    let n = max (abs(q2 - q1)) (max (abs(r2c - r1c)) (abs(s2 - s1)))
+    let scratch = ArrayPool.Shared.Rent(n + 1)
+    let mutable count = 0
 
     if c1 >= 0 && c1 < w && r1 >= 0 && r1 < h && not(isBlocked c1 r1) then
-      result.Add(struct (c1, r1))
+      scratch.[count] <- struct (c1, r1)
+      count <- count + 1
 
-      let struct (q1, r1c, s1) = offsetToCube c1 r1 grid.Orientation
-      let struct (q2, r2c, s2) = offsetToCube c2 r2 grid.Orientation
-      let n = max (abs(q2 - q1)) (max (abs(r2c - r1c)) (abs(s2 - s1)))
       let mutable stopped = false
       let mutable i = 1
 
@@ -933,13 +1054,17 @@ module Hex2DSpatial =
           if isBlocked col row then
             stopped <- true
           else
-            result.Add(struct (col, row))
+            scratch.[count] <- struct (col, row)
+            count <- count + 1
         else
           stopped <- true
 
         i <- i + 1
 
-    result.ToArray()
+    let result = Array.zeroCreate<struct (int * int)> count
+    Array.blit scratch 0 result 0 count
+    ArrayPool.Shared.Return(scratch)
+    result
 
   /// Flood fill from (col, row) using BFS over hex neighbors.
   /// Returns all reachable hex cells for which `predicate` returns true.
@@ -949,7 +1074,7 @@ module Hex2DSpatial =
     ([<InlineIfLambda>] predicate: int -> int -> bool)
     (grid: HexGrid<'T>)
     : struct (int * int)[] =
-    let w, h = grid.Width, grid.Height
+    let struct (w, h) = struct (grid.Width, grid.Height)
 
     if w = 0 || h = 0 then
       Array.empty
@@ -961,24 +1086,30 @@ module Hex2DSpatial =
       let total = w * h
       let visited = ArrayPool.Shared.Rent(total)
       Array.Clear(visited, 0, total)
-      let result = ResizeArray<struct (int * int)>()
-      let queue = Queue<struct (int * int)>()
-      queue.Enqueue(struct (col, row))
+      let queue = ArrayPool.Shared.Rent(total)
+      let mutable head = 0
+      let mutable tail = 0
+      queue.[tail] <- struct (col, row)
+      tail <- tail + 1
       visited.[col + row * w] <- 1
 
-      while queue.Count > 0 do
-        let struct (cc, cr) = queue.Dequeue()
-        result.Add(struct (cc, cr))
+      while head < tail do
+        let struct (cc, cr) = queue.[head]
+        head <- head + 1
 
-        Internal.forEachNeighbor cc cr grid (fun nc nr ->
+        Internal.forEachNeighbor cc cr w h grid.Orientation (fun nc nr ->
           let idx = nc + nr * w
 
           if visited.[idx] = 0 && predicate nc nr then
             visited.[idx] <- 1
-            queue.Enqueue(struct (nc, nr)))
+            queue.[tail] <- struct (nc, nr)
+            tail <- tail + 1)
 
+      let result = Array.zeroCreate<struct (int * int)> tail
+      Array.blit queue 0 result 0 tail
+      ArrayPool.Shared.Return(queue)
       ArrayPool.Shared.Return(visited)
-      result.ToArray()
+      result
 
   /// A* pathfinding on a hex grid. Returns the shortest path from start to
   /// goal as an array of hex coordinates, or ValueNone if no path exists.
@@ -991,7 +1122,7 @@ module Hex2DSpatial =
     ([<InlineIfLambda>] costFn: int -> int -> int -> int -> float32)
     (grid: HexGrid<'T>)
     : struct (int * int)[] voption =
-    let w, h = grid.Width, grid.Height
+    let struct (w, h) = struct (grid.Width, grid.Height)
 
     if
       startCol < 0
@@ -1013,8 +1144,14 @@ module Hex2DSpatial =
     else
       let struct (gq, gr, _) = offsetToCube goalCol goalRow grid.Orientation
 
-      let inline hCost c r : float32 =
-        let struct (q, rc, s) = offsetToCube c r grid.Orientation
+      let inline hCost
+        (gq: int)
+        (gr: int)
+        (orientation: HexOrientation)
+        c
+        r
+        : float32 =
+        let struct (q, rc, _) = offsetToCube c r orientation
         float32(abs(gq - q) + abs(gr - rc)) / 2f
 
       let total = w * h
@@ -1030,23 +1167,23 @@ module Hex2DSpatial =
         closed.[i] <- 0
 
       gScore.[startCol + startRow * w] <- 0f
-      let queue = Internal.MinHeap()
+      let mutable heap = Internal.create total
 
-      queue.Push(
-        {
+      Internal.push
+        &heap
+        ({
           Internal.Col = startCol
           Internal.Row = startRow
-          Internal.Priority = hCost startCol startRow
-        }
-      )
+          Internal.Priority = hCost gq gr grid.Orientation startCol startRow
+        })
 
       let mutable found = false
 
-      while queue.Count > 0 && not found do
-        match queue.TryPop() with
+      while Internal.count heap > 0 && not found do
+        match Internal.tryPop &heap with
         | ValueNone -> ()
         | ValueSome current ->
-          let cc, cr = current.Col, current.Row
+          let struct (cc, cr) = struct (current.Col, current.Row)
           let idx = cc + cr * w
 
           if closed.[idx] <> 0 then
@@ -1056,7 +1193,7 @@ module Hex2DSpatial =
           else
             closed.[idx] <- 1
 
-            Internal.forEachNeighbor cc cr grid (fun nc nr ->
+            Internal.forEachNeighbor cc cr w h grid.Orientation (fun nc nr ->
               let nIdx = nc + nr * w
 
               if closed.[nIdx] = 0 && isPassable nc nr then
@@ -1067,31 +1204,42 @@ module Hex2DSpatial =
                   parentCol.[nIdx] <- cc
                   parentRow.[nIdx] <- cr
 
-                  queue.Push(
-                    {
+                  Internal.push
+                    &heap
+                    ({
                       Internal.Col = nc
                       Internal.Row = nr
-                      Internal.Priority = tentative + hCost nc nr
-                    }
-                  ))
+                      Internal.Priority =
+                        tentative + hCost gq gr grid.Orientation nc nr
+                    }))
 
       let result =
         if found then
-          let path = ResizeArray<struct (int * int)>()
+          let mutable n = 0
           let mutable cc = goalCol
           let mutable cr = goalRow
 
           while cc <> startCol || cr <> startRow do
-            path.Add(struct (cc, cr))
+            n <- n + 1
             let idx = cc + cr * w
-            let pc = parentCol.[idx]
-            let pr = parentRow.[idx]
-            cc <- pc
-            cr <- pr
+            cc <- parentCol.[idx]
+            cr <- parentRow.[idx]
 
-          path.Add(struct (startCol, startRow))
-          path.Reverse()
-          ValueSome(path.ToArray())
+          n <- n + 1
+          let path = Array.zeroCreate<struct (int * int)> n
+          let mutable i = n - 1
+          cc <- goalCol
+          cr <- goalRow
+
+          while cc <> startCol || cr <> startRow do
+            path.[i] <- struct (cc, cr)
+            i <- i - 1
+            let idx = cc + cr * w
+            cc <- parentCol.[idx]
+            cr <- parentRow.[idx]
+
+          path.[0] <- struct (startCol, startRow)
+          ValueSome path
         else
           ValueNone
 
@@ -1099,4 +1247,5 @@ module Hex2DSpatial =
       ArrayPool.Shared.Return(parentCol)
       ArrayPool.Shared.Return(parentRow)
       ArrayPool.Shared.Return(closed)
+      Internal.dispose &heap
       result

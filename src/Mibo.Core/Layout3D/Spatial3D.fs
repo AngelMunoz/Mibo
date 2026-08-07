@@ -2,7 +2,6 @@ namespace Mibo.Layout3D
 
 open System
 open System.Buffers
-open System.Collections.Generic
 open System.Numerics
 open Mibo.Layout
 
@@ -23,74 +22,84 @@ module Grid3DSpatial =
       Priority: float32
     }
 
-    /// Min-heap priority queue for 3D A* pathfinding.
-    [<Sealed>]
-    type MinHeap() =
-      let mutable items = Array.zeroCreate<AStarNode> 16
-      let mutable count = 0
+    /// Min-heap priority queue for 3D A* pathfinding over a pooled backing array.
+    [<Struct>]
+    type MinHeap = {
+      mutable Items: AStarNode[]
+      mutable Count: int
+    }
 
-      member _.Count = count
+    let inline internal create(capacity: int) : MinHeap = {
+      Items = ArrayPool.Shared.Rent capacity
+      Count = 0
+    }
 
-      member _.Push(node: AStarNode) =
-        if count = items.Length then
-          let newArr = Array.zeroCreate<AStarNode>(count * 2)
-          Array.blit items 0 newArr 0 count
-          items <- newArr
+    let inline internal count(heap: MinHeap) : int = heap.Count
 
-        items.[count] <- node
-        count <- count + 1
-        let mutable i = count - 1
+    let inline internal push (heap: byref<MinHeap>) (node: AStarNode) =
+      if heap.Count = heap.Items.Length then
+        let newArr = ArrayPool.Shared.Rent(heap.Items.Length * 2)
+        Array.blit heap.Items 0 newArr 0 heap.Count
+        ArrayPool.Shared.Return(heap.Items)
+        heap.Items <- newArr
 
-        while i > 0 do
-          let parent = (i - 1) / 2
+      heap.Items.[heap.Count] <- node
+      heap.Count <- heap.Count + 1
+      let mutable i = heap.Count - 1
 
-          if items.[i].Priority < items.[parent].Priority then
-            let tmp = items.[i]
-            items.[i] <- items.[parent]
-            items.[parent] <- tmp
-            i <- parent
-          else
-            i <- 0
+      while i > 0 do
+        let parent = (i - 1) / 2
 
-      member _.TryPop() =
-        if count = 0 then
-          ValueNone
+        if heap.Items.[i].Priority < heap.Items.[parent].Priority then
+          let tmp = heap.Items.[i]
+          heap.Items.[i] <- heap.Items.[parent]
+          heap.Items.[parent] <- tmp
+          i <- parent
         else
-          let result = items.[0]
-          count <- count - 1
+          i <- 0
 
-          if count > 0 then
-            items.[0] <- items.[count]
+    let inline internal tryPop(heap: byref<MinHeap>) : AStarNode voption =
+      if heap.Count = 0 then
+        ValueNone
+      else
+        let result = heap.Items.[0]
+        heap.Count <- heap.Count - 1
 
-            let mutable i = 0
-            let mutable looping = true
+        if heap.Count > 0 then
+          heap.Items.[0] <- heap.Items.[heap.Count]
 
-            while looping do
-              let left = 2 * i + 1
-              let right = 2 * i + 2
-              let mutable smallest = i
+          let mutable i = 0
+          let mutable looping = true
 
-              if
-                left < count
-                && items.[left].Priority < items.[smallest].Priority
-              then
-                smallest <- left
+          while looping do
+            let left = 2 * i + 1
+            let right = 2 * i + 2
+            let mutable smallest = i
 
-              if
-                right < count
-                && items.[right].Priority < items.[smallest].Priority
-              then
-                smallest <- right
+            if
+              left < heap.Count
+              && heap.Items.[left].Priority < heap.Items.[smallest].Priority
+            then
+              smallest <- left
 
-              if smallest <> i then
-                let tmp = items.[i]
-                items.[i] <- items.[smallest]
-                items.[smallest] <- tmp
-                i <- smallest
-              else
-                looping <- false
+            if
+              right < heap.Count
+              && heap.Items.[right].Priority < heap.Items.[smallest].Priority
+            then
+              smallest <- right
 
-          ValueSome result
+            if smallest <> i then
+              let tmp = heap.Items.[i]
+              heap.Items.[i] <- heap.Items.[smallest]
+              heap.Items.[smallest] <- tmp
+              i <- smallest
+            else
+              looping <- false
+
+        ValueSome result
+
+    let inline internal dispose(heap: byref<MinHeap>) =
+      ArrayPool.Shared.Return(heap.Items)
 
   /// Returns the 6 face-adjacent neighbors of (x, y, z).
   let inline neighbors6
@@ -99,28 +108,55 @@ module Grid3DSpatial =
     z
     (grid: CellGrid3D<'T>)
     : struct (int * int * int)[] =
-    let w, h, d = grid.Width, grid.Height, grid.Depth
-    let result = ResizeArray<struct (int * int * int)> 6
+    let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
+    let mutable n = 0
 
     if x > 0 then
-      result.Add(struct (x - 1, y, z))
+      n <- n + 1
 
     if x < w - 1 then
-      result.Add(struct (x + 1, y, z))
+      n <- n + 1
 
     if y > 0 then
-      result.Add(struct (x, y - 1, z))
+      n <- n + 1
 
     if y < h - 1 then
-      result.Add(struct (x, y + 1, z))
+      n <- n + 1
 
     if z > 0 then
-      result.Add(struct (x, y, z - 1))
+      n <- n + 1
 
     if z < d - 1 then
-      result.Add(struct (x, y, z + 1))
+      n <- n + 1
 
-    result.ToArray()
+    let result = Array.zeroCreate<struct (int * int * int)> n
+    let mutable i = 0
+
+    if x > 0 then
+      result.[i] <- struct (x - 1, y, z)
+      i <- i + 1
+
+    if x < w - 1 then
+      result.[i] <- struct (x + 1, y, z)
+      i <- i + 1
+
+    if y > 0 then
+      result.[i] <- struct (x, y - 1, z)
+      i <- i + 1
+
+    if y < h - 1 then
+      result.[i] <- struct (x, y + 1, z)
+      i <- i + 1
+
+    if z > 0 then
+      result.[i] <- struct (x, y, z - 1)
+      i <- i + 1
+
+    if z < d - 1 then
+      result.[i] <- struct (x, y, z + 1)
+      i <- i + 1
+
+    result
 
   /// Returns the 26 surrounding neighbors (face + edge + corner).
   let inline neighbors26
@@ -129,19 +165,32 @@ module Grid3DSpatial =
     z
     (grid: CellGrid3D<'T>)
     : struct (int * int * int)[] =
-    let w, h, d = grid.Width, grid.Height, grid.Depth
-    let result = ResizeArray<struct (int * int * int)> 26
+    let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
+    let mutable n = 0
 
     for dz in -1 .. 1 do
       for dy in -1 .. 1 do
         for dx in -1 .. 1 do
           if dx <> 0 || dy <> 0 || dz <> 0 then
-            let nx, ny, nz = x + dx, y + dy, z + dz
+            let struct (nx, ny, nz) = struct (x + dx, y + dy, z + dz)
 
             if nx >= 0 && nx < w && ny >= 0 && ny < h && nz >= 0 && nz < d then
-              result.Add(struct (nx, ny, nz))
+              n <- n + 1
 
-    result.ToArray()
+    let result = Array.zeroCreate<struct (int * int * int)> n
+    let mutable i = 0
+
+    for dz in -1 .. 1 do
+      for dy in -1 .. 1 do
+        for dx in -1 .. 1 do
+          if dx <> 0 || dy <> 0 || dz <> 0 then
+            let struct (nx, ny, nz) = struct (x + dx, y + dy, z + dz)
+
+            if nx >= 0 && nx < w && ny >= 0 && ny < h && nz >= 0 && nz < d then
+              result.[i] <- struct (nx, ny, nz)
+              i <- i + 1
+
+    result
 
   /// Manhattan distance in 3D.
   let inline distanceManhattan x1 y1 z1 x2 y2 z2 : int =
@@ -194,23 +243,32 @@ module Grid3DSpatial =
     if range < 0 then
       Array.empty
     else
-      let w, h, d = grid.Width, grid.Height, grid.Depth
-      let result = ResizeArray<struct (int * int * int)>()
-
+      let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
       let x1 = max 0 (x - range)
       let x2 = min (w - 1) (x + range)
       let y1 = max 0 (y - range)
       let y2 = min (h - 1) (y + range)
       let z1 = max 0 (z - range)
       let z2 = min (d - 1) (z + range)
+      let mutable n = 0
 
       for cz in z1..z2 do
         for cy in y1..y2 do
           for cx in x1..x2 do
             if max (abs(cx - x)) (max (abs(cy - y)) (abs(cz - z))) <= range then
-              result.Add(struct (cx, cy, cz))
+              n <- n + 1
 
-      result.ToArray()
+      let result = Array.zeroCreate<struct (int * int * int)> n
+      let mutable i = 0
+
+      for cz in z1..z2 do
+        for cy in y1..y2 do
+          for cx in x1..x2 do
+            if max (abs(cx - x)) (max (abs(cy - y)) (abs(cz - z))) <= range then
+              result.[i] <- struct (cx, cy, cz)
+              i <- i + 1
+
+      result
 
   /// Returns true if a 3D line from (x1,y1,z1) to (x2,y2,z2) is clear of
   /// blocked cells. Uses 3D Bresenham. Start not checked; goal IS checked.
@@ -224,7 +282,7 @@ module Grid3DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> int -> bool)
     (grid: CellGrid3D<'T>)
     : bool =
-    let w, h, d = grid.Width, grid.Height, grid.Depth
+    let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
     let dx = abs(x2 - x1)
     let dy = abs(y2 - y1)
     let dz = abs(z2 - z1)
@@ -232,7 +290,7 @@ module Grid3DSpatial =
     let sy = if y1 < y2 then 1 else -1
     let sz = if z1 < z2 then 1 else -1
     let dm = max dx (max dy dz)
-    let mutable cx, cy, cz = x1, y1, z1
+    let mutable struct (cx, cy, cz) = struct (x1, y1, z1)
     let mutable ex = dm / 2
     let mutable ey = dm / 2
     let mutable ez = dm / 2
@@ -278,8 +336,10 @@ module Grid3DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> int -> bool)
     (grid: CellGrid3D<'T>)
     : struct (int * int * int)[] =
-    let w, h, d = grid.Width, grid.Height, grid.Depth
-    let result = ResizeArray<struct (int * int * int)>()
+    let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
+    let dm = max (abs(x2 - x1)) (max (abs(y2 - y1)) (abs(z2 - z1)))
+    let scratch = ArrayPool.Shared.Rent(dm + 1)
+    let mutable count = 0
 
     if
       x1 >= 0
@@ -290,7 +350,8 @@ module Grid3DSpatial =
       && z1 < d
       && not(isBlocked x1 y1 z1)
     then
-      result.Add(struct (x1, y1, z1))
+      scratch.[count] <- struct (x1, y1, z1)
+      count <- count + 1
 
       let dx = abs(x2 - x1)
       let dy = abs(y2 - y1)
@@ -298,8 +359,7 @@ module Grid3DSpatial =
       let sx = if x1 < x2 then 1 else -1
       let sy = if y1 < y2 then 1 else -1
       let sz = if z1 < z2 then 1 else -1
-      let dm = max dx (max dy dz)
-      let mutable cx, cy, cz = x1, y1, z1
+      let mutable struct (cx, cy, cz) = struct (x1, y1, z1)
       let mutable ex = dm / 2
       let mutable ey = dm / 2
       let mutable ez = dm / 2
@@ -329,11 +389,15 @@ module Grid3DSpatial =
             if isBlocked cx cy cz then
               stopped <- true
             else
-              result.Add(struct (cx, cy, cz))
+              scratch.[count] <- struct (cx, cy, cz)
+              count <- count + 1
           else
             stopped <- true
 
-    result.ToArray()
+    let result = Array.zeroCreate<struct (int * int * int)> count
+    Array.blit scratch 0 result 0 count
+    ArrayPool.Shared.Return(scratch)
+    result
 
   /// Flood fill from (x, y, z) using BFS over 6-connected neighbors.
   let inline floodFill
@@ -343,7 +407,7 @@ module Grid3DSpatial =
     ([<InlineIfLambda>] predicate: int -> int -> int -> bool)
     (grid: CellGrid3D<'T>)
     : struct (int * int * int)[] =
-    let w, h, d = grid.Width, grid.Height, grid.Depth
+    let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
 
     if w = 0 || h = 0 || d = 0 then
       Array.empty
@@ -355,14 +419,16 @@ module Grid3DSpatial =
       let total = w * h * d
       let visited = ArrayPool.Shared.Rent(total)
       Array.Clear(visited, 0, total)
-      let result = ResizeArray<struct (int * int * int)>()
-      let queue = Queue<struct (int * int * int)>()
-      queue.Enqueue(struct (x, y, z))
+      let queue = ArrayPool.Shared.Rent(total)
+      let mutable head = 0
+      let mutable tail = 0
+      queue.[tail] <- struct (x, y, z)
+      tail <- tail + 1
       visited.[toIndex x y z w h] <- 1
 
-      while queue.Count > 0 do
-        let struct (cx, cy, cz) = queue.Dequeue()
-        result.Add(struct (cx, cy, cz))
+      while head < tail do
+        let struct (cx, cy, cz) = queue.[head]
+        head <- head + 1
 
         if cx > 0 then
           let nx = cx - 1
@@ -370,7 +436,8 @@ module Grid3DSpatial =
 
           if visited.[idx] = 0 && predicate nx cy cz then
             visited.[idx] <- 1
-            queue.Enqueue(struct (nx, cy, cz))
+            queue.[tail] <- struct (nx, cy, cz)
+            tail <- tail + 1
 
         if cx < w - 1 then
           let nx = cx + 1
@@ -378,7 +445,8 @@ module Grid3DSpatial =
 
           if visited.[idx] = 0 && predicate nx cy cz then
             visited.[idx] <- 1
-            queue.Enqueue(struct (nx, cy, cz))
+            queue.[tail] <- struct (nx, cy, cz)
+            tail <- tail + 1
 
         if cy > 0 then
           let ny = cy - 1
@@ -386,7 +454,8 @@ module Grid3DSpatial =
 
           if visited.[idx] = 0 && predicate cx ny cz then
             visited.[idx] <- 1
-            queue.Enqueue(struct (cx, ny, cz))
+            queue.[tail] <- struct (cx, ny, cz)
+            tail <- tail + 1
 
         if cy < h - 1 then
           let ny = cy + 1
@@ -394,7 +463,8 @@ module Grid3DSpatial =
 
           if visited.[idx] = 0 && predicate cx ny cz then
             visited.[idx] <- 1
-            queue.Enqueue(struct (cx, ny, cz))
+            queue.[tail] <- struct (cx, ny, cz)
+            tail <- tail + 1
 
         if cz > 0 then
           let nz = cz - 1
@@ -402,7 +472,8 @@ module Grid3DSpatial =
 
           if visited.[idx] = 0 && predicate cx cy nz then
             visited.[idx] <- 1
-            queue.Enqueue(struct (cx, cy, nz))
+            queue.[tail] <- struct (cx, cy, nz)
+            tail <- tail + 1
 
         if cz < d - 1 then
           let nz = cz + 1
@@ -410,10 +481,14 @@ module Grid3DSpatial =
 
           if visited.[idx] = 0 && predicate cx cy nz then
             visited.[idx] <- 1
-            queue.Enqueue(struct (cx, cy, nz))
+            queue.[tail] <- struct (cx, cy, nz)
+            tail <- tail + 1
 
+      let result = Array.zeroCreate<struct (int * int * int)> tail
+      Array.blit queue 0 result 0 tail
+      ArrayPool.Shared.Return(queue)
       ArrayPool.Shared.Return(visited)
-      result.ToArray()
+      result
 
   /// A* pathfinding on a 3D voxel grid. Returns the shortest path as an
   /// array of coordinates, or ValueNone if no path exists.
@@ -429,7 +504,7 @@ module Grid3DSpatial =
       int -> int -> int -> int -> int -> int -> float32)
     (grid: CellGrid3D<'T>)
     : struct (int * int * int)[] voption =
-    let w, h, d = grid.Width, grid.Height, grid.Depth
+    let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
 
     if
       startX < 0
@@ -467,28 +542,28 @@ module Grid3DSpatial =
         parentZ.[i] <- -1
         closed.[i] <- 0
 
-      let inline hCost x y z : float32 =
-        float32(abs(goalX - x) + abs(goalY - y) + abs(goalZ - z))
+      let inline hCost (gx: int) (gy: int) (gz: int) x y z : float32 =
+        float32(abs(gx - x) + abs(gy - y) + abs(gz - z))
 
       gScore.[toIndex startX startY startZ w h] <- 0f
-      let queue = Internal.MinHeap()
+      let mutable heap = Internal.create total
 
-      queue.Push(
-        {
+      Internal.push
+        &heap
+        ({
           Internal.X = startX
           Internal.Y = startY
           Internal.Z = startZ
-          Internal.Priority = hCost startX startY startZ
-        }
-      )
+          Internal.Priority = hCost goalX goalY goalZ startX startY startZ
+        })
 
       let mutable found = false
 
-      while queue.Count > 0 && not found do
-        match queue.TryPop() with
+      while Internal.count heap > 0 && not found do
+        match Internal.tryPop &heap with
         | ValueNone -> ()
         | ValueSome current ->
-          let cx, cy, cz = current.X, current.Y, current.Z
+          let struct (cx, cy, cz) = struct (current.X, current.Y, current.Z)
           let idx = toIndex cx cy cz w h
 
           if closed.[idx] <> 0 then
@@ -514,14 +589,15 @@ module Grid3DSpatial =
                 parentY.[nIdx] <- cy
                 parentZ.[nIdx] <- cz
 
-                queue.Push(
-                  {
+                Internal.push
+                  &heap
+                  ({
                     Internal.X = nx
                     Internal.Y = cy
                     Internal.Z = cz
-                    Internal.Priority = tentative + hCost nx cy cz
-                  }
-                )
+                    Internal.Priority =
+                      tentative + hCost goalX goalY goalZ nx cy cz
+                  })
 
             nx <- cx + 1
 
@@ -537,14 +613,15 @@ module Grid3DSpatial =
                 parentY.[nIdx] <- cy
                 parentZ.[nIdx] <- cz
 
-                queue.Push(
-                  {
+                Internal.push
+                  &heap
+                  ({
                     Internal.X = nx
                     Internal.Y = cy
                     Internal.Z = cz
-                    Internal.Priority = tentative + hCost nx cy cz
-                  }
-                )
+                    Internal.Priority =
+                      tentative + hCost goalX goalY goalZ nx cy cz
+                  })
 
             let mutable ny = cy - 1
 
@@ -562,14 +639,15 @@ module Grid3DSpatial =
                 parentY.[nIdx] <- cy
                 parentZ.[nIdx] <- cz
 
-                queue.Push(
-                  {
+                Internal.push
+                  &heap
+                  ({
                     Internal.X = cx
                     Internal.Y = ny
                     Internal.Z = cz
-                    Internal.Priority = tentative + hCost cx ny cz
-                  }
-                )
+                    Internal.Priority =
+                      tentative + hCost goalX goalY goalZ cx ny cz
+                  })
 
             ny <- cy + 1
 
@@ -585,14 +663,15 @@ module Grid3DSpatial =
                 parentY.[nIdx] <- cy
                 parentZ.[nIdx] <- cz
 
-                queue.Push(
-                  {
+                Internal.push
+                  &heap
+                  ({
                     Internal.X = cx
                     Internal.Y = ny
                     Internal.Z = cz
-                    Internal.Priority = tentative + hCost cx ny cz
-                  }
-                )
+                    Internal.Priority =
+                      tentative + hCost goalX goalY goalZ cx ny cz
+                  })
 
             let mutable nz = cz - 1
 
@@ -610,14 +689,15 @@ module Grid3DSpatial =
                 parentY.[nIdx] <- cy
                 parentZ.[nIdx] <- cz
 
-                queue.Push(
-                  {
+                Internal.push
+                  &heap
+                  ({
                     Internal.X = cx
                     Internal.Y = cy
                     Internal.Z = nz
-                    Internal.Priority = tentative + hCost cx cy nz
-                  }
-                )
+                    Internal.Priority =
+                      tentative + hCost goalX goalY goalZ cx cy nz
+                  })
 
             nz <- cz + 1
 
@@ -633,35 +713,47 @@ module Grid3DSpatial =
                 parentY.[nIdx] <- cy
                 parentZ.[nIdx] <- cz
 
-                queue.Push(
-                  {
+                Internal.push
+                  &heap
+                  ({
                     Internal.X = cx
                     Internal.Y = cy
                     Internal.Z = nz
-                    Internal.Priority = tentative + hCost cx cy nz
-                  }
-                )
+                    Internal.Priority =
+                      tentative + hCost goalX goalY goalZ cx cy nz
+                  })
 
       let result =
         if found then
-          let path = ResizeArray<struct (int * int * int)>()
+          let mutable n = 0
           let mutable cx = goalX
           let mutable cy = goalY
           let mutable cz = goalZ
 
           while cx <> startX || cy <> startY || cz <> startZ do
-            path.Add(struct (cx, cy, cz))
+            n <- n + 1
             let idx = toIndex cx cy cz w h
-            let px = parentX.[idx]
-            let py = parentY.[idx]
-            let pz = parentZ.[idx]
-            cx <- px
-            cy <- py
-            cz <- pz
+            cx <- parentX.[idx]
+            cy <- parentY.[idx]
+            cz <- parentZ.[idx]
 
-          path.Add(struct (startX, startY, startZ))
-          path.Reverse()
-          ValueSome(path.ToArray())
+          n <- n + 1
+          let path = Array.zeroCreate<struct (int * int * int)> n
+          let mutable i = n - 1
+          cx <- goalX
+          cy <- goalY
+          cz <- goalZ
+
+          while cx <> startX || cy <> startY || cz <> startZ do
+            path.[i] <- struct (cx, cy, cz)
+            i <- i - 1
+            let idx = toIndex cx cy cz w h
+            cx <- parentX.[idx]
+            cy <- parentY.[idx]
+            cz <- parentZ.[idx]
+
+          path.[0] <- struct (startX, startY, startZ)
+          ValueSome path
         else
           ValueNone
 
@@ -670,6 +762,7 @@ module Grid3DSpatial =
       ArrayPool.Shared.Return(parentY)
       ArrayPool.Shared.Return(parentZ)
       ArrayPool.Shared.Return(closed)
+      Internal.dispose &heap
       result
 
 // ── Hex3D grid spatial helpers ──────────────────────────────────────────
@@ -686,27 +779,49 @@ module Hex3DSpatial =
     layer
     (grid: HexGrid3D<'T>)
     : struct (int * int * int)[] =
-    let w, h, d = grid.Width, grid.Height, grid.Depth
-    let result = ResizeArray<struct (int * int * int)> 8
+    let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
 
-    // Same-layer hex neighbors (6)
-    let tmpGrid = HexGrid.create w d 1f Vector2.Zero grid.Orientation
-    let hexNbrs = Hex2DSpatial.neighbors col row tmpGrid
+    if layer < 0 || layer >= h then
+      Array.empty
+    else
+      let mutable n = 0
 
-    for i in 0 .. hexNbrs.Length - 1 do
-      let struct (nc, nr) = hexNbrs.[i]
+      Hex2DSpatial.Internal.forEachNeighbor
+        col
+        row
+        w
+        d
+        grid.Orientation
+        (fun _ _ -> n <- n + 1)
 
-      if layer >= 0 && layer < h then
-        result.Add(struct (nc, nr, layer))
+      if layer > 0 then
+        n <- n + 1
 
-    // Up / down neighbors
-    if layer > 0 then
-      result.Add(struct (col, row, layer - 1))
+      if layer < h - 1 then
+        n <- n + 1
 
-    if layer < h - 1 then
-      result.Add(struct (col, row, layer + 1))
+      let result = Array.zeroCreate<struct (int * int * int)> n
+      let mutable i = 0
 
-    result.ToArray()
+      Hex2DSpatial.Internal.forEachNeighbor
+        col
+        row
+        w
+        d
+        grid.Orientation
+        (fun nc nr ->
+          result.[i] <- struct (nc, nr, layer)
+          i <- i + 1)
+
+      if layer > 0 then
+        result.[i] <- struct (col, row, layer - 1)
+        i <- i + 1
+
+      if layer < h - 1 then
+        result.[i] <- struct (col, row, layer + 1)
+        i <- i + 1
+
+      result
 
   /// Returns only the 6 hex neighbors on the same layer.
   let inline neighborsHex
@@ -715,23 +830,37 @@ module Hex3DSpatial =
     layer
     (grid: HexGrid3D<'T>)
     : struct (int * int * int)[] =
-    let w, d = grid.Width, grid.Depth
-    let tmpGrid = HexGrid.create w d 1f Vector2.Zero grid.Orientation
-    let hexNbrs = Hex2DSpatial.neighbors col row tmpGrid
-    let result = Array.zeroCreate<struct (int * int * int)>(hexNbrs.Length)
+    let struct (w, d) = struct (grid.Width, grid.Depth)
+    let mutable n = 0
 
-    for i in 0 .. hexNbrs.Length - 1 do
-      let struct (nc, nr) = hexNbrs.[i]
-      result.[i] <- struct (nc, nr, layer)
+    Hex2DSpatial.Internal.forEachNeighbor
+      col
+      row
+      w
+      d
+      grid.Orientation
+      (fun _ _ -> n <- n + 1)
+
+    let result = Array.zeroCreate<struct (int * int * int)> n
+    let mutable i = 0
+
+    Hex2DSpatial.Internal.forEachNeighbor
+      col
+      row
+      w
+      d
+      grid.Orientation
+      (fun nc nr ->
+        result.[i] <- struct (nc, nr, layer)
+        i <- i + 1)
 
     result
 
   /// Hex distance in 3D: hex distance on the plane + layer difference.
   let inline distance c1 r1 l1 c2 r2 l2 (grid: HexGrid3D<'T>) : int =
-    let w, d = grid.Width, grid.Depth
-    let tmpGrid = HexGrid.create w d 1f Vector2.Zero grid.Orientation
-    let hexDist = Hex2DSpatial.distance c1 r1 c2 r2 tmpGrid
-    hexDist + abs(l2 - l1)
+    let struct (q1, r1c, s1) = Hex2DSpatial.offsetToCube c1 r1 grid.Orientation
+    let struct (q2, r2c, s2) = Hex2DSpatial.offsetToCube c2 r2 grid.Orientation
+    (abs(q1 - q2) + abs(r1c - r2c) + abs(s1 - s2)) / 2 + abs(l2 - l1)
 
   /// Converts a 3D world position to the nearest hex3D cell.
   let inline worldToCell
@@ -791,23 +920,45 @@ module Hex3DSpatial =
     if range < 0 then
       Array.empty
     else
-      let w, h, d = grid.Width, grid.Height, grid.Depth
-      let result = ResizeArray<struct (int * int * int)>()
-      let tmpGrid = HexGrid.create w d 1f Vector2.Zero grid.Orientation
+      let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
+      let mutable n = 0
 
       for dl in -range .. range do
         let l = layer + dl
-        let layerDist = abs dl
 
         if l >= 0 && l < h then
-          let hexRange = range - layerDist
-          let hexCells = Hex2DSpatial.inRange col row hexRange tmpGrid
+          let hexRange = range - abs dl
 
-          for i in 0 .. hexCells.Length - 1 do
-            let struct (nc, nr) = hexCells.[i]
-            result.Add(struct (nc, nr, l))
+          Hex2DSpatial.forEachInRange
+            col
+            row
+            hexRange
+            w
+            d
+            grid.Orientation
+            (fun _ _ -> n <- n + 1)
 
-      result.ToArray()
+      let result = Array.zeroCreate<struct (int * int * int)> n
+      let mutable i = 0
+
+      for dl in -range .. range do
+        let l = layer + dl
+
+        if l >= 0 && l < h then
+          let hexRange = range - abs dl
+
+          Hex2DSpatial.forEachInRange
+            col
+            row
+            hexRange
+            w
+            d
+            grid.Orientation
+            (fun oc oR ->
+              result.[i] <- struct (oc, oR, l)
+              i <- i + 1)
+
+      result
 
   /// Returns true if a hex3D line is clear of blocked cells.
   let inline lineOfSight
@@ -820,7 +971,7 @@ module Hex3DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> int -> bool)
     (grid: HexGrid3D<'T>)
     : bool =
-    let w, h, d = grid.Width, grid.Height, grid.Depth
+    let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
     let struct (q1, r1c, s1) = Hex2DSpatial.offsetToCube c1 r1 grid.Orientation
     let struct (q2, r2c, s2) = Hex2DSpatial.offsetToCube c2 r2 grid.Orientation
     let hexN = max (abs(q2 - q1)) (max (abs(r2c - r1c)) (abs(s2 - s1)))
@@ -863,7 +1014,7 @@ module Hex3DSpatial =
     ([<InlineIfLambda>] predicate: int -> int -> int -> bool)
     (grid: HexGrid3D<'T>)
     : struct (int * int * int)[] =
-    let w, h, d = grid.Width, grid.Height, grid.Depth
+    let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
 
     if w = 0 || h = 0 || d = 0 then
       Array.empty
@@ -877,24 +1028,31 @@ module Hex3DSpatial =
       let total = w * h * d
       let visited = ArrayPool.Shared.Rent(total)
       Array.Clear(visited, 0, total)
-      let result = ResizeArray<struct (int * int * int)>()
-      let queue = Queue<struct (int * int * int)>()
-      queue.Enqueue(struct (col, row, layer))
+      let queue = ArrayPool.Shared.Rent(total)
+      let mutable head = 0
+      let mutable tail = 0
+      queue.[tail] <- struct (col, row, layer)
+      tail <- tail + 1
       visited.[toIndex col row layer w d] <- 1
-      let tmpGrid = HexGrid.create w d 1f Vector2.Zero grid.Orientation
 
-      while queue.Count > 0 do
-        let struct (cc, cr, cl) = queue.Dequeue()
-        result.Add(struct (cc, cr, cl))
+      while head < tail do
+        let struct (cc, cr, cl) = queue.[head]
+        head <- head + 1
 
         // Same-layer hex neighbors (zero-alloc callback)
-        Hex2DSpatial.Internal.forEachNeighbor cc cr tmpGrid (fun nc nr ->
-          if cl >= 0 && cl < h then
+        Hex2DSpatial.Internal.forEachNeighbor
+          cc
+          cr
+          w
+          d
+          grid.Orientation
+          (fun nc nr ->
             let idx = toIndex nc nr cl w d
 
             if visited.[idx] = 0 && predicate nc nr cl then
               visited.[idx] <- 1
-              queue.Enqueue(struct (nc, nr, cl)))
+              queue.[tail] <- struct (nc, nr, cl)
+              tail <- tail + 1)
 
         // Up / down neighbors
         if cl > 0 then
@@ -902,17 +1060,22 @@ module Hex3DSpatial =
 
           if visited.[idx] = 0 && predicate cc cr (cl - 1) then
             visited.[idx] <- 1
-            queue.Enqueue(struct (cc, cr, cl - 1))
+            queue.[tail] <- struct (cc, cr, cl - 1)
+            tail <- tail + 1
 
         if cl < h - 1 then
           let idx = toIndex cc cr (cl + 1) w d
 
           if visited.[idx] = 0 && predicate cc cr (cl + 1) then
             visited.[idx] <- 1
-            queue.Enqueue(struct (cc, cr, cl + 1))
+            queue.[tail] <- struct (cc, cr, cl + 1)
+            tail <- tail + 1
 
+      let result = Array.zeroCreate<struct (int * int * int)> tail
+      Array.blit queue 0 result 0 tail
+      ArrayPool.Shared.Return(queue)
       ArrayPool.Shared.Return(visited)
-      result.ToArray()
+      result
 
   /// A* pathfinding on a hex3D grid. Returns the shortest path or ValueNone.
   let inline findPath
@@ -927,7 +1090,7 @@ module Hex3DSpatial =
       int -> int -> int -> int -> int -> int -> float32)
     (grid: HexGrid3D<'T>)
     : struct (int * int * int)[] voption =
-    let w, h, d = grid.Width, grid.Height, grid.Depth
+    let struct (w, h, d) = struct (grid.Width, grid.Height, grid.Depth)
 
     if
       startCol < 0
@@ -955,10 +1118,18 @@ module Hex3DSpatial =
       let struct (gq, gr, _) =
         Hex2DSpatial.offsetToCube goalCol goalRow grid.Orientation
 
-      let inline hCost c r l : float32 =
-        let struct (q, rc, _) = Hex2DSpatial.offsetToCube c r grid.Orientation
+      let inline hCost
+        (gq: int)
+        (gr: int)
+        (gl: int)
+        (orientation: HexOrientation)
+        c
+        r
+        l
+        : float32 =
+        let struct (q, rc, _) = Hex2DSpatial.offsetToCube c r orientation
         let hexDist = float32(abs(gq - q) + abs(gr - rc)) / 2f
-        hexDist + float32(abs(goalLayer - l))
+        hexDist + float32(abs(gl - l))
 
       let total = w * h * d
       let gScore = ArrayPool.Shared.Rent(total)
@@ -975,25 +1146,25 @@ module Hex3DSpatial =
         closed.[i] <- 0
 
       gScore.[toIndex startCol startRow startLayer w d] <- 0f
-      let queue = Grid3DSpatial.Internal.MinHeap()
+      let mutable heap = Grid3DSpatial.Internal.create total
 
-      queue.Push(
-        {
+      Grid3DSpatial.Internal.push
+        &heap
+        ({
           Grid3DSpatial.Internal.X = startCol
           Grid3DSpatial.Internal.Y = startRow
           Grid3DSpatial.Internal.Z = startLayer
-          Grid3DSpatial.Internal.Priority = hCost startCol startRow startLayer
-        }
-      )
+          Grid3DSpatial.Internal.Priority =
+            hCost gq gr goalLayer grid.Orientation startCol startRow startLayer
+        })
 
       let mutable found = false
-      let tmpGrid = HexGrid.create w d 1f Vector2.Zero grid.Orientation
 
-      while queue.Count > 0 && not found do
-        match queue.TryPop() with
+      while Grid3DSpatial.Internal.count heap > 0 && not found do
+        match Grid3DSpatial.Internal.tryPop &heap with
         | ValueNone -> ()
         | ValueSome current ->
-          let cc, cr, cl = current.X, current.Y, current.Z
+          let struct (cc, cr, cl) = struct (current.X, current.Y, current.Z)
           let idx = toIndex cc cr cl w d
 
           if closed.[idx] <> 0 then
@@ -1004,8 +1175,13 @@ module Hex3DSpatial =
             closed.[idx] <- 1
 
             // Same-layer hex neighbors (zero-alloc callback)
-            Hex2DSpatial.Internal.forEachNeighbor cc cr tmpGrid (fun nc nr ->
-              if cl >= 0 && cl < h then
+            Hex2DSpatial.Internal.forEachNeighbor
+              cc
+              cr
+              w
+              d
+              grid.Orientation
+              (fun nc nr ->
                 let nIdx = toIndex nc nr cl w d
 
                 if closed.[nIdx] = 0 && isPassable nc nr cl then
@@ -1017,15 +1193,16 @@ module Hex3DSpatial =
                     parentRow.[nIdx] <- cr
                     parentLayer.[nIdx] <- cl
 
-                    queue.Push(
-                      {
+                    Grid3DSpatial.Internal.push
+                      &heap
+                      ({
                         Grid3DSpatial.Internal.X = nc
                         Grid3DSpatial.Internal.Y = nr
                         Grid3DSpatial.Internal.Z = cl
                         Grid3DSpatial.Internal.Priority =
-                          tentative + hCost nc nr cl
-                      }
-                    ))
+                          tentative
+                          + hCost gq gr goalLayer grid.Orientation nc nr cl
+                      }))
 
             // Up / down neighbors
             if cl > 0 then
@@ -1040,15 +1217,16 @@ module Hex3DSpatial =
                   parentRow.[nIdx] <- cr
                   parentLayer.[nIdx] <- cl
 
-                  queue.Push(
-                    {
+                  Grid3DSpatial.Internal.push
+                    &heap
+                    ({
                       Grid3DSpatial.Internal.X = cc
                       Grid3DSpatial.Internal.Y = cr
                       Grid3DSpatial.Internal.Z = cl - 1
                       Grid3DSpatial.Internal.Priority =
-                        tentative + hCost cc cr (cl - 1)
-                    }
-                  )
+                        tentative
+                        + hCost gq gr goalLayer grid.Orientation cc cr (cl - 1)
+                    })
 
             if cl < h - 1 then
               let nIdx = toIndex cc cr (cl + 1) w d
@@ -1062,36 +1240,48 @@ module Hex3DSpatial =
                   parentRow.[nIdx] <- cr
                   parentLayer.[nIdx] <- cl
 
-                  queue.Push(
-                    {
+                  Grid3DSpatial.Internal.push
+                    &heap
+                    ({
                       Grid3DSpatial.Internal.X = cc
                       Grid3DSpatial.Internal.Y = cr
                       Grid3DSpatial.Internal.Z = cl + 1
                       Grid3DSpatial.Internal.Priority =
-                        tentative + hCost cc cr (cl + 1)
-                    }
-                  )
+                        tentative
+                        + hCost gq gr goalLayer grid.Orientation cc cr (cl + 1)
+                    })
 
       let result =
         if found then
-          let path = ResizeArray<struct (int * int * int)>()
+          let mutable n = 0
           let mutable cc = goalCol
           let mutable cr = goalRow
           let mutable cl = goalLayer
 
           while cc <> startCol || cr <> startRow || cl <> startLayer do
-            path.Add(struct (cc, cr, cl))
+            n <- n + 1
             let idx = toIndex cc cr cl w d
-            let pc = parentCol.[idx]
-            let pr = parentRow.[idx]
-            let pl = parentLayer.[idx]
-            cc <- pc
-            cr <- pr
-            cl <- pl
+            cc <- parentCol.[idx]
+            cr <- parentRow.[idx]
+            cl <- parentLayer.[idx]
 
-          path.Add(struct (startCol, startRow, startLayer))
-          path.Reverse()
-          ValueSome(path.ToArray())
+          n <- n + 1
+          let path = Array.zeroCreate<struct (int * int * int)> n
+          let mutable i = n - 1
+          cc <- goalCol
+          cr <- goalRow
+          cl <- goalLayer
+
+          while cc <> startCol || cr <> startRow || cl <> startLayer do
+            path.[i] <- struct (cc, cr, cl)
+            i <- i - 1
+            let idx = toIndex cc cr cl w d
+            cc <- parentCol.[idx]
+            cr <- parentRow.[idx]
+            cl <- parentLayer.[idx]
+
+          path.[0] <- struct (startCol, startRow, startLayer)
+          ValueSome path
         else
           ValueNone
 
@@ -1100,4 +1290,5 @@ module Hex3DSpatial =
       ArrayPool.Shared.Return(parentRow)
       ArrayPool.Shared.Return(parentLayer)
       ArrayPool.Shared.Return(closed)
+      Grid3DSpatial.Internal.dispose &heap
       result
