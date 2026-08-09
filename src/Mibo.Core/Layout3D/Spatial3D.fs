@@ -207,7 +207,7 @@ module Grid3DSpatial =
     let dz = float32(z2 - z1)
     sqrt(dx * dx + dy * dy + dz * dz)
 
-  /// Converts a world position to the nearest grid cell. Returns ValueNone
+  /// Converts a world position to the grid cell that contains it. Returns ValueNone
   /// if the position is outside the grid.
   let inline worldToCell
     (worldPos: Vector3)
@@ -216,9 +216,9 @@ module Grid3DSpatial =
     let fx = (worldPos.X - grid.Origin.X) / grid.CellSize.X
     let fy = (worldPos.Y - grid.Origin.Y) / grid.CellSize.Y
     let fz = (worldPos.Z - grid.Origin.Z) / grid.CellSize.Z
-    let cx = int(round fx)
-    let cy = int(round fy)
-    let cz = int(round fz)
+    let cx = int(floor fx)
+    let cy = int(floor fy)
+    let cz = int(floor fz)
 
     if
       cx >= 0
@@ -863,12 +863,14 @@ module Hex3DSpatial =
     (abs(q1 - q2) + abs(r1c - r2c) + abs(s1 - s2)) / 2 + abs(l2 - l1)
 
   /// Converts a 3D world position to the nearest hex3D cell.
+  /// The hex (XZ) plane resolves to the nearest hex center; the Y axis resolves
+  /// to the containing layer.
   let inline worldToCell
     (worldPos: Vector3)
     (grid: HexGrid3D<'T>)
     : struct (int * int * int) voption =
     let layerF = (worldPos.Y - grid.Origin.Y) / grid.LayerHeight
-    let layer = int(round layerF)
+    let layer = int(floor layerF)
 
     if layer < 0 || layer >= grid.Height then
       ValueNone
