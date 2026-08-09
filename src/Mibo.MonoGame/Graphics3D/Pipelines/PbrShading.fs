@@ -1010,10 +1010,15 @@ module internal PbrShading =
         | ValueSome part ->
           // Skinned parts (SkinnedEffect baked effect) get the Skinned technique and the
           // bone palette, copied into the shared scratch, tail-filled with identity.
+          // Gate on bones being present: a DrawModel-deferred transparent part carries
+          // ValueNone (its opaque counterpart draws Standard), so a part that merely has a
+          // baked SkinnedEffect must render Standard here too, or it would use the Skinned
+          // technique with no palette uploaded (stale/zero bones → collapsed vertices).
           let isSkinned =
-            match part.Effect with
-            | :? SkinnedEffect -> true
-            | _ -> false
+            entry.Bones.IsSome
+            && (match part.Effect with
+                | :? SkinnedEffect -> true
+                | _ -> false)
 
           if isSkinned then
             e.CurrentTechnique <- e.Techniques["Skinned"]
