@@ -177,7 +177,7 @@ module Grid2DSpatial =
     let dy = float32(y2 - y1)
     sqrt(dx * dx + dy * dy)
 
-  /// Converts a world position to the nearest grid cell coordinates.
+  /// Converts a world position to the grid cell that contains it.
   /// Returns ValueNone if the position is outside the grid.
   let inline worldToCell
     (worldPos: Vector2)
@@ -185,8 +185,8 @@ module Grid2DSpatial =
     : struct (int * int) voption =
     let fx = (worldPos.X - grid.Origin.X) / grid.CellSize.X
     let fy = (worldPos.Y - grid.Origin.Y) / grid.CellSize.Y
-    let cx = int(round fx)
-    let cy = int(round fy)
+    let cx = int(floor fx)
+    let cy = int(floor fy)
 
     if cx >= 0 && cx < grid.Width && cy >= 0 && cy < grid.Height then
       ValueSome(struct (cx, cy))

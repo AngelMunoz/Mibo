@@ -182,6 +182,58 @@ let tests =
           Expect.equal cx 5 "X"
           Expect.equal cy 5 "Y"
         | ValueNone -> failwith "Expected ValueSome"
+
+      // Regression: getWorldPos anchors a cell at its corner
+      // (origin + N*cellSize), so worldToCell must resolve the cell that
+      // *contains* the point (floor), not the nearest corner (round).
+      // Without this, the second half of a cell reports the next cell.
+      testCase "worldToCell returns the containing cell, not the nearest corner"
+      <| fun _ ->
+        let grid = CellGrid2D.create 10 10 (Vector2(32f, 32f)) Vector2.Zero
+
+        // Cell 1 spans X [32, 64). 49 is in the second half of cell 1;
+        // round(49/32) would wrongly snap to cell 2.
+        let result = Grid2DSpatial.worldToCell (Vector2(49f, 10f)) grid
+
+        match result with
+        | ValueSome struct (cx, cy) ->
+          Expect.equal cx 1 "X should be the containing cell"
+          Expect.equal cy 0 "Y should be the containing cell"
+        | ValueNone -> failwith "Expected ValueSome"
+
+      // Regression: F#'s `round` is banker's rounding, so at exact .5
+      // fractional positions (the centers of odd cells) it snaps to the
+      // even neighbor. floor has no such bias.
+      testCase "worldToCell is unbiased at cell-center half points"
+      <| fun _ ->
+        let grid = CellGrid2D.create 10 10 (Vector2(32f, 32f)) Vector2.Zero
+
+        // Center of cell 1: X = 48 -> 48/32 = 1.5
+        // round(1.5) = 2 (banker's); floor(1.5) = 1.
+        for x in [ 1; 2; 3 ] do
+          let centerX = float32 x * 32f + 16f
+          let result = Grid2DSpatial.worldToCell (Vector2(centerX, 0f)) grid
+
+          match result with
+          | ValueSome struct (cx, _) ->
+            Expect.equal cx x "Center should map to its own cell"
+          | ValueNone -> failwith "Expected ValueSome"
+
+      testCase "worldToCell handles negative coordinates via floor"
+      <| fun _ ->
+        // Origin negative so cells extend into negative world space.
+        let grid =
+          CellGrid2D.create 10 10 (Vector2(32f, 32f)) (Vector2(-160f, -160f))
+
+        // World X = -159 is just inside cell 0 (origin -160). floor(-159/32
+        // adjusted) must stay 0, not -1 as truncate would give.
+        let result = Grid2DSpatial.worldToCell (Vector2(-159f, -159f)) grid
+
+        match result with
+        | ValueSome struct (cx, cy) ->
+          Expect.equal cx 0 "X should be cell 0"
+          Expect.equal cy 0 "Y should be cell 0"
+        | ValueNone -> failwith "Expected ValueSome"
     ]
 
     // ── Square grid: InRange ──────────────────────────────────────────

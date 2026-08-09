@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Core:** `worldToCell` on square (`Grid2DSpatial`), voxel (`Grid3DSpatial`) and the layer axis of 3D hex (`Hex3DSpatial`) grids now returns the cell that *contains* the world position. They previously snapped to the nearest cell corner, so any point in the second half of a cell (and, because of banker's rounding, the exact center of an odd-indexed cell) reported the next cell over. Hex 2D and the hex (XZ) plane of 3D hex are unchanged — those resolve to the nearest hex center as before.
+
 ## [4.0.0] - 2026-08-07
 
 ### Changed
