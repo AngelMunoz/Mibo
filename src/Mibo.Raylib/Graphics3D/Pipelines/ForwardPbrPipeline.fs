@@ -573,7 +573,9 @@ module internal ShadowPassHelpers =
   /// has <c>0 &lt; Opacity &lt; 1</c>. Transparents are not drawn inline — they are collected,
   /// sorted far-to-near by camera distance, and flushed after all opaque geometry. The PBR
   /// fragment already outputs alpha and the default ALPHA blend is always active, so the
-  /// flush is a draw-order change only (no blend/depth-state switch needed).
+  /// flush needs no blend-state switch; it only toggles depth writes off for the duration
+  /// of the pass (see <c>flushTransparents</c>) so transparents don't occlude the geometry
+  /// behind them in the depth buffer.
   [<Struct>]
   type TransparentMeshDraw = {
     Mesh: Mesh
@@ -619,7 +621,8 @@ module internal ShadowPassHelpers =
     /// skipped (they don't cast); materials with <c>Opacity &lt; 1.0</c> are also skipped —
     /// transparent geometry doesn't cast shadows (the depth pass is binary, no alpha test,
     /// so a blended object must not write shadow depth). Instanced draws are collected
-    /// whole regardless (their commands carry no material on this backend).</summary>
+    /// whole regardless: their commands carry a material, but it is not consulted here
+    /// (per-part material resolution for instanced draws is a v1 limitation).</summary>
     member _.Add(cmd: Command3D) =
       match cmd with
       | Command3D.DisableShadows -> shadowsEnabled <- false
@@ -2624,9 +2627,9 @@ type ForwardPipelineBase
 
   // Deferred transparent draws for the forward pass (materials with 0 < Opacity < 1):
   // collected inline, sorted far-to-near by camera distance at flush points (camera
-  // boundaries, DrawImmediate, end of frame), then drawn after all opaque geometry.
-  // The PBR fragment already outputs alpha and the default ALPHA blend is always
-  // active, so the flush is a draw-order change only. Grow-only, reused across frames.
+  // boundaries, DrawImmediate, end of frame), then drawn after all opaque geometry with
+  // depth writes off. The PBR fragment already outputs alpha and the default ALPHA blend
+  // is always active, so the flush toggles only the depth mask. Grow-only, reused across frames.
   let transparentDraws = ResizeArray<TransparentMeshDraw>()
 
   // Cached far-to-near comparer for the transparent sort — one object for the pipeline
@@ -3647,6 +3650,13 @@ type ForwardPipelineBase
         if transparentDraws.Count > 0 then
           transparentDraws.Sort(transparentComparer)
 
+          // Standard transparency: depth test stays on (a closer opaque surface can still
+          // hide a transparent one), but depth writes go off so a transparent surface
+          // doesn't occlude the geometry behind it in the depth buffer. This keeps the
+          // depth texture exposed to PostProcessWithDepth effects opaque-only on both
+          // backends (MonoGame uses DepthStencilState.DepthRead for the same reason).
+          Rlgl.DisableDepthMask()
+
           for i = 0 to transparentDraws.Count - 1 do
             let d = transparentDraws[i]
 
@@ -3681,6 +3691,7 @@ type ForwardPipelineBase
                 bones
               )
 
+          Rlgl.EnableDepthMask()
           transparentDraws.Clear()
 
       for i = 0 to buffer.Count - 1 do

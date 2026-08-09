@@ -4,7 +4,7 @@
 
 ### Added
 
-- **MonoGame 3D, Raylib 3D:** per-material transparency. Materials with `0 < Opacity < 1` now render alpha-blended after all opaque geometry, sorted far-to-near by camera distance (MonoGame switches to alpha blending with depth-read for the sorted pass); `Opacity <= 0` renders nothing. Transparent geometry no longer casts shadows — the depth pass is binary — and on MonoGame it is also excluded from the scene-depth pre-pass. Models or effects whose albedo/effect alpha is below 1 (e.g. a raylib albedo `Color.A` below 255) now render transparent instead of opaque casters. Instanced draws and `beginEffect`/`endEffect`-scoped draws keep their previous immediate behavior in this version — give them fully opaque materials.
+- **MonoGame 3D, Raylib 3D:** per-material transparency. Materials with `0 < Opacity < 1` render alpha-blended after all opaque geometry, sorted far-to-near by camera distance, with depth writes off for the sorted pass (depth test stays on) on both backends; `Opacity <= 0` renders nothing. Transparent geometry does not cast shadows and is excluded from the scene-depth pre-pass — the depth pass is binary — so `PostProcessWithDepth` effects (fog, depth-of-field) sample opaque-only depth on both backends. Models or effects whose albedo/effect alpha is below 1 (e.g. a raylib albedo `Color.A` below 255) now render transparent instead of opaque casters. Instanced and `beginEffect`/`endEffect`-scoped transparent draws are not deferred: they render immediately and unsorted, so they may blend incorrectly against sorted transparents — prefer opaque materials for them.
 
 ## [4.0.0] - 2026-08-07
 

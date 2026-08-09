@@ -204,11 +204,16 @@ identical:
 - **raylib:** the scene renders into a custom framebuffer whose depth attachment is
   a sampleable texture (not a renderbuffer). OpenGL's depth buffer is directly
   sampleable, so no extra geometry pass is needed — the depth you get is the same
-  depth buffer the forward pass wrote.
+  depth buffer the forward pass wrote. Transparent surfaces write with depth off during
+  their sorted pass, so they do not contribute to this depth buffer.
 - **MonoGame:** DirectX/OpenGL depth-stencil buffers are not directly sampleable as
   textures in MonoGame's API, so the pipeline re-renders all opaque geometry into a
   dedicated R32F color render target (cleared to white = far) via a depth-only
   shader. This is an extra geometry pass, but produces the same NDC z values.
+  Transparent geometry is excluded from this pass, matching raylib.
+
+In both cases the depth texture is opaque-only — `PostProcessWithDepth` effects (fog,
+depth-of-field) never see transparent surfaces.
 
 ### Post-process shader requirements
 

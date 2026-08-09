@@ -151,7 +151,9 @@ Use for UI elements, debug markers, or anything that should appear at full brigh
 
 - `Opacity >= 1.0` — opaque. Renders in the forward pass, writes depth, casts shadows.
 - `0 < Opacity < 1.0` — transparent. Renders after all opaque geometry, sorted far-to-near
-  by camera distance, and alpha-blends with the scene.
+  by camera distance, and alpha-blends with the scene. Depth testing stays on but depth
+  writes are off for the sorted pass, so a transparent surface never occludes the geometry
+  behind it in the depth buffer.
 - `Opacity <= 0.0` — not rendered at all (no draw, no shadow).
 
 ```fsharp
@@ -167,20 +169,22 @@ buffer.mesh(prims.Cube, transform, glassMat).drop()
 
 Rules:
 
-- **Transparent geometry does not cast shadows.** The shadow pass is binary — it cannot
-  represent partial occlusion — so transparent surfaces are excluded from shadow and
-  scene-depth rendering. `EnableShadows`/`DisableShadows` scopes do not change this.
+- **Transparent geometry does not cast shadows and does not write depth.** The shadow and
+  scene-depth passes are binary — they cannot represent partial occlusion — so transparent
+  surfaces are excluded from both, and the sorted pass writes with depth off. Consequence:
+  `PostProcessWithDepth` effects (fog, depth-of-field) sample opaque-only depth on both
+  backends. `EnableShadows`/`DisableShadows` scopes do not change this.
 - **Ordering is per-camera, far-to-near.** Transparent draws sort by distance to the camera
   that captured them and render at camera boundaries and end of frame. Intersecting
   transparent surfaces can still sort incorrectly — there is no per-pixel ordering.
 - **Where opacity comes from.** On raylib, `Opacity` maps from the albedo texture/color
   alpha channel (`Color.A`); on MonoGame, from the effect's alpha (`BasicEffect.Alpha` /
-  `SkinnedEffect.Alpha`). On MonoGame, transparent draws switch the device to alpha blending
-  with depth-read for the duration of the sorted pass.
+  `SkinnedEffect.Alpha`). On both backends the sorted transparent pass uses alpha blending
+  with depth writes off (depth test on) for its duration.
 - **Limitations.** Instanced draws and draws inside a `beginEffect`/`endEffect` scope are
-  not deferred in this version: they render immediately and keep their previous shadow
-  behavior. On MonoGame they also keep the frame's opaque blend state — give instanced or
-  effect-scoped geometry fully opaque materials.
+  not deferred in this version: they render immediately and unsorted, so a transparent
+  instanced or effect-scoped surface may blend incorrectly against sorted transparents.
+  Prefer fully opaque materials for them.
 
 ## Primitive meshes
 

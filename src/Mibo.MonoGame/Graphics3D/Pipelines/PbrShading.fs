@@ -790,27 +790,11 @@ module internal PbrShading =
                       Opacity = mat.Opacity * tintVec.W
                 }
 
-            if mat.Opacity < 1.0f then
-              // Transparent: defer to the sorted pass. Opacity <= 0 draws nothing at all.
-              // The instanced fallback passes ValueNone for the list — instanced draws
-              // keep the previous immediate behavior.
-              if mat.Opacity > 0.0f then
-                match transparentDraws with
-                | ValueSome draws ->
-                  draws.Add {
-                    Part = ValueSome part
-                    Mesh = ValueNone
-                    World = world
-                    Material = mat
-                    Bones = ValueSome bones
-                    DistanceSq =
-                      Vector3.DistanceSquared(
-                        state.CurrentCamera.Position,
-                        world.Translation
-                      )
-                  }
-                | ValueNone -> ()
-            else
+            // Draws this part immediately with the resolved material. Local inline so the
+            // byref `&mat` is addressed at the call sites (local functions can't take
+            // byref params). Used for opaque parts and for the instanced fallback's
+            // transparent parts, which have no shared transparent list to defer into.
+            let inline drawPartImmediately() =
               let key = materialKey &mat
 
               if not res.HasLastMaterial || key <> res.LastKey then
@@ -826,6 +810,33 @@ module internal PbrShading =
                 drawPart(gd, part)
               finally
                 part.Effect <- saved
+
+            if mat.Opacity <= 0.0f then
+              // Fully invisible: draw nothing.
+              ()
+            elif mat.Opacity < 1.0f then
+              // Transparent: defer to the sorted pass when one is available.
+              // The instanced fallback passes ValueNone (no shared transparent list),
+              // so it draws immediately, unsorted — matching the DX11 real-instancing
+              // path. Sorted deferral of skinned+instanced transparents is a v1
+              // limitation.
+              match transparentDraws with
+              | ValueSome draws ->
+                draws.Add {
+                  Part = ValueSome part
+                  Mesh = ValueNone
+                  World = world
+                  Material = mat
+                  Bones = ValueSome bones
+                  DistanceSq =
+                    Vector3.DistanceSquared(
+                      state.CurrentCamera.Position,
+                      world.Translation
+                    )
+                }
+              | ValueNone -> drawPartImmediately()
+            else
+              drawPartImmediately()
       | _ -> ()
 
   /// <summary>Handles <c>DrawAnimatedModel</c>: Skinned technique for SkinnedEffect parts,
