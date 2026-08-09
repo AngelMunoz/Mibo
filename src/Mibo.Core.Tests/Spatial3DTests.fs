@@ -174,6 +174,26 @@ let tests =
           Grid3DSpatial.worldToCell (Vector3(-100f, -100f, -100f)) grid
 
         Expect.equal result ValueNone "OOB"
+
+      // Regression: getWorldPos anchors a cell at its corner, so worldToCell
+      // must resolve the containing cell (floor), not the nearest corner
+      // (round). Points in the second half of a cell would otherwise report
+      // the next cell.
+      testCase "worldToCell returns the containing cell, not the nearest corner"
+      <| fun _ ->
+        let grid =
+          CellGrid3D.create 10 10 10 (Vector3(32f, 32f, 32f)) Vector3.Zero
+
+        // Cell 1 spans [32, 64) on each axis. (49, 49, 49) is in the second
+        // half of cell 1; round(49/32) would wrongly snap to cell 2.
+        let result = Grid3DSpatial.worldToCell (Vector3(49f, 49f, 49f)) grid
+
+        match result with
+        | ValueSome struct (cx, cy, cz) ->
+          Expect.equal cx 1 "X should be the containing cell"
+          Expect.equal cy 1 "Y should be the containing cell"
+          Expect.equal cz 1 "Z should be the containing cell"
+        | ValueNone -> failwith "Expected ValueSome"
     ]
 
     // ── Voxel grid: InRange ───────────────────────────────────────────
@@ -546,6 +566,27 @@ let tests =
 
         let result = Hex3DSpatial.worldToCell (Vector3(0f, -100f, 0f)) grid
         Expect.equal result ValueNone "OOB layer"
+
+      // Regression: the Y/layer axis is corner-anchored
+      // (HexGrid3D.getWorldPos: origin.Y + layer * LayerHeight), so a world Y
+      // in the second half of a layer must resolve to that layer (floor), not
+      // snap to the next layer boundary (round).
+      testCase "worldToCell layer axis returns the containing layer"
+      <| fun _ ->
+        let grid =
+          HexGrid3D.create 10 5 10 32f 2f Vector3.Zero HexOrientation.PointyTop
+
+        // Layer 1 spans Y [2, 4). Y = 3 is its middle.
+        // Use the exact hex center for col 0 / row 0 so only the layer is in
+        // question. PointyTop center: x = hexW/2, z = hexH/2.
+        let hexW = 32f * sqrt 3f
+        let hexH = 32f * 2f
+        let pos = Vector3(hexW / 2f, 3f, hexH / 2f)
+
+        match Hex3DSpatial.worldToCell pos grid with
+        | ValueSome struct (_, _, layer) ->
+          Expect.equal layer 1 "Should be layer 1"
+        | ValueNone -> failwith "Expected ValueSome"
     ]
 
     // ── Hex3D grid: InRange ───────────────────────────────────────────
