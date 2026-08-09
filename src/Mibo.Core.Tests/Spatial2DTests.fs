@@ -211,7 +211,7 @@ let tests =
         // Center of cell 1: X = 48 -> 48/32 = 1.5
         // round(1.5) = 2 (banker's); floor(1.5) = 1.
         for x in [ 1; 2; 3 ] do
-          let centerX = float32 x * 32f
+          let centerX = float32 x * 32f + 16f
           let result = Grid2DSpatial.worldToCell (Vector2(centerX, 0f)) grid
 
           match result with
