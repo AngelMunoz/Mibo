@@ -618,6 +618,7 @@ module internal ShadowPass =
             }
 
             res.CollectedModelPartCount <- res.CollectedModelPartCount + 1
+          | _ -> ()
     | Command3D.DrawModelWith(model, transform, matOverride) ->
       // The override decides opacity in the forward pass, so it matters for depth: parts
       // whose resolved material is transparent are skipped. The flat part index (meshes ×
@@ -665,6 +666,7 @@ module internal ShadowPass =
             }
 
             res.CollectedModelPartCount <- res.CollectedModelPartCount + 1
+          | _ -> ()
     | Command3D.DrawAnimatedModelWith(model, transform, bones, matOverride) ->
       // Mirror DrawAnimatedModel (SkinnedEffect parts only), but the override decides
       // opacity in the forward pass, so it matters for depth: transparent parts are

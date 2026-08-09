@@ -182,9 +182,11 @@ Rules:
   `SkinnedEffect.Alpha`). On both backends the sorted transparent pass uses alpha blending
   with depth writes off (depth test on) for its duration.
 - **Limitations.** Instanced draws and draws inside a `beginEffect`/`endEffect` scope are
-  not deferred in this version: they render immediately and unsorted, so a transparent
-  instanced or effect-scoped surface may blend incorrectly against sorted transparents.
-  Prefer fully opaque materials for them.
+  not deferred in this version: they render immediately and unsorted. On raylib such a
+  transparent surface still blends (with depth writes on, since it skips the sorted flush);
+  on MonoGame it renders effectively opaque, because the frame's `BlendState.Opaque` is not
+  switched for these immediate draws. Either way a transparent instanced or effect-scoped
+  surface may look wrong against sorted transparents — prefer fully opaque materials for them.
 
 ## Primitive meshes
 
