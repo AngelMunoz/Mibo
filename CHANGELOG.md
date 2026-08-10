@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-08-10
+
 ### Added
 
 - **MonoGame 3D, Raylib 3D:** per-material transparency. Materials with `0 < Opacity < 1` render alpha-blended after all opaque geometry, sorted far-to-near by camera distance, with depth writes off for the sorted pass (depth test stays on) on both backends; `Opacity <= 0` renders nothing. Transparent geometry does not cast shadows and is excluded from the scene-depth pre-pass — the depth pass is binary — so `PostProcessWithDepth` effects (fog, depth-of-field) sample opaque-only depth on both backends. Instanced and `beginEffect`/`endEffect`-scoped transparent draws are not deferred: they render immediately and unsorted, so they may blend incorrectly against sorted transparents — prefer opaque materials for them.
