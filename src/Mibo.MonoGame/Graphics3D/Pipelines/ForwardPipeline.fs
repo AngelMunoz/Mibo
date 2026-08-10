@@ -1,6 +1,7 @@
 namespace Mibo.Elmish.Graphics3D.Pipelines
 
 open System
+open System.Collections.Generic
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Elmish
@@ -330,6 +331,19 @@ type ForwardPipelineBase
   // bone-transforms scratch are all owned by PbrResources and driven by PbrShading.* (PbrShading.fs).
   let pbrRes = PbrResources()
 
+  // Deferred transparent draws for the forward pass (materials with 0 < Opacity < 1): collected
+  // inline by the default Shade, sorted far-to-near by camera distance at flush points (camera
+  // boundaries, DrawImmediate, end of frame), then drawn after all opaque geometry with alpha
+  // blending + depth-read. Grow-only, reused across frames.
+  let transparentDraws = ResizeArray<TransparentDraw>()
+
+  // Cached far-to-near comparer for the transparent sort — one object for the pipeline
+  // lifetime, no per-frame allocation (List.Sort with a comparer sorts in place).
+  let transparentComparer: IComparer<TransparentDraw> =
+    { new IComparer<TransparentDraw> with
+        member _.Compare(a, b) = b.DistanceSq.CompareTo(a.DistanceSq)
+    }
+
   // Shadow pass: all shadow state (atlas, depth effect + params, origin, raster, pooled
   // caster/skinned/scratch arrays, per-light slot mappings, frustum, bone palette) is owned
   // by ShadowResources and driven by ShadowPass.run. See ShadowPass.fs.
@@ -413,7 +427,8 @@ type ForwardPipelineBase
           pbrRes,
           model,
           transform,
-          ValueNone
+          ValueNone,
+          transparentDraws
         )
       | Command3D.DrawModelWith(model, transform, matOverride) ->
         PbrShading.drawModel(
@@ -423,7 +438,8 @@ type ForwardPipelineBase
           pbrRes,
           model,
           transform,
-          ValueSome matOverride
+          ValueSome matOverride,
+          transparentDraws
         )
       | Command3D.DrawAnimatedModel(model, transform, bones) ->
         PbrShading.drawAnimatedModel(
@@ -434,7 +450,8 @@ type ForwardPipelineBase
           model,
           transform,
           bones,
-          ValueNone
+          ValueNone,
+          transparentDraws
         )
       | Command3D.DrawAnimatedModelWith(model, transform, bones, matOverride) ->
         PbrShading.drawAnimatedModel(
@@ -445,7 +462,8 @@ type ForwardPipelineBase
           model,
           transform,
           bones,
-          ValueSome matOverride
+          ValueSome matOverride,
+          transparentDraws
         )
       | Command3D.DrawPrimitive(mesh, transform, material) ->
         PbrShading.drawPrimitive(
@@ -455,7 +473,8 @@ type ForwardPipelineBase
           pbrRes,
           mesh,
           transform,
-          material
+          material,
+          transparentDraws
         )
       | Command3D.DrawInstanced(mesh,
                                 transforms,
@@ -1231,6 +1250,36 @@ type ForwardPipelineBase
       // skipped. So reset to "no active camera" before the forward loop.
       state.HasCamera <- false
 
+      // Transparent flush: draws the deferred transparents (sorted far-to-near) with alpha
+      // blending + depth-read, then clears the list. Opaque geometry already wrote depth and
+      // the far-to-near sort guarantees each successive transparent is nearer, so it passes
+      // the depth test against everything already drawn. Called at camera boundaries, before
+      // DrawImmediate, and at the end of the frame — must run while the deferring camera's
+      // matrices/viewport are still current. No-op when nothing was deferred. Inline so the
+      // body can take the address of the enclosing mutable state/scene at each call site
+      // (a closure cannot capture byrefs).
+      let inline flushTransparents() =
+        if transparentDraws.Count > 0 then
+          let prevBlend = gd.BlendState
+          let prevDepth = gd.DepthStencilState
+
+          gd.BlendState <- BlendState.AlphaBlend
+          gd.DepthStencilState <- DepthStencilState.DepthRead
+          transparentDraws.Sort(transparentComparer)
+
+          for i = 0 to transparentDraws.Count - 1 do
+            PbrShading.drawTransparent(
+              gd,
+              &state,
+              &scene,
+              pbrRes,
+              transparentDraws[i]
+            )
+
+          gd.BlendState <- prevBlend
+          gd.DepthStencilState <- prevDepth
+          transparentDraws.Clear()
+
       // Running camera-block index into the block plan; advanced at each
       // BeginCamera/BeginCameraConfig below (multi-block frames only).
       let mutable blockIndex = -1
@@ -1252,6 +1301,10 @@ type ForwardPipelineBase
         match buffer[i] with
         // ── Camera ──
         | Command3D.BeginCamera cam ->
+          // Transparents sort by the camera that deferred them — flush before switching to
+          // the new camera's matrices (state still holds the previous camera's view).
+          flushTransparents()
+
           // Re-establish this camera's view (the pre-scan left the LAST camera's view in
           // state; without this, multi-camera scenes render every view from the last one).
           let struct (v, _) = buildMatrices cam
@@ -1286,6 +1339,10 @@ type ForwardPipelineBase
             )
 
         | Command3D.BeginCameraConfig cfg ->
+          // Transparents sort by the camera that deferred them — flush before applying the
+          // new block's viewport/matrices (the previous camera's viewport is still active).
+          flushTransparents()
+
           // Apply viewport + clear color (deferred from pre-scan so clearing happens here).
           match cfg.Viewport with
           | ValueSome rect -> gd.Viewport <- Viewport(rect)
@@ -1344,6 +1401,10 @@ type ForwardPipelineBase
 
         | Command3D.EndCamera ->
           if state.HasCamera then
+            // Transparents sort by the camera that deferred them — flush before the
+            // viewport restore (the deferring camera's viewport is still active).
+            flushTransparents()
+
             // Restore fullscreen viewport + mark camera inactive so subsequent draws are skipped
             // until the next BeginCamera (matches the B5-B9 single-pass semantics; without this,
             // draws after EndCamera would dispatch with stale matrices).
@@ -1415,6 +1476,10 @@ type ForwardPipelineBase
 
         // ── Escape hatch: full device control + the gathered scene data ──
         | Command3D.DrawImmediate action ->
+          // Transparents emitted before the immediate block draw before it (they were
+          // deferred earlier in the buffer).
+          flushTransparents()
+
           let savedHasCamera = state.HasCamera
           let savedViewport = gd.Viewport
 
@@ -1434,6 +1499,10 @@ type ForwardPipelineBase
             // Restore viewport; camera state is logical (matrices), nothing to restore on gd.
             gd.Viewport <- savedViewport
             state.HasCamera <- savedHasCamera
+
+      // ── Transparent flush (end of frame) — state still holds the last camera's
+      // matrices/viewport, which the scene-depth pre-pass below also reads. ──
+      flushTransparents()
 
       // ── Scene depth pre-pass (camera-POV, reusing collected geometry) ──
       // Only runs when PostProcessWithDepth actions exist. Single-camera frames reuse the

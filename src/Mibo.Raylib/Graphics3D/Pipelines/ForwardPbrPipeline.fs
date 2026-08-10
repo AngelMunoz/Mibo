@@ -569,6 +569,22 @@ module internal ShadowPassHelpers =
     BoneCount: int
   }
 
+  /// A deferred transparent draw for the forward pass: a single mesh draw whose material
+  /// has <c>0 &lt; Opacity &lt; 1</c>. Transparents are not drawn inline — they are collected,
+  /// sorted far-to-near by camera distance, and flushed after all opaque geometry. The PBR
+  /// fragment already outputs alpha and the default ALPHA blend is always active, so the
+  /// flush needs no blend-state switch; it only toggles depth writes off for the duration
+  /// of the pass (see <c>flushTransparents</c>) so transparents don't occlude the geometry
+  /// behind them in the depth buffer.
+  [<Struct>]
+  type TransparentMeshDraw = {
+    Mesh: Mesh
+    Transform: Matrix4x4
+    Bones: Matrix4x4[] voption
+    Material: Material3D
+    DistanceSq: float32
+  }
+
   /// <summary>
   /// Grow-only pooled collection of mesh draws for the shadow pass, gathered per command
   /// (<c>Begin</c> → <c>Add</c>* → <c>Finish</c>) instead of a count scan + rent-exact +
@@ -602,55 +618,79 @@ module internal ShadowPassHelpers =
       instancedCount <- 0
 
     /// <summary>Collects one buffer command. Draws emitted while shadows are disabled are
-    /// skipped (they don't cast); everything else appends to the pooled spans.</summary>
+    /// skipped (they don't cast); materials with <c>Opacity &lt; 1.0</c> are also skipped —
+    /// transparent geometry doesn't cast shadows (the depth pass is binary, no alpha test,
+    /// so a blended object must not write shadow depth). Instanced draws are collected
+    /// whole regardless: their commands carry a material, but it is not consulted here
+    /// (per-part material resolution for instanced draws is a v1 limitation).</summary>
     member _.Add(cmd: Command3D) =
       match cmd with
       | Command3D.DisableShadows -> shadowsEnabled <- false
       | Command3D.EnableShadows -> shadowsEnabled <- true
-      | Command3D.DrawMesh(mesh, transform, _) when shadowsEnabled ->
-        ensureMesh(meshCount + 1)
+      | Command3D.DrawMesh(mesh, transform, material) when shadowsEnabled ->
+        if material.Opacity >= 1.0f then
+          ensureMesh(meshCount + 1)
 
-        meshDraws[meshCount] <- {
-          Mesh = mesh
-          Transform = transform
-          Bones = ValueNone
-        }
+          meshDraws[meshCount] <- {
+            Mesh = mesh
+            Transform = transform
+            Bones = ValueNone
+          }
 
-        meshCount <- meshCount + 1
-      | Command3D.DrawSkinnedMesh(mesh, transform, _, bones) when shadowsEnabled ->
-        ensureMesh(meshCount + 1)
+          meshCount <- meshCount + 1
+      | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) when
+        shadowsEnabled
+        ->
+        if material.Opacity >= 1.0f then
+          ensureMesh(meshCount + 1)
 
-        meshDraws[meshCount] <- {
-          Mesh = mesh
-          Transform = transform
-          Bones = ValueSome bones
-        }
+          meshDraws[meshCount] <- {
+            Mesh = mesh
+            Transform = transform
+            Bones = ValueSome bones
+          }
 
-        meshCount <- meshCount + 1
+          meshCount <- meshCount + 1
       | Command3D.DrawModel(model, transform) when shadowsEnabled ->
         for mi = 0 to model.MeshCount - 1 do
           let mesh = NativePtr.get model.Meshes mi
-          ensureMesh(meshCount + 1)
+          let matIdx = NativePtr.get model.MeshMaterial mi
+          let raylibMat = NativePtr.get model.Materials matIdx
 
-          meshDraws[meshCount] <- {
-            Mesh = mesh
-            Transform = transform
-            Bones = ValueNone
-          }
+          // Per-submesh opacity from the model's native materials (Color.A / 255).
+          if
+            (NativePtr.get raylibMat.Maps (int MaterialMapIndex.Albedo)).Color.A = 255uy
+          then
+            ensureMesh(meshCount + 1)
 
-          meshCount <- meshCount + 1
-      | Command3D.DrawModelWith(model, transform, _) when shadowsEnabled ->
+            meshDraws[meshCount] <- {
+              Mesh = mesh
+              Transform = transform
+              Bones = ValueNone
+            }
+
+            meshCount <- meshCount + 1
+      | Command3D.DrawModelWith(model, transform, matOverride) when
+        shadowsEnabled
+        ->
         for mi = 0 to model.MeshCount - 1 do
           let mesh = NativePtr.get model.Meshes mi
-          ensureMesh(meshCount + 1)
 
-          meshDraws[meshCount] <- {
-            Mesh = mesh
-            Transform = transform
-            Bones = ValueNone
-          }
+          let opaque =
+            match matOverride with
+            | MaterialOverride.All m -> m.Opacity >= 1.0f
+            | MaterialOverride.PerMesh f -> (f mi).Opacity >= 1.0f
 
-          meshCount <- meshCount + 1
+          if opaque then
+            ensureMesh(meshCount + 1)
+
+            meshDraws[meshCount] <- {
+              Mesh = mesh
+              Transform = transform
+              Bones = ValueNone
+            }
+
+            meshCount <- meshCount + 1
       | Command3D.DrawMeshInstanced(mesh, transforms, _, instanceCount) when
         shadowsEnabled
         ->
@@ -2585,6 +2625,20 @@ type ForwardPipelineBase
   // former count-scan + rent-exact + fill-scan (two buffer walks + pool churn per pass).
   let drawCollection = MeshDrawCollection()
 
+  // Deferred transparent draws for the forward pass (materials with 0 < Opacity < 1):
+  // collected inline, sorted far-to-near by camera distance at flush points (camera
+  // boundaries, DrawImmediate, end of frame), then drawn after all opaque geometry with
+  // depth writes off. The PBR fragment already outputs alpha and the default ALPHA blend
+  // is always active, so the flush toggles only the depth mask. Grow-only, reused across frames.
+  let transparentDraws = ResizeArray<TransparentMeshDraw>()
+
+  // Cached far-to-near comparer for the transparent sort — one object for the pipeline
+  // lifetime, no per-frame allocation (List.Sort with a comparer sorts in place).
+  let transparentComparer: IComparer<TransparentMeshDraw> =
+    { new IComparer<TransparentMeshDraw> with
+        member _.Compare(a, b) = b.DistanceSq.CompareTo(a.DistanceSq)
+    }
+
   let applyPostProcess
     (ctx: GameContext)
     (sceneTarget: RenderTexture2D)
@@ -3506,11 +3560,148 @@ type ForwardPipelineBase
     let mutable activeEffect: Shader voption = ValueNone
 
     let dispatchForwardPass(sceneRT: RenderTexture2D voption) =
+      // True when every submesh of the model draws opaque under the given override —
+      // gate for the single-pass fast path (the common case, keeps the per-model
+      // BeginShaderMode). ValueNone = the model's own native materials
+      // (Color.A = 255 ⟺ Opacity = 1.0 — see Material3D.fromRaylibMaterial).
+      let modelAllOpaque(model: Model, matOverride: MaterialOverride voption) =
+        match matOverride with
+        | ValueSome(MaterialOverride.All m) -> m.Opacity >= 1.0f
+        | ValueSome(MaterialOverride.PerMesh f) ->
+          let mutable ok = true
+          let mutable mi = 0
+
+          while ok && mi < model.MeshCount do
+            if (f mi).Opacity < 1.0f then
+              ok <- false
+
+            mi <- mi + 1
+
+          ok
+        | ValueNone ->
+          let mutable ok = true
+          let mutable mi = 0
+
+          while ok && mi < model.MeshCount do
+            let matIdx = NativePtr.get model.MeshMaterial mi
+            let raylibMat = NativePtr.get model.Materials matIdx
+
+            if
+              (NativePtr.get raylibMat.Maps (int MaterialMapIndex.Albedo))
+                .Color.A
+              <> 255uy
+            then
+              ok <- false
+
+            mi <- mi + 1
+
+          ok
+
+      // Mixed-opacity model: draw each submesh inline when opaque, defer when transparent.
+      let drawModelSplit
+        (
+          model: Model,
+          transform: Matrix4x4,
+          matOverride: MaterialOverride voption,
+          distSq: float32
+        ) =
+        for mi = 0 to model.MeshCount - 1 do
+          let mesh = NativePtr.get model.Meshes mi
+
+          let mat3d =
+            match matOverride with
+            | ValueNone ->
+              Material3D.fromRaylibMaterial(
+                NativePtr.get
+                  model.Materials
+                  (NativePtr.get model.MeshMaterial mi)
+              )
+            | ValueSome(MaterialOverride.All m) -> m
+            | ValueSome(MaterialOverride.PerMesh f) -> f mi
+
+          if mat3d.Opacity >= 1.0f then
+            handleDrawMesh(
+              forwardShader,
+              &variants.Forward,
+              lights,
+              maxPt,
+              maxSp,
+              pointShadowSlots,
+              spotShadowSlots,
+              currentCamera,
+              mesh,
+              transform,
+              mat3d
+            )
+          elif mat3d.Opacity > 0.0f then
+            transparentDraws.Add {
+              Mesh = mesh
+              Transform = transform
+              Bones = ValueNone
+              Material = mat3d
+              DistanceSq = distSq
+            }
+
+      // Draws the deferred transparents (sorted far-to-near) and clears the list. Must run
+      // while a camera is active (DrawMesh requires BeginMode3D) and before any EndMode3D /
+      // DrawImmediate boundary; no-op when nothing was deferred. Re-enters the per-draw
+      // handlers, so lights/material caches and shader begin/end stay consistent.
+      let flushTransparents() =
+        if transparentDraws.Count > 0 then
+          transparentDraws.Sort(transparentComparer)
+
+          // Standard transparency: depth test stays on (a closer opaque surface can still
+          // hide a transparent one), but depth writes go off so a transparent surface
+          // doesn't occlude the geometry behind it in the depth buffer. This keeps the
+          // depth texture exposed to PostProcessWithDepth effects opaque-only on both
+          // backends (MonoGame uses DepthStencilState.DepthRead for the same reason).
+          Rlgl.DisableDepthMask()
+
+          for i = 0 to transparentDraws.Count - 1 do
+            let d = transparentDraws[i]
+
+            match d.Bones with
+            | ValueNone ->
+              handleDrawMesh(
+                forwardShader,
+                &variants.Forward,
+                lights,
+                maxPt,
+                maxSp,
+                pointShadowSlots,
+                spotShadowSlots,
+                currentCamera,
+                d.Mesh,
+                d.Transform,
+                d.Material
+              )
+            | ValueSome bones ->
+              handleDrawSkinnedMesh(
+                skinnedShader,
+                &variants.Skinned,
+                lights,
+                maxPt,
+                maxSp,
+                pointShadowSlots,
+                spotShadowSlots,
+                currentCamera,
+                d.Mesh,
+                d.Transform,
+                d.Material,
+                bones
+              )
+
+          Rlgl.EnableDepthMask()
+          transparentDraws.Clear()
+
       for i = 0 to buffer.Count - 1 do
         match buffer[i] with
         // ── Camera management (inline — simple state toggles) ──
         | Command3D.BeginCamera cam ->
           if cameraActive then
+            // Transparents sort by the camera that deferred them — flush before leaving.
+            flushTransparents()
+
             if shaderActive then
               Raylib.EndShaderMode()
               shaderActive <- false
@@ -3539,6 +3730,9 @@ type ForwardPipelineBase
 
         | Command3D.BeginCameraConfig cfg ->
           if cameraActive then
+            // Transparents sort by the camera that deferred them — flush before leaving.
+            flushTransparents()
+
             if shaderActive then
               Raylib.EndShaderMode()
               shaderActive <- false
@@ -3568,6 +3762,8 @@ type ForwardPipelineBase
 
         | Command3D.EndCamera ->
           if cameraActive then
+            flushTransparents()
+
             if shaderActive then
               Raylib.EndShaderMode()
               shaderActive <- false
@@ -3599,62 +3795,110 @@ type ForwardPipelineBase
               // Default path: inline PBR fast path (hot path — no virtual call).
               match buffer[i] with
               | Command3D.DrawMesh(mesh, transform, material) ->
-                handleDrawMesh(
-                  forwardShader,
-                  &variants.Forward,
-                  lights,
-                  maxPt,
-                  maxSp,
-                  pointShadowSlots,
-                  spotShadowSlots,
-                  currentCamera,
-                  mesh,
-                  transform,
-                  material
-                )
+                if material.Opacity >= 1.0f then
+                  handleDrawMesh(
+                    forwardShader,
+                    &variants.Forward,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    currentCamera,
+                    mesh,
+                    transform,
+                    material
+                  )
+                elif material.Opacity > 0.0f then
+                  transparentDraws.Add {
+                    Mesh = mesh
+                    Transform = transform
+                    Bones = ValueNone
+                    Material = material
+                    DistanceSq =
+                      Vector3.DistanceSquared(
+                        currentCamera.Position,
+                        transform.Translation
+                      )
+                  }
               | Command3D.DrawModel(model, transform) ->
-                handleDrawModel(
-                  forwardShader,
-                  &variants.Forward,
-                  lights,
-                  maxPt,
-                  maxSp,
-                  pointShadowSlots,
-                  spotShadowSlots,
-                  currentCamera,
-                  model,
-                  transform,
-                  ValueNone
-                )
+                if modelAllOpaque(model, ValueNone) then
+                  handleDrawModel(
+                    forwardShader,
+                    &variants.Forward,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    currentCamera,
+                    model,
+                    transform,
+                    ValueNone
+                  )
+                else
+                  drawModelSplit(
+                    model,
+                    transform,
+                    ValueNone,
+                    Vector3.DistanceSquared(
+                      currentCamera.Position,
+                      transform.Translation
+                    )
+                  )
               | Command3D.DrawModelWith(model, transform, matOverride) ->
-                handleDrawModel(
-                  forwardShader,
-                  &variants.Forward,
-                  lights,
-                  maxPt,
-                  maxSp,
-                  pointShadowSlots,
-                  spotShadowSlots,
-                  currentCamera,
-                  model,
-                  transform,
-                  ValueSome matOverride
-                )
+                if modelAllOpaque(model, ValueSome matOverride) then
+                  handleDrawModel(
+                    forwardShader,
+                    &variants.Forward,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    currentCamera,
+                    model,
+                    transform,
+                    ValueSome matOverride
+                  )
+                else
+                  drawModelSplit(
+                    model,
+                    transform,
+                    ValueSome matOverride,
+                    Vector3.DistanceSquared(
+                      currentCamera.Position,
+                      transform.Translation
+                    )
+                  )
               | Command3D.DrawSkinnedMesh(mesh, transform, material, bones) ->
-                handleDrawSkinnedMesh(
-                  skinnedShader,
-                  &variants.Skinned,
-                  lights,
-                  maxPt,
-                  maxSp,
-                  pointShadowSlots,
-                  spotShadowSlots,
-                  currentCamera,
-                  mesh,
-                  transform,
-                  material,
-                  bones
-                )
+                if material.Opacity >= 1.0f then
+                  handleDrawSkinnedMesh(
+                    skinnedShader,
+                    &variants.Skinned,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    currentCamera,
+                    mesh,
+                    transform,
+                    material,
+                    bones
+                  )
+                elif material.Opacity > 0.0f then
+                  transparentDraws.Add {
+                    Mesh = mesh
+                    Transform = transform
+                    Bones = ValueSome bones
+                    Material = material
+                    DistanceSq =
+                      Vector3.DistanceSquared(
+                        currentCamera.Position,
+                        transform.Translation
+                      )
+                  }
               | Command3D.DrawMeshInstanced(mesh,
                                             transforms,
                                             material,
@@ -3734,6 +3978,10 @@ type ForwardPipelineBase
           let view = Rlgl.GetMatrixModelview()
           let projection = Rlgl.GetMatrixProjection()
 
+          // Transparents emitted before the immediate block draw before it (they were
+          // deferred earlier in the buffer).
+          flushTransparents()
+
           if shaderActive then
             Raylib.EndShaderMode()
             shaderActive <- false
@@ -3771,7 +4019,10 @@ type ForwardPipelineBase
         | Command3D.PostProcess _
         | Command3D.PostProcessWithDepth _ -> ()
 
-      // End remaining shader/camera state after dispatch
+      // End remaining shader/camera state after dispatch — transparents flush first
+      // (they need the camera scope open).
+      flushTransparents()
+
       if shaderActive then
         Raylib.EndShaderMode()
 

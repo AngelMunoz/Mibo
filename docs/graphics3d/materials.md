@@ -60,7 +60,7 @@ buffer
 | `NormalMap` | `Texture2D voption` | `ValueNone` | Normal map for surface detail |
 | `EmissionColor` | `Color` | `Black` | Self-illumination color |
 | `EmissionMap` | `Texture2D voption` | `ValueNone` | Emission texture |
-| `Opacity` | `float32` | `1.0` | Alpha (1 = opaque, 0 = transparent) |
+| `Opacity` | `float32` | `1.0` | Alpha (>= 1 = opaque, 0 = invisible, in between = transparent) |
 | `Tiling` | `Vector2` | `(1, 1)` | UV tiling multiplier |
 
 ## Builder pattern
@@ -144,6 +144,49 @@ let glow = Material3D.unlit Color.Cyan
 ```
 
 Use for UI elements, debug markers, or anything that should appear at full brightness regardless of scene lighting.
+
+## Transparency
+
+`Opacity` controls how the surface mixes with what is behind it:
+
+- `Opacity >= 1.0` — opaque. Renders in the forward pass, writes depth, casts shadows.
+- `0 < Opacity < 1.0` — transparent. Renders after all opaque geometry, sorted far-to-near
+  by camera distance, and alpha-blends with the scene. Depth testing stays on but depth
+  writes are off for the sorted pass, so a transparent surface never occludes the geometry
+  behind it in the depth buffer.
+- `Opacity <= 0.0` — not rendered at all (no draw, no shadow).
+
+```fsharp
+let glassMat = {
+    Material3D.defaults with
+        AlbedoColor = Color(200, 220, 255, 120) // alpha 120/255
+        Opacity = 120.0f / 255.0f
+        Roughness = 0.05f
+        Metallic = 0.9f
+}
+buffer.mesh(prims.Cube, transform, glassMat).drop()
+```
+
+Rules:
+
+- **Transparent geometry does not cast shadows and does not write depth.** The shadow and
+  scene-depth passes are binary — they cannot represent partial occlusion — so transparent
+  surfaces are excluded from both, and the sorted pass writes with depth off. Consequence:
+  `PostProcessWithDepth` effects (fog, depth-of-field) sample opaque-only depth on both
+  backends. `EnableShadows`/`DisableShadows` scopes do not change this.
+- **Ordering is per-camera, far-to-near.** Transparent draws sort by distance to the camera
+  that captured them and render at camera boundaries and end of frame. Intersecting
+  transparent surfaces can still sort incorrectly — there is no per-pixel ordering.
+- **Where opacity comes from.** On raylib, `Opacity` maps from the albedo texture/color
+  alpha channel (`Color.A`); on MonoGame, from the effect's alpha (`BasicEffect.Alpha` /
+  `SkinnedEffect.Alpha`). On both backends the sorted transparent pass uses alpha blending
+  with depth writes off (depth test on) for its duration.
+- **Limitations.** Instanced draws and draws inside a `beginEffect`/`endEffect` scope are
+  not deferred in this version: they render immediately and unsorted. On raylib such a
+  transparent surface still blends (with depth writes on, since it skips the sorted flush);
+  on MonoGame it renders effectively opaque, because the frame's `BlendState.Opaque` is not
+  switched for these immediate draws. Either way a transparent instanced or effect-scoped
+  surface may look wrong against sorted transparents — prefer fully opaque materials for them.
 
 ## Primitive meshes
 

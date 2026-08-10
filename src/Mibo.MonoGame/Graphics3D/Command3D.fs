@@ -66,6 +66,10 @@ module Billboard3D =
 /// <para><c>All</c> applies one <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/> to every mesh part
 /// (allocation-free struct field). <c>PerMesh</c> takes a resolver indexed by a flat counter over
 /// <c>model.Meshes × MeshParts</c> in pipeline iteration order.</para>
+/// <para>The <c>PerMesh</c> resolver is invoked at least once per mesh part per frame on the forward
+/// pass and again during shadow collection (plus additional calls under user-effect scopes), with no
+/// memoization. It must be pure and cheap — prefer returning a precomputed material over allocating
+/// or computing per call.</para>
 /// </summary>
 [<Struct>]
 type MaterialOverride =

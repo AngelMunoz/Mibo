@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **MonoGame 3D, Raylib 3D:** per-material transparency. Materials with `0 < Opacity < 1` render alpha-blended after all opaque geometry, sorted far-to-near by camera distance, with depth writes off for the sorted pass (depth test stays on) on both backends; `Opacity <= 0` renders nothing. Transparent geometry does not cast shadows and is excluded from the scene-depth pre-pass — the depth pass is binary — so `PostProcessWithDepth` effects (fog, depth-of-field) sample opaque-only depth on both backends. Instanced and `beginEffect`/`endEffect`-scoped transparent draws are not deferred: they render immediately and unsorted, so they may blend incorrectly against sorted transparents — prefer opaque materials for them.
+
+### Changed
+
+- **Breaking (behavioral): MonoGame 3D, Raylib 3D:** models or effects whose albedo/effect alpha is below 1 (e.g. a raylib albedo `Color.A` below 255, or a MonoGame `BasicEffect.Alpha`/`SkinnedEffect.Alpha` below 1) previously rendered fully opaque and cast shadows. They now render alpha-blended and no longer cast shadows or write scene depth. Games that relied on partially-transparent materials rendering as opaque casters must set `Opacity = 1` (raylib: `Color.A = 255`) to restore the previous behavior.
+
 ### Fixed
 
 - **Core:** `worldToCell` on square (`Grid2DSpatial`), voxel (`Grid3DSpatial`) and the layer axis of 3D hex (`Hex3DSpatial`) grids now returns the cell that *contains* the world position. They previously snapped to the nearest cell corner, so any point in the second half of a cell (and, because of banker's rounding, the exact center of an odd-indexed cell) reported the next cell over. Hex 2D and the hex (XZ) plane of 3D hex are unchanged — those resolve to the nearest hex center as before.

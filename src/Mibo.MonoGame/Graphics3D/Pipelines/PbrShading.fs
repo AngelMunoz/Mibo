@@ -69,9 +69,34 @@ type ForwardFrame = {
   /// uploads these uniforms by name so a custom effect can opt into shadow sampling.</summary>
   mutable Shadows: ShadowResult voption
   /// <summary>The total elapsed game time, in seconds (<c>Game.TotalGameTime.TotalSeconds</c>). Uploaded
-  /// as the <c>time</c> uniform so an animated shader (water ripples, flowing textures, pulsing emissive)
+  /// as the <c>time</c> uniform so an animated shader (water ripples, flowing textures, pulsating emissive)
   /// has a clock to read — the only animation input the scene-data contract provides.</summary>
   Time: float32
+}
+
+/// <summary>
+/// A deferred transparent draw for the forward pass: a single model-mesh-part or primitive
+/// draw whose resolved material has <c>0 &lt; Opacity &lt; 1</c>. Collected inline during the
+/// forward pass, sorted far-to-near by camera distance, and flushed after all opaque geometry
+/// with alpha blending + depth-read (opaque geometry already wrote depth; each successive
+/// transparent is nearer and passes the depth test). Transparent geometry is also excluded
+/// from the shadow and scene-depth gathers (see <c>ShadowPass.collectCommand</c>) — something
+/// that renders blended must not write shadow depth.
+/// </summary>
+[<Struct>]
+type TransparentDraw = {
+  /// <summary>The model-mesh-part to draw (ValueNone for primitives).</summary>
+  Part: ModelMeshPart voption
+  /// <summary>The primitive mesh to draw (ValueNone for model parts).</summary>
+  Mesh: PrimitiveMesh voption
+  /// <summary>The world transform of the mesh (per-mesh world for model parts).</summary>
+  World: Matrix
+  /// <summary>The resolved material (override + tint already applied).</summary>
+  Material: Material3D
+  /// <summary>The bone palette for skinned parts (ValueNone otherwise).</summary>
+  Bones: Matrix[] voption
+  /// <summary>Squared distance to the camera that deferred this draw (sort key).</summary>
+  DistanceSq: float32
 }
 
 /// <summary>
@@ -585,7 +610,8 @@ module internal PbrShading =
       res: PbrResources,
       model: Model,
       transform: Matrix,
-      matOverride: MaterialOverride voption
+      matOverride: MaterialOverride voption,
+      transparentDraws: ResizeArray<TransparentDraw>
     ) =
     if ensureEffect(gd, res) then
       match struct (res.Effect, res.Params) with
@@ -634,21 +660,38 @@ module internal PbrShading =
               | ValueSome(MaterialOverride.PerMesh f) -> f partIndex
 
             partIndex <- partIndex + 1
-            let key = materialKey &mat
 
-            if not res.HasLastMaterial || key <> res.LastKey then
-              PbrUniforms.uploadMaterial(&p, &mat)
-              PbrUniforms.bindTextures(&p, &mat, whiteTex res)
-              res.LastKey <- key
-              res.HasLastMaterial <- true
+            if mat.Opacity < 1.0f then
+              // Transparent: defer to the sorted pass. Opacity <= 0 draws nothing at all.
+              if mat.Opacity > 0.0f then
+                transparentDraws.Add {
+                  Part = ValueSome part
+                  Mesh = ValueNone
+                  World = world
+                  Material = mat
+                  Bones = ValueNone
+                  DistanceSq =
+                    Vector3.DistanceSquared(
+                      state.CurrentCamera.Position,
+                      world.Translation
+                    )
+                }
+            else
+              let key = materialKey &mat
 
-            let saved = part.Effect
-            part.Effect <- e
+              if not res.HasLastMaterial || key <> res.LastKey then
+                PbrUniforms.uploadMaterial(&p, &mat)
+                PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                res.LastKey <- key
+                res.HasLastMaterial <- true
 
-            try
-              drawPart(gd, part)
-            finally
-              part.Effect <- saved
+              let saved = part.Effect
+              part.Effect <- e
+
+              try
+                drawPart(gd, part)
+              finally
+                part.Effect <- saved
       | _ -> ()
 
   /// <summary>Handles <c>DrawAnimatedModel</c>: Skinned technique for SkinnedEffect parts,
@@ -667,7 +710,8 @@ module internal PbrShading =
       transform: Matrix,
       bones: Matrix[],
       matOverride: MaterialOverride voption,
-      tint: Color voption
+      tint: Color voption,
+      transparentDraws: ResizeArray<TransparentDraw> voption
     ) =
     if ensureEffect(gd, res) then
       match struct (res.Effect, res.Params) with
@@ -746,21 +790,53 @@ module internal PbrShading =
                       Opacity = mat.Opacity * tintVec.W
                 }
 
-            let key = materialKey &mat
+            // Draws this part immediately with the resolved material. Local inline so the
+            // byref `&mat` is addressed at the call sites (local functions can't take
+            // byref params). Used for opaque parts and for the instanced fallback's
+            // transparent parts, which have no shared transparent list to defer into.
+            let inline drawPartImmediately() =
+              let key = materialKey &mat
 
-            if not res.HasLastMaterial || key <> res.LastKey then
-              PbrUniforms.uploadMaterial(&p, &mat)
-              PbrUniforms.bindTextures(&p, &mat, whiteTex res)
-              res.LastKey <- key
-              res.HasLastMaterial <- true
+              if not res.HasLastMaterial || key <> res.LastKey then
+                PbrUniforms.uploadMaterial(&p, &mat)
+                PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                res.LastKey <- key
+                res.HasLastMaterial <- true
 
-            let saved = part.Effect
-            part.Effect <- e
+              let saved = part.Effect
+              part.Effect <- e
 
-            try
-              drawPart(gd, part)
-            finally
-              part.Effect <- saved
+              try
+                drawPart(gd, part)
+              finally
+                part.Effect <- saved
+
+            if mat.Opacity <= 0.0f then
+              // Fully invisible: draw nothing.
+              ()
+            elif mat.Opacity < 1.0f then
+              // Transparent: defer to the sorted pass when one is available.
+              // The instanced fallback passes ValueNone (no shared transparent list),
+              // so it draws immediately, unsorted — matching the DX11 real-instancing
+              // path. Sorted deferral of skinned+instanced transparents is a v1
+              // limitation.
+              match transparentDraws with
+              | ValueSome draws ->
+                draws.Add {
+                  Part = ValueSome part
+                  Mesh = ValueNone
+                  World = world
+                  Material = mat
+                  Bones = ValueSome bones
+                  DistanceSq =
+                    Vector3.DistanceSquared(
+                      state.CurrentCamera.Position,
+                      world.Translation
+                    )
+                }
+              | ValueNone -> drawPartImmediately()
+            else
+              drawPartImmediately()
       | _ -> ()
 
   /// <summary>Handles <c>DrawAnimatedModel</c>: Skinned technique for SkinnedEffect parts,
@@ -774,7 +850,8 @@ module internal PbrShading =
       model: Model,
       transform: Matrix,
       bones: Matrix[],
-      matOverride: MaterialOverride voption
+      matOverride: MaterialOverride voption,
+      transparentDraws: ResizeArray<TransparentDraw>
     ) =
     drawAnimatedModelCore(
       gd,
@@ -785,7 +862,8 @@ module internal PbrShading =
       transform,
       bones,
       matOverride,
-      ValueNone
+      ValueNone,
+      ValueSome transparentDraws
     )
 
   /// <summary>
@@ -800,9 +878,25 @@ module internal PbrShading =
       res: PbrResources,
       mesh: PrimitiveMesh,
       transform: Matrix,
-      material: Material3D
+      material: Material3D,
+      transparentDraws: ResizeArray<TransparentDraw>
     ) =
-    if ensureEffect(gd, res) then
+    if material.Opacity < 1.0f then
+      // Transparent: defer to the sorted pass. Opacity <= 0 draws nothing at all.
+      if material.Opacity > 0.0f then
+        transparentDraws.Add {
+          Part = ValueNone
+          Mesh = ValueSome mesh
+          World = transform
+          Material = material
+          Bones = ValueNone
+          DistanceSq =
+            Vector3.DistanceSquared(
+              state.CurrentCamera.Position,
+              transform.Translation
+            )
+        }
+    elif ensureEffect(gd, res) then
       match struct (res.Effect, res.Params) with
       | struct (ValueSome e, ValueSome p) ->
         e.CurrentTechnique <- e.Techniques["Standard"]
@@ -864,6 +958,101 @@ module internal PbrShading =
       effect.Projection <- state.Projection
       applyLighting(effect, frame.Lights)
       mesh.Draw(gd, effect)
+
+  /// <summary>
+  /// Draws one deferred transparent entry (<see cref="T:Mibo.Elmish.Graphics3D.Pipelines.TransparentDraw"/>)
+  /// during the forward pass's transparent flush. PBR Standard or Skinned technique by the part's
+  /// baked effect, world/normal/view-proj/camera matrices, material uniforms through the MaterialKey
+  /// short-circuit, and the effect swap around the part draw. The caller has already switched to
+  /// alpha blending + depth-read. Mirrors the per-part body of <c>drawModel</c>/<c>drawAnimatedModelCore</c>
+  /// minus the immediate-draw deferral branch.
+  /// </summary>
+  let drawTransparent
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      frame: byref<ForwardFrame>,
+      res: PbrResources,
+      entry: TransparentDraw
+    ) =
+    if ensureEffect(gd, res) then
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome e, ValueSome p) ->
+        let mutable t = entry.World
+        let mutable inv = Matrix.Identity
+        Matrix.Invert(&t, &inv) |> ignore
+        let normalMatrix = Matrix.Transpose inv
+
+        PbrUniforms.setMatrix p.Matrix.MatModel entry.World
+        PbrUniforms.setMatrix p.Matrix.ViewProj (state.View * state.Projection)
+        PbrUniforms.setMatrix p.Matrix.NormalMatrix normalMatrix
+        PbrUniforms.setVec3 p.Matrix.CameraPos state.CurrentCamera.Position
+
+        if res.LightsDirty then
+          PbrUniforms.uploadLights(
+            &p,
+            frame.Lights,
+            frame.PointShadowSlots,
+            frame.SpotShadowSlots
+          )
+
+          res.LightsDirty <- false
+
+        let key = materialKey &entry.Material
+
+        if not res.HasLastMaterial || key <> res.LastKey then
+          PbrUniforms.uploadMaterial(&p, &entry.Material)
+          PbrUniforms.bindTextures(&p, &entry.Material, whiteTex res)
+          res.LastKey <- key
+          res.HasLastMaterial <- true
+
+        match entry.Part with
+        | ValueSome part ->
+          // Skinned parts (SkinnedEffect baked effect) get the Skinned technique and the
+          // bone palette, copied into the shared scratch, tail-filled with identity.
+          // Gate on bones being present: a DrawModel-deferred transparent part carries
+          // ValueNone (its opaque counterpart draws Standard), so a part that merely has a
+          // baked SkinnedEffect must render Standard here too, or it would use the Skinned
+          // technique with no palette uploaded (stale/zero bones → collapsed vertices).
+          let isSkinned =
+            entry.Bones.IsSome
+            && (match part.Effect with
+                | :? SkinnedEffect -> true
+                | _ -> false)
+
+          if isSkinned then
+            e.CurrentTechnique <- e.Techniques["Skinned"]
+
+            match entry.Bones with
+            | ValueSome bones ->
+              let palette = frame.BonePaletteScratch
+              let palCount = min bones.Length palette.Length
+
+              for i = 0 to palCount - 1 do
+                palette[i] <- bones[i]
+
+              for i = palCount to palette.Length - 1 do
+                palette[i] <- Matrix.Identity
+
+              PbrUniforms.setMatrixArray p.Matrix.Bones palette
+            | ValueNone -> ()
+          else
+            e.CurrentTechnique <- e.Techniques["Standard"]
+
+          let saved = part.Effect
+          part.Effect <- e
+
+          try
+            drawPart(gd, part)
+          finally
+            part.Effect <- saved
+        | ValueNone ->
+          match entry.Mesh with
+          | ValueSome mesh ->
+            e.CurrentTechnique <- e.Techniques["Standard"]
+            mesh.Draw(gd, e)
+          | ValueNone -> ()
+      | _ -> ()
 
   /// <summary>
   /// Stages per-instance world matrices into the reusable <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/>
@@ -1416,7 +1605,8 @@ module internal PbrShading =
             transforms[i],
             slice,
             matOverride,
-            tint
+            tint,
+            ValueNone
           )
       else
         // Bone transforms give each mesh its parent-bone world (the matModel the

@@ -12,6 +12,9 @@ open Mibo.Elmish
 /// <para><c>All</c> applies one <see cref="T:Mibo.Elmish.Graphics3D.Material3D"/> to every sub-mesh
 /// (allocation-free struct field). <c>PerMesh</c> takes a resolver indexed by the pipeline's sub-mesh
 /// iteration order — mesh index <c>0..model.MeshCount-1</c> on the raylib backend.</para>
+/// <para>The <c>PerMesh</c> resolver is invoked several times per mesh per frame (forward pass,
+/// shadow collection, and the per-frame shader-variant warm-up), with no memoization. It must be
+/// pure and cheap — prefer returning a precomputed material over allocating or computing per call.</para>
 /// </summary>
 [<Struct>]
 type MaterialOverride =

@@ -512,13 +512,26 @@ module internal ShadowPass =
     res.CollectedInstancedCount <- 0
     res.CollectedSkinnedInstancedCount <- 0
 
+  /// True when the part's baked effect renders opaque in the forward pass. The forward pass
+  /// resolves material opacity from the same effect (Material3D.fromEffect reads
+  /// BasicEffect.Alpha/SkinnedEffect.Alpha); other effects map to a default material with
+  /// Opacity = 1. Transparent parts are excluded from depth renders (shadow + scene depth).
+  let private partIsOpaque(part: ModelMeshPart) =
+    match part.Effect with
+    | :? BasicEffect as b -> b.Alpha >= 1.0f
+    | :? SkinnedEffect as s -> s.Alpha >= 1.0f
+    | _ -> true
+
   /// <summary>
   /// Collects one buffer command into the pooled arrays on <paramref name="res"/>, recording a
   /// <c>CastsShadow</c> flag per entry (snapshot of the running cast state — see
   /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.ShadowPass.beginCollect"/>). Shared by the
   /// shadow render (filters to <c>CastsShadow = true</c>) and the scene-depth render (all
-  /// entries). <paramref name="gd"/> is used only to lazily build merged part groups for
-  /// skinned + instanced models (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.MergedModelParts.tryGet"/>).
+  /// entries). Transparent geometry is never collected — the depth pass is binary (no alpha
+  /// test), so a transparent caster would occlude at full strength; being shared, the
+  /// exclusion also applies to the scene-depth render. <paramref name="gd"/> is used only to
+  /// lazily build merged part groups for skinned + instanced models
+  /// (<see cref="M:Mibo.Elmish.Graphics3D.Pipelines.MergedModelParts.tryGet"/>).
   /// </summary>
   let collectCommand
     (gd: GraphicsDevice)
@@ -535,26 +548,30 @@ module internal ShadowPass =
     match cmd with
     | Command3D.EnableShadows -> res.CollectCastEnabled <- true
     | Command3D.DisableShadows -> res.CollectCastEnabled <- false
-    | Command3D.DrawPrimitive(mesh, transform, _) ->
-      if res.CollectedDrawCount >= shadowDraws.Length then
-        Array.Resize(&shadowDraws, shadowDraws.Length * 2)
-        res.Draws <- shadowDraws
+    | Command3D.DrawPrimitive(mesh, transform, material) ->
+      // Transparent primitives (Opacity < 1 in the forward pass) don't cast shadows: the
+      // depth pass is binary (no alpha test), so a transparent caster would occlude at
+      // full strength.
+      if material.Opacity >= 1.0f then
+        if res.CollectedDrawCount >= shadowDraws.Length then
+          Array.Resize(&shadowDraws, shadowDraws.Length * 2)
+          res.Draws <- shadowDraws
 
-      let worldBounds = mesh.Bounds.Transform transform
+        let worldBounds = mesh.Bounds.Transform transform
 
-      shadowDraws[res.CollectedDrawCount] <- {
-        Mesh = mesh
-        Transform = transform
-        WorldBounds = worldBounds
-        CastsShadow = castEnabled
-      }
+        shadowDraws[res.CollectedDrawCount] <- {
+          Mesh = mesh
+          Transform = transform
+          WorldBounds = worldBounds
+          CastsShadow = castEnabled
+        }
 
-      res.CollectedDrawCount <- res.CollectedDrawCount + 1
+        res.CollectedDrawCount <- res.CollectedDrawCount + 1
     | Command3D.DrawAnimatedModel(model, transform, bones) ->
       for mesh in model.Meshes do
         for part in mesh.MeshParts do
           match part.Effect with
-          | :? SkinnedEffect ->
+          | :? SkinnedEffect when partIsOpaque part ->
             if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
               Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
               res.SkinnedDraws <- shadowSkinnedDraws
@@ -572,7 +589,7 @@ module internal ShadowPass =
       for mesh in model.Meshes do
         for part in mesh.MeshParts do
           match part.Effect with
-          | :? SkinnedEffect ->
+          | :? SkinnedEffect when partIsOpaque part ->
             if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
               Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
               res.SkinnedDraws <- shadowSkinnedDraws
@@ -585,7 +602,7 @@ module internal ShadowPass =
             }
 
             res.CollectedSkinnedCount <- res.CollectedSkinnedCount + 1
-          | _ ->
+          | _ when partIsOpaque part ->
             if res.CollectedModelPartCount >= shadowModelPartDraws.Length then
               Array.Resize(
                 &shadowModelPartDraws,
@@ -601,12 +618,26 @@ module internal ShadowPass =
             }
 
             res.CollectedModelPartCount <- res.CollectedModelPartCount + 1
-    | Command3D.DrawModelWith(model, transform, _) ->
-      // Override material is irrelevant to depth; gather identically to DrawModel.
+          | _ -> ()
+    | Command3D.DrawModelWith(model, transform, matOverride) ->
+      // The override decides opacity in the forward pass, so it matters for depth: parts
+      // whose resolved material is transparent are skipped. The flat part index (meshes ×
+      // parts) mirrors the forward pass's drawModel counter. Transparent parts don't cast
+      // shadows: the depth pass is binary (no alpha test), so a transparent caster would
+      // occlude at full strength.
+      let mutable partIndex = 0
+
       for mesh in model.Meshes do
         for part in mesh.MeshParts do
+          let opaque =
+            match matOverride with
+            | MaterialOverride.All m -> m.Opacity >= 1.0f
+            | MaterialOverride.PerMesh f -> (f partIndex).Opacity >= 1.0f
+
+          partIndex <- partIndex + 1
+
           match part.Effect with
-          | :? SkinnedEffect ->
+          | :? SkinnedEffect when opaque ->
             if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
               Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
               res.SkinnedDraws <- shadowSkinnedDraws
@@ -619,7 +650,7 @@ module internal ShadowPass =
             }
 
             res.CollectedSkinnedCount <- res.CollectedSkinnedCount + 1
-          | _ ->
+          | _ when opaque ->
             if res.CollectedModelPartCount >= shadowModelPartDraws.Length then
               Array.Resize(
                 &shadowModelPartDraws,
@@ -635,12 +666,25 @@ module internal ShadowPass =
             }
 
             res.CollectedModelPartCount <- res.CollectedModelPartCount + 1
-    | Command3D.DrawAnimatedModelWith(model, transform, bones, _) ->
-      // Mirror DrawAnimatedModel: SkinnedEffect parts only.
+          | _ -> ()
+    | Command3D.DrawAnimatedModelWith(model, transform, bones, matOverride) ->
+      // Mirror DrawAnimatedModel (SkinnedEffect parts only), but the override decides
+      // opacity in the forward pass, so it matters for depth: transparent parts are
+      // skipped. The flat part index (meshes × parts) mirrors the forward pass's
+      // drawAnimatedModel counter.
+      let mutable partIndex = 0
+
       for mesh in model.Meshes do
         for part in mesh.MeshParts do
+          let opaque =
+            match matOverride with
+            | MaterialOverride.All m -> m.Opacity >= 1.0f
+            | MaterialOverride.PerMesh f -> (f partIndex).Opacity >= 1.0f
+
+          partIndex <- partIndex + 1
+
           match part.Effect with
-          | :? SkinnedEffect ->
+          | :? SkinnedEffect when opaque ->
             if res.CollectedSkinnedCount >= shadowSkinnedDraws.Length then
               Array.Resize(&shadowSkinnedDraws, shadowSkinnedDraws.Length * 2)
               res.SkinnedDraws <- shadowSkinnedDraws
