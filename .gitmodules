@@ -1,0 +1,3 @@
+[submodule "src/AdaptiveSlop"]
+	path = src/AdaptiveSlop
+	url = git@github.com:TheAngryByrd/AdaptiveSlop.git

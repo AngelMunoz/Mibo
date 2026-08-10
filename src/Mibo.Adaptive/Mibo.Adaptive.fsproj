@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Adaptive.Headless.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mibo.Core\Mibo.Core.fsproj" />
+    <ProjectReference Include="..\AdaptiveSlop\src\AdaptiveSlop.Core\AdaptiveSlop.Core.fsproj" />
+  </ItemGroup>
+
+</Project>
