@@ -131,10 +131,14 @@ module Router =
         if impact.SplashRadius > 0f then
           // Splash: the blast fans out from the DETONATION POINT to
           // every enemy within radius (flat full damage, no falloff).
-          // Each ApplyDamage zero-crossing emits its own Killed →
-          // gold + DeathPoof via handleEnemyEvents. A transient
-          // read of Positions — cold path, once per impact.
+          // The damage is applied to ALL targets first, then the
+          // events are handled: the original queued the ApplyDamage
+          // messages and the pump ran them after the fan-out, so the
+          // despawns (Killed) never modified the Positions view being
+          // enumerated here — the direct handler must preserve that
+          // ordering or the enumerator throws mid-loop.
           let positions = world.Enemies.Positions |> AMap.getValue
+          let events = ResizeArray<Enemies.EnemyEvent>()
 
           for KeyValueV(eid, epos) in positions do
             if Vector2.Distance(epos, impact.Pos) <= impact.SplashRadius then
@@ -145,7 +149,9 @@ module Router =
                   world.Enemies
                   world.Map.Path
 
-              handleEnemyEvents world enemyEvents
+              events.AddRange(enemyEvents)
+
+          handleEnemyEvents world events
 
           Vfx.Vfx.update
             (Vfx.Burst(Vfx.VfxKind.Explosion, impact.Pos))

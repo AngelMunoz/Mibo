@@ -242,6 +242,63 @@ let tests =
            + TestData.Fixtures.grunt.GoldReward)
           "kill rewarded")
 
+    testCase
+      "splash fan-out survives a mid-loop boss kill (queued-pump ordering)"
+      (fun () ->
+        let h = TestData.mkHarness cfg
+
+        // Cannon next to the path (the road runs along row 4). The
+        // fixture gold (100) cannot afford a cannon (120) — top up.
+        Router.applyEconomyMsg h.World (EconomyMsg.EarnGold 200)
+        Router.selectTower h.World TowerDefs.cannon
+        Router.placeTower h.World struct (2, 3) |> ignore
+        h.StepN(2, TestData.dt)
+
+        // A boss next to a runner on the path — ONE cannon blast
+        // kills both. The boss's death used to despawn AND split
+        // (spawnAt) DURING the splash fan-out's enumeration of
+        // Positions; the transaction commits mutate the live
+        // dictionary mid-loop and the enumerator throws (the wave-13
+        // crash). The original queued the ApplyDamage messages and
+        // the pump ran them after the fan-out — the direct handler
+        // must defer the event handling the same way.
+        Router.applyEnemyMsg
+          h.World
+          (Enemies.EnemyMsg.Spawn TestData.Fixtures.boss)
+
+        Router.applyEnemyMsg
+          h.World
+          (Enemies.EnemyMsg.Spawn TestData.Fixtures.runner)
+
+        h.StepN(2, TestData.dt)
+
+        // Pre-damage the boss so the first blast kills it.
+        let bossId =
+          h.World.Enemies.Defs
+          |> AMap.getValue
+          |> Seq.pick(fun (KeyValueV(eid, d)) ->
+            if d.Key = TestData.Fixtures.boss.Key then
+              Some eid
+            else
+              None)
+
+        Router.applyEnemyMsg
+          h.World
+          (Enemies.EnemyMsg.ApplyDamage(bossId, 190))
+
+        let cleared =
+          h.StepUntil(
+            (fun m ->
+              (m.Projectiles.Rows |> AMap.getValue).Count = 0
+              && m.Enemies.Alive |> AMap.count |> AVal.getValue = 0),
+            TestData.dt,
+            300
+          )
+
+        Expect.isTrue
+          cleared
+          "boss and pack died to splash fire (no mid-loop throw)")
+
     testCase "upgrade through the router: gold spent, scaled damage" (fun () ->
       let h = TestData.mkHarness cfg
 

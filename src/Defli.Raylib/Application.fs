@@ -73,8 +73,8 @@ module Inputs =
     match action with
     | GameAction.PanLeft -> Vector2(1f, 0f)
     | GameAction.PanRight -> Vector2(-1f, 0f)
-    | GameAction.PanUp -> Vector2(1f, 0f)
-    | GameAction.PanDown -> Vector2(-1f, 0f)
+    | GameAction.PanUp -> Vector2(0f, 1f)
+    | GameAction.PanDown -> Vector2(0f, -1f)
     | _ -> Vector2.Zero
 
 module Application =
