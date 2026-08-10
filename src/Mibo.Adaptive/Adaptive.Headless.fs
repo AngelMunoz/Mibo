@@ -14,17 +14,43 @@ open Mibo.Elmish
 /// </summary>
 /// <remarks>
 /// The context exposes the framework-owned roots: the time cell, written by the
-/// runner at the start of every <c>Step</c>, and the exit-request cell, read by
-/// the runner to decide whether to stop. The world reads these cells and derives
-/// its projections from them like any other root; it never writes them.
+/// runner at the start of every <c>Step</c>, the exit-request cell, read by the
+/// runner to decide whether to stop, and the restart-request cell, read by the
+/// host to decide whether to rebuild the world. The world reads these cells and
+/// derives its projections from them like any other root; only
+/// <c>ExitRequested</c>/<c>RestartRequested</c> are written by the world.
 /// </remarks>
 type AdaptiveContext
-  internal (ctx: GameContext, time: cval<GameTime>, exitRequested: cval<bool>) =
+  internal
+  (
+    ctx: GameContext,
+    time: cval<GameTime>,
+    exitRequested: cval<bool>,
+    restartRequested: cval<bool>
+  ) =
   /// <summary>The framework-owned time root. The runner writes it at the start of every <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>; projections may depend on it (animation, physics, timers).</summary>
   member _.Time = time
 
   /// <summary>The exit-request root. Set it to <c>true</c> to make the runner stop — the adaptive counterpart of <c>Cmd.signalExit</c>.</summary>
   member _.ExitRequested = exitRequested
+
+  /// <summary>
+  /// The restart-request root. Set it to <c>true</c> to rebuild the world: the
+  /// runner disposes the world's disposables, re-runs <c>Init</c> — a fresh
+  /// graph over the same roots — and forces the first frame. The windowed
+  /// hosts consume it after <c>Step</c>; headless users call
+  /// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Restart"/> themselves.
+  /// </summary>
+  member _.RestartRequested = restartRequested
+
+  /// <summary>
+  /// The <see cref="T:Mibo.Elmish.GameContext"/> the runner owns: the window
+  /// dimensions and the registered services (IAssets, IInput, custom). Worlds
+  /// read services directly from here in <c>Init</c> and <c>Update</c> — the
+  /// host registers what it owns and the world pulls the rest; there is no
+  /// registration ceremony.
+  /// </summary>
+  member _.Context = ctx
 
   /// <summary>Current window width in pixels. Default: 800.</summary>
   member _.WindowWidth = ctx.WindowWidth
@@ -138,7 +164,12 @@ module AdaptiveWorld =
 /// </para>
 /// </remarks>
 type AdaptiveHeadless<'Frame>
-  (world: AdaptiveWorld<'Frame>, ?width: int, ?height: int) =
+  (
+    world: AdaptiveWorld<'Frame>,
+    ?width: int,
+    ?height: int,
+    ?context: GameContext
+  ) =
 
   let w = defaultArg width 800
   let h = defaultArg height 600
@@ -150,6 +181,7 @@ type AdaptiveHeadless<'Frame>
 
   let mutable gameContext = Unchecked.defaultof<GameContext>
   let mutable exitCell = Unchecked.defaultof<cval<bool>>
+  let mutable restartCell = Unchecked.defaultof<cval<bool>>
   let mutable ctx = Unchecked.defaultof<AdaptiveContext>
   let mutable initialized = false
 
@@ -165,7 +197,7 @@ type AdaptiveHeadless<'Frame>
   /// Runs once: on the first user of the runner (a step or the RunAsync game thread).
   let ensureInitialized() =
     if not initialized then
-      gameContext <- GameContext.create(w, h)
+      gameContext <- defaultArg context (GameContext.create(w, h))
 
       let timeCell =
         CVal.create(
@@ -176,7 +208,8 @@ type AdaptiveHeadless<'Frame>
         )
 
       exitCell <- CVal.create false
-      ctx <- AdaptiveContext(gameContext, timeCell, exitCell)
+      restartCell <- CVal.create false
+      ctx <- AdaptiveContext(gameContext, timeCell, exitCell, restartCell)
 
       let init = world.Init ctx
       frameBuilder <- init.FrameBuilder
@@ -194,6 +227,42 @@ type AdaptiveHeadless<'Frame>
 
   /// <summary>Whether the runner has received an exit request.</summary>
   member _.ShouldQuit = if initialized then AVal.getValue exitCell else false
+
+  /// <summary>
+  /// Whether the world has requested a rebuild (it wrote
+  /// <see cref="P:Mibo.Adaptive.AdaptiveContext.RestartRequested"/>). The
+  /// windowed hosts check this after <c>Step</c> and call
+  /// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Restart"/>.
+  /// </summary>
+  member _.RestartRequested =
+    if initialized then AVal.getValue restartCell else false
+
+  /// <summary>
+  /// Rebuild the world: disposes the world's disposables (e.g. input
+  /// subscriptions), re-runs <c>Init</c> with the same context — a fresh graph
+  /// over the same roots, which is what makes restart safe — resets the
+  /// internal clock and forces the first frame. The world requests it by
+  /// writing <c>RestartRequested</c>; the windowed hosts consume it after
+  /// <c>Step</c>, headless users call this directly.
+  /// </summary>
+  member _.Restart() =
+    if initialized then
+      for i = 0 to disposables.Count - 1 do
+        disposables[i].Dispose()
+
+      disposables.Clear()
+
+      let init = world.Init ctx
+      frameBuilder <- init.FrameBuilder
+      disposables.AddRange(init.Disposables)
+
+      gameTime <- {
+        TotalTime = TimeSpan.Zero
+        ElapsedGameTime = TimeSpan.Zero
+      }
+
+      restartCell.Set(false)
+      frame <- frameBuilder()
 
   /// <summary>Total elapsed virtual time.</summary>
   member _.GameTime = gameTime

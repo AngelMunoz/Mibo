@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="CameraView.fs" />
+    <Compile Include="MapView.fs" />
+    <Compile Include="EnemiesView.fs" />
+    <Compile Include="TowersView.fs" />
+    <Compile Include="ProjectilesView.fs" />
+    <Compile Include="VfxView.fs" />
+    <Compile Include="Shell.fs" />
+    <Compile Include="DiagnosticsView.fs" />
+    <Compile Include="WorldView.fs" />
+    <Compile Include="Application.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Defli\Defli.fsproj" />
+    <ProjectReference Include="..\Mibo.Raylib\Mibo.Raylib.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="assets/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

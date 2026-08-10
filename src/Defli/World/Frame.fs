@@ -4,8 +4,9 @@ open System.Collections.Generic
 open AdaptiveSlop.Core
 open Mibo.Adaptive
 open Mibo.Elmish
-open Raylib_cs
+open Defli
 open Defli.World.Systems
+open Defli.World.Systems.Camera
 
 // ─────────────────────────────────────────────────────────────
 // Frame — the Force phase. Everything the renderer needs, resolved
@@ -42,9 +43,25 @@ module Frame =
     TowerCount: int
     EnemyCount: int
     ProjectileCount: int
-    /// The camera (the subsystem mutates the struct; the frame carries
-    /// a copy at force time).
-    Camera: Camera2D
+    /// UI state written by the host (hover cell / selected tower) —
+    /// the frame carries their current values so draw reads the
+    /// struct.
+    HoverCell: struct (int * int) voption
+    SelectedTower: TowerDef
+    /// Hover overlays — the projections the draw side consumes.
+    PlacementPreview: PlacementStatus
+    RangeRing: TowerDef voption
+    /// Vfx pools + the view-memoized texture handles (non-adaptive
+    /// state; draw reads pool particles).
+    Vfx: Vfx.VfxModel
+    /// The map — static world data (terrain/path/decorations/
+    /// waypoints).
+    Map: MapModel
+    /// World-sim diagnostics (the F3 overlay reads the display line).
+    Diag: WorldDiag
+    /// The camera — a backend-neutral snapshot at force time; the
+    /// frontend builds its native camera at the edge.
+    Camera: CameraState
   }
 
   /// Forcing the frame: resolve every output projection once, pack the
@@ -73,7 +90,14 @@ module Frame =
       TowerCount = AVal.getValue towerCount
       EnemyCount = AVal.getValue enemyCount
       ProjectileCount = AVal.getValue projectileCount
-      Camera = world.Camera.Camera
+      HoverCell = world.HoverCell |> AVal.getValue
+      SelectedTower = world.SelectedTower |> AVal.getValue
+      PlacementPreview = world.Projections.PlacementPreview |> AVal.getValue
+      RangeRing = world.Projections.RangeRing |> AVal.getValue
+      Vfx = world.Vfx
+      Map = world.Map
+      Diag = world.Diag
+      Camera = world.Camera.State
     }
 
   /// The adaptive program: the frame builder forces the world's

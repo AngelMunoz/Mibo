@@ -20,6 +20,7 @@
     <Compile Include="Texture.fs" />
     <Compile Include="Elmish.Program.fs" />
     <Compile Include="Elmish.Runtime.fs" />
+    <Compile Include="Adaptive.Runtime.fs" />
     <Compile Include="DefaultShaders.fs" />
     <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
     <Compile Include="Graphics2D/Lighting/LitShader.fs" />
@@ -53,6 +54,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Mibo.Core\Mibo.Core.fsproj" />
+    <ProjectReference Include="..\Mibo.Adaptive\Mibo.Adaptive.fsproj" />
   </ItemGroup>
 
   <ItemGroup>

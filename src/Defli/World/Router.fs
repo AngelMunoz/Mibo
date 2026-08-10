@@ -282,7 +282,7 @@ module Router =
   // Validation stays exactly where Defli had it (in the router).
 
   /// The player starts the next wave. No-op on game over.
-  let inline startNextWave(world: World) : unit =
+  let startNextWave(world: World) : unit =
     if not(AVal.getValue world.Economy.GameOver) then
       let events = Waves.Waves.update Waves.WaveMsg.StartNextWave world.Waves
 
@@ -350,7 +350,7 @@ module Router =
   /// Host-facing system messages (tests and debug hosts): applies the
   /// message and handles the events it emits, exactly as the router
   /// would when the same message arrives from a tick.
-  let inline applyEnemyMsg (world: World) (msg: Enemies.EnemyMsg) : unit =
+  let applyEnemyMsg (world: World) (msg: Enemies.EnemyMsg) : unit =
     let events = Enemies.Enemies.update msg world.Enemies world.Map.Path
 
     handleEnemyEvents world events

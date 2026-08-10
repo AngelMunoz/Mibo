@@ -19,6 +19,7 @@ let allTests =
     ProjectilesTests.tests
     DiagnosticsTests.tests
     RouterTests.tests
+    CameraTests.tests
   ]
 
 [<EntryPoint>]
