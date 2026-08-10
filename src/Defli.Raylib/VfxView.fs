@@ -24,8 +24,23 @@ open Defli.World.Systems.Vfx
 [<Sealed>]
 type VfxView() =
 
-  /// Conversion buffer — grown as needed, reused every frame.
-  let mutable scratch = Array.empty<Lighting.Particle2D>
+  /// Conversion buffer PER KIND. The draw commands are deferred — the
+  /// renderer executes them after the view returns — and each command
+  /// holds the array it was recorded with. One shared buffer would
+  /// make every command read the LAST kind's particles with its own
+  /// texture (the "square behind the puff" artifact). One buffer per
+  /// kind keeps each command's data isolated; all six are grown once
+  /// and reused, so steady state allocates nothing.
+  let scratchByKind = Array.init 6 (fun _ -> Array.empty<Lighting.Particle2D>)
+
+  let kindIndex(kind: VfxKind) =
+    match kind with
+    | Impact -> 0
+    | Explosion -> 1
+    | DeathPoof -> 2
+    | Muzzle -> 3
+    | Placement -> 4
+    | BaseHit -> 5
 
   [<Literal>]
   let ImpactPath = "kenney_particle_pack/spark_01.png"
@@ -78,9 +93,12 @@ type VfxView() =
     if pool.Count > 0 then
       let tex = textureOfCached kind model assets
       let full = Rectangle(0f, 0f, float32 tex.Width, float32 tex.Height)
+      let idx = kindIndex kind
 
-      if scratch.Length < pool.Particles.Length then
-        scratch <- Array.zeroCreate pool.Particles.Length
+      if scratchByKind[idx].Length < pool.Particles.Length then
+        scratchByKind[idx] <- Array.zeroCreate pool.Particles.Length
+
+      let scratch = scratchByKind[idx]
 
       for i in 0 .. pool.Count - 1 do
         let p = pool.Particles[i]
