@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-08-10
+
 ### Added
 
 - **Adaptive (experimental):** new `Mibo.Adaptive` package with the `AdaptiveHeadless` runner — a pull-based architecture on AdaptiveSlop as an alternative to MVU. State lives in changeable roots, derived state in adaptive projections, and the runner forces the frame's projections at the end of each `Step`, so reads are O(1) and unchanged state recomputes nothing — an idle frame costs no recomputation. `Step`/`StepN`/`StepUntil`/`Run`/`RunAsync` and observers mirror `HeadlessRunner`; there is no `'Msg`, no `Cmd` and no `Sub` — handlers write roots and run effects directly.
