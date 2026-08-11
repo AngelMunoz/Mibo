@@ -19,6 +19,7 @@
     <Compile Include="LayeredHex3DTests.fs" />
     <Compile Include="Spatial2DTests.fs" />
     <Compile Include="Spatial3DTests.fs" />
+    <Compile Include="AdaptiveHeadlessTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 

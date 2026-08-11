@@ -3,7 +3,6 @@ module Mibo.Adaptive.Tests.AdaptiveHeadless
 open System
 open System.Threading
 open Expecto
-open AdaptiveSlop.Core
 open Mibo.Adaptive
 open Mibo.Elmish
 

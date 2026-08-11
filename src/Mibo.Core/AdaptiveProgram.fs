@@ -1,7 +1,6 @@
 namespace Mibo.Adaptive
 
 open System
-open AdaptiveSlop.Core
 open Mibo.Elmish
 
 /// <summary>

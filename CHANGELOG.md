@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Mibo.Adaptive** — the adaptive-data library, adopted from AdaptiveSlop in its entirety and renamed (`AdaptiveSlop.Core` → `Mibo.Adaptive`). Dependency-free: the core never references Mibo; the Mibo integration (`AdaptiveProgram`/`AdaptiveHeadless`) now lives in Mibo.Core, and `AdaptiveRaylibGame`/`AdaptiveGame` hosts ship in Mibo.Raylib/Mibo.MonoGame. Ships with its own changelog and versioning (`src/Mibo.Adaptive/CHANGELOG.md`), an xunit + FsCheck test suite (`Mibo.Adaptive.Tests`), and BenchmarkDotNet benchmarks (`Mibo.Adaptive.Benchmarks`). The AdaptiveSlop submodule is gone.
+- **Adaptive (windowed):** `AdaptiveRaylibGame` (raylib) and `AdaptiveGame` (MonoGame) hosts drive an `AdaptiveHeadless` runner from the backend's frame loop — input poll → Step → force → draw.
+- **Defli sample:** moved to Mibo.Samples (`Defli/Shared`, `Defli/Raylib`, `Defli/MonoDX12` + VK/GL/DX11 thin clients) and removed from this repo.
+
 ## [4.1.0] - 2026-08-10
 
 ### Added

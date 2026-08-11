@@ -1,18 +1,43 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    Mibo.Adaptive — the adaptive-data library (adopted from AdaptiveSlop).
+    Dependency-free by design: the core modules never reference Mibo types;
+    the Mibo integration (AdaptiveProgram/AdaptiveHeadless) lives in Mibo.Core,
+    which references this project.
+  -->
+
   <PropertyGroup>
     <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Own changelog and versioning (KeepAChangelog task derives the package
+         version from this file, not the repo root changelog). -->
+    <ChangelogFile>$(MSBuildThisFileDirectory)/CHANGELOG.md</ChangelogFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="AdaptiveProgram.fs" />
-    <Compile Include="Adaptive.Headless.fs" />
+    <InternalsVisibleTo Include="Mibo.Adaptive.Tests" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Mibo.Core\Mibo.Core.fsproj" />
-    <ProjectReference Include="..\AdaptiveSlop\src\AdaptiveSlop.Core\AdaptiveSlop.Core.fsproj" />
+    <Compile Include="Core/JsonConverters.fs" />
+    <Compile Include="Core/Library.fs" />
+    <Compile Include="Core/Collections/Shared.fs" />
+    <Compile Include="Core/Collections/Changeable.fs" />
+    <Compile Include="Core/Collections/JsonConverters.fs" />
+    <Compile Include="Core/Collections/SetNodes.fs" />
+    <Compile Include="Core/Collections/MapNodes.fs" />
+    <Compile Include="Core/Collections/ListNodes.fs" />
+    <Compile Include="Core/Collections/Reductions.fs" />
+    <Compile Include="Core/Collections/ElementSetNode.fs" />
+    <Compile Include="Core/Collections/ElementMapNode.fs" />
+    <Compile Include="Core/Collections/ElementListNode.fs" />
+    <Compile Include="Core/Collections/ExternalNodes.fs" />
+    <Compile Include="Core/Collections/Api.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Ionide.KeepAChangelog.Tasks" Version="0.3.3" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

@@ -44,6 +44,12 @@
     <Compile Include="Graphics3D/Light3D.fs" />
     <Compile Include="Graphics2D/Types.fs" />
     <Compile Include="Graphics/Draw.fs" />
+    <Compile Include="AdaptiveProgram.fs" />
+    <Compile Include="Adaptive.Headless.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mibo.Adaptive\Mibo.Adaptive.fsproj" />
   </ItemGroup>
 
   <ItemGroup>

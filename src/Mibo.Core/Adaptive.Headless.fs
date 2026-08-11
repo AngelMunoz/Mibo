@@ -6,7 +6,6 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Threading
 open System.Threading.Tasks
-open AdaptiveSlop.Core
 open Mibo.Elmish
 
 /// <summary>
