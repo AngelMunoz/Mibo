@@ -76,15 +76,16 @@ module Enemies =
     // zero row only guards transient mid-transaction reads (Alive filters
     // it out).
     let positionsHealths =
-      m.Healths
-      |> AMap.joinOn
+      AMap.joinOn
+        m.Positions
+        m.Healths
         (fun eid _ -> eid)
         (fun _ posV healthV ->
           AVal.map2 (fun pos h -> ValueSome(struct (pos, h))) posV healthV)
-        m.Positions
 
-    m.Motions
-    |> AMap.joinOn
+    AMap.joinOn
+      positionsHealths
+      m.Motions
       (fun eid _ -> eid)
       (fun
            _
@@ -117,7 +118,6 @@ module Enemies =
               })
           structV
           motionV)
-      positionsHealths
 
   let inline private buildAlive
     (m: EnemiesModel)
@@ -135,23 +135,19 @@ module Enemies =
   let inline private buildBossPositions
     (m: EnemiesModel)
     : amap<int<EnemyId>, Vector2> =
-    m.Defs
-    |> AMap.joinOn
-      (fun eid _ -> eid)
-      (fun _ posV defV ->
-        AVal.map2
-          (fun pos def ->
-            Telemetry.bossPositions <- Telemetry.bossPositions + 1
+    AMap.joinOn m.Positions m.Defs (fun eid _ -> eid) (fun _ posV defV ->
+      AVal.map2
+        (fun pos def ->
+          Telemetry.bossPositions <- Telemetry.bossPositions + 1
 
-            def
-            |> ValueOption.bind(fun d ->
-              if d.Archetype = EnemyArchetype.Boss then
-                ValueSome pos
-              else
-                ValueNone))
-          posV
-          defV)
-      m.Positions
+          def
+          |> ValueOption.bind(fun d ->
+            if d.Archetype = EnemyArchetype.Boss then
+              ValueSome pos
+            else
+              ValueNone))
+        posV
+        defV)
 
   let init() : EnemiesModel =
     let m = EnemiesModel()

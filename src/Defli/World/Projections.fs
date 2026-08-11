@@ -48,8 +48,9 @@ type Projections
   /// the render side keeps drawing the shot flying to the detonation
   /// point (the sim no longer removes it mid-flight).
   member val Homing: amap<int<ProjectileId>, HomingView> =
-    enemies.Positions
-    |> AMap.joinOn
+    AMap.joinOn
+      projectiles.Rows
+      enemies.Positions
       (fun _ (row: ProjectileRow) -> row.TargetEnemy)
       (fun _ (rowV: aval<ProjectileRow>) (posV: aval<Vector2 voption>) ->
         AVal.map2
@@ -63,7 +64,6 @@ type Projections
             })
           rowV
           posV)
-      projectiles.Rows
 
   /// #12 Suppression (Phase 6) — per tower, is a live boss within
   /// BossAura.Radius of its cell? → the fire-rate factor (1 = free,

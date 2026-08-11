@@ -194,3 +194,156 @@ dotnet fsi tools/probe-structure.fsx defli-adaptive-sim.speedscope.json
 and `probe-nodes.fsx` are new. Trace collected with
 `dotnet-trace collect --profile gc-verbose -o out.nettrace --name Defli.Raylib`,
 converted with `dotnet-trace convert --format Speedscope`.)
+
+## 6. Post-joinOn assessment (2026-08-10, second trace)
+
+**Scope:** a second long windowed session over the same wave range (20–35,
+576.3 s, game fully warm) captured AFTER the projections moved from
+`mapA` + `tryFind` to `AMap.joinOn` (commit `f74239d`, AdaptiveSlop PR #19
+branch `feat/joinon-groupby-reductions`). Same capture method, same census —
+directly comparable to sections 2–4.
+
+### 6.1 Macroscopic — the same census, before → after
+
+| Metric | Pre-joinOn (518.3 s) | Post-joinOn (576.3 s) |
+| --- | --- | --- |
+| Busy samples (≈ ms busy) | 37 080 (7.2 % wall, 1.19 ms/frame) | 19 167 (3.3 % wall, 0.55 ms/frame) |
+| AdaptiveSlop samples | 19 410 (52.3 % busy, 3.7 % wall, 0.62 ms/frame) | 6 297 (32.9 % busy, **1.1 % wall, 0.18 ms/frame**) |
+| zeroCreate samples | 3 827 (10.3 % of busy) | 1 219 (3.2 % of busy) |
+| GC frames / pushMapDelta / OnDeltas | 0 / 0 / 0 | 0 / 0 / 0 |
+| Densest minute (busy share) | 10.5 % | 5.0 % |
+| AdaptiveSlop share per minute | flat 45–57 % | flat 31–37 % |
+
+Session-mix note: the post-joinOn session was NOT lighter — it was heavier on
+the sim side (more towers placed: `Towers.tick` absolute samples grew 4 528 →
+5 492; more projectiles in flight: the homing-updates loop, measured as the
+`List<ValueTuple<int, ProjectileRow>>.AddWithResize` leaf, grew ~1 520 →
+3 930). Total busy still halved. The adaptive collapse is therefore not a
+lighter-session artifact.
+
+### 6.2 Microscopic — per node, before → after
+
+| Chain | Pre (samples, % busy) | Post (samples, % busy) |
+| --- | --- | --- |
+| **Homing join** (all machinery) | 10 570 (28.5 %) | **~184 (0.7 %)** |
+| ├─ projection lambda (game code) | 7 761 (20.9 %) | 40 (0.2 %) |
+| └─ per-key `voption<HomingView>` reads | 1 926 (5.2 %) | 19 (0.1 %) |
+| **Views join** (3-way, two JoinMapNodes) | 2 310 (6.2 %) | 674 (3.5 %) |
+| **BossPositions** | 1 907 (5.1 %) | 70 (0.4 %) |
+| **Suppression** (filter + count chain) | 1 961 (5.3 %) | ~244 (1.3 %) |
+| **Alive chain** (filter + count) | 4 539 (12.2 %) | 813 (4.2 %) |
+| **EffectiveDef** | 1 | 1 |
+| Join right-side lookups (MapLookupNode) | 93 (0.2 %) | 473 (2.5 %) |
+
+Reading: the joinOn swap removed the per-key subgraph rebuild — the measured
+2.1 MB/op allocation sink. The Homing join, the #1 cost line and the one
+scaling with the session's hottest entity, collapsed 40× (10 570 → 184
+samples) while the projectile load grew. What replaced the rebuild: the swap
+(cell re-apply, ~0 samples) and the read-time gate (the right-side lookup
+re-syncs — Health 79, Motion 326, EnemyDef 68 samples; the Motion lookup
+pays a voption equality per enemy per frame). The scan/equality work in the
+Views join-2 (ScanElements 29, `GenericEqualityComparer` on the join-1 struct
+89) is the new fixed cost of the 3-way composition — an order of magnitude
+below the old rebuild.
+
+### 6.3 The occasional slowliness — investigated
+
+The FPS counter stayed at 60; the user felt rare sluggishness. The CPU trace
+answers:
+
+- **No long busy period exists on the game thread.** The longest busy
+  cluster (consecutive samples with < 25 ms gaps) is 10 samples ≈ 10 ms of
+  busy, at t ≈ 545.9 s (the wave-35 climax). Average busy per frame is
+  0.55 ms.
+- **The 733.5 ms "CPU_TIME span" is a sampling artifact** — it contains
+  exactly 1 sample. The same artifact shape (650.8 ms span) exists in the
+  pre-joinOn trace. Span durations are unusable; only samples are truth.
+- **The 413 idle gaps ≥ 120 ms** (50 of them ≥ 250 ms, 2 ≥ 500 ms) are gaps
+  between BUSY samples — the thread was waiting, not computing. They cluster
+  in the boot minutes (115 in minute 0 — asset load / shader compile) and
+  decline to 2–18 per minute by minute 7. Consistent with the trace
+  collector's event-writing pauses (the user's hypothesis) — this session
+  showed no FPS dip, unlike earlier collector interference.
+- The occasional heavy frames that DO exist are game-side: the dense-minute
+  clusters sit in `Towers.tick` (O(towers × alive) target acquisition,
+  CPU_TIME leaf 3 108 samples) and the Projectiles homing loop (3 930) —
+  the sim's own scans at the wave climax, not adaptive nodes.
+
+Verdict on the slowliness: no stall in the adaptive machinery — its total is
+0.18 ms/frame. The felt sluggishness is either the dense sim frames (5–10 ms
+busy at the climax, still inside the 16.7 ms budget) or the collector, and
+the two are distinguishable with a short no-collector session or a
+per-frame-max timer in the shell loop.
+
+### 6.3.1 GC — measured from the GC events, not the sample census
+
+The "GC frames: 0" rows above come from the sample census
+(`probe-structure.fsx` greps the frame-name table for `System.GC`/
+`PollGC`/`WriteBarrier`/`Garbage`). That check only proves no GC *code* ever
+appeared on a game-thread stack. It does NOT measure GC pauses: a blocking
+(stop-the-world) GC **suspends** the game thread, a suspended thread produces
+no samples, and the GC work runs on the GC threads (which have no profile in
+this trace) — a GC pause looks like an idle gap, indistinguishable from
+vsync/collector waits.
+
+The direct measurement reads the gc-verbose GC events from the nettrace
+(`tools/gcprobe`, a TraceEvent console app — GCStart/GCStop/SuspendEEStart/
+RestartEEStop):
+
+| | count | total | avg | max |
+| --- | --- | --- | --- | --- |
+| GCs (186 blocking, 2 background) | 188 | — | one per ~3 s | — |
+| GC work (Start→Stop) | 186 | 52.9 ms | 0.28 ms | 0.54 ms |
+| STW pause (SuspendEEStart→RestartEEStop) | 188 | 62.6 ms | 0.333 ms | **0.69 ms** |
+
+All 188 pauses are < 1 ms; the worst pause is 0.69 ms = 4 % of one frame
+budget. Total stop-the-world across the 576 s session is 62.6 ms (0.01 % of
+wall). **The GC cannot cause the felt slowliness** — the pauses are two
+orders of magnitude below what the frame budget would notice, and three
+below the 250–1000 ms sampling gaps. The allocation rate that drives the GCs
+is the ~1.2 k zeroCreate samples (~3.2 % of busy) — the frequency is normal
+for a small-heap game.
+
+**Did GC increase vs the original? No — it decreased.** Same probe, run over
+the seven original Defli nettrace files in `E:\Defli`:
+
+| Trace (E:\Defli) | wall | GCs | GC/s | STW total | STW max |
+| --- | --- | --- | --- | --- | --- |
+| 210309 (Phase 3 era) | 222.0 s | 17 | 0.08/s | 5.4 ms | 1.07 ms |
+| 211933 (Phase 4 era) | 247.7 s | 20 | 0.08/s | 6.9 ms | 1.16 ms |
+| 093206 | 201.3 s | 22 | 0.11/s | 8.2 ms | 0.97 ms |
+| 111124 (Phase 5 era) | 321.4 s | 185 | 0.58/s | 69.7 ms | 0.89 ms |
+| **092915 (Trace A, regression peak)** | 368.7 s | 859 | 2.33/s | 2 800 ms | **37.2 ms** |
+| 102819 (Trace B) | 208.9 s | 35 | 0.17/s | 12.2 ms | 0.65 ms |
+| **230909 (waves 33–35 baseline)** | 50.25 s | 60 | 1.19/s | 31.0 ms | 2.05 ms |
+| **Port (post-joinOn)** | 576.3 s | 188 | **0.33/s** | 62.6 ms | **0.69 ms** |
+
+Reading: the port collects 3.6× less often than the same-wave baseline
+(0.33/s vs 1.19/s) with a 3× smaller worst pause (0.69 vs 2.05 ms) — GC
+activity is driven by allocation, and the port allocates less (the dead
+write side + the joinOn swap: no per-key rebuild, the original's 2.1 MB/op).
+Trace A (the pre-lazy regression-peak build) shows what allocation-driven GC
+looks like when it IS a problem: 859 GCs, 2.8 s of stop-the-world, and
+**37 ms pauses** — visible stutter, three orders above the port's worst. The
+port's 0.69 ms worst pause is below every original trace's worst except the
+two lightest early sessions.
+
+Note: the pre-joinOn Mibo nettrace was overwritten by this recording, so the
+pre/post joinOn GC delta cannot be measured directly; the architecture-level
+comparison above is the available evidence, and it shows no GC increase.
+
+### 6.4 Verdict — did the PR help?
+
+**Yes, decisively.** Adaptive wall-share dropped 3.7 % → 1.1 % (0.62 →
+0.18 ms/frame) with a heavier session, the allocation drip dropped 3.8 k →
+1.2 k zeroCreate samples, and the Homing join — the profiled hot spot the PR
+was written for — collapsed from 28.5 % of busy to 0.7 % while projectile
+volume grew. The remaining adaptive cost is the read-time gate (lookups +
+scan equality) at ~1–2 orders of magnitude below the rebuild it replaced.
+
+Watch items (unchanged, now smaller): Suppression's O(towers × bosses)
+re-scan (1.3 %, by design), the per-tower transient reads (cooldownA/targetA,
+grew with tower count), view-side strings (TowersView level labels 665
+samples + `AssetsService.resolvePath` 330 samples — texture paths resolved
+per frame), and the dense sim frames at the wave climax (game-side target
+acquisition + homing loops).
