@@ -47,9 +47,11 @@ type TowersModel() =
   /// Tagged from the start — ids never pass through a plain int.
   member val NextId = 0<TowerId> with get, set
 
-  /// The EFFECTIVE def per tower: Statics.Def × Levels — derived
-  /// projections composing on derived projections (RangeRing joins on
-  /// this, the tick reads it transiently once per frame).
+  /// The EFFECTIVE def per tower: Statics.Def × Levels — a same-key
+  /// AMap.joinOn (the per-tower subgraph swaps its static input in
+  /// place, no rebuild on write); the missing level falls back to 1.
+  /// RangeRing composes on top of this, the tick reads it transiently
+  /// once per frame.
   member val EffectiveDef: amap<int<TowerId>, TowerDef> =
     Unchecked.defaultof<_> with get, set
 
@@ -58,13 +60,22 @@ module Towers =
   let inline private buildEffectiveDef
     (m: TowersModel)
     : amap<int<TowerId>, TowerDef> =
-    m.Statics
-    |> AMap.mapA(fun tid s ->
-      m.Levels
-      |> AMap.tryFind tid
-      |> AVal.map(fun level ->
-        Telemetry.effectiveDef <- Telemetry.effectiveDef + 1
-        TowerDefs.effectiveDef s.Def (level |> ValueOption.defaultValue 1)))
+    m.Levels
+    |> AMap.joinOn
+      (fun tid _ -> tid)
+      (fun _ staticV levelV ->
+        AVal.map2
+          (fun s level ->
+            Telemetry.effectiveDef <- Telemetry.effectiveDef + 1
+
+            ValueSome(
+              TowerDefs.effectiveDef
+                s.Def
+                (level |> ValueOption.defaultValue 1)
+            ))
+          staticV
+          levelV)
+      m.Statics
 
   let init() : TowersModel =
     let m = TowersModel()

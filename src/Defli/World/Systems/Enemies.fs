@@ -19,8 +19,8 @@ open Defli
 //   Defs      — static per enemy (sprite, reward); written once
 //
 // Projections:
-//   Views      = Positions × Healths × Motions join (AMap.mapA +
-//                per-element tryFind avals — one ElementMapNode)
+//   Views      = Positions × Healths × Motions join (3-way AMap.joinOn
+//                composition — per-key subgraphs, in-place input swap)
 //   Alive      = Views |> filter Hp > 0 (targeting/render query)
 // ─────────────────────────────────────────────────────────────
 
@@ -69,41 +69,55 @@ module Enemies =
   let inline private buildViews
     (m: EnemiesModel)
     : amap<int<EnemyId>, EnemyView> =
-    // One ElementMapNode: per enemy, an aval joining its three rows via
-    // tryFind. Rows are written atomically in transactions, so post-commit
-    // all three always exist; the defensive zero row only guards transient
-    // mid-transaction reads (Alive filters it out).
-    m.Positions
-    |> AMap.mapA(fun eid pos ->
-      let healths = m.Healths |> AMap.tryFind eid
-      let motions = m.Motions |> AMap.tryFind eid
+    // The 3-way joinOn composition (Positions × Healths × Motions): each
+    // join builds its per-key subgraph once and swaps the left input in
+    // place — no rebuild on update. Rows are written atomically in
+    // transactions, so post-commit all three always exist; the defensive
+    // zero row only guards transient mid-transaction reads (Alive filters
+    // it out).
+    let positionsHealths =
+      m.Healths
+      |> AMap.joinOn
+        (fun eid _ -> eid)
+        (fun _ posV healthV ->
+          AVal.map2 (fun pos h -> ValueSome(struct (pos, h))) posV healthV)
+        m.Positions
 
-      let inline matchA (h: Health voption) (mv: Motion voption) =
-        match struct (h, mv) with
-        | ValueSome h, ValueSome mv -> {
-            Pos = pos
-            Hp = h.Hp
-            MaxHp = h.MaxHp
-            Progress = mv.Progress
-            Slow = mv.Slow
-            PathIndex = mv.PathIndex
-          }
-        | _ ->
-            {
-              Pos = pos
-              Hp = 0
-              MaxHp = 0
-              Progress = 0f
-              Slow = 1f
-              PathIndex = 0
-            }
+    m.Motions
+    |> AMap.joinOn
+      (fun eid _ -> eid)
+      (fun
+           _
+           (structV: aval<struct (Vector2 * Health voption)>)
+           (motionV: aval<Motion voption>) ->
+        AVal.map2
+          (fun
+               (struct (pos, h): struct (Vector2 * Health voption))
+               (mv: Motion voption) ->
+            Telemetry.viewsJoin <- Telemetry.viewsJoin + 1
 
-      motions
-      |> AVal.map2
-        (fun h mv ->
-          Telemetry.viewsJoin <- Telemetry.viewsJoin + 1
-          matchA h mv)
-        healths)
+            match struct (h, mv) with
+            | ValueSome h, ValueSome mv ->
+              ValueSome {
+                Pos = pos
+                Hp = h.Hp
+                MaxHp = h.MaxHp
+                Progress = mv.Progress
+                Slow = mv.Slow
+                PathIndex = mv.PathIndex
+              }
+            | _ ->
+              ValueSome {
+                Pos = pos
+                Hp = 0
+                MaxHp = 0
+                Progress = 0f
+                Slow = 1f
+                PathIndex = 0
+              })
+          structV
+          motionV)
+      positionsHealths
 
   let inline private buildAlive
     (m: EnemiesModel)
@@ -113,27 +127,31 @@ module Enemies =
       Telemetry.aliveFilter <- Telemetry.aliveFilter + 1
       v.Hp > 0)
 
-  /// Boss positions: per-enemy tryFind into Defs (the Views-join
-  /// shape), kept only when the archetype is Boss. Written by the
-  /// movement tick like Positions; read by the world's Suppression
+  /// Boss positions: a same-key AMap.joinOn into Defs (the Views-join
+  /// shape), kept only when the archetype is Boss — the join's
+  /// ValueNone output drops the entry (choose semantics). Written by
+  /// the movement tick like Positions; read by the world's Suppression
   /// projection.
   let inline private buildBossPositions
     (m: EnemiesModel)
     : amap<int<EnemyId>, Vector2> =
-    m.Positions
-    |> AMap.chooseA(fun eid pos ->
-      m.Defs
-      |> AMap.tryFind eid
-      |> AVal.map(fun def ->
-        Telemetry.bossPositions <- Telemetry.bossPositions + 1
+    m.Defs
+    |> AMap.joinOn
+      (fun eid _ -> eid)
+      (fun _ posV defV ->
+        AVal.map2
+          (fun pos def ->
+            Telemetry.bossPositions <- Telemetry.bossPositions + 1
 
-        def
-        |> ValueOption.bind(fun d ->
-          if d.Archetype = EnemyArchetype.Boss then
-            ValueSome pos
-          else
-            ValueNone)
-        |> ValueOption.toOption))
+            def
+            |> ValueOption.bind(fun d ->
+              if d.Archetype = EnemyArchetype.Boss then
+                ValueSome pos
+              else
+                ValueNone))
+          posV
+          defV)
+      m.Positions
 
   let init() : EnemiesModel =
     let m = EnemiesModel()

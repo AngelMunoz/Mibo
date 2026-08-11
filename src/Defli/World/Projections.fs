@@ -12,8 +12,8 @@ open Defli.World.Systems
 // purely from their own maps (see each system file).
 //
 //   Homing (#3)          — Projectiles.Rows × Enemies.Positions
-//                          (the bind showcase: per-projectile
-//                          dynamic dependency on the target's row)
+//                          (the AMap.joinOn showcase: per-projectile
+//                          computed join key on the target's row)
 //   Suppression (#12)    — Towers.Statics × Enemies.BossPositions
 //                          (the SPATIAL join: per-tower filter over
 //                          boss positions — Phase 6 boss aura)
@@ -40,23 +40,30 @@ type Projections
   ) =
 
   /// #3 Homing — one aval per projectile tracking its target's live
-  /// position row through the graph. A dead target (row removed from
-  /// Enemies.Positions) falls back to the projectile row's
-  /// LastTargetPos: the render side keeps drawing the shot flying to
-  /// the detonation point (the sim no longer removes it mid-flight).
+  /// position row through the graph, now as an AMap.joinOn: the join
+  /// key is the target enemy, the per-projectile subgraph is built once
+  /// and the position input swaps in place (no rebuild on update). A
+  /// dead target (row removed from Enemies.Positions) yields ValueNone
+  /// in the lookup and falls back to the projectile row's LastTargetPos:
+  /// the render side keeps drawing the shot flying to the detonation
+  /// point (the sim no longer removes it mid-flight).
   member val Homing: amap<int<ProjectileId>, HomingView> =
-    projectiles.Rows
-    |> AMap.mapA(fun _ row ->
-      enemies.Positions
-      |> AMap.tryFind row.TargetEnemy
-      |> AVal.map(fun pos ->
-        Telemetry.homingJoin <- Telemetry.homingJoin + 1
+    enemies.Positions
+    |> AMap.joinOn
+      (fun _ (row: ProjectileRow) -> row.TargetEnemy)
+      (fun _ (rowV: aval<ProjectileRow>) (posV: aval<Vector2 voption>) ->
+        AVal.map2
+          (fun (row: ProjectileRow) (pos: Vector2 voption) ->
+            Telemetry.homingJoin <- Telemetry.homingJoin + 1
 
-        {
-          Pos = row.Pos
-          TargetPos = pos |> ValueOption.defaultValue row.LastTargetPos
-          Sprite = row.ProjectileSprite
-        }))
+            ValueSome {
+              Pos = row.Pos
+              TargetPos = pos |> ValueOption.defaultValue row.LastTargetPos
+              Sprite = row.ProjectileSprite
+            })
+          rowV
+          posV)
+      projectiles.Rows
 
   /// #12 Suppression (Phase 6) — per tower, is a live boss within
   /// BossAura.Radius of its cell? → the fire-rate factor (1 = free,
