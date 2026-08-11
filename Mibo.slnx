@@ -4,10 +4,6 @@
     <Project Path="src/Mibo.Core.Tests/Mibo.Core.Tests.fsproj" />
     <Project Path="src/Mibo.Adaptive/Mibo.Adaptive.fsproj" />
     <Project Path="src/Mibo.Adaptive.Tests/Mibo.Adaptive.Tests.fsproj" />
-    <Project Path="src/Mibo.Adaptive.Demo/Mibo.Adaptive.Demo.fsproj" />
-    <Project Path="src/Defli/Defli.fsproj" />
-    <Project Path="src/Defli.Tests/Defli.Tests.fsproj" />
-    <Project Path="src/Defli.Raylib/Defli.Raylib.fsproj" />
     <Project Path="src/Mibo.MonoGame/Mibo.MonoGame.fsproj" />
     <Project Path="src/Mibo.MonoGame.Tests/Mibo.MonoGame.Tests.fsproj" />
     <Project Path="src/Mibo.Raylib/Mibo.Raylib.fsproj" />
