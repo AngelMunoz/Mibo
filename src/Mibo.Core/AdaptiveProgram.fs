@@ -240,6 +240,8 @@ type AdaptiveProgram<'Frame> = {
 }
 
 /// <summary>Functions for creating and configuring adaptive programs.</summary>
+[<Experimental("Under active development, the API may change without notice and carries no stability guarantees.");
+  RequireQualifiedAccess>]
 module AdaptiveProgram =
 
   /// <summary>
