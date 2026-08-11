@@ -33,6 +33,12 @@ type VfxView() =
   /// and reused, so steady state allocates nothing.
   let scratchByKind = Array.init 6 (fun _ -> Array.empty<Lighting.Particle2D>)
 
+  /// Resolved texture handle per kind, cached on the view (presentation
+  /// state — asset handles, not adaptive reads). Resolves once through
+  /// IAssets, then reuses the stored Texture2D so steady state does no
+  /// per-frame string work.
+  let textures = Dictionary<string, Texture2D>()
+
   let kindIndex(kind: VfxKind) =
     match kind with
     | Impact -> 0
@@ -70,28 +76,21 @@ type VfxView() =
     | Placement -> PlacementPath
     | BaseHit -> BaseHitPath
 
-  /// Cached handle per kind: resolves through IAssets once, then
-  /// reuses the stored Texture2D (the cache lives on the sim model —
-  /// no per-frame string work).
-  let textureOfCached (kind: VfxKind) (model: VfxModel) (assets: IAssets) =
+  /// Cached handle per kind: resolves through IAssets once, then reuses
+  /// the stored Texture2D from the view's own cache (no per-frame string
+  /// work).
+  let textureOfCached (kind: VfxKind) (assets: IAssets) =
     let key = textureOf kind
-
-    match model.Textures |> Dictionary.tryGetValue key with
-    | ValueSome tex -> tex
-    | ValueNone ->
-      let tex = assets.Texture key
-      model.Textures[key] <- tex
-      tex
+    assets.Texture key
 
   let drawPool
     (kind: VfxKind)
     (pool: VfxPool)
-    (model: VfxModel)
     (assets: IAssets)
     (buffer: RenderBuffer2D)
     =
     if pool.Count > 0 then
-      let tex = textureOfCached kind model assets
+      let tex = textureOfCached kind assets
       let full = Rectangle(0f, 0f, float32 tex.Width, float32 tex.Height)
       let idx = kindIndex kind
 
@@ -108,7 +107,7 @@ type VfxView() =
           Size = p.Size
           Rotation = p.Rotation
           SourceRect = full
-          Color = p.Color
+          Color = RaylibColor.toRaylibColor p.Color
         }
 
       buffer.particles(tex, scratch, pool.Count, layer = Layers.Effects).drop()
@@ -116,9 +115,9 @@ type VfxView() =
   /// The view: one .particles draw call per kind/texture.
   member _.View (ctx: GameContext) (model: VfxModel) (buffer: RenderBuffer2D) =
     let assets = GameContext.getService<IAssets> ctx
-    drawPool VfxKind.Impact model.Impact model assets buffer
-    drawPool VfxKind.Explosion model.Explosion model assets buffer
-    drawPool VfxKind.DeathPoof model.DeathPoof model assets buffer
-    drawPool VfxKind.Muzzle model.Muzzle model assets buffer
-    drawPool VfxKind.Placement model.Placement model assets buffer
-    drawPool VfxKind.BaseHit model.BaseHit model assets buffer
+    drawPool VfxKind.Impact model.Impact assets buffer
+    drawPool VfxKind.Explosion model.Explosion assets buffer
+    drawPool VfxKind.DeathPoof model.DeathPoof assets buffer
+    drawPool VfxKind.Muzzle model.Muzzle assets buffer
+    drawPool VfxKind.Placement model.Placement assets buffer
+    drawPool VfxKind.BaseHit model.BaseHit assets buffer

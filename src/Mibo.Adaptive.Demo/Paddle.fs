@@ -30,6 +30,7 @@ let create(side: PaddleSide) : State =
     y
     |> AVal.map(fun centerY ->
       bump()
+
       {
         X = x
         Y = centerY - paddleHeight / 2f

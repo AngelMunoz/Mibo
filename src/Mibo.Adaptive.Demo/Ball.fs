@@ -21,11 +21,10 @@ type State = {
 /// on another feature's root — that is how the graph composes.
 let create(leftPaddleY: cval<float32>) : State =
   let value =
-    CVal.create
-      {
-        Position = Vector2(courtWidth / 2f, courtHeight / 2f)
-        Velocity = Vector2(300f, 150f)
-      }
+    CVal.create {
+      Position = Vector2(courtWidth / 2f, courtHeight / 2f)
+      Velocity = Vector2(300f, 150f)
+    }
 
   let rect =
     value
@@ -96,13 +95,9 @@ let step
 let reset (ball: State) (serveToward: PaddleSide) : unit =
   let dirX = if serveToward = Left then -1f else 1f
 
-  ball.Value.Set
-    {
-      Position = Vector2(courtWidth / 2f, courtHeight / 2f)
+  ball.Value.Set {
+    Position = Vector2(courtWidth / 2f, courtHeight / 2f)
 
-      Velocity =
-        Vector2(
-          300f * dirX,
-          200f * (if rng.NextDouble() > 0.5 then 1f else -1f)
-        )
-    }
+    Velocity =
+      Vector2(300f * dirX, 200f * (if rng.NextDouble() > 0.5 then 1f else -1f))
+  }

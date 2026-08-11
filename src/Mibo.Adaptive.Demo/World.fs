@@ -71,8 +71,7 @@ let aiSpeedFactor = 0.5f
 let aiMove (world: World) (isLeft: bool) : float32 =
   let b = AVal.getValue world.Ball.Value
 
-  let incoming =
-    isLeft && b.Velocity.X < 0f || not isLeft && b.Velocity.X > 0f
+  let incoming = isLeft && b.Velocity.X < 0f || not isLeft && b.Velocity.X > 0f
 
   if not incoming then
     0f
@@ -112,18 +111,16 @@ let buildFrame (world: World) (clockLabel: aval<string>) () : RenderFrame = {
 
 /// The adaptive program: Init retains the world's projections behind the
 /// frame builder; Update runs the router.
-let adaptiveWorld(world: World) : AdaptiveWorld<RenderFrame> =
-  AdaptiveWorld.mk(fun ctx ->
-    // The HUD clock is a time-dependent projection: it is created here, in
-    // Init, because it depends on the runner-owned time root.
-    let clockLabel =
-      CVal.value ctx.Time
-      |> AVal.map(fun gt ->
-        Telemetry.clockLabel <- Telemetry.clockLabel + 1
-        sprintf "t = %.1f s" gt.TotalTime.TotalSeconds)
+let adaptiveProgram(world: World) : AdaptiveProgram<RenderFrame> =
+  AdaptiveProgram.mkProgram
+    (fun ctx ->
+      // The HUD clock is a time-dependent projection: it is created here, in
+      // Init, because it depends on the runner-owned time root.
+      let clockLabel =
+        CVal.value ctx.Time
+        |> AVal.map(fun gt ->
+          Telemetry.clockLabel <- Telemetry.clockLabel + 1
+          sprintf "t = %.1f s" gt.TotalTime.TotalSeconds)
 
-    {
-      FrameBuilder = buildFrame world clockLabel
-      Disposables = []
-    })
-  |> AdaptiveWorld.withUpdate(fun _ctx gameTime -> step world gameTime)
+      AdaptiveInit.ofFrameBuilder(buildFrame world clockLabel))
+    (fun _ctx gameTime -> step world gameTime)

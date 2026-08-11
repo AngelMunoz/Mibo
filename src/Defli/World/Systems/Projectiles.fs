@@ -5,7 +5,6 @@ open System.Collections.Generic
 open System.Numerics
 open AdaptiveSlop.Core
 open Mibo.Elmish
-open Raylib_cs
 open Defli.World
 
 // ─────────────────────────────────────────────────────────────

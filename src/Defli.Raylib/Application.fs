@@ -175,47 +175,46 @@ module Application =
       hoverCell world viewport delta.Position
       |> ValueOption.iter(fun c -> Router.upgradeTower world c |> ignore)
 
-  /// The windowed world: boot (texture filtering), input wiring and
+  /// The windowed program: boot (texture filtering), input wiring and
   /// the per-frame shell phase over the same sim (Router.step).
-  let windowedWorld
+  let windowedProgram
     (cell: WorldCell)
     (shell: Shell)
-    : AdaptiveWorld<Frame.RenderFrame> =
-    AdaptiveWorld.mk(fun ctx ->
-      // The raylib loader forces TRILINEAR filtering on every texture
-      // (docs/assets.md): a gutterless spritesheet sampled bilinearly
-      // at tile borders bleeds adjacent (black) texels in — the seam
-      // lines between tiles. Point filtering stops it. Applied ONCE at
-      // boot (mutates the cached texture's sampler — not per frame).
-      let assets = ctx.Context |> GameContext.getService<IAssets>
+    : AdaptiveProgram<Frame.RenderFrame> =
+    AdaptiveProgram.mkProgram
+      (fun ctx ->
+        // The raylib loader forces TRILINEAR filtering on every texture
+        // (docs/assets.md): a gutterless spritesheet sampled bilinearly
+        // at tile borders bleeds adjacent (black) texels in — the seam
+        // lines between tiles. Point filtering stops it. Applied ONCE at
+        // boot (mutates the cached texture's sampler — not per frame).
+        let assets = ctx.Context |> GameContext.getService<IAssets>
 
-      assets.Texture Tiles.SheetPath
-      |> Texture.filter TextureFilter.Point
-      |> ignore
+        assets.Texture Tiles.SheetPath
+        |> Texture.filter TextureFilter.Point
+        |> ignore
 
-      // Input → world. The subscriptions run on the game thread (the
-      // host polls right before Step), so the graph owner-thread rule
-      // holds. Disposed with the runner — or re-created on restart.
-      let input = ctx.Context |> GameContext.getService<IInput>
-      let d1 = input.KeyboardDelta.Subscribe(handleKeyboard ctx cell shell)
-      let d2 = input.MouseDelta.Subscribe(handleMouse ctx cell shell)
+        // Input → world. The subscriptions run on the game thread (the
+        // host polls right before Step), so the graph owner-thread rule
+        // holds. Disposed with the runner — or re-created on restart.
+        let input = ctx.Context |> GameContext.getService<IInput>
+        let d1 = input.KeyboardDelta.Subscribe(handleKeyboard ctx cell shell)
+        let d2 = input.MouseDelta.Subscribe(handleMouse ctx cell shell)
 
-      {
-        FrameBuilder = Frame.buildFrame cell.Value
-        Disposables = [ d1; d2 ]
-      })
-    |> AdaptiveWorld.withUpdate(fun ctx gameTime ->
-      let world = cell.Value
+        AdaptiveInit.ofFrameBuilder(Frame.buildFrame cell.Value)
+        |> AdaptiveInit.withDisposables [ d1; d2 ])
+      (fun _ctx gameTime ->
+        let world = cell.Value
 
-      Diagnostics.update shell.Diag
+        Diagnostics.update shell.Diag
 
-      // Keyboard pan with the current dt (the shell accumulated the
-      // held keys during the input poll).
-      if shell.PanDir <> Vector2.Zero then
-        let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
+        // Keyboard pan with the current dt (the shell accumulated the
+        // held keys during the input poll).
+        if shell.PanDir <> Vector2.Zero then
+          let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
 
-        Camera.Camera.update
-          (CameraMsg.Pan(shell.PanDir * panSpeed * dt))
-          world.Camera
+          Camera.Camera.update
+            (CameraMsg.Pan(shell.PanDir * panSpeed * dt))
+            world.Camera
 
-      Router.step world gameTime)
+        Router.step world gameTime)

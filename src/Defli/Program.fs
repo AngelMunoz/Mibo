@@ -31,7 +31,7 @@ let runSim() =
   let world = World.init cfg
 
   use runner =
-    new AdaptiveHeadless<Frame.RenderFrame>(Frame.adaptiveWorld world)
+    new AdaptiveHeadless<Frame.RenderFrame>(Frame.adaptiveProgram world)
 
   let mutable lastWave = 0
   let mutable gameOverReported = false

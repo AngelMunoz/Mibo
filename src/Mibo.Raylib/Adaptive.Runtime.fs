@@ -1,39 +1,52 @@
-namespace Mibo.Elmish
+namespace Mibo.Adaptive
 
 open System
 open Raylib_cs
 open Mibo.Input
-open Mibo.Adaptive
+open Mibo.Elmish
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AdaptiveRaylibGame: the raylib-backed host for adaptive programs.
+//
+// Mirrors RaylibGame's responsibilities (window/audio lifecycle, input polling,
+// render dispatch) but delegates the per-frame simulation to an
+// AdaptiveHeadless runner instead of the Elmish message-processing loop. The
+// host is only the I/O shell: it owns no simulation state of its own.
+//
+// Work ordering each frame (matches RaylibGame + AdaptiveHeadless.Step):
+//   poll input → resize check → Step (posts → time root → Update → force frame)
+//                → consume restart request → draw renderers in add-order.
+//
+// Intentional differences from RaylibGame (the adaptive contract):
+//   - No Program/Cmd/Sub machinery — the program is an AdaptiveProgram.
+//   - Input is always registered and polled (no withInput toggle).
+//   - The runner builds the graph lazily on the first Step.
+//   - Restart: the program may request a rebuild (fresh graph, fresh clock).
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
-/// The raylib-backed host for adaptive worlds. Owns the window/audio lifecycle
-/// like <see cref="T:Mibo.Elmish.RaylibGame`2"/> and delegates the per-frame
-/// simulation to an <see cref="T:Mibo.Adaptive.AdaptiveHeadless`1"/> runner.
+/// The raylib-backed host for adaptive programs. Owns the window/audio
+/// lifecycle like <see cref="T:Mibo.Elmish.RaylibGame`2"/> and delegates the
+/// per-frame simulation to an <see cref="T:Mibo.Adaptive.AdaptiveHeadless`1"/>
+/// runner.
 /// </summary>
 /// <remarks>
-/// This is the adaptive counterpart of <see cref="T:Mibo.Elmish.RaylibGame`2"/>,
-/// with the MVU ceremony removed: there is no <c>Program</c> record, no builder
-/// chain, no Cmd/Sub machinery — the world is passed directly, services are
-/// registered through the constructor, and input is always registered and
-/// polled. Each frame: poll input, check for resize, <c>Step</c> the runner
-/// (which runs the world's Update phase and forces the frame), consume a
-/// restart request if the world wrote one, then draw the renderers with the
+/// Construct one with an <see cref="T:Mibo.Adaptive.AdaptiveProgram`1"/> and
+/// call <c>Run()</c>. Each frame: poll input, check for resize, <c>Step</c> the
+/// runner (which runs the program's Update phase and forces the frame), consume
+/// a restart request if the program wrote one, then draw the renderers with the
 /// forced frame. The frame's transient views are valid until the next
 /// <c>Step</c>, so the draw window is exactly the gap between them.
 /// </remarks>
-type AdaptiveRaylibGame<'Frame>
-  (
-    world: AdaptiveWorld<'Frame>,
-    ?config: GameConfig,
-    ?assetsBasePath: string,
-    ?serviceRegistrations: (GameContext -> unit) list,
-    ?renderers: (unit -> IRenderer<'Frame>) list
-  ) =
+type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
 
+  /// <summary>Run the host: open the window, drive the frame loop, then tear down.</summary>
   member _.Run() =
-    let config = defaultArg config GameConfig.defaultConfig
-    let serviceRegistrations = defaultArg serviceRegistrations []
-    let renderers = defaultArg renderers []
+    let config =
+      List.fold
+        (fun c f -> f c)
+        GameConfig.defaultConfig
+        (List.rev program.Config)
 
     Raylib.InitWindow(config.Width, config.Height, config.Title)
     Raylib.SetExitKey(KeyboardKey.Null)
@@ -50,35 +63,48 @@ type AdaptiveRaylibGame<'Frame>
     if config.MinWidth.IsSome || config.MinHeight.IsSome then
       Raylib.SetWindowState(ConfigFlags.ResizableWindow)
 
-    let renderers = [| for f in renderers -> f() |]
+    // Reverse to match add-order (the list is ::-prepended, like Config and
+    // ServiceRegistrations). Without this, the last renderer added would draw
+    // first, and earlier renderers would draw on top — opposite of the
+    // expected layering. Mirrors RaylibGame.
+    let renderers = ResizeArray<IRenderer<'Frame>>()
+
+    for f in List.rev program.Renderers do
+      renderers.Add(f())
 
     let ctx = GameContext.create(config.Width, config.Height)
 
     let assets =
-      match assetsBasePath with
-      | Some p -> AssetsService.createWithBasePath(p)
-      | None -> AssetsService.create()
+      match program.AssetsBasePath with
+      | ValueSome p -> AssetsService.createWithBasePath(p)
+      | ValueNone -> AssetsService.create()
 
     GameContext.register<IAssets> assets ctx
 
-    // Input is always registered and polled — the world reads the IInput
-    // service directly through the context (no withInput toggle).
-    let inputService = Input.create []
-    GameContext.register<IInput> inputService ctx
+    let mutable inputServiceOpt: IInput voption = ValueNone
 
-    // User service registrations run in the order given, before the runner
-    // builds the graph (the runner initializes on its first Step).
-    for register in serviceRegistrations do
+    // Input is opt-in via AdaptiveProgram.withInput — mirrors RaylibGame's
+    // HasInput gate. The program reads the IInput service directly through
+    // the context when it is enabled.
+    if program.HasInput then
+      let inputService = Input.create []
+      GameContext.register<IInput> inputService ctx
+      inputServiceOpt <- ValueSome inputService
+
+    // User service registrations run before the runner builds the graph (the
+    // runner initializes on its first Step). Mirrors RaylibGame's reversal so
+    // registration order matches add-order.
+    for register in List.rev program.ServiceRegistrations do
       register ctx
 
-    let runner = new AdaptiveHeadless<'Frame>(world, context = ctx)
+    let runner = new AdaptiveHeadless<'Frame>(program, context = ctx)
 
     while not(runner.ShouldQuit || RaylibHelpers.windowShouldClose()) do
       let dt = Raylib.GetFrameTime()
       let elapsed = TimeSpan.FromSeconds(float dt)
 
-      // Poll hardware input before the world's Update phase reads it.
-      inputService.Poll()
+      // Poll hardware input before the program's Update phase reads it.
+      inputServiceOpt |> ValueOption.iter(fun svc -> svc.Poll())
 
       // Check for window resize and update context dimensions.
       if Raylib.IsWindowResized().AsBool() then
@@ -86,7 +112,7 @@ type AdaptiveRaylibGame<'Frame>
 
       runner.Step(elapsed) |> ignore
 
-      // The world may have requested a rebuild (e.g. restart after game
+      // The program may have requested a rebuild (e.g. restart after game
       // over): re-run Init — fresh graph, fresh clock, first frame forced.
       if runner.RestartRequested then
         runner.Restart()
@@ -94,12 +120,12 @@ type AdaptiveRaylibGame<'Frame>
       Raylib.BeginDrawing()
       Raylib.ClearBackground(Color.Black)
 
-      for i = 0 to renderers.Length - 1 do
+      for i = 0 to renderers.Count - 1 do
         renderers[i].Draw(ctx, runner.Frame, runner.GameTime)
 
       Raylib.EndDrawing()
 
-    for i = 0 to renderers.Length - 1 do
+    for i = 0 to renderers.Count - 1 do
       match renderers[i] with
       | :? IDisposable as d -> d.Dispose()
       | _ -> ()

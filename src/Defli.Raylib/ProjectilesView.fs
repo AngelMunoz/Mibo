@@ -45,7 +45,7 @@ module ProjectilesView =
           SpriteState.create(
             tex,
             Rectangle(v.Pos.X - w / 2f, v.Pos.Y - h / 2f, w, h),
-            tile.Rect
+            MapView.tileRect tile
           )
           |> SpriteState.withOrigin(Vector2(w / 2f, h / 2f))
           |> SpriteState.withRotation angle

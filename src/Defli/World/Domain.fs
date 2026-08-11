@@ -1,6 +1,5 @@
 namespace Defli.World
 
-open Raylib_cs
 open System.Numerics
 
 // ─────────────────────────────────────────────────────────────
@@ -53,6 +52,8 @@ type TerrainKind =
 
 /// One baked atlas tile (position + size), see Tiles.fs.
 /// GENERATED data — the dataset is compile-time, no XML at runtime.
+/// The native rectangle is built at the view edge (the sim stays
+/// backend-neutral and carries only the raw atlas coordinates).
 [<Struct>]
 type TileInfo = {
   Name: string
@@ -60,15 +61,7 @@ type TileInfo = {
   Y: int
   Width: int
   Height: int
-} with
-
-  member this.Rect =
-    Rectangle(
-      float32 this.X,
-      float32 this.Y,
-      float32 this.Width,
-      float32 this.Height
-    )
+}
 
 [<Struct>]
 type MapTile = {

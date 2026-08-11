@@ -3,7 +3,6 @@ namespace Defli
 open System
 open System.Diagnostics
 open System.Numerics
-open Raylib_cs
 open AdaptiveSlop.Core
 open Defli.World
 // ─────────────────────────────────────────────────────────────

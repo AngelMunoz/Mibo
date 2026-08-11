@@ -79,7 +79,7 @@ let runSim() =
   <| ((liveFrames + pausedFrames) / 60)
 
   let world = World.create()
-  use runner = new AdaptiveHeadless<RenderFrame>(World.adaptiveWorld world)
+  use runner = new AdaptiveHeadless<RenderFrame>(World.adaptiveProgram world)
 
   let mutable lastScore = "0   -   0"
 
@@ -152,7 +152,7 @@ let runRaylib() =
   Raylib_cs.Raylib.SetTargetFPS(60)
 
   let world = World.create()
-  use runner = new AdaptiveHeadless<RenderFrame>(World.adaptiveWorld world)
+  use runner = new AdaptiveHeadless<RenderFrame>(World.adaptiveProgram world)
 
   while not runner.ShouldQuit
         && not(Raylib_cs.Raylib.WindowShouldClose().AsBool()) do
@@ -168,11 +168,10 @@ let runRaylib() =
         else
           0f
 
-    world.Input.Set
-      {
-        LeftMove = leftMove
-        RightMove = World.aiMove world false * World.aiSpeedFactor
-      }
+    world.Input.Set {
+      LeftMove = leftMove
+      RightMove = World.aiMove world false * World.aiSpeedFactor
+    }
 
     if Raylib_cs.Raylib.IsKeyPressed(Raylib_cs.KeyboardKey.P).AsBool() then
       world.Paused.Set(not(AVal.getValue world.Paused))

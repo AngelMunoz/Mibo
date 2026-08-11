@@ -120,7 +120,7 @@ let mkHarness(cfg: WorldConfig) =
   let world = World.init cfg
 
   let runner =
-    new AdaptiveHeadless<Frame.RenderFrame>(Frame.adaptiveWorld world)
+    new AdaptiveHeadless<Frame.RenderFrame>(Frame.adaptiveProgram world)
 
   Harness(world, runner)
 

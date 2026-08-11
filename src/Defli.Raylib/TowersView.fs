@@ -42,7 +42,7 @@ module TowersView =
       // Base plate.
       buffer
         .sprite(
-          SpriteState.create(tex, cellRect, Tiles.turretBaseA.Rect)
+          SpriteState.create(tex, cellRect, MapView.tileRect Tiles.turretBaseA)
           |> SpriteState.withLayer Layers.Entities
         )
         .drop()
@@ -53,7 +53,7 @@ module TowersView =
       |> ValueOption.iter(fun tile ->
         buffer
           .sprite(
-            SpriteState.create(tex, cellRect, tile.Rect)
+            SpriteState.create(tex, cellRect, MapView.tileRect tile)
             |> SpriteState.withLayer Layers.Entities
           )
           .drop())

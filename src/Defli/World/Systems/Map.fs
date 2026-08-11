@@ -2,7 +2,6 @@ namespace Defli.World.Systems
 
 open System.Numerics
 open Mibo.Layout
-open Raylib_cs
 open Defli.World
 
 // ─────────────────────────────────────────────────────────────

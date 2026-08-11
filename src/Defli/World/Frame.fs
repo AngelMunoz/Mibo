@@ -102,9 +102,7 @@ module Frame =
 
   /// The adaptive program: the frame builder forces the world's
   /// projections at the end of every Step; Update runs the router.
-  let adaptiveWorld(world: World) : AdaptiveWorld<RenderFrame> =
-    AdaptiveWorld.mk(fun _ctx -> {
-      FrameBuilder = buildFrame world
-      Disposables = []
-    })
-    |> AdaptiveWorld.withUpdate(fun _ctx gameTime -> Router.step world gameTime)
+  let adaptiveProgram(world: World) : AdaptiveProgram<RenderFrame> =
+    AdaptiveProgram.mkProgram
+      (fun _ctx -> AdaptiveInit.ofFrameBuilder(buildFrame world))
+      (fun _ctx gameTime -> Router.step world gameTime)

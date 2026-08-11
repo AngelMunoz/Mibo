@@ -77,7 +77,7 @@ module EnemiesView =
               SpriteState.create(
                 tex,
                 Rectangle(v.Pos.X - w / 2f, v.Pos.Y - h / 2f, w, h),
-                tile.Rect
+                MapView.tileRect tile
               )
               |> SpriteState.withOrigin(Vector2(w / 2f, h / 2f))
               |> SpriteState.withRotation angle
@@ -102,7 +102,7 @@ module EnemiesView =
               SpriteState.create(
                 tex,
                 Rectangle(v.Pos.X - tw / 2f, v.Pos.Y - th / 2f, tw, th),
-                turretTile.Rect
+                MapView.tileRect turretTile
               )
               |> SpriteState.withOrigin(Vector2(tw / 2f, th / 2f))
               |> SpriteState.withRotation(angle + def.TurretAngle)

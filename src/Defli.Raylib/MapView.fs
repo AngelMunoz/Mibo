@@ -18,6 +18,13 @@ open Defli.World.Systems
 
 module MapView =
 
+  /// Builds the native raylib atlas rectangle from a TileInfo's raw
+  /// coordinates. The sim carries only the backend-neutral X/Y/Width/
+  /// Height; the native rectangle is constructed here, at the view edge.
+  /// Shared by all Defli.Raylib views that draw atlas tiles.
+  let inline tileRect(t: TileInfo) =
+    Rectangle(float32 t.X, float32 t.Y, float32 t.Width, float32 t.Height)
+
   /// Picks the path tile frame for a cell from its path neighbors.
   /// Corners fall back to the vertical piece (placeholder — a nicer
   /// corner mapping can land later). No rotation is returned: the path
@@ -94,7 +101,7 @@ module MapView =
             SpriteState.create(
               tex,
               Rectangle(pos.X, pos.Y, size, size),
-              frame.Rect
+              tileRect frame
             )
             |> SpriteState.withLayer Layers.Ground
           )
@@ -121,7 +128,7 @@ module MapView =
             SpriteState.create(
               tex,
               Rectangle(pos.X, pos.Y, size, size),
-              frame.Rect
+              tileRect frame
             )
             |> SpriteState.withLayer Layers.Path
           )
@@ -145,7 +152,7 @@ module MapView =
               SpriteState.create(
                 tex,
                 Rectangle(pos.X, pos.Y, size, size),
-                frame.Rect
+                tileRect frame
               )
               |> SpriteState.withLayer Layers.Path
             )
@@ -168,7 +175,7 @@ module MapView =
               SpriteState.create(
                 tex,
                 Rectangle(pos.X, pos.Y, size, size),
-                Tiles.turretMountEmpty.Rect
+                tileRect Tiles.turretMountEmpty
               )
               |> SpriteState.withLayer Layers.Path
             )

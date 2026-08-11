@@ -3,7 +3,7 @@ module Defli.World.Systems.Vfx
 open System
 open System.Collections.Generic
 open System.Numerics
-open Raylib_cs
+open Mibo
 open Defli.World
 
 // ─────────────────────────────────────────────────────────────
@@ -27,10 +27,11 @@ open Defli.World
 // smoke look. Deterministic bursts — no RNG stream (index-based
 // angles/speed tiers; golden-angle rotation spread).
 //
-// Texture handles are resolved ONCE and cached on the model: the
-// per-frame `assets.Texture(string)` calls were flagged by the trace
-// (string allocation per call — resolvePath). The cache is
-// presentation state (asset handles, not adaptive reads).
+// Texture handles are resolved ONCE and cached on the raylib view
+// (VfxView): the per-frame `assets.Texture(string)` calls were flagged
+// by the trace (string allocation per call). The cache is presentation
+// state (asset handles, not adaptive reads), so it lives at the view
+// edge and the sim carries only backend-neutral particle data.
 // ─────────────────────────────────────────────────────────────
 
 [<Struct>]
@@ -44,14 +45,14 @@ type VfxKind =
 
 /// Headless port: the original stored the renderer's Particle2D
 /// (Mibo.Elmish.Graphics2D, raylib-only). The sim only integrates
-/// positions, sizes and alphas — a local struct keeps the pool shape
-/// identical; the raylib frontend maps it back (milestone 2).
+/// positions, sizes and alphas — a local backend-neutral struct keeps
+/// the pool shape identical; the raylib frontend maps it back (adding
+/// the native source rect and converting the color at the view edge).
 [<Struct>]
 type Particle2D = {
   Position: Vector2
   Size: Vector2
   Rotation: float32
-  SourceRect: Rectangle
   Color: Color
 }
 
@@ -69,8 +70,6 @@ type VfxModel() =
   member val Muzzle = VfxPool 128 with get, set
   member val Placement = VfxPool 128 with get, set
   member val BaseHit = VfxPool 128 with get, set
-  /// Resolved texture handle per kind (view-time, cached once).
-  member val Textures = Dictionary<string, Texture2D>() with get, set
 
 [<Struct>]
 type VfxMsg = Burst of kind: VfxKind * pos: Vector2
@@ -127,8 +126,7 @@ module Vfx =
             Position = pos
             Size = Vector2(size, size)
             Rotation = float32((i * 137) % 360)
-            SourceRect = Rectangle(0f, 0f, 0f, 0f) // full texture — patched in the view
-            Color = Color(255uy, 255uy, 255uy, 255uy)
+            Color = Color.White
           }
 
         pool.Velocities[pool.Count] <- velocity
@@ -164,8 +162,12 @@ module Vfx =
       let newAlpha = byte(max 0f (float32 p.Color.A - fadeAmount))
 
       if newAlpha > 0uy then
-        let c = Color(p.Color.R, p.Color.G, p.Color.B, newAlpha)
-        pool.Particles[write] <- { p with Color = c }
+        pool.Particles[write] <-
+          {
+            p with
+                Color = { p.Color with A = newAlpha }
+          }
+
         pool.Velocities[write] <- pool.Velocities[read]
         write <- write + 1
 

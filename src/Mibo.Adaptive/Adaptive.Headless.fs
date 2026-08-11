@@ -10,162 +10,33 @@ open AdaptiveSlop.Core
 open Mibo.Elmish
 
 /// <summary>
-/// The graph-building context handed to an <see cref="T:Mibo.Adaptive.AdaptiveWorld`1"/>.
-/// </summary>
-/// <remarks>
-/// The context exposes the framework-owned roots: the time cell, written by the
-/// runner at the start of every <c>Step</c>, the exit-request cell, read by the
-/// runner to decide whether to stop, and the restart-request cell, read by the
-/// host to decide whether to rebuild the world. The world reads these cells and
-/// derives its projections from them like any other root; only
-/// <c>ExitRequested</c>/<c>RestartRequested</c> are written by the world.
-/// </remarks>
-type AdaptiveContext
-  internal
-  (
-    ctx: GameContext,
-    time: cval<GameTime>,
-    exitRequested: cval<bool>,
-    restartRequested: cval<bool>
-  ) =
-  /// <summary>The framework-owned time root. The runner writes it at the start of every <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>; projections may depend on it (animation, physics, timers).</summary>
-  member _.Time = time
-
-  /// <summary>The exit-request root. Set it to <c>true</c> to make the runner stop — the adaptive counterpart of <c>Cmd.signalExit</c>.</summary>
-  member _.ExitRequested = exitRequested
-
-  /// <summary>
-  /// The restart-request root. Set it to <c>true</c> to rebuild the world: the
-  /// runner disposes the world's disposables, re-runs <c>Init</c> — a fresh
-  /// graph over the same roots — and forces the first frame. The windowed
-  /// hosts consume it after <c>Step</c>; headless users call
-  /// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Restart"/> themselves.
-  /// </summary>
-  member _.RestartRequested = restartRequested
-
-  /// <summary>
-  /// The <see cref="T:Mibo.Elmish.GameContext"/> the runner owns: the window
-  /// dimensions and the registered services (IAssets, IInput, custom). Worlds
-  /// read services directly from here in <c>Init</c> and <c>Update</c> — the
-  /// host registers what it owns and the world pulls the rest; there is no
-  /// registration ceremony.
-  /// </summary>
-  member _.Context = ctx
-
-  /// <summary>Current window width in pixels. Default: 800.</summary>
-  member _.WindowWidth = ctx.WindowWidth
-
-  /// <summary>Current window height in pixels. Default: 600.</summary>
-  member _.WindowHeight = ctx.WindowHeight
-
-/// <summary>The result of building an adaptive world.</summary>
-[<Struct>]
-type AdaptiveInit<'Frame> = {
-  /// <summary>
-  /// The frame builder: forces the frame's output projections (recomputing each
-  /// exactly once if a dependency moved, and not at all otherwise) and packs
-  /// them into <c>'Frame</c>.
-  /// </summary>
-  FrameBuilder: unit -> 'Frame
-
-  /// <summary>Disposables released when the runner is disposed.</summary>
-  Disposables: IDisposable list
-}
-
-/// <summary>
-/// A program configuration for running an adaptive game world without graphics.
-/// </summary>
-/// <remarks>
-/// The adaptive world replaces the Elmish triad (model, message, update) with a
-/// dependency graph: changeable roots hold the state, derived projections compose
-/// it, and the runner forces the frame's projections at the end of every step.
-/// There is no <c>'Msg</c>, no <c>Cmd</c> and no <c>Sub</c> — handlers write roots
-/// directly and effects run directly. Use <see cref="M:Mibo.Adaptive.AdaptiveWorld.mk"/> to create a world.
-/// </remarks>
-type AdaptiveWorld<'Frame> = {
-  /// <summary>
-  /// Builds the graph (roots and projections) and registers handlers.
-  /// Returns the <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/> — the frame builder
-  /// plus the disposables released when the runner is disposed.
-  /// </summary>
-  Init: AdaptiveContext -> AdaptiveInit<'Frame>
-
-  /// <summary>
-  /// Optional per-frame phase. Runs after the time root is written and before
-  /// the frame is forced. Reads projections, writes roots. Default: no-op.
-  /// </summary>
-  Update: AdaptiveContext -> GameTime -> unit
-
-  /// <summary>Observer factories for receiving the forced frame each step.</summary>
-  Observers: (unit -> IObserver<struct (GameContext * 'Frame * GameTime)>) list
-}
-
-/// <summary>Extension functions for building and configuring an <see cref="T:Mibo.Adaptive.AdaptiveWorld`1"/>.</summary>
-module AdaptiveWorld =
-
-  /// <summary>
-  /// Creates a <c>System.IObserver</c> from an <c>onNext</c> callback, hiding
-  /// the <c>OnError</c> and <c>OnCompleted</c> boilerplate.
-  /// </summary>
-  let inline observe
-    (onNext: struct (GameContext * 'Frame * GameTime) -> unit)
-    : IObserver<struct (GameContext * 'Frame * GameTime)> =
-    { new IObserver<struct (GameContext * 'Frame * GameTime)> with
-        member _.OnNext value = onNext value
-        member _.OnError _ = ()
-        member _.OnCompleted() = ()
-    }
-
-  /// <summary>Creates a world with an empty per-frame phase and no observers.</summary>
-  let mk
-    (init: AdaptiveContext -> AdaptiveInit<'Frame>)
-    : AdaptiveWorld<'Frame> =
-    {
-      Init = init
-      Update = fun _ctx _gameTime -> ()
-      Observers = []
-    }
-
-  /// <summary>Sets the per-frame phase of the world.</summary>
-  let withUpdate
-    (update: AdaptiveContext -> GameTime -> unit)
-    (world: AdaptiveWorld<'Frame>)
-    : AdaptiveWorld<'Frame> =
-    { world with Update = update }
-
-  /// <summary>Adds an observer factory to the world.</summary>
-  let withObserver
-    (factory: unit -> IObserver<struct (GameContext * 'Frame * GameTime)>)
-    (world: AdaptiveWorld<'Frame>)
-    : AdaptiveWorld<'Frame> =
-    {
-      world with
-          Observers = factory :: world.Observers
-    }
-
-/// <summary>
-/// Runs an adaptive game world with explicit frame stepping.
+/// Runs an adaptive program with explicit frame stepping.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The runner owns the frame boundary. Each <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>:
-/// (1) applies cross-thread posts, (2) writes the current game time into the time root,
-/// (3) runs the world's per-frame phase, (4) forces the frame builder — the frame's
-/// projections recompute exactly once if any of their dependencies moved, and not at all
-/// otherwise — and (5) notifies the observers with the forced frame. Draw code reads the
+/// (1) applies cross-thread posts at the frame boundary,
+/// (2) writes the current game time into the time root (once, or once per
+/// fixed step when <see cref="F:Mibo.Adaptive.AdaptiveProgram`1.FixedStep"/> is set),
+/// (3) runs the program's <c>Update</c> phase,
+/// (4) forces the frame builder — the frame's projections recompute exactly
+/// once if any of their dependencies moved, and not at all otherwise — and
+/// (5) notifies the observers with the forced frame. Draw code reads the
 /// returned frame: reads are O(1) until the next write.
 /// </para>
 /// <para>
 /// The adaptive graph is confined to the thread that creates it (AdaptiveSlop's
-/// owner-thread model: no locks, allocation-free steady state). The runner creates
-/// the graph lazily on the first user — the thread that first calls
+/// owner-thread model: no locks, allocation-free steady state). The runner
+/// creates the graph lazily on the first user — the thread that first calls
 /// <c>Step</c>/<c>StepN</c>/<c>StepUntil</c>/<c>Run</c>, or the dedicated game
 /// thread of <c>RunAsync</c>. All graph work then happens on that thread.
+/// Cross-thread writes go through <c>cval.Post</c> and are drained by
+/// <c>Posting.pump</c> at the start of every step.
 /// </para>
 /// </remarks>
 type AdaptiveHeadless<'Frame>
   (
-    world: AdaptiveWorld<'Frame>,
+    program: AdaptiveProgram<'Frame>,
     ?width: int,
     ?height: int,
     ?context: GameContext
@@ -184,6 +55,8 @@ type AdaptiveHeadless<'Frame>
   let mutable restartCell = Unchecked.defaultof<cval<bool>>
   let mutable ctx = Unchecked.defaultof<AdaptiveContext>
   let mutable initialized = false
+
+  let mutable fixedAccSeconds = 0.0f
 
   let mutable gameTime = {
     TotalTime = TimeSpan.Zero
@@ -211,7 +84,7 @@ type AdaptiveHeadless<'Frame>
       restartCell <- CVal.create false
       ctx <- AdaptiveContext(gameContext, timeCell, exitCell, restartCell)
 
-      let init = world.Init ctx
+      let init = program.Init ctx
       frameBuilder <- init.FrameBuilder
       disposables.AddRange(init.Disposables)
 
@@ -220,7 +93,7 @@ type AdaptiveHeadless<'Frame>
 
       // Observers are stored by prepending (see withObserver), so reverse to
       // initialize and notify in registration order — matching HeadlessRunner.
-      for factory in List.rev world.Observers do
+      for factory in List.rev program.Observers do
         observers.Add(factory())
 
       initialized <- true
@@ -229,7 +102,7 @@ type AdaptiveHeadless<'Frame>
   member _.ShouldQuit = if initialized then AVal.getValue exitCell else false
 
   /// <summary>
-  /// Whether the world has requested a rebuild (it wrote
+  /// Whether the program has requested a rebuild (it wrote
   /// <see cref="P:Mibo.Adaptive.AdaptiveContext.RestartRequested"/>). The
   /// windowed hosts check this after <c>Step</c> and call
   /// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Restart"/>.
@@ -238,12 +111,12 @@ type AdaptiveHeadless<'Frame>
     if initialized then AVal.getValue restartCell else false
 
   /// <summary>
-  /// Rebuild the world: disposes the world's disposables (e.g. input
+  /// Rebuild the program: disposes the program's disposables (e.g. input
   /// subscriptions), re-runs <c>Init</c> with the same context — a fresh graph
   /// over the same roots, which is what makes restart safe — resets the
-  /// internal clock and forces the first frame. The world requests it by
-  /// writing <c>RestartRequested</c>; the windowed hosts consume it after
-  /// <c>Step</c>, headless users call this directly.
+  /// internal clock and fixed-step accumulator, and forces the first frame. The
+  /// program requests it by writing <c>RestartRequested</c>; the windowed hosts
+  /// consume it after <c>Step</c>, headless users call this directly.
   /// </summary>
   member _.Restart() =
     if initialized then
@@ -252,7 +125,7 @@ type AdaptiveHeadless<'Frame>
 
       disposables.Clear()
 
-      let init = world.Init ctx
+      let init = program.Init ctx
       frameBuilder <- init.FrameBuilder
       disposables.AddRange(init.Disposables)
 
@@ -260,6 +133,8 @@ type AdaptiveHeadless<'Frame>
         TotalTime = TimeSpan.Zero
         ElapsedGameTime = TimeSpan.Zero
       }
+
+      fixedAccSeconds <- 0.0f
 
       restartCell.Set(false)
       frame <- frameBuilder()
@@ -271,13 +146,23 @@ type AdaptiveHeadless<'Frame>
   member _.Frame = frame
 
   /// <summary>
-  /// Advance the world by one frame and return the forced frame.
+  /// Advance the program by one frame and return the forced frame.
   /// </summary>
   /// <param name="elapsed">Frame delta (e.g. <c>TimeSpan.FromMilliseconds(16)</c> for 60fps). Negative values are clamped to zero.</param>
   /// <remarks>
-  /// This mutates the runner's internal state (time root, world roots, frame).
+  /// <para>
+  /// When <see cref="F:Mibo.Adaptive.AdaptiveProgram`1.FixedStep"/> is set, the
+  /// frame delta is converted into zero or more fixed-size steps: the time root
+  /// is written and <c>Update</c> runs once per step. The frame is forced once
+  /// at the end regardless, so intermediate steps are integrated but not
+  /// observed by the frame. This mirrors the MVU <c>TickFrame</c> fixed-step
+  /// loop, calling <c>Update</c> instead of dispatching a mapped message.
+  /// </para>
+  /// <para>
+  /// This mutates the runner's internal state (time root, program roots, frame).
   /// Do not mix <c>Step</c>/<c>StepN</c>/<c>StepUntil</c> with <c>Run</c>/<c>RunAsync</c> on the same runner
   /// — they all advance the simulation and using them together will produce simulation corruption.
+  /// </para>
   /// </remarks>
   member _.Step(elapsed: TimeSpan) : 'Frame =
     ensureInitialized()
@@ -290,19 +175,48 @@ type AdaptiveHeadless<'Frame>
       // comparison boxes both operands (48 bytes/call on the frame path).
       let elapsed = if elapsed.Ticks < 0L then TimeSpan.Zero else elapsed
 
-      gameTime <- {
-        TotalTime = gameTime.TotalTime + elapsed
-        ElapsedGameTime = elapsed
-      }
-
-      // Apply cross-thread posts (e.g. input-thread writes) at the frame boundary.
+      // Apply cross-thread posts (e.g. input-thread writes) at the frame
+      // boundary, once per Step — mirrors MVU draining deferred effects at the
+      // top of TickFrame.
       Posting.pump()
 
-      // The time root is the framework's write into the graph.
-      ctx.Time.Set(gameTime)
+      match program.FixedStep with
+      | ValueNone ->
+        gameTime <- {
+          TotalTime = gameTime.TotalTime + elapsed
+          ElapsedGameTime = elapsed
+        }
 
-      // The imperative phase: reads projections, writes roots.
-      world.Update ctx gameTime
+        // The time root is the framework's write into the graph.
+        ctx.Time.Set(gameTime)
+
+        // The imperative phase: reads projections, writes roots.
+        program.Update ctx gameTime
+
+      | ValueSome cfg ->
+        let maxFrame = cfg.MaxFrameSeconds |> ValueOption.defaultValue 0.25f
+        let deltaSeconds = float32 elapsed.TotalSeconds
+
+        let struct (acc2, steps, _dropped) =
+          FixedStep.compute
+            cfg.StepSeconds
+            cfg.MaxStepsPerFrame
+            maxFrame
+            fixedAccSeconds
+            deltaSeconds
+
+        fixedAccSeconds <- acc2
+
+        let stepElapsed = TimeSpan.FromSeconds(float cfg.StepSeconds)
+
+        for _i = 1 to steps do
+          gameTime <- {
+            TotalTime = gameTime.TotalTime + stepElapsed
+            ElapsedGameTime = stepElapsed
+          }
+
+          ctx.Time.Set(gameTime)
+          program.Update ctx gameTime
 
       // The force phase: recompute the frame's projections exactly once
       // (not at all if none of their dependencies moved) and pack the struct.
@@ -486,7 +400,7 @@ type AdaptiveHeadless<'Frame>
           }
     }
 
-  /// <summary>Dispose world disposables and observers, and clean up resources.</summary>
+  /// <summary>Dispose program disposables and observers, and clean up resources.</summary>
   member _.Dispose() =
     for i = 0 to disposables.Count - 1 do
       disposables[i].Dispose()
