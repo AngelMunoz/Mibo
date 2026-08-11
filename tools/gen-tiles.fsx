@@ -137,18 +137,9 @@ let sheets: Sheet[] = [|
         "dirtPatchOnGrassBottomRight"
         "dirtPatchOnGrassCenter"
       |]
-      "enemyHulls",
-      [|
-        "tankHullGreen"
-        "tankHullBeige"
-      |]
+      "enemyHulls", [| "tankHullGreen"; "tankHullBeige" |]
       "enemyPlanes",
-      [|
-        "planeGreen"
-        "planeGray"
-        "planeGhostA"
-        "planeGhostB"
-      |]
+      [| "planeGreen"; "planeGray"; "planeGhostA"; "planeGhostB" |]
     |]
   }
 |]

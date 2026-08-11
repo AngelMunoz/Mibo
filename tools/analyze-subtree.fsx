@@ -13,7 +13,9 @@ open System.Text.Json
 let path =
   match fsi.CommandLineArgs with
   | [| _; p |] -> p
-  | _ -> failwith "usage: dotnet fsi tools/analyze-subtree.fsx <trace.speedscope.json>"
+  | _ ->
+    failwith
+      "usage: dotnet fsi tools/analyze-subtree.fsx <trace.speedscope.json>"
 
 let doc = JsonDocument.Parse(File.ReadAllText path)
 let root = doc.RootElement
@@ -47,8 +49,10 @@ for struct (t, f, at) in events do
   if at <> lastAt && lastAt >= 0.0 then
     snapshot()
 
-  if t = "O" then stack.Add f
-  elif stack.Count > 0 then stack.RemoveAt(stack.Count - 1)
+  if t = "O" then
+    stack.Add f
+  elif stack.Count > 0 then
+    stack.RemoveAt(stack.Count - 1)
 
   lastAt <- at
 
@@ -59,10 +63,14 @@ let total = samples.Count
 printfn "═══ panorama ═══  %d samples (each ≈ 1 ms busy)" total
 
 // Per-depth top inclusive
-for depth in 0 .. 6 do
+for depth in 0..6 do
   let counts =
     samples
-    |> Seq.collect(fun st -> if st.Length > depth then [ (frameName st[depth]), 1 ] else [])
+    |> Seq.collect(fun st ->
+      if st.Length > depth then
+        [ (frameName st[depth]), 1 ]
+      else
+        [])
     |> Seq.groupBy fst
     |> Seq.map(fun (n, xs) -> n, xs |> Seq.length)
     |> Seq.sortByDescending snd
@@ -75,7 +83,13 @@ for depth in 0 .. 6 do
     printfn "  %5.1f%%  (%5d)  %s" (100.0 * float c / float total) c n
 
 // Subtree + child attribution per query
-let queries = [ "Towers.tick"; "Renderer2D"; "Application.view"; "AdaptiveSlop.Core"; "Enemies+Enemies" ]
+let queries = [
+  "Towers.tick"
+  "Renderer2D"
+  "Application.view"
+  "AdaptiveSlop.Core"
+  "Enemies+Enemies"
+]
 
 for q in queries do
   printfn ""
@@ -99,9 +113,20 @@ for q in queries do
 
           if i + 1 < st.Length then
             let c = frameName st[i + 1]
-            children[c] <- (if children.ContainsKey c then children[c] else 0) + 1
 
-    printfn "  %5.1f%%  (%5d)  %s" (100.0 * float inclusive / float total) inclusive name
+            children[c] <-
+              (if children.ContainsKey c then children[c] else 0) + 1
 
-    for KeyValue(c, n) in children |> Seq.sortByDescending _.Value |> Seq.truncate 8 do
-      printfn "        └─ %5.1f%%  (%5d)  %s" (100.0 * float n / float total) n c
+    printfn
+      "  %5.1f%%  (%5d)  %s"
+      (100.0 * float inclusive / float total)
+      inclusive
+      name
+
+    for KeyValue(c, n) in
+      children |> Seq.sortByDescending _.Value |> Seq.truncate 8 do
+      printfn
+        "        └─ %5.1f%%  (%5d)  %s"
+        (100.0 * float n / float total)
+        n
+        c
