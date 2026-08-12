@@ -35,3 +35,6 @@ jobs:
             - Look out for rendering affecting changes not noted in the PR
             - Look out for asymetry between backends. E.g. something added to raylib and not monogame and viceversa
             - When bug fixes are submtted for rendering concerns, make sure both backends are fixed or do not share the same bug
+
+            DO NOT MAKE ANY CHANGES LOCALLY, DO NOT CHANGE THE PR DESCRIPTION OR REACTIONS.
+            FOCUS ON THE REVIEW ONLY AND REPORT IN ASD-STE100 SIMPLIFIED TECHNICAL ENGLISH.

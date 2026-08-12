@@ -86,7 +86,13 @@ let pollSteps
   =
   let mutable steps = 0
 
-  while steps < maxSteps && not(predicate()) do
+  // Wall-clock bound in addition to the step budget: the completion under
+  // test requires a thread-pool hop (Async.Start), and on constrained runners
+  // the pool can take hundreds of ms to run a trivial work item. The step
+  // budget alone (~1-2 ms/step) is then marginal and the tests flake.
+  let sw = System.Diagnostics.Stopwatch.StartNew()
+
+  while (steps < maxSteps && not(predicate()) && sw.Elapsed.TotalSeconds < 10.0) do
     runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
     steps <- steps + 1
     Thread.Sleep 1
@@ -835,7 +841,7 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
         0
         "Update should not yet see the intent of its own step"
 
-      Expect.equal runner.Frame 42 "The force should see the intent.s write"
+      Expect.equal runner.Frame 42 "The force should see the intent's write"
 
     testCase
       "Intent posted during Update runs in the same step, before the force"
@@ -867,7 +873,7 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
       Expect.equal
         runner.Frame
         7
-        "The posted intent.s write should reach the force"
+        "The posted intent's write should reach the force"
 
     testCase
       "Intent posted from a foreign thread lands at the next post drain, in post order"
@@ -983,7 +989,7 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
       Expect.equal runner.Frame 9 "The deferral's write should reach the force"
 
     testCase
-      "A posted intent.s write is visible in the same step.s forced frame"
+      "A posted intent's write is visible in the same step's forced frame"
     <| fun _ ->
       // The dead-enemy case: Update posts the removal; the post drain
       // applies it before the Force, so the frame never renders the
@@ -1004,7 +1010,7 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
       let frame = runner.Step(TimeSpan.FromMilliseconds(16))
 
       Expect.isTrue posted "The intent should have been posted"
-      Expect.isFalse frame "The force must see the posted intent.s write"
+      Expect.isFalse frame "The force must see the posted intent's write"
 
     testCase
       "Posted chain removing from a cmap under a live projection does not throw"

@@ -7,7 +7,7 @@ open Mibo.Elmish
 
 /// <summary>
 /// The intent queue of an adaptive program: the single place to post
-/// <c>unit -> unit</c> work during <c>Update</c>. Intents are thunks deferred
+/// <c>unit -> unit</c> work during <c>Update</c>. Intents are work items deferred
 /// to a moment the runtime owns, exposed as moment-named entry points:
 /// <see cref="M:Mibo.Adaptive.IntentQueue.post"/> (later in this step),
 /// <see cref="M:Mibo.Adaptive.IntentQueue.postNextFrame"/> (top of the next
@@ -17,16 +17,16 @@ open Mibo.Elmish
 /// — closures capture the handler, so no message type is needed.
 /// </summary>
 /// <remarks>
-/// Both lanes are MPSC: a
+/// Both lanes are multi-producer, single-consumer queues: a
 /// <see cref="T:System.Collections.Concurrent.ConcurrentQueue`1"/> for
-/// producers, drained wholesale by the single consumer (the runner) on the
-/// owner thread. The post drain runs until empty — thunks posted during the
-/// drain run in the same pass, in post order, mirroring MVU's
-/// <c>DispatchMode.Immediate</c> semantics; work-posting-work cycles are the
+/// producers, drained by the single consumer (the runner) on the
+/// owner thread. The post drain runs until empty — work posted during the
+/// drain runs in the same drain, in post order, mirroring MVU's
+/// <c>DispatchMode.Immediate</c> semantics; work that posts more work is the
 /// user's responsibility, exactly as message cycles are in MVU. The
 /// next-frame lane drains once per <c>Step</c> at the boundary, never per
 /// sub-step.
-/// Allocation: one queue node per posted thunk — acceptable on the cold
+/// Allocation: one queue node per posted work item — acceptable on the cold
 /// path, zero on steps with no posted work.
 /// </remarks>
 type IntentQueue() =
@@ -38,7 +38,7 @@ type IntentQueue() =
   /// after the next <c>Update</c> (after each sub-step's <c>Update</c> under
   /// fixed-step), in post order, drained until empty, before the frame is
   /// forced. Cross-system reactions, foreign-thread posts, and async
-  /// completions go here. Safe to call from any thread; the thunk itself must
+  /// completions go here. Safe to call from any thread; the work itself must
   /// only run owner-thread legal writes (plain <c>Set</c> calls). The
   /// adaptive counterpart of <c>Cmd.ofMsg</c>.
   /// </summary>
@@ -50,20 +50,22 @@ type IntentQueue() =
   /// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>: it runs on the
   /// owner thread at the frame boundary, after cross-thread posts are applied
   /// (<c>Posting.pump</c>) and before the time root is written. The adaptive
-  /// counterpart of <c>Cmd.deferNextFrame</c> — the lane exists for explicit
-  /// deferrals that must not react within the posting step. Safe to call
+  /// counterpart of <c>Cmd.deferNextFrame</c> — the lane exists for work that
+  /// must not run in the step that posted it. Safe to call
   /// from any thread.
   /// </summary>
   /// <param name="work">The work to run at the next step's boundary.</param>
   member _.postNextFrame(work: unit -> unit) = nextFrame.Enqueue work
 
   /// <summary>
-  /// Defers a background task to this queue: the starter runs on the owner
-  /// thread at the next post drain, <c>work</c> runs off the owner thread,
-  /// and the completion (<c>ofSuccess</c> or <c>ofError</c>) is posted to the
-  /// same lane and runs on the owner thread at a later post drain, where root
-  /// writes are legal. The runtime owns the crossing — the caller never
-  /// touches post/pump. The adaptive counterpart of <c>Cmd.ofTask</c>.
+  /// Defers a background task to this queue: the starter runs on the
+  /// owner thread at the next post drain and hands the work to the
+  /// thread pool — <c>work</c> (the task creation call) and the task itself
+  /// run off the owner thread — and the completion (<c>ofSuccess</c> or
+  /// <c>ofError</c>) is posted to the same lane and runs on the owner thread
+  /// at a later post drain, where root writes are legal. The runtime handles
+  /// the thread handoff for you — you never post or pump directly. The
+  /// adaptive counterpart of <c>Cmd.ofTask</c>.
   /// </summary>
   /// <param name="work">The background work to start; must not touch the graph.</param>
   /// <param name="ofSuccess">Receives the result on the owner thread at a later post drain.</param>
@@ -82,11 +84,13 @@ type IntentQueue() =
       |> Async.Start)
 
   /// <summary>
-  /// Defers an F# async workflow to this queue: the starter runs on the owner
-  /// thread at the next post drain, the workflow runs off the owner thread,
-  /// and the completion (<c>ofSuccess</c> or <c>ofError</c>) is posted to the
-  /// same lane and runs on the owner thread at a later post drain, where root
-  /// writes are legal. The adaptive counterpart of <c>Cmd.ofAsync</c>.
+  /// Defers an F# async workflow to this queue: the starter runs on the
+  /// owner thread at the next post drain and starts the workflow on the
+  /// thread pool — the workflow body runs off the owner thread — and the
+  /// completion (<c>ofSuccess</c> or <c>ofError</c>) is posted to the same
+  /// lane and runs on the owner thread at a later post drain, where root
+  /// writes are legal. The runtime handles the thread handoff for you — you
+  /// never post or pump directly. The adaptive counterpart of <c>Cmd.ofAsync</c>.
   /// </summary>
   /// <param name="work">The async workflow to start; must not touch the graph.</param>
   /// <param name="ofSuccess">Receives the result on the owner thread at a later post drain.</param>
@@ -105,9 +109,9 @@ type IntentQueue() =
       |> Async.Start)
 
   /// <summary>
-  /// Runs every pending posted thunk in post order on the calling (owner)
-  /// thread until the lane is empty: thunks posted during the drain (from
-  /// any thread) run in the same pass, in post order. No termination bound.
+  /// Runs every pending work item in post order on the calling (owner)
+  /// thread until the lane is empty: work posted during the drain (from
+  /// any thread) runs in the same drain, in post order. No termination bound.
   /// </summary>
   member internal _.Drain() =
     let mutable next = Unchecked.defaultof<unit -> unit>
@@ -117,8 +121,8 @@ type IntentQueue() =
 
   /// <summary>
   /// Runs the next-frame lane on the calling (owner) thread: everything queued
-  /// at the top of the step, in post order. Thunks posted during this drain
-  /// also run in the same pass (same semantics as the post drain).
+  /// at the top of the step, in post order. Work posted during this drain
+  /// also runs in the same drain (same semantics as the post drain).
   /// </summary>
   member internal _.DrainNextFrame() =
     let mutable next = Unchecked.defaultof<unit -> unit>
@@ -140,10 +144,9 @@ type IntentQueue() =
 /// and the registered services. The program reads these cells and derives
 /// its projections from them like any other root; only <c>ExitRequested</c>
 /// is written by the program. The context deliberately does NOT expose the
-/// intent queue — phase
-/// reachability by type: the frame builder and init/projection construction
-/// must not be able to defer work. The queue is reachable only from the
-/// <c>Update</c> phase, via <see cref="T:Mibo.Adaptive.AdaptiveContext"/>.
+/// intent queue: the frame builder and init/projection construction must not
+/// be able to defer work. Only the <c>Update</c> phase can reach the queue,
+/// via <see cref="T:Mibo.Adaptive.AdaptiveContext"/>.
 /// </remarks>
 type AdaptiveFrameContext
   internal (ctx: GameContext, time: cval<GameTime>, exitRequested: cval<bool>) =
@@ -172,7 +175,7 @@ type AdaptiveFrameContext
 /// The <c>Update</c>-phase context: everything on
 /// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> plus the framework-owned
 /// intent queue, <see cref="P:Mibo.Adaptive.AdaptiveContext.Intents"/> —
-/// intents are thunks of <c>unit -> unit</c> work deferred to a
+/// intents are <c>unit -> unit</c> work items deferred to a
 /// framework-owned moment (after <c>Update</c>, at the top of the next step,
 /// or as background work whose completion returns via <c>post</c>).
 /// </summary>
@@ -181,7 +184,7 @@ type AdaptiveFrameContext
 /// reacts to what it read and defers work; the frame builder and projection
 /// construction see only
 /// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/>, so the force phase
-/// cannot enqueue — correctness by construction, no runtime guards.
+/// cannot enqueue work — the design makes it impossible, no runtime checks.
 /// </remarks>
 type AdaptiveContext
   internal (frameCtx: AdaptiveFrameContext, intents: IntentQueue) =
@@ -338,7 +341,8 @@ type AdaptiveSub = {
   /// <c>post</c> argument is the same-step lane's entry point
   /// (<see cref="M:Mibo.Adaptive.IntentQueue.post"/>): event callbacks
   /// (possibly on foreign threads) may only enqueue work for the next post
-  /// drain — confinement is preserved by construction.
+  /// drain — a foreign-thread callback can never run game code directly, it
+  /// only schedules work for the owner thread.
   /// </summary>
   Attach: ((unit -> unit) -> unit) -> IDisposable
 }
@@ -380,8 +384,8 @@ module AdaptiveSub =
 /// projection receive the queue-less
 /// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> (roots and services
 /// only), while <c>Update</c> receives the full
-/// <see cref="T:Mibo.Adaptive.AdaptiveContext"/> with the intent queue — the
-/// force phase cannot enqueue by construction.
+/// <see cref="T:Mibo.Adaptive.AdaptiveContext"/> with the intent queue — so
+/// the force phase cannot enqueue work.
 /// </para>
 /// <para>
 /// The <c>Init</c>/<c>Update</c>/<c>Observers</c>/<c>Subscriptions</c> slots

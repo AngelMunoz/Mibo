@@ -15,7 +15,7 @@
 
 ### Removed
 
-- **Breaking (experimental): Adaptive:** the restart machinery (`AdaptiveContext.RestartRequested`, `AdaptiveHeadless.Restart()`) — a fresh world is dispose the runner and create a new one.
+- **Breaking (experimental): Adaptive:** the restart machinery (`AdaptiveContext.RestartRequested`, `AdaptiveHeadless.Restart()`) — dispose of the runner and create a new one.
 
 ### Fixed
 
