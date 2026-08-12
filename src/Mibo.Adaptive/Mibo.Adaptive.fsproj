@@ -10,6 +10,9 @@
   <PropertyGroup>
     <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Ship the adaptive readme (with the AdaptiveSlop attribution), not the
+         repo root readme. -->
+    <MiboReadmePath>$(MSBuildThisFileDirectory)README.md</MiboReadmePath>
     <!-- Own changelog and versioning (KeepAChangelog task derives the package
          version from this file, not the repo root changelog). -->
     <ChangelogFile>$(MSBuildThisFileDirectory)/CHANGELOG.md</ChangelogFile>

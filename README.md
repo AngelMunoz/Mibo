@@ -30,6 +30,7 @@ Mibo aims to solve 80/20 of use cases for enabling developers to focus on game l
 - **Layout** — 2D procedural grid layout (`CellGrid2D`) with platformer, top-down, and geometric primitives
 - **Layout3D** — 3D voxel-style grid layout (`CellGrid3D`) with terrain, interior rooms, corridors, stairs, and procedural generation
 - **Animation** — sprite sheet slicing, `AnimatedSprite` state machines, and grid-based animation definitions
+- **Mibo.Adaptive** — a pull-based incremental computation library for tight-loop workloads: `CVal`/`AVal` roots and projections plus adaptive sets, maps, and lists with element-level deltas, allocation-free in steady state. The Mibo integration (`AdaptiveProgram`/`AdaptiveHeadless` and the windowed hosts) is experimental.
 - **Input Mapper** — Listen to raw input and map it to semantic actions
 - **Performance** — zero-allocation hot paths: spatial grid queries return a single result array per call, and per-frame dictionary lookups, light merging, and render-pipeline bookkeeping allocate nothing
 
@@ -97,6 +98,9 @@ Mibo is built on top of:
 - [raylib](https://github.com/raysan5/raylib) — the cross-platform graphics library that powers the raylib backend's rendering, input, and audio layers
 - [raylib-cs](https://github.com/raylib-cs/raylib-cs) — the C# bindings that make raylib accessible from .NET
 - [MonoGame](https://github.com/MonoGame/MonoGame) — the cross-platform framework that powers the MonoGame backend (DesktopGL/OpenGL and WindowsDX/DirectX)
+- [AdaptiveSlop](https://github.com/TheAngryByrd/AdaptiveSlop) — the pull-based incremental computation library by [TheAngryByrd](https://github.com/TheAngryByrd) that Mibo.Adaptive was adopted from
+
+> **Mibo.Adaptive originated from [AdaptiveSlop](https://github.com/TheAngryByrd/AdaptiveSlop)** — adopted in its entirety, renamed, and maintained as part of Mibo. All design and implementation credit goes to [TheAngryByrd](https://github.com/TheAngryByrd).
 
 ## Feedback
 

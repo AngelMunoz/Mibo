@@ -97,11 +97,12 @@ jobs:
       # Mibo.Adaptive has its own changelog and versioning (it versions itself
       # through its ChangelogFile) and is released by the dedicated job below,
       # so it is excluded from the main pack — otherwise the main release
-      # would ship the adaptive package with the repo version.
+      # would ship the adaptive package with the repo version. Mibo.Templates
+      # versions from the repo changelog like the libraries and ships here.
       - name: Pack
         if: steps.check_tag.outputs.exists == 'false'
         run: |
-          for p in src/Mibo.Core/Mibo.Core.fsproj src/Mibo.Raylib/Mibo.Raylib.fsproj src/Mibo.MonoGame/Mibo.MonoGame.fsproj; do
+          for p in src/Mibo.Core/Mibo.Core.fsproj src/Mibo.Raylib/Mibo.Raylib.fsproj src/Mibo.MonoGame/Mibo.MonoGame.fsproj src/Templates/Mibo.Templates.csproj; do
             dotnet pack --configuration Release --no-build --output nupkgs "$p"
           done
 

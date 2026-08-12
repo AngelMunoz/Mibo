@@ -1,0 +1,8 @@
+<Project>
+    <!-- The pack items live here (imported after the project body) so
+         per-project overrides such as MiboReadmePath take effect. -->
+    <ItemGroup>
+        <None Include="$(MSBuildThisFileDirectory)/../LICENSE" Pack="true" PackagePath=""/>
+        <None Include="$(MiboReadmePath)" Pack="true" PackagePath=""/>
+    </ItemGroup>
+</Project>

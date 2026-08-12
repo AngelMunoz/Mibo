@@ -1,10 +1,8 @@
-# AdaptiveSlop
+# Mibo.Adaptive
 
-A full AI assisted library for pull-based incremental computation library in F#.
+A pull-based incremental computation library in F#, part of [Mibo](https://github.com/AngelMunoz/Mibo). It tracks dependencies automatically and recomputes only what changed, focusing on allocation-free steady state and tight-loop workloads (games, simulations, real-time UIs).
 
-AdaptiveSlop tracks dependencies automatically. It recomputes only what changed. It
-focuses on allocation-free steady state and tight-loop workloads (games, simulations,
-real-time UIs).
+> **Origin.** Mibo.Adaptive originated from [AdaptiveSlop](https://github.com/TheAngryByrd/AdaptiveSlop) by [TheAngryByrd](https://github.com/TheAngryByrd). The library was adopted in its entirety, renamed, and is now maintained here as part of Mibo — the pull-based design and allocation-free steady state remain its core. See [Credit](#credit).
 
 The main target is the tight-loop profile: many values change between reads, and
 reads must be cheap and allocation-free.
@@ -36,21 +34,22 @@ FSharp.Data.Adaptive is the mature choice for general incremental computing:
   scan loses.
 
 Rule of thumb: general incremental computing → FSharp.Data.Adaptive. Tight loops with
-cheap reads → AdaptiveSlop.
+cheap reads → Mibo.Adaptive.
 
 ## Building
 
 ```bash
-dotnet build AdaptiveSlop.sln
+dotnet build Mibo.slnx
 ```
 
-The core (`src/AdaptiveSlop.Core`) depends only on the BCL. A NuGet package is not
-published yet; reference the project or the built DLL directly.
+The core (`src/Mibo.Adaptive`) depends only on the BCL. The library ships as the
+`Mibo.Adaptive` NuGet package; the Mibo integration (`AdaptiveProgram`/
+`AdaptiveHeadless`) lives in `Mibo.Core`.
 
 ## Quick Start
 
 ```fsharp
-open AdaptiveSlop.Core
+open Mibo.Adaptive
 
 let width = CVal.create 10.0
 let height = CVal.create 20.0
@@ -268,7 +267,7 @@ The library aims to be fast. Steady-state reads and writes try to allocate nothi
 
 Benchmarks exist in `docs/BENCHMARKS.md`. They compare the library against
 FSharp.Data.Adaptive on identical workloads.
-While the workloads are shaped for FDA, AdaptiveSlop still performs well.
+While the workloads are shaped for FDA, Mibo.Adaptive still performs well.
 
 Guidance: `map`/`map2` for 1–2 deps, `map3`/`map4` for 3–4, `mapN`/`reduce`/`sum` for
 5+; consume collection **deltas** on hot paths rather than re-reading whole snapshots.
@@ -300,7 +299,11 @@ Guidance: `map`/`map2` for 1–2 deps, `map3`/`map4` for 3–4, `mapN`/`reduce`/
 
 ## Credit
 
-AdaptiveSlop is inspired by
+Mibo.Adaptive originated from [AdaptiveSlop](https://github.com/TheAngryByrd/AdaptiveSlop)
+by [TheAngryByrd](https://github.com/TheAngryByrd) — adopted in its entirety and renamed;
+all design and implementation credit goes to its author.
+
+AdaptiveSlop (and therefore Mibo.Adaptive) is inspired by
 [FSharp.Data.Adaptive](https://github.com/fsprojects/FSharp.Data.Adaptive). The API
 follows its conventions (`mapA`/`filterA`/`chooseA`, `AdaptiveReduction`, transactions, deltas).
 Credit and thanks to the FDA authors.

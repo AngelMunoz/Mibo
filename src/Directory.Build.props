@@ -7,9 +7,9 @@
         <PackageLicenseFile>LICENSE</PackageLicenseFile>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <ChangelogFile>$(MSBuildThisFileDirectory)../CHANGELOG.md</ChangelogFile>
+        <!-- The readme packed into each package as README.md. Defaults to the
+             repo root readme; a project with its own readme (Mibo.Adaptive)
+             overrides this before Directory.Build.targets evaluates. -->
+        <MiboReadmePath Condition="'$(MiboReadmePath)' == ''">$(MSBuildThisFileDirectory)../README.md</MiboReadmePath>
     </PropertyGroup>
-    <ItemGroup>
-        <None Include="$(MSBuildThisFileDirectory)/../LICENSE" Pack="true" PackagePath=""/>
-        <None Include="$(MSBuildThisFileDirectory)/../README.md" Pack="true" PackagePath=""/>
-    </ItemGroup>
 </Project>

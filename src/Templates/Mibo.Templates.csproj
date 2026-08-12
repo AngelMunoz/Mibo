@@ -13,12 +13,17 @@
     <ContentTargetFolders>content</ContentTargetFolders>
     <NoWarn>$(NoWarn);NU5128</NoWarn>
     <NoDefaultExcludes>true</NoDefaultExcludes>
-    <Version>4.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <Content Include="Templates/**/*" Exclude="Templates/**/bin/**;Templates/**/obj/**;Templates/**/.DS_Store" />
     <Compile Remove="**/*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Version from the repo changelog like the libraries, so the release
+         flow publishes the templates in lockstep with the other packages. -->
+    <PackageReference Include="Ionide.KeepAChangelog.Tasks" Version="0.3.3" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

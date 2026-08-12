@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Templates:** `Mibo.Templates` (the `mibo-2d`/`mibo-3d`/`mibo-mg-2d`/`mibo-mg-3d` starters) is now packed and published with each release, versioned from the repo changelog like the libraries.
+
+### Fixed
+
+- **Mibo.Adaptive:** the NuGet package now ships its own readme — including the credit note for its AdaptiveSlop origin — instead of the repo root readme.
+
 ## [4.2.0] - 2026-08-11
 
 ### Added
