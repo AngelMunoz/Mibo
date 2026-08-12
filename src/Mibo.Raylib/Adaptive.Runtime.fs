@@ -19,7 +19,8 @@ open Mibo.Elmish
 //
 // Intentional differences from RaylibGame (the adaptive contract):
 //   - No Program/Cmd/Sub machinery — the program is an AdaptiveProgram.
-//   - Input is always registered and polled (no withInput toggle).
+//   - Input is opt-in: registered and polled only when the program opted in
+//     via AdaptiveProgram.withInput (mirrors RaylibGame's HasInput gate).
 //   - The runner builds the graph lazily on the first Step.
 //   - Restart: the program may request a rebuild (fresh graph, fresh clock).
 // ─────────────────────────────────────────────────────────────────────────────

@@ -702,24 +702,31 @@ type ToSetListNode<'T when 'T: equality>(source: IAdaptiveList<'T>) =
 /// <summary>
 /// An adaptive list of a set's elements (FDA <c>AList.ofASet</c> parity, poll
 /// node). The order is the set's iteration order, stable while the set does
-/// not change; every read rebuilds and emits the positional diff.
+/// not change. The set is re-read on every read (dependency registration); the
+/// rebuild and the positional diff run only when the set's version moved, so
+/// clean reads allocate nothing (library invariant 5).
 /// </summary>
 type SetToListNode<'T when 'T: equality>(source: IAdaptiveSet<'T>) =
   let mutable data = ResizeArray<'T>()
   let mutable out = ListDelta<'T>.Create()
   let mutable version = 0L
   let mutable sinks = SinkList.Create()
+  let mutable depVersion = -1L
   let mutable disposed = false
 
   member private this.Poll() =
     if not disposed then
-      let next = ResizeArray<'T>(source.GetValue())
+      let v = source.GetValue()
 
-      if Collections.rebuildListDiff next data &out then
-        version <- version + 1L
-        Collections.pushAndBumpList GraphContext.Current out &sinks
+      if source.Version <> depVersion then
+        depVersion <- source.Version
+        let next = ResizeArray<'T>(v)
 
-      out.Clear()
+        if Collections.rebuildListDiff next data &out then
+          version <- version + 1L
+          Collections.pushAndBumpList GraphContext.Current out &sinks
+
+        out.Clear()
 
   interface IAdaptiveList<'T> with
     member this.GetValue() =
@@ -832,31 +839,44 @@ type BindListNode<'T, 'U>
 
 /// <summary>
 /// Concatenates a fixed sequence of lists (FDA <c>AList.concat</c> parity,
-/// poll node): every read re-reads all inner lists and emits the positional
-/// diff of the concatenation.
+/// poll node). Every read re-reads all inner lists (dependency registration);
+/// the rebuild and the positional diff run only when any inner list's version
+/// moved, so clean reads allocate nothing (library invariant 5).
 /// </summary>
 type ConcatListNode<'T>(sources: IAdaptiveList<'T>[]) =
   let mutable data = ResizeArray<'T>()
   let mutable out = ListDelta<'T>.Create()
   let mutable version = 0L
   let mutable sinks = SinkList.Create()
+  let mutable depVersions = Array.init sources.Length (fun _ -> -1L)
   let mutable disposed = false
 
   member private this.Poll() =
     if not disposed then
-      let next = ResizeArray<'T>()
+      let mutable moved = false
 
-      for s in sources do
-        let view = s.GetValue()
+      for i = 0 to sources.Length - 1 do
+        let s = sources[i]
+        let _ = s.GetValue()
 
-        for i in 0 .. view.Count - 1 do
-          next.Add view[i]
+        if s.Version <> depVersions[i] then
+          depVersions[i] <- s.Version
+          moved <- true
 
-      if Collections.rebuildListDiff next data &out then
-        version <- version + 1L
-        Collections.pushAndBumpList GraphContext.Current out &sinks
+      if moved then
+        let next = ResizeArray<'T>()
 
-      out.Clear()
+        for s in sources do
+          let view = s.GetValue()
+
+          for i in 0 .. view.Count - 1 do
+            next.Add view[i]
+
+        if Collections.rebuildListDiff next data &out then
+          version <- version + 1L
+          Collections.pushAndBumpList GraphContext.Current out &sinks
+
+        out.Clear()
 
   interface IAdaptiveList<'T> with
     member this.GetValue() =
@@ -947,10 +967,15 @@ type OfAvalListNode<'T, 'S when 'S :> seq<'T>>(value: IAdaptiveValue<'S>) =
     member this.RemoveListSink(sink) = Collections.removeSink &sinks sink
 
 /// <summary>
-/// A poll node that rebuilds its output from the source on every read and
-/// emits the positional diff (the gap-sheet poll-node strategy for rev, sort,
-/// pairwise). The source is re-read on every read; the diff elides the
-/// unchanged prefix/suffix.
+/// A poll node that rebuilds its output from the source and emits the
+/// positional diff (the gap-sheet poll-node strategy for rev, sort, pairwise).
+/// The source is re-read on every read. Rebuild-on-every-read is deliberate:
+/// the <c>build</c> function may read additional adaptive inputs (the
+/// <c>subA</c>/<c>takeA</c>/<c>skipA</c> bounds do), so a source-version gate
+/// would be unsound — a change to an external input would be missed. Nodes
+/// whose output is a pure function of the source only (e.g. the dedicated
+/// <c>SubListNode</c>) use the gated pattern instead, holding invariant 5 on
+/// clean reads.
 /// </summary>
 type PollListSourceNode<'T, 'U>
   (
@@ -1004,9 +1029,96 @@ type PollListSourceNode<'T, 'U>
     member this.RemoveListSink(sink) = Collections.removeSink &sinks sink
 
 /// <summary>
+/// The window <c>[offset, offset + count)</c> of a list with adaptive bounds
+/// (FDA <c>AList.subA</c> parity, poll node). All three dependencies — the
+/// source list and the two bound scalars — are re-read on every read
+/// (dependency registration); the window and the positional diff run only
+/// when any of their versions moved, so clean reads allocate nothing and run
+/// no user code (library invariant 5). The <c>build</c> route of
+/// <c>PollListSourceNode</c> cannot gate: its closure may read additional
+/// adaptive inputs, so this node exists with the extra versions tracked
+/// explicitly.
+/// </summary>
+type SubListNode<'T>
+  (
+    source: IAdaptiveList<'T>,
+    offset: IAdaptiveValue<int>,
+    count: IAdaptiveValue<int>
+  ) =
+  let mutable data = ResizeArray<'T>()
+  let mutable out = ListDelta<'T>.Create()
+  let mutable version = 0L
+  let mutable sinks = SinkList.Create()
+  let mutable lastSourceVersion = -1L
+  let mutable lastOffsetVersion = -1L
+  let mutable lastCountVersion = -1L
+  let mutable disposed = false
+
+  member private this.Poll() =
+    if not disposed then
+      let view = source.GetValue()
+      let o = max 0 (offset.GetValue())
+      let c = max 0 (count.GetValue())
+
+      if
+        source.Version <> lastSourceVersion
+        || offset.Version <> lastOffsetVersion
+        || count.Version <> lastCountVersion
+      then
+        lastSourceVersion <- source.Version
+        lastOffsetVersion <- offset.Version
+        lastCountVersion <- count.Version
+        let start = min o view.Count
+        let n = min c (view.Count - start)
+        let next = ResizeArray<'T>(n)
+
+        for i in start .. start + n - 1 do
+          next.Add view[i]
+
+        if Collections.rebuildListDiff next data &out then
+          version <- version + 1L
+          Collections.pushAndBumpList GraphContext.Current out &sinks
+
+        out.Clear()
+
+  interface IAdaptiveList<'T> with
+    member this.GetValue() =
+      let ctx = GraphContext.Default
+      ctx.ClaimOwner()
+
+      try
+        if disposed then
+          invalidOp "This adaptive list has been disposed."
+
+        this.Poll()
+        AdaptiveRuntime.addDependency (this :> IAdaptiveObject) version
+        data :> IReadOnlyList<'T>
+      finally
+        ctx.ReleaseOwner()
+
+    member this.Version =
+      this.Poll()
+      version
+
+  interface IDisposable with
+    member this.Dispose() =
+      if not disposed then
+        disposed <- true
+        Collections.clearSinks &sinks
+
+  interface IListSinkRegistry with
+    member this.AddListSink(sink) = Collections.addSink &sinks sink
+
+    member this.RemoveListSink(sink) = Collections.removeSink &sinks sink
+
+/// <summary>
 /// A stable sort node (FDA <c>AList.sortWith</c> parity, poll model). The
-/// keys are computed once per poll with their input positions (the
-/// <c>sortByi</c> mapping contract); the sort is stable by position.
+/// keys are computed with their input positions (the <c>sortByi</c> mapping
+/// contract); the sort is stable by position. The source is re-read on every
+/// read (dependency registration); keys, sort and diff run only when the
+/// source's version moved, so clean reads allocate nothing and run no user
+/// code (library invariant 5). The <c>keyMapping</c>/<c>comparer</c> must be
+/// pure functions of the element — external adaptive reads are not tracked.
 /// </summary>
 type SortListNode<'T, 'K>
   (
@@ -1018,41 +1130,45 @@ type SortListNode<'T, 'K>
   let mutable out = ListDelta<'T>.Create()
   let mutable version = 0L
   let mutable sinks = SinkList.Create()
+  let mutable depVersion = -1L
   let mutable disposed = false
 
   member private this.Poll() =
     if not disposed then
       let view = source.GetValue()
-      let n = view.Count
-      let keys = Array.zeroCreate n
-      let next = ResizeArray<'T>(n)
 
-      for i in 0 .. n - 1 do
-        next.Add view[i]
-        keys[i] <- keyMapping i view[i]
+      if source.Version <> depVersion then
+        depVersion <- source.Version
+        let n = view.Count
+        let keys = Array.zeroCreate n
+        let next = ResizeArray<'T>(n)
 
-      // Stable decorate-sort-undecorate: equal keys keep the input order.
-      let order = Array.init n id
+        for i in 0 .. n - 1 do
+          next.Add view[i]
+          keys[i] <- keyMapping i view[i]
 
-      Array.Sort(
-        order,
-        Comparison(fun a b ->
-          let c = comparer keys[a] keys[b]
-          if c <> 0 then c else compare a b)
-      )
+        // Stable decorate-sort-undecorate: equal keys keep the input order.
+        let order = Array.init n id
 
-      let sorted = Array.zeroCreate n
+        Array.Sort(
+          order,
+          Comparison(fun a b ->
+            let c = comparer keys[a] keys[b]
+            if c <> 0 then c else compare a b)
+        )
 
-      for i in 0 .. n - 1 do
-        sorted[i] <- next[order[i]]
+        let sorted = Array.zeroCreate n
 
-      let rebuilt = ResizeArray<'T>(sorted)
+        for i in 0 .. n - 1 do
+          sorted[i] <- next[order[i]]
 
-      if Collections.rebuildListDiff rebuilt data &out then
-        version <- version + 1L
-        Collections.pushAndBumpList GraphContext.Current out &sinks
+        let rebuilt = ResizeArray<'T>(sorted)
 
-      out.Clear()
+        if Collections.rebuildListDiff rebuilt data &out then
+          version <- version + 1L
+          Collections.pushAndBumpList GraphContext.Current out &sinks
+
+        out.Clear()
 
   interface IAdaptiveList<'T> with
     member this.GetValue() =

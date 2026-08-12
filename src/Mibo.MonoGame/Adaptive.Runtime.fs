@@ -23,7 +23,8 @@ open Mibo.Elmish
 //
 // Intentional differences from MiboGame (the adaptive contract):
 //   - No Program/Cmd/Sub machinery — the program is an AdaptiveProgram.
-//   - Input is always registered and polled (no withInput toggle).
+//   - Input is opt-in: registered and polled only when the program opted in
+//     via AdaptiveProgram.withInput (mirrors MiboGame's HasInput gate).
 //   - The runner builds the graph lazily on the first Step.
 //   - Restart: the program may request a rebuild (fresh graph, fresh clock).
 //   - The runner owns the GameTime; the host reads runner.GameTime for draw.
@@ -42,7 +43,8 @@ open Mibo.Elmish
 /// delegates simulation to the adaptive runner — it holds no simulation state
 /// of its own.
 /// </remarks>
-type AdaptiveGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as this =
+type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as this
+  =
   inherit Game()
 
   let program = mgProgram.Program

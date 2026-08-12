@@ -53,6 +53,11 @@ Hold these in all core changes; violating any of them breaks the design:
    access.
 5. **Zero library-side allocation on hot paths** (clean read, mark, static recompute,
    delta delivery). Prove allocation claims with `GC.GetAllocatedBytesForCurrentThread`.
+   The poll list nodes hold this on clean reads via source-version gates
+   (`SetToListNode`, `ConcatListNode`, `SubListNode`, `SortListNode`).
+   `PollListSourceNode` is the documented exception: its `build` closure may read
+   additional adaptive inputs (the `subA`/`takeA`/`skipA` bounds do), so a
+   source-version gate would be unsound — it rebuilds on every read by design.
 6. **Transactions defer application**: writes inside `Transaction.run` apply at commit;
    reads inside see pre-transaction values.
 

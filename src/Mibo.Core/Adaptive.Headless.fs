@@ -4,6 +4,7 @@ open System
 open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
+open System.Runtime.ExceptionServices
 open System.Threading
 open System.Threading.Tasks
 open Mibo.Elmish
@@ -64,6 +65,8 @@ type AdaptiveHeadless<'Frame>
 
   let mutable frame = Unchecked.defaultof<'Frame>
   let mutable frameBuilder: unit -> 'Frame = Unchecked.defaultof<unit -> 'Frame>
+  // Guards RunAsync: at most one enumerator may drive the runner at a time.
+  let mutable runAsyncActive = 0
 
   /// Create the graph on the current thread and force the first frame.
   /// Runs once: on the first user of the runner (a step or the RunAsync game thread).
@@ -255,6 +258,11 @@ type AdaptiveHeadless<'Frame>
   member this.StepUntil
     (predicate: 'Frame -> bool, elapsed: TimeSpan, [<Struct>] ?maxFrames: int)
     =
+    // Initialize before the first predicate check: on a fresh runner the frame
+    // is still Unchecked.defaultof (null for reference-type frames), so
+    // evaluating the predicate against it would read garbage or throw.
+    ensureInitialized()
+
     let max = defaultValueArg maxFrames 10000
     let mutable steps = 0
     let mutable met = predicate frame || this.ShouldQuit
@@ -314,6 +322,13 @@ type AdaptiveHeadless<'Frame>
   /// over <c>IAsyncEnumerable</c> directly.
   /// </para>
   /// <para>
+  /// At most one enumerator may consume a runner at a time: a second
+  /// <c>GetAsyncEnumerator</c> while one is active throws. An exception on the
+  /// game thread (from <c>Init</c>, <c>Update</c>, or a projection) is not
+  /// thrown on the background thread — it is stored and rethrown from
+  /// <c>MoveNextAsync</c> so the consumer sees a normal error.
+  /// </para>
+  /// <para>
   /// This advances the runner's internal state. Do not mix with <c>Step</c>/<c>StepN</c>/<c>StepUntil</c>
   /// on the same runner — they all advance the simulation and using them together
   /// will produce simulation corruption.
@@ -327,6 +342,13 @@ type AdaptiveHeadless<'Frame>
 
     { new IAsyncEnumerable<struct (GameTime * 'Frame)> with
         member _.GetAsyncEnumerator(cancellationToken) =
+          // One consumer at a time: two enumerators would step the same runner
+          // concurrently, racing on gameTime/frame and the fixed-step
+          // accumulator. The flag is released in DisposeAsync.
+          if Interlocked.CompareExchange(&runAsyncActive, 1, 0) <> 0 then
+            invalidOp
+              "RunAsync already has an active enumerator on this runner. Only one consumer at a time is supported."
+
           let linkedCts =
             CancellationTokenSource.CreateLinkedTokenSource(
               ct,
@@ -338,30 +360,42 @@ type AdaptiveHeadless<'Frame>
           let frames = ConcurrentQueue<struct (GameTime * 'Frame)>()
           let signal = new SemaphoreSlim(0)
           let mutable current = Unchecked.defaultof<struct (GameTime * 'Frame)>
+          // Set when the game thread dies with an exception. Rethrown from
+          // MoveNextAsync so the consumer sees a normal error instead of the
+          // process being killed by an unhandled thread exception.
+          let mutable gameThreadError: exn = null
 
           let gameThread =
             Thread(fun () ->
               try
-                ensureInitialized()
+                try
+                  ensureInitialized()
 
-                let sw = Stopwatch.StartNew()
-                let intervalMs = interval.TotalMilliseconds
-                let mutable nextTick = 0.0
-                let mutable running = true
+                  let sw = Stopwatch.StartNew()
+                  let intervalMs = interval.TotalMilliseconds
+                  let mutable nextTick = 0.0
+                  let mutable running = true
 
-                while running do
-                  if this.ShouldQuit || linkedCts.IsCancellationRequested then
-                    running <- false
-                  else
-                    let elapsed = sw.Elapsed.TotalMilliseconds
-
-                    if elapsed >= nextTick then
-                      nextTick <- nextTick + intervalMs
-                      this.Step interval |> ignore
-                      frames.Enqueue(struct (this.GameTime, this.Frame))
-                      signal.Release() |> ignore
+                  while running do
+                    if
+                      this.ShouldQuit || linkedCts.IsCancellationRequested
+                    then
+                      running <- false
                     else
-                      Thread.Sleep 1
+                      let elapsed = sw.Elapsed.TotalMilliseconds
+
+                      if elapsed >= nextTick then
+                        nextTick <- nextTick + intervalMs
+                        this.Step interval |> ignore
+                        frames.Enqueue(struct (this.GameTime, this.Frame))
+                        signal.Release() |> ignore
+                      else
+                        Thread.Sleep 1
+                with ex ->
+                  // Store and surface from MoveNextAsync; do not let an
+                  // unhandled exception on a background thread kill the
+                  // process.
+                  gameThreadError <- ex
               finally
                 // Wake a waiting consumer so it can observe the end of the stream.
                 signal.Release() |> ignore)
@@ -378,13 +412,19 @@ type AdaptiveHeadless<'Frame>
                     try
                       let! _ = signal.WaitAsync linkedCts.Token
 
-                      let mutable item =
-                        Unchecked.defaultof<struct (GameTime * 'Frame)>
+                      match gameThreadError with
+                      | null ->
+                        let mutable item =
+                          Unchecked.defaultof<struct (GameTime * 'Frame)>
 
-                      if frames.TryDequeue(&item) then
-                        current <- item
-                        return true
-                      else
+                        if frames.TryDequeue(&item) then
+                          current <- item
+                          return true
+                        else
+                          return false
+                      | ex ->
+                        // Rethrow with the original stack trace.
+                        ExceptionDispatchInfo.Capture(ex).Throw()
                         return false
                     with :? OperationCanceledException ->
                       return false
@@ -392,6 +432,7 @@ type AdaptiveHeadless<'Frame>
                 )
 
               member _.DisposeAsync() =
+                Interlocked.Exchange(&runAsyncActive, 0) |> ignore
                 linkedCts.Cancel()
                 signal.Release() |> ignore
                 linkedCts.Dispose()

@@ -14,5 +14,5 @@
 - Changeable nodes round-trip through `System.Text.Json` with zero options (self-registering converters).
 - `Transaction` and `Posting` primitives for batched writes and cross-thread effects.
 - Mibo.Core — `AdaptiveProgram`/`AdaptiveHeadless`: the adaptive counterpart of the MVU `Program` shell (graph-building context, frame builders, restart/exit requests, fixed-step and headless runners).
-- Mibo.Raylib/Mibo.MonoGame — `AdaptiveRaylibGame` and `AdaptiveGame` hosts that drive an `AdaptiveHeadless` runner from the backend's frame loop.
+- Mibo.Raylib/Mibo.MonoGame — `AdaptiveRaylibGame` and `AdaptiveMonoGameGame` hosts that drive an `AdaptiveHeadless` runner from the backend's frame loop.
 - Tests and benchmarks: `Mibo.Adaptive.Tests` (xunit + FsCheck property suite) and `Mibo.Adaptive.Benchmarks` (BenchmarkDotNet, compared against FSharp.Data.Adaptive).

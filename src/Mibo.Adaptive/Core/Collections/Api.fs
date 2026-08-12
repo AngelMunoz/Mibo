@@ -2449,20 +2449,7 @@ module AList =
     (count: aval<int>)
     (list: alist<'T>)
     : alist<'T> =
-    new PollListSourceNode<'T, 'T>(
-      list,
-      fun view ->
-        let o = max 0 (offset.GetValue())
-        let c = max 0 (count.GetValue())
-        let start = min o view.Count
-        let n = min c (view.Count - start)
-        let next = ResizeArray<'T>(n)
-
-        for i in start .. start + n - 1 do
-          next.Add view[i]
-
-        next
-    )
+    new SubListNode<'T>(list, offset, count)
 
   /// <summary>The window <c>[offset, offset + count)</c> of the list (FDA <c>AList.sub</c> parity).</summary>
   let inline sub (offset: int) (count: int) (list: alist<'T>) : alist<'T> =

@@ -5,6 +5,12 @@ on:
 
 jobs:
   create-release:
+    # Mibo.Core's package depends on Mibo.Adaptive (the nuspec pins the last
+    # released adaptive version), so adaptive must reach NuGet first — a
+    # consumer restoring Mibo.Core in the window before Mibo.Adaptive exists
+    # would fail. The adaptive job skips quietly when its changelog has no
+    # released version; this job then proceeds as before.
+    needs: create-adaptive-release
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -165,8 +165,9 @@ module internal LitBatchTessellation =
     (origin: Vector2)
     (rotation: float32)
     : struct (Vector2 * Vector2 * Vector2 * Vector2) =
-    let cosR = cos rotation
-    let sinR = sin rotation
+    let rotationRad = MathHelper.ToRadians(rotation)
+    let cosR = cos rotationRad
+    let sinR = sin rotationRad
 
     let transformCorner(lx: float32, ly: float32) =
       let tx = lx - origin.X
@@ -1662,7 +1663,9 @@ module private CommandHandlers =
           dest,
           Nullable src,
           color,
-          rotation,
+          // SpriteState.Rotation is documented in degrees (matching
+          // raylib's DrawTexturePro); SpriteBatch.Draw wants radians.
+          MathHelper.ToRadians(rotation),
           srcOrigin,
           effects,
           0.0f

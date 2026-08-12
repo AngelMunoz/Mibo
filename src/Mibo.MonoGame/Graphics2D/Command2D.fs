@@ -20,7 +20,7 @@ type SpriteState = {
   /// <summary>Origin point for rotation and positioning (relative to Dest).</summary>
   Origin: Vector2
 
-  /// <summary>Rotation in radians around Origin.</summary>
+  /// <summary>Rotation in degrees around Origin (matches raylib's SpriteState; the backend converts to radians for SpriteBatch.Draw).</summary>
   Rotation: float32
 
   /// <summary>Tint color (multiplied with texture).</summary>
@@ -727,7 +727,7 @@ module SpriteState =
   /// <summary>Sets the origin point for rotation/positioning.</summary>
   let inline withOrigin (v: Vector2) (s: SpriteState) = { s with Origin = v }
 
-  /// <summary>Sets the rotation in radians.</summary>
+  /// <summary>Sets the rotation in degrees around Origin (matches raylib; the backend converts to radians).</summary>
   let inline withRotation (v: float32) (s: SpriteState) = {
     s with
         Rotation = v

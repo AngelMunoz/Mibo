@@ -44,6 +44,25 @@ let mkTestProgram() =
           (fun () -> posRecomputes),
           (fun () -> velRecomputes))
 
+/// A program whose root is created inside <c>Init</c> — the only legal shape
+/// for <c>RunAsync</c>, because <c>Init</c> runs on the runner's dedicated game
+/// thread and the adaptive graph is confined to its creating thread. The root
+/// handle is published to the caller once <c>Init</c> has run (after the first
+/// frame is yielded); the test thread writes it via <c>Post</c>, the only
+/// cross-thread-safe write.
+let mkRunAsyncProgram() =
+  let mutable root = Unchecked.defaultof<cval<float32>>
+
+  let program =
+    AdaptiveProgram.mkProgram
+      (fun _ctx ->
+        let pos = CVal.create 0.0f
+        root <- pos
+        AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue pos))
+      (fun _ctx _gameTime -> ())
+
+  struct (program, (fun () -> root))
+
 /// A program whose frame is the time root's total time in seconds.
 let mkTimeProgram() =
   AdaptiveProgram.mkProgram
@@ -494,15 +513,18 @@ let adaptiveHeadlessTests =
 
     testCase "RunAsync yields frames with advancing time"
     <| fun _ ->
-      let struct (program, pos, _vel, _, _) = mkTestProgram()
-      use runner = new AdaptiveHeadless<TestFrame>(program)
-
-      pos.Set(2.0f)
+      // The graph must be created on the game thread: RunAsync evaluates on a
+      // dedicated thread, and the adaptive graph is confined to its creating
+      // thread (the owner-thread check in Debug builds). Roots built on the
+      // test thread — as the other tests do for Step — violate that contract
+      // and throw from the game thread.
+      let struct (program, getRoot) = mkRunAsyncProgram()
+      use runner = new AdaptiveHeadless<float32>(program)
 
       use cts = new CancellationTokenSource()
 
       task {
-        let results = ResizeArray<struct (TestFrame * float)>()
+        let results = ResizeArray<struct (float32 * float)>()
         let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
         let enumerator = enum.GetAsyncEnumerator(cts.Token)
 
@@ -516,24 +538,32 @@ let adaptiveHeadlessTests =
               if hasNext then
                 let struct (gt, frame) = enumerator.Current
                 results.Add(struct (frame, gt.TotalTime.TotalSeconds))
+
+                // Init has run by the first frame, so the root handle is
+                // published; cross-thread writes go through Post and land at
+                // the next step boundary on the game thread.
+                if results.Count = 1 then
+                  getRoot().Post(2.0f)
               else
                 running <- false
             with :? OperationCanceledException ->
               running <- false
 
-            if results.Count >= 3 then
+            if results.Count >= 4 then
               cts.Cancel()
         finally
           enumerator.DisposeAsync().AsTask().Wait()
 
         Expect.isGreaterThanOrEqual
           results.Count
-          3
-          "Should yield at least 3 frames"
+          4
+          "Should yield at least 4 frames"
 
-        for i = 0 to results.Count - 1 do
-          let struct (frame, _) = results[i]
-          Expect.equal frame.Position 2.0f "Each frame should reflect the root"
+        let struct (first, _) = results[0]
+        Expect.equal first 0.0f "First frame should carry the initial value"
+
+        let posted = results |> Seq.exists(fun struct (v, _) -> v = 2.0f)
+        Expect.isTrue posted "Posted value should land in a later frame"
 
         let struct (_, t1) = results[0]
         let struct (_, t2) = results[1]
@@ -544,8 +574,14 @@ let adaptiveHeadlessTests =
 
     testCase "RunAsync with already-cancelled token yields nothing"
     <| fun _ ->
-      let struct (program, _, _, _, _) = mkTestProgram()
-      use runner = new AdaptiveHeadless<TestFrame>(program)
+      // Trivial program: no roots are created, so nothing runs on the game
+      // thread beyond Init itself (which builds its graph on that thread).
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx -> AdaptiveInit.ofFrameBuilder(fun () -> 0.0f))
+          (fun _ctx _gameTime -> ())
+
+      use runner = new AdaptiveHeadless<float32>(program)
 
       use cts = new CancellationTokenSource()
       cts.Cancel()
@@ -581,6 +617,59 @@ let adaptiveHeadlessTests =
       Expect.throwsT<ArgumentException>
         (fun () -> runner.RunAsync(TimeSpan.Zero) |> ignore)
         "Should throw ArgumentException for zero interval"
+
+    testCase "RunAsync surfaces game-thread failures from MoveNextAsync"
+    <| fun _ ->
+      // An exception on the game thread (e.g. Init or Update throwing) must
+      // not kill the process: it is stored and rethrown from MoveNextAsync so
+      // the consumer sees a normal error.
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx -> failwith "boom")
+          (fun _ctx _gameTime -> ())
+
+      use runner = new AdaptiveHeadless<float32>(program)
+
+      task {
+        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16))
+        let enumerator = enum.GetAsyncEnumerator()
+        let mutable sawBoom = false
+
+        try
+          try
+            let! _ = enumerator.MoveNextAsync().AsTask()
+            () // No throw: the failure was not surfaced.
+          with ex ->
+            sawBoom <- ex.Message = "boom"
+        finally
+          enumerator.DisposeAsync().AsTask().Wait()
+
+        Expect.isTrue
+          sawBoom
+          "MoveNextAsync should rethrow the game-thread failure"
+      }
+      |> Async.AwaitTask
+      |> Async.RunSynchronously
+
+    testCase "RunAsync rejects a second concurrent enumerator"
+    <| fun _ ->
+      // Two enumerators would step the same runner concurrently (unprotected
+      // gameTime/frame/accumulator); the second GetAsyncEnumerator is rejected.
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx -> AdaptiveInit.ofFrameBuilder(fun () -> 0.0f))
+          (fun _ctx _gameTime -> ())
+
+      use runner = new AdaptiveHeadless<float32>(program)
+      let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16))
+      let enumerator = enum.GetAsyncEnumerator()
+
+      try
+        Expect.throwsT<InvalidOperationException>
+          (fun () -> enum.GetAsyncEnumerator() |> ignore)
+          "A second concurrent enumerator should be rejected"
+      finally
+        enumerator.DisposeAsync().AsTask().Wait()
 
     testCase "FixedStep runs Update once per sub-step and forces the frame once"
     <| fun _ ->
