@@ -10,18 +10,38 @@ open System.Threading.Tasks
 open Mibo.Elmish
 
 /// <summary>
+/// One step's worth of simulation produced by
+/// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.RunAsync"/>: the game time
+/// and the forced frame of the step.
+/// </summary>
+[<Struct>]
+type StepOutcome<'Frame> = {
+  /// <summary>The total and per-step elapsed time of the step.</summary>
+  GameTime: GameTime
+
+  /// <summary>The forced frame of the step.</summary>
+  Frame: 'Frame
+}
+
+/// <summary>
 /// Runs an adaptive program with explicit frame stepping.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The runner owns the frame boundary. Each <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>:
-/// (1) applies cross-thread posts at the frame boundary,
+/// The runner owns the frame boundary. Each
+/// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>:
+/// (1) applies cross-thread posts and drains the next-frame buffer at the
+/// frame boundary, then diffs the program's subscription projection against
+/// the attached table,
 /// (2) writes the current game time into the time root (once, or once per
 /// fixed step when <see cref="F:Mibo.Adaptive.AdaptiveProgram`1.FixedStep"/> is set),
 /// (3) runs the program's <c>Update</c> phase,
-/// (4) forces the frame builder — the frame's projections recompute exactly
+/// (4) drains the intent queue until empty — posted work runs in post
+/// order, and thunks posted during the drain run in the same pass (after
+/// each sub-step's <c>Update</c> under fixed-step),
+/// (5) forces the frame builder — the frame's projections recompute exactly
 /// once if any of their dependencies moved, and not at all otherwise — and
-/// (5) notifies the observers with the forced frame. Draw code reads the
+/// (6) notifies the observers with the forced frame. Draw code reads the
 /// returned frame: reads are O(1) until the next write.
 /// </para>
 /// <para>
@@ -30,8 +50,10 @@ open Mibo.Elmish
 /// creates the graph lazily on the first user — the thread that first calls
 /// <c>Step</c>/<c>StepN</c>/<c>StepUntil</c>/<c>Run</c>, or the dedicated game
 /// thread of <c>RunAsync</c>. All graph work then happens on that thread.
-/// Cross-thread writes go through <c>cval.Post</c> and are drained by
-/// <c>Posting.pump</c> at the start of every step.
+/// Cross-thread writes go through <c>cval.Post</c> — drained by
+/// <c>Posting.pump</c> at the start of every step — and external work goes
+/// through <see cref="P:Mibo.Adaptive.AdaptiveContext.Intents"/> (the post
+/// lane is thread-safe, drained at the next post drain after <c>Update</c>).
 /// </para>
 /// </remarks>
 type AdaptiveHeadless<'Frame>
@@ -52,9 +74,19 @@ type AdaptiveHeadless<'Frame>
 
   let mutable gameContext = Unchecked.defaultof<GameContext>
   let mutable exitCell = Unchecked.defaultof<cval<bool>>
-  let mutable restartCell = Unchecked.defaultof<cval<bool>>
+  let mutable frameCtx = Unchecked.defaultof<AdaptiveFrameContext>
   let mutable ctx = Unchecked.defaultof<AdaptiveContext>
   let mutable initialized = false
+
+  // The framework-owned intent queue, created eagerly: external
+  // injection (Post) must be safe before the graph exists, and the queue has
+  // no thread affinity — only its drains do (owner thread, inside Step).
+  let intents = IntentQueue()
+
+  // Attached subscription disposables, keyed by SubId. The runtime diffs the
+  // program's subscription projection against this table every step: new key
+  // → attach, missing key → detach, surviving key → keep (identity is the key).
+  let attachedSubs = Dictionary<SubId, IDisposable>()
 
   let mutable fixedAccSeconds = 0.0f
 
@@ -75,20 +107,23 @@ type AdaptiveHeadless<'Frame>
       gameContext <- defaultArg context (GameContext.create(w, h))
 
       let timeCell =
-        CVal.create(
-          {
-            TotalTime = TimeSpan.Zero
-            ElapsedGameTime = TimeSpan.Zero
-          }
-        )
+        CVal.create {
+          TotalTime = TimeSpan.Zero
+          ElapsedGameTime = TimeSpan.Zero
+        }
 
       exitCell <- CVal.create false
-      restartCell <- CVal.create false
-      ctx <- AdaptiveContext(gameContext, timeCell, exitCell, restartCell)
 
-      let init = program.Init ctx
+      // Phase reachability by type: Init and the subscription projection get
+      // the queue-less frame context; only Update gets the full context with
+      // the intent queue.
+      frameCtx <- AdaptiveFrameContext(gameContext, timeCell, exitCell)
+
+      ctx <- AdaptiveContext(frameCtx, intents)
+
+      let init = program.Init frameCtx
       frameBuilder <- init.FrameBuilder
-      disposables.AddRange(init.Disposables)
+      disposables.AddRange init.Disposables
 
       // Force the first frame so Frame is never default after initialization.
       frame <- frameBuilder()
@@ -100,46 +135,54 @@ type AdaptiveHeadless<'Frame>
 
       initialized <- true
 
+
+  /// Diff the program's subscription projection against the attached table.
+  /// Runs on the owner thread at the frame boundary, after the next-frame lane
+  /// drain and before the time root write. The projection is an amap
+  /// keyed by SubId: reading it is incremental — no work when no dependency
+  /// moved — and the diff table does the real attach/detach work.
+  let diffSubscriptions() =
+    match program.Subscriptions with
+    | ValueNone ->
+      // No projection: detach anything left over (the projection is fixed at
+      // program build, so this is a safety net rather than a live path).
+      for KeyValueV(_, d) in attachedSubs do
+        d.Dispose()
+
+      attachedSubs.Clear()
+    | ValueSome subscribe ->
+      // Transient view of the current map content (AMap.getValue, not
+      // AMap.force): zero allocation on clean steps — only the incremental
+      // recompute runs when a dependency moved. Used synchronously inside
+      // this step, so the transient view's validity window is respected.
+      let current = subscribe frameCtx |> AMap.getValue
+
+      // New key → attach, handing the subscription the post function:
+      // events never run handlers directly, they post work for the next
+      // post drain, on the owner thread, in order.
+      for KeyValueV(id, sub) in current do
+        if not(attachedSubs.ContainsKey id) then
+          attachedSubs[id] <- sub.Attach intents.post
+
+      // Missing key → detach. Surviving keys are kept as-is: the key is the
+      // identity, never re-attach on a fresh closure value.
+      if attachedSubs.Count > 0 then
+        let stale = ResizeArray<SubId>()
+
+        for KeyValueV(id, _) in attachedSubs do
+          if not(current.ContainsKey id) then
+            stale.Add id
+
+        for id in stale do
+
+          attachedSubs
+          |> Dictionary.tryGetValue id
+          |> ValueOption.iter(fun d ->
+            d.Dispose()
+            attachedSubs.Remove id |> ignore)
+
   /// <summary>Whether the runner has received an exit request.</summary>
   member _.ShouldQuit = if initialized then AVal.getValue exitCell else false
-
-  /// <summary>
-  /// Whether the program has requested a rebuild (it wrote
-  /// <see cref="P:Mibo.Adaptive.AdaptiveContext.RestartRequested"/>). The
-  /// windowed hosts check this after <c>Step</c> and call
-  /// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Restart"/>.
-  /// </summary>
-  member _.RestartRequested =
-    if initialized then AVal.getValue restartCell else false
-
-  /// <summary>
-  /// Rebuild the program: disposes the program's disposables (e.g. input
-  /// subscriptions), re-runs <c>Init</c> with the same context — a fresh graph
-  /// over the same roots, which is what makes restart safe — resets the
-  /// internal clock and fixed-step accumulator, and forces the first frame. The
-  /// program requests it by writing <c>RestartRequested</c>; the windowed hosts
-  /// consume it after <c>Step</c>, headless users call this directly.
-  /// </summary>
-  member _.Restart() =
-    if initialized then
-      for i = 0 to disposables.Count - 1 do
-        disposables[i].Dispose()
-
-      disposables.Clear()
-
-      let init = program.Init ctx
-      frameBuilder <- init.FrameBuilder
-      disposables.AddRange(init.Disposables)
-
-      gameTime <- {
-        TotalTime = TimeSpan.Zero
-        ElapsedGameTime = TimeSpan.Zero
-      }
-
-      fixedAccSeconds <- 0.0f
-
-      restartCell.Set(false)
-      frame <- frameBuilder()
 
   /// <summary>Total elapsed virtual time.</summary>
   member _.GameTime = gameTime
@@ -155,10 +198,12 @@ type AdaptiveHeadless<'Frame>
   /// <para>
   /// When <see cref="F:Mibo.Adaptive.AdaptiveProgram`1.FixedStep"/> is set, the
   /// frame delta is converted into zero or more fixed-size steps: the time root
-  /// is written and <c>Update</c> runs once per step. The frame is forced once
-  /// at the end regardless, so intermediate steps are integrated but not
-  /// observed by the frame. This mirrors the MVU <c>TickFrame</c> fixed-step
-  /// loop, calling <c>Update</c> instead of dispatching a mapped message.
+  /// is written, <c>Update</c> runs, and the intent queue drains until empty
+  /// once per step. The frame is forced once at the end regardless, so
+  /// intermediate steps are integrated but not observed by the frame. This
+  /// mirrors the MVU <c>TickFrame</c> fixed-step loop, calling <c>Update</c>
+  /// instead of dispatching a mapped message. The next-frame lane drains once
+  /// per Step at the boundary — never per sub-step.
   /// </para>
   /// <para>
   /// This mutates the runner's internal state (time root, program roots, frame).
@@ -166,7 +211,25 @@ type AdaptiveHeadless<'Frame>
   /// — they all advance the simulation and using them together will produce simulation corruption.
   /// </para>
   /// </remarks>
-  member _.Step(elapsed: TimeSpan) : 'Frame =
+  member this.Step(elapsed: TimeSpan) : 'Frame =
+    let f = this.StepCore elapsed
+
+    // Observers (drain point 6): notify with the forced frame, after the step
+    // completes. Post-quit steps are no-ops (StepCore returned the cached
+    // frame early), so they do not notify.
+    if not this.ShouldQuit then
+      for i = 0 to observers.Count - 1 do
+        observers[i].OnNext(gameContext, frame, gameTime)
+
+    f
+
+  /// The shared step engine: applies posts, drains the next-frame lane, diffs
+  /// the subscription projection, writes the time root and runs <c>Update</c>
+  /// (once, or once per fixed step, each followed by the post drain), and
+  /// forces the frame. Returns the forced frame; the caller decides its
+  /// disposition — Step notifies the observers, RunAsync packages it for the
+  /// consumer.
+  member private _.StepCore(elapsed: TimeSpan) : 'Frame =
     ensureInitialized()
 
     if AVal.getValue exitCell then
@@ -177,10 +240,15 @@ type AdaptiveHeadless<'Frame>
       // comparison boxes both operands (48 bytes/call on the frame path).
       let elapsed = if elapsed.Ticks < 0L then TimeSpan.Zero else elapsed
 
-      // Apply cross-thread posts (e.g. input-thread writes) at the frame
-      // boundary, once per Step — mirrors MVU draining deferred effects at the
-      // top of TickFrame.
+      // Frame boundary (drain points 1-2 of the step table): apply cross-thread
+      // posts (e.g. input-thread writes), then drain the next-frame lane —
+      // explicit postNextFrame deferrals, once per Step, before the time write.
       Posting.pump()
+      intents.DrainNextFrame()
+
+      // Subscription lifecycle: diff the program's subscription projection
+      // against the attached table.
+      diffSubscriptions()
 
       match program.FixedStep with
       | ValueNone ->
@@ -190,10 +258,17 @@ type AdaptiveHeadless<'Frame>
         }
 
         // The time root is the framework's write into the graph.
-        ctx.Time.Set(gameTime)
+        ctx.Time.Set gameTime
 
-        // The imperative phase: reads projections, writes roots.
+        // The imperative phase: reads projections, writes roots, posts
+        // intents.
         program.Update ctx gameTime
+
+        // Post drain (drain point 4): posted work runs until empty, in post
+        // order — thunks posted during the drain (from any thread) run in the
+        // same pass. Work posted during Update reacts within THIS step, before
+        // the force; foreign-thread posts land at the next post drain.
+        intents.Drain()
 
       | ValueSome cfg ->
         let maxFrame = cfg.MaxFrameSeconds |> ValueOption.defaultValue 0.25f
@@ -217,16 +292,17 @@ type AdaptiveHeadless<'Frame>
             ElapsedGameTime = stepElapsed
           }
 
-          ctx.Time.Set(gameTime)
+          ctx.Time.Set gameTime
           program.Update ctx gameTime
 
-      // The force phase: recompute the frame's projections exactly once
-      // (not at all if none of their dependencies moved) and pack the struct.
+          // Post drain after each sub-step's Update: every sub-step reads
+          // settled state. Drained until empty.
+          intents.Drain()
+
+      // The force phase (drain point 5): recompute the frame's projections
+      // exactly once (not at all if none of their dependencies moved) and pack
+      // the struct.
       frame <- frameBuilder()
-
-      for i = 0 to observers.Count - 1 do
-        observers[i].OnNext(gameContext, frame, gameTime)
-
       frame
 
   /// <summary>Advance the simulation by N frames and return the last forced frame.</summary>
@@ -309,17 +385,38 @@ type AdaptiveHeadless<'Frame>
           Thread.Sleep 1
     }
 
+  /// <summary>
+  /// Thread-safe external injection: posts a thunk to the post lane, where it
+  /// runs on the owner thread at the next post drain — after the next step's
+  /// <c>Update</c> (after each sub-step's <c>Update</c> under fixed-step), in
+  /// post order, drained until empty, before the frame is forced. A
+  /// convenience for foreign code (tests, network callbacks, AI drivers) that
+  /// holds the runner but not the Update context: the same as
+  /// <see cref="M:Mibo.Adaptive.IntentQueue.post"/>.
+  /// </summary>
+  member _.Post(thunk: unit -> unit) = intents.post thunk
+
   /// <summary>Run the simulation asynchronously, yielding each frame as an async enumerable.</summary>
   /// <param name="interval">Tick interval.</param>
   /// <param name="ct">Optional cancellation token to stop the loop.</param>
-  /// <returns>An async sequence of <c>(GameTime * 'Frame)</c> snapshots.</returns>
+  /// <returns>An async sequence of <see cref="T:Mibo.Adaptive.StepOutcome`1"/> snapshots: the game time and the forced frame of each step.</returns>
   /// <remarks>
   /// <para>
   /// The world loop runs on a dedicated background game thread — the graph is
   /// confined to its creating thread, and async continuation threads are not it.
-  /// The async enumerable is a consumer of that thread: it receives the frames
-  /// the loop produces, in order. The <c>for .. in</c> syntax in F# 8+ can iterate
-  /// over <c>IAsyncEnumerable</c> directly.
+  /// The async enumerable is a consumer of that thread: it receives the
+  /// outcomes the loop produces, in order. The <c>for .. in</c> syntax in F# 8+
+  /// can iterate over <c>IAsyncEnumerable</c> directly:
+  /// <code>
+  /// for outcome in world.RunAsync hz30 do
+  ///   render outcome.Frame
+  /// </code>
+  /// The consumer renders the packed frame — it never touches the world's
+  /// graph. Background work started with
+  /// <see cref="M:Mibo.Adaptive.IntentQueue.postTask`1"/> / <c>postAsync</c>
+  /// runs off the world thread, and its completion posts back into the world's
+  /// intent queue (thread-safe) and runs at the next post drain on the game
+  /// thread.
   /// </para>
   /// <para>
   /// At most one enumerator may consume a runner at a time: a second
@@ -340,7 +437,7 @@ type AdaptiveHeadless<'Frame>
 
     let ct = defaultValueArg ct CancellationToken.None
 
-    { new IAsyncEnumerable<struct (GameTime * 'Frame)> with
+    { new IAsyncEnumerable<StepOutcome<'Frame>> with
         member _.GetAsyncEnumerator(cancellationToken) =
           // One consumer at a time: two enumerators would step the same runner
           // concurrently, racing on gameTime/frame and the fixed-step
@@ -356,10 +453,10 @@ type AdaptiveHeadless<'Frame>
             )
 
           // The game thread owns the graph (created on first use) and posts the
-          // frames to this queue; the async enumerator waits on the signal.
-          let frames = ConcurrentQueue<struct (GameTime * 'Frame)>()
+          // outcomes to this queue; the async enumerator waits on the signal.
+          let frames = ConcurrentQueue<StepOutcome<'Frame>>()
           let signal = new SemaphoreSlim(0)
-          let mutable current = Unchecked.defaultof<struct (GameTime * 'Frame)>
+          let mutable current = Unchecked.defaultof<StepOutcome<'Frame>>
           // Set when the game thread dies with an exception. Rethrown from
           // MoveNextAsync so the consumer sees a normal error instead of the
           // process being killed by an unhandled thread exception.
@@ -386,8 +483,16 @@ type AdaptiveHeadless<'Frame>
 
                       if elapsed >= nextTick then
                         nextTick <- nextTick + intervalMs
-                        this.Step interval |> ignore
-                        frames.Enqueue(struct (this.GameTime, this.Frame))
+                        let f = this.StepCore interval
+
+                        frames.Enqueue { GameTime = this.GameTime; Frame = f }
+
+                        // Observers (drain point 6): the forced frame of the
+                        // step, notified on the game thread. The consumer
+                        // receives the same frame through the outcome.
+                        for i = 0 to observers.Count - 1 do
+                          observers[i].OnNext(gameContext, frame, gameTime)
+
                         signal.Release() |> ignore
                       else
                         Thread.Sleep 1
@@ -403,7 +508,7 @@ type AdaptiveHeadless<'Frame>
           gameThread.IsBackground <- true
           gameThread.Start()
 
-          { new IAsyncEnumerator<struct (GameTime * 'Frame)> with
+          { new IAsyncEnumerator<StepOutcome<'Frame>> with
               member _.Current = current
 
               member _.MoveNextAsync() =
@@ -415,7 +520,7 @@ type AdaptiveHeadless<'Frame>
                       match gameThreadError with
                       | null ->
                         let mutable item =
-                          Unchecked.defaultof<struct (GameTime * 'Frame)>
+                          Unchecked.defaultof<StepOutcome<'Frame>>
 
                         if frames.TryDequeue(&item) then
                           current <- item
@@ -440,8 +545,13 @@ type AdaptiveHeadless<'Frame>
           }
     }
 
-  /// <summary>Dispose program disposables and observers, and clean up resources.</summary>
+  /// <summary>Detach all subscriptions, dispose program disposables and observers, and clean up resources.</summary>
   member _.Dispose() =
+    for KeyValueV(_, d) in attachedSubs do
+      d.Dispose()
+
+    attachedSubs.Clear()
+
     for i = 0 to disposables.Count - 1 do
       disposables[i].Dispose()
 

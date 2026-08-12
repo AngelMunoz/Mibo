@@ -15,14 +15,13 @@ open Mibo.Elmish
 //
 // Work ordering each frame (matches RaylibGame + AdaptiveHeadless.Step):
 //   poll input → resize check → Step (posts → time root → Update → force frame)
-//                → consume restart request → draw renderers in add-order.
+//                → draw renderers in add-order.
 //
 // Intentional differences from RaylibGame (the adaptive contract):
 //   - No Program/Cmd/Sub machinery — the program is an AdaptiveProgram.
 //   - Input is opt-in: registered and polled only when the program opted in
 //     via AdaptiveProgram.withInput (mirrors RaylibGame's HasInput gate).
 //   - The runner builds the graph lazily on the first Step.
-//   - Restart: the program may request a rebuild (fresh graph, fresh clock).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -34,10 +33,10 @@ open Mibo.Elmish
 /// <remarks>
 /// Construct one with an <see cref="T:Mibo.Adaptive.AdaptiveProgram`1"/> and
 /// call <c>Run()</c>. Each frame: poll input, check for resize, <c>Step</c> the
-/// runner (which runs the program's Update phase and forces the frame), consume
-/// a restart request if the program wrote one, then draw the renderers with the
-/// forced frame. The frame's transient views are valid until the next
-/// <c>Step</c>, so the draw window is exactly the gap between them.
+/// runner (which runs the program's Update phase and forces the frame), then
+/// draw the renderers with the forced frame. The frame's transient views are
+/// valid until the next <c>Step</c>, so the draw window is exactly the gap
+/// between them.
 /// </remarks>
 type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
 
@@ -112,11 +111,6 @@ type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
         ctx.UpdateDimensions(Raylib.GetScreenWidth(), Raylib.GetScreenHeight())
 
       runner.Step(elapsed) |> ignore
-
-      // The program may have requested a rebuild (e.g. restart after game
-      // over): re-run Init — fresh graph, fresh clock, first frame forced.
-      if runner.RestartRequested then
-        runner.Restart()
 
       Raylib.BeginDrawing()
       Raylib.ClearBackground(Color.Black)

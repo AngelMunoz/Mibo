@@ -2,6 +2,7 @@ module Mibo.Adaptive.Tests.AdaptiveHeadless
 
 open System
 open System.Threading
+open System.Threading.Tasks
 open Expecto
 open Mibo.Adaptive
 open Mibo.Elmish
@@ -72,6 +73,51 @@ let mkTimeProgram() =
 
       AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue totalSeconds))
     (fun _ctx _gameTime -> ())
+
+/// Steps the runner (16ms per step) until <c>predicate</c> holds or
+/// <c>maxSteps</c> steps have run; returns the number of steps taken.
+/// Bounded poll for async completions that land at later step boundaries.
+/// Yields briefly between steps: the completion being polled for arrives via
+/// the thread pool, and a tight loop on the polling thread would starve it.
+let pollSteps
+  (runner: AdaptiveHeadless<'Frame>)
+  (predicate: unit -> bool)
+  (maxSteps: int)
+  =
+  let mutable steps = 0
+
+  while steps < maxSteps && not(predicate()) do
+    runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+    steps <- steps + 1
+    Thread.Sleep 1
+
+  steps
+
+/// A RunAsync program that starts a background task on the first step; the
+/// completion writes a world-owned root. The root handle is published once
+/// Init has run.
+let mkRunAsyncWorkProgram() =
+  let mutable root = Unchecked.defaultof<cval<int>>
+  let mutable started = false
+
+  let program =
+    AdaptiveProgram.mkProgram
+      (fun _ctx ->
+        let value = CVal.create 0
+        root <- value
+
+        AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+      (fun ctx _gameTime ->
+        if not started then
+          started <- true
+
+          ctx.Intents.postTask(
+            (fun () -> Task.FromResult(99)),
+            (fun v -> root.Set v),
+            (fun _ -> ())
+          ))
+
+  struct (program, (fun () -> root))
 
 [<Tests>]
 let adaptiveHeadlessTests =
@@ -381,30 +427,6 @@ let adaptiveHeadlessTests =
 
       Expect.isTrue disposed "Init disposables should be disposed"
 
-    testCase "Init disposables are disposed and re-created on restart"
-    <| fun _ ->
-      let mutable disposedCount = 0
-
-      let program =
-        AdaptiveProgram.mkProgram
-          (fun ctx ->
-            AdaptiveInit.ofFrameBuilder(fun () -> 0.0f)
-            |> AdaptiveInit.withDisposable
-              { new IDisposable with
-                  member _.Dispose() = disposedCount <- disposedCount + 1
-              })
-          (fun _ctx _gameTime -> ())
-
-      use runner = new AdaptiveHeadless<float32>(program)
-      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
-      runner.Restart()
-      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
-
-      Expect.equal
-        disposedCount
-        1
-        "Restart should dispose the first init's disposable"
-
     testCase "StepN advances N frames and returns the last frame"
     <| fun _ ->
       let counter = CVal.create 0
@@ -536,8 +558,11 @@ let adaptiveHeadlessTests =
               let! hasNext = enumerator.MoveNextAsync().AsTask()
 
               if hasNext then
-                let struct (gt, frame) = enumerator.Current
-                results.Add(struct (frame, gt.TotalTime.TotalSeconds))
+                let outcome = enumerator.Current
+
+                results.Add(
+                  struct (outcome.Frame, outcome.GameTime.TotalTime.TotalSeconds)
+                )
 
                 // Init has run by the first frame, so the root handle is
                 // published; cross-thread writes go through Post and land at
@@ -768,4 +793,597 @@ let adaptiveHeadlessTests =
           }
           |> ignore)
         "StepSeconds <= 0 should throw"
+  ]
+
+[<Tests>]
+let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
+  testList "AdaptiveHeadless deferred work and subscriptions" [
+    testCase
+      "Posted intent runs in the same step, after Update and before the force"
+    <| fun _ ->
+      let value = CVal.create 0
+      let mutable seenInUpdate = -1
+      let trace = ResizeArray<string>()
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+          (fun _ctx _gameTime ->
+            trace.Add "update"
+            seenInUpdate <- AVal.getValue value)
+
+      use runner = new AdaptiveHeadless<int>(program)
+
+      // Warm up so the owner thread (and the intent queue) exist before posting.
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+      trace.Clear()
+
+      runner.Post(fun () ->
+        trace.Add "post"
+        value.Set 42)
+
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal
+        (List.ofSeq trace)
+        [ "update"; "post" ]
+        "Posted intent should drain after Update, in the same step"
+
+      Expect.equal
+        seenInUpdate
+        0
+        "Update should not yet see the intent of its own step"
+
+      Expect.equal runner.Frame 42 "The force should see the intent.s write"
+
+    testCase
+      "Intent posted during Update runs in the same step, before the force"
+    <| fun _ ->
+      let value = CVal.create 0
+      let trace = ResizeArray<string>()
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+          (fun ctx _gameTime ->
+            trace.Add "update"
+
+            if trace.Count = 1 then
+              ctx.Intents.post(fun () ->
+                trace.Add "post"
+                value.Set 7))
+
+      use runner = new AdaptiveHeadless<int>(program)
+
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal
+        (List.ofSeq trace)
+        [ "update"; "post" ]
+        "An Update-posted intent should drain in the same step, after Update"
+
+      Expect.equal
+        runner.Frame
+        7
+        "The posted intent.s write should reach the force"
+
+    testCase
+      "Intent posted from a foreign thread lands at the next post drain, in post order"
+    <| fun _ ->
+      let trace = ResizeArray<int>()
+      // -1 marks the Update phase, so the post drain is observable.
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx -> AdaptiveInit.ofFrameBuilder(fun () -> 0.0f))
+          (fun _ctx _gameTime -> trace.Add -1)
+
+      use runner = new AdaptiveHeadless<float32>(program)
+      // Warm up so the owner thread (and the intent queue) exist before the
+      // foreign thread posts. The warm-up step's Update already wrote to the
+      // trace; reset it so the emptiness assertion below only sees the posts.
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+      trace.Clear()
+
+      use doneSignal = new ManualResetEventSlim(false)
+
+      let thread =
+        Thread(fun () ->
+          runner.Post(fun () -> trace.Add 1)
+          runner.Post(fun () -> trace.Add 2)
+          runner.Post(fun () -> trace.Add 3)
+          doneSignal.Set())
+
+      thread.IsBackground <- true
+      thread.Start()
+      doneSignal.Wait()
+      thread.Join()
+
+      Expect.isEmpty
+        trace
+        "Foreign-thread intents must not run on the posting thread"
+
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal
+        (List.ofSeq trace)
+        [ -1; 1; 2; 3 ]
+        "Foreign-thread intents should drain in post order, at the post drain"
+
+    testCase "A posted chain drains until empty within one step, in post order"
+    <| fun _ ->
+      let value = CVal.create 0
+      let trace = ResizeArray<string>()
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+          (fun ctx _gameTime ->
+            trace.Add "update"
+
+            if trace.Count = 1 then
+              // A posts B, B posts C: the post drain runs until empty, so
+              // the whole chain settles within this step, before the force.
+              ctx.Intents.post(fun () ->
+                trace.Add "a"
+                value.Set 1
+
+                ctx.Intents.post(fun () ->
+                  trace.Add "b"
+                  value.Set 2
+
+                  ctx.Intents.post(fun () ->
+                    trace.Add "c"
+                    value.Set 3))))
+
+      use runner = new AdaptiveHeadless<int>(program)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal
+        (List.ofSeq trace)
+        [ "update"; "a"; "b"; "c" ]
+        "The chain should drain in one step, in post order"
+
+      Expect.equal runner.Frame 3 "The force should see the chain's final write"
+
+    testCase "NextStep runs at the next step's boundary, not this step"
+    <| fun _ ->
+      let value = CVal.create 0
+      let trace = ResizeArray<string>()
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+          (fun ctx _gameTime ->
+            trace.Add "update"
+
+            if trace.Count = 1 then
+              ctx.Intents.postNextFrame(fun () ->
+                trace.Add "next-step"
+                value.Set 9))
+
+      use runner = new AdaptiveHeadless<int>(program)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal
+        (List.ofSeq trace)
+        [ "update" ]
+        "A next-step deferral must not run in the posting step"
+
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal
+        (List.ofSeq trace)
+        [ "update"; "next-step"; "update" ]
+        "A next-step deferral runs at the next boundary, before Update"
+
+      Expect.equal runner.Frame 9 "The deferral's write should reach the force"
+
+    testCase
+      "A posted intent.s write is visible in the same step.s forced frame"
+    <| fun _ ->
+      // The dead-enemy case: Update posts the removal; the post drain
+      // applies it before the Force, so the frame never renders the
+      // half-settled state (a dead enemy drawn standing for one frame).
+      let alive = CVal.create true
+      let mutable posted = false
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue alive))
+          (fun ctx _gameTime ->
+            if not posted && AVal.getValue alive then
+              posted <- true
+              ctx.Intents.post(fun () -> alive.Set false))
+
+      use runner = new AdaptiveHeadless<bool>(program)
+      let frame = runner.Step(TimeSpan.FromMilliseconds(16))
+
+      Expect.isTrue posted "The intent should have been posted"
+      Expect.isFalse frame "The force must see the posted intent.s write"
+
+    testCase
+      "Posted chain removing from a cmap under a live projection does not throw"
+    <| fun _ ->
+      let entities = CMap.ofSeq [ 1, "a"; 2, "b"; 3, "c" ]
+
+      // A live projection over the map, forced by the frame builder every step.
+      let names = entities |> AMap.map(fun _k v -> v)
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> (AMap.getValue names).Count))
+          (fun ctx _gameTime ->
+            ctx.Intents.post(fun () ->
+              // Handler 1: enumerates the collection to completion.
+              let mutable seen = ""
+
+              for KeyValue(_, v) in AMap.getValue entities do
+                seen <- seen + v
+
+              // Handler 2 (chained from handler 1): mutates the collection.
+              // The post drain runs thunks strictly sequentially, so the
+              // enumeration above finished before this removal — no
+              // mid-enumeration mutation.
+              ctx.Intents.post(fun () ->
+                CMap.remove 1 entities
+                CMap.remove 2 entities)))
+
+      use runner = new AdaptiveHeadless<int>(program)
+      let frame = runner.Step(TimeSpan.FromMilliseconds(16))
+
+      Expect.equal
+        frame
+        1
+        "The force should see the settled map (one entry left)"
+
+    testCase "postTask completion re-enters as posted work at a later step"
+    <| fun _ ->
+      let result = CVal.create 0
+      let mutable onDoneRan = false
+      let mutable onDoneThreadId = 0
+      let mutable started = false
+      let testThreadId = Environment.CurrentManagedThreadId
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue result))
+          (fun ctx _gameTime ->
+            if not started then
+              started <- true
+
+              ctx.Intents.postTask(
+                (fun () -> Task.FromResult(42)),
+                (fun v ->
+                  onDoneRan <- true
+                  onDoneThreadId <- Environment.CurrentManagedThreadId
+                  result.Set v),
+                (fun _ -> ())
+              ))
+
+      use runner = new AdaptiveHeadless<int>(program)
+
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.isFalse
+        onDoneRan
+        "The completion must not run in the starting step"
+
+      let steps = pollSteps runner (fun () -> onDoneRan) 1000
+
+      Expect.isLessThan
+        steps
+        1000
+        "The completion should arrive within the poll budget"
+
+      Expect.isTrue onDoneRan "The completion should have run"
+
+      Expect.equal
+        onDoneThreadId
+        testThreadId
+        "The completion must run on the owner thread"
+
+      Expect.equal
+        runner.Frame
+        42
+        "The completion's root write should reach a later frame"
+
+    testCase "postTask error path delivers the exception as posted work"
+    <| fun _ ->
+      let mutable onErrorRan = false
+      let mutable onDoneRan = false
+      let mutable receivedMessage = ""
+      let mutable started = false
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx -> AdaptiveInit.ofFrameBuilder(fun () -> 0.0f))
+          (fun ctx _gameTime ->
+            if not started then
+              started <- true
+
+              ctx.Intents.postTask(
+                (fun () -> Task.FromException<int>(exn "boom")),
+                (fun _ -> onDoneRan <- true),
+                (fun ex ->
+                  onErrorRan <- true
+                  receivedMessage <- ex.Message)
+              ))
+
+      use runner = new AdaptiveHeadless<float32>(program)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      let steps = pollSteps runner (fun () -> onErrorRan) 1000
+
+      Expect.isLessThan
+        steps
+        1000
+        "The error should arrive within the poll budget"
+
+      Expect.isTrue onErrorRan "The error handler should have run"
+
+      // AwaitTask surfaces a faulted task's AggregateException, so assert the
+      // inner message rather than the exact wrapper text.
+      Expect.stringContains
+        receivedMessage
+        "boom"
+        "The error handler should receive the exception"
+
+      Expect.isFalse onDoneRan "The done handler must not run on failure"
+
+    testCase
+      "RunAsync yields outcomes; postTask completions re-enter via the intent queue"
+    <| fun _ ->
+      let struct (program, _) = mkRunAsyncWorkProgram()
+      use runner = new AdaptiveHeadless<int>(program)
+      use cts = new CancellationTokenSource()
+
+      task {
+        let outcomes = ResizeArray<StepOutcome<int>>()
+        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
+        let enumerator = enum.GetAsyncEnumerator(cts.Token)
+
+        try
+          let mutable running = true
+
+          while running do
+            try
+              let! hasNext = enumerator.MoveNextAsync().AsTask()
+
+              if hasNext then
+                outcomes.Add enumerator.Current
+
+                if outcomes.Count >= 12 then
+                  cts.Cancel()
+              else
+                running <- false
+            with :? OperationCanceledException ->
+              running <- false
+        finally
+          enumerator.DisposeAsync().AsTask().Wait()
+
+        Expect.isGreaterThanOrEqual
+          outcomes.Count
+          12
+          "Should yield at least 12 outcomes"
+
+        Expect.equal
+          outcomes[0].Frame
+          0
+          "The first outcome predates the async completion"
+
+        Expect.isTrue
+          (outcomes |> Seq.exists(fun outcome -> outcome.Frame = 99))
+          "The async completion's root write should appear in a later outcome"
+      }
+      |> Async.AwaitTask
+      |> Async.RunSynchronously
+
+    testCase "FixedStep settles after each sub-step's Update"
+    <| fun _ ->
+      let counter = CVal.create 0
+      let trace = ResizeArray<string>()
+      let mutable posted = false
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue counter))
+          (fun ctx _gameTime ->
+            trace.Add "update"
+            counter.Set(AVal.getValue counter + 1)
+
+            if not posted then
+              posted <- true
+
+              // Posted from sub-step 1: the post drain runs after each
+              // sub-step's Update, so this applies BEFORE sub-step 2's Update
+              // reads the counter.
+              ctx.Intents.post(fun () ->
+                trace.Add "post"
+                counter.Set(AVal.getValue counter * 10)))
+        |> AdaptiveProgram.withFixedStep {
+          StepSeconds = 0.01f
+          MaxStepsPerFrame = 5
+          MaxFrameSeconds = ValueNone
+        }
+
+      use runner = new AdaptiveHeadless<int>(program)
+      // One 50ms frame at a 10ms step → 5 sub-steps; the frame is forced once.
+      runner.Step(TimeSpan.FromMilliseconds 50) |> ignore
+
+      // Sub-step 1: update (0 → 1), post (1 → 10). Sub-steps 2-5: update
+      // only (10 → 14).
+      Expect.equal
+        (List.ofSeq trace)
+        [ "update"; "post"; "update"; "update"; "update"; "update" ]
+        "The post drain runs after sub-step 1's Update, before sub-step 2's"
+
+      Expect.equal runner.Frame 14 "Sub-step 2 must read the settled counter"
+
+    testCase
+      "Subscriptions attach once, survive recomputes by key, and detach when the key leaves"
+    <| fun _ ->
+      let driver = CVal.create 0
+      let mutable attaches = 0
+      let mutable disposes = 0
+
+      let sub = {
+        Id = SubId.ofString "test/sub"
+        Attach =
+          fun _post ->
+            attaches <- attaches + 1
+
+            { new IDisposable with
+                member _.Dispose() = disposes <- disposes + 1
+            }
+      }
+
+      let subMap =
+        driver
+        |> CVal.value
+        |> AVal.map(fun n ->
+          if n >= 0 then
+            Map.ofList [ SubId.ofString "test/sub", sub ] |> Map.toSeq
+          else
+            Seq.empty<SubId * AdaptiveSub>)
+        |> AMap.ofAVal
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx -> AdaptiveInit.ofFrameBuilder(fun () -> 0.0f))
+          (fun _ctx _gameTime -> ())
+        |> AdaptiveProgram.withSubscriptions(fun _ctx -> subMap)
+
+      use runner = new AdaptiveHeadless<float32>(program)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal attaches 1 "The first step should attach the subscription"
+      Expect.equal disposes 0 "Nothing should be detached yet"
+
+      // The map recomputes twice with fresh closure values; the key survives,
+      // so the runtime must keep the attachment (identity is the key).
+      runner.Post(fun () -> driver.Set 1)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      runner.Post(fun () -> driver.Set 2)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal attaches 1 "A surviving key must not re-attach on recompute"
+      Expect.equal disposes 0 "A surviving key must not be detached"
+
+      // The key leaves the map: dispose. The post lands in the post drain
+      // after this step's Update; the diff at the NEXT step's boundary sees
+      // the vanished key, so the detach needs one extra step.
+      runner.Post(fun () -> driver.Set -1)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal disposes 1 "A vanished key should be detached"
+
+      // The key returns: attach fresh (same post drain → boundary-diff lag).
+      runner.Post(fun () -> driver.Set 3)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal attaches 2 "A returning key should attach again"
+
+    testCase "Subscription events post work handled at the next post drain"
+    <| fun _ ->
+      let value = CVal.create 0
+      let mutable capturedPost = Unchecked.defaultof<(unit -> unit) -> unit>
+      let mutable postThreadId = 0
+      let testThreadId = Environment.CurrentManagedThreadId
+
+      let sub = {
+        Id = SubId.ofString "test/event"
+        Attach =
+          fun post ->
+            capturedPost <- post
+
+            { new IDisposable with
+                member _.Dispose() = ()
+            }
+      }
+
+      let subMap =
+        AVal.constant(
+          Map.ofList [ SubId.ofString "test/event", sub ] |> Map.toSeq
+        )
+        |> AMap.ofAVal
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+          (fun _ctx _gameTime -> ())
+        |> AdaptiveProgram.withSubscriptions(fun _ctx -> subMap)
+
+      use runner = new AdaptiveHeadless<int>(program)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      // A subscription event: the captured callback posts work for the post
+      // drain of the next step.
+      capturedPost(fun () ->
+        postThreadId <- Environment.CurrentManagedThreadId
+        value.Set 5)
+
+      Expect.equal runner.Frame 0 "The event must not run synchronously"
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal
+        runner.Frame
+        5
+        "The posted event should apply at the next post drain"
+
+      Expect.equal
+        postThreadId
+        testThreadId
+        "The posted work should run on the owner thread"
+
+    testCase "Dispose detaches all subscriptions"
+    <| fun _ ->
+      let mutable attaches = 0
+      let mutable disposes = 0
+
+      let sub = {
+        Id = SubId.ofString "test/sub"
+        Attach =
+          fun _post ->
+            attaches <- attaches + 1
+
+            { new IDisposable with
+                member _.Dispose() = disposes <- disposes + 1
+            }
+      }
+
+      let subMap =
+        AVal.constant(
+          Map.ofList [ SubId.ofString "test/sub", sub ] |> Map.toSeq
+        )
+        |> AMap.ofAVal
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx -> AdaptiveInit.ofFrameBuilder(fun () -> 0.0f))
+          (fun _ctx _gameTime -> ())
+        |> AdaptiveProgram.withSubscriptions(fun _ctx -> subMap)
+
+      do
+        use runner = new AdaptiveHeadless<float32>(program)
+        runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+        Expect.equal attaches 1 "The first step should attach the subscription"
+
+        Expect.equal
+          disposes
+          0
+          "An attached subscription must not be disposed early"
+
+      Expect.equal disposes 1 "Dispose should detach all subscriptions"
   ]
