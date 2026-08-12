@@ -2,9 +2,11 @@
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-08-11
+
 ### Added
 
-- **Mibo.Adaptive** — the adaptive-data library, adopted from AdaptiveSlop in its entirety and renamed (`AdaptiveSlop.Core` → `Mibo.Adaptive`). Dependency-free: the core never references Mibo; the Mibo integration (`AdaptiveProgram`/`AdaptiveHeadless`) lives in Mibo.Core, and `AdaptiveRaylibGame`/`AdaptiveMonoGameGame` hosts ship in the raylib/MonoGame backends. Ships with its own changelog and versioning, an xunit + FsCheck test suite, and BenchmarkDotNet benchmarks. The AdaptiveSlop submodule is gone.
+- **Mibo.Adaptive (experimental)** — the adaptive-data library, adopted from AdaptiveSlop in its entirety and renamed (`AdaptiveSlop.Core` → `Mibo.Adaptive`). Dependency-free: the core never references Mibo; the Mibo integration (`AdaptiveProgram`/`AdaptiveHeadless`) lives in Mibo.Core, and `AdaptiveRaylibGame`/`AdaptiveMonoGameGame` hosts ship in the raylib/MonoGame backends. Ships with its own changelog and versioning, an xunit + FsCheck test suite, and BenchmarkDotNet benchmarks. The AdaptiveSlop submodule is gone.
 - **Adaptive (experimental):** `AdaptiveHeadless` runner — a pull-based architecture as an alternative to MVU. State lives in changeable roots, derived state in adaptive projections, and the runner forces the frame's projections at the end of each `Step`, so reads are O(1) and unchanged state recomputes nothing — an idle frame costs no recomputation. `Step`/`StepN`/`StepUntil`/`Run`/`RunAsync` and observers mirror `HeadlessRunner`; there is no `'Msg`, no `Cmd` and no `Sub` — handlers write roots and run effects directly.
 - **Adaptive (experimental):** windowed hosts — `AdaptiveRaylibGame` (raylib) and `AdaptiveMonoGameGame` (MonoGame) run an adaptive world in a window with the MVU ceremony removed: no `Program` builder, no Cmd/Sub machinery, input registered and polled when opted in via `withInput`, services read straight from the context. A world can rebuild itself — the `RestartRequested` root and the runner's `Restart()` re-run `Init` for a fresh graph, fresh subscriptions and a reset clock.
 - The `Mibo.Adaptive` integration is marked experimental: using `AdaptiveProgram` emits a compiler warning, and the API carries no stability guarantees while it is under active development.
