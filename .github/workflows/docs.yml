@@ -38,7 +38,10 @@ jobs:
         run: dotnet restore
 
       - name: Run Tests
-        run: dotnet test --configuration Release --no-restore
+        # Debug catches the owner-thread checks and other #if DEBUG diagnostics
+        # that Release builds strip out (the adaptive graph confinement checks);
+        # release.yml keeps the Release gate for the actual release.
+        run: dotnet test --configuration Debug --no-restore
 
       - name: Build Library
         run: dotnet build -c Release

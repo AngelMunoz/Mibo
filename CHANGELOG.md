@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Mibo.Adaptive** — the adaptive-data library, adopted from AdaptiveSlop in its entirety and renamed (`AdaptiveSlop.Core` → `Mibo.Adaptive`). Dependency-free: the core never references Mibo; the Mibo integration (`AdaptiveProgram`/`AdaptiveHeadless`) lives in Mibo.Core, and `AdaptiveRaylibGame`/`AdaptiveMonoGameGame` hosts ship in the raylib/MonoGame backends. Ships with its own changelog and versioning, an xunit + FsCheck test suite, and BenchmarkDotNet benchmarks. The AdaptiveSlop submodule is gone.
+- **Adaptive (experimental):** `AdaptiveHeadless` runner — a pull-based architecture as an alternative to MVU. State lives in changeable roots, derived state in adaptive projections, and the runner forces the frame's projections at the end of each `Step`, so reads are O(1) and unchanged state recomputes nothing — an idle frame costs no recomputation. `Step`/`StepN`/`StepUntil`/`Run`/`RunAsync` and observers mirror `HeadlessRunner`; there is no `'Msg`, no `Cmd` and no `Sub` — handlers write roots and run effects directly.
+- **Adaptive (experimental):** windowed hosts — `AdaptiveRaylibGame` (raylib) and `AdaptiveMonoGameGame` (MonoGame) run an adaptive world in a window with the MVU ceremony removed: no `Program` builder, no Cmd/Sub machinery, input registered and polled when opted in via `withInput`, services read straight from the context. A world can rebuild itself — the `RestartRequested` root and the runner's `Restart()` re-run `Init` for a fresh graph, fresh subscriptions and a reset clock.
+- The `Mibo.Adaptive` integration is marked experimental: using `AdaptiveProgram` emits a compiler warning, and the API carries no stability guarantees while it is under active development.
+
+### Fixed
+
+- **MonoGame 2D:** rotated sprites now face the requested direction. `SpriteState.Rotation` is documented in degrees, but the backend passed it straight to MonoGame's radians-based sprite rotation, so any rotated sprite — projectiles, enemy bodies, turrets — spun in place or pointed diagonally instead of along its heading. Lit sprites rotate correctly as well.
+
 ## [4.1.0] - 2026-08-10
 
 ### Added
@@ -14,7 +25,7 @@
 
 ### Fixed
 
-- **Core:** `worldToCell` on square (`Grid2DSpatial`), voxel (`Grid3DSpatial`) and the layer axis of 3D hex (`Hex3DSpatial`) grids now returns the cell that *contains* the world position. They previously snapped to the nearest cell corner, so any point in the second half of a cell (and, because of banker's rounding, the exact center of an odd-indexed cell) reported the next cell over. Hex 2D and the hex (XZ) plane of 3D hex are unchanged — those resolve to the nearest hex center as before.
+- **Core:** `worldToCell` on square (`Grid2DSpatial`), voxel (`Grid3DSpatial`) and the layer axis of 3D hex (`Hex3DSpatial`) grids now returns the cell that _contains_ the world position. They previously snapped to the nearest cell corner, so any point in the second half of a cell (and, because of banker's rounding, the exact center of an odd-indexed cell) reported the next cell over. Hex 2D and the hex (XZ) plane of 3D hex are unchanged — those resolve to the nearest hex center as before.
 
 ## [4.0.0] - 2026-08-07
 

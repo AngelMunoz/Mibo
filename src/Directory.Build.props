@@ -6,7 +6,7 @@
         <PackageProjectUrl>https://AngelMunoz.github.io/Mibo</PackageProjectUrl>
         <PackageLicenseFile>LICENSE</PackageLicenseFile>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <ChangelogFile>$(SolutionDir)/CHANGELOG.md</ChangelogFile>
+        <ChangelogFile>$(MSBuildThisFileDirectory)../CHANGELOG.md</ChangelogFile>
     </PropertyGroup>
     <ItemGroup>
         <None Include="$(MSBuildThisFileDirectory)/../LICENSE" Pack="true" PackagePath=""/>

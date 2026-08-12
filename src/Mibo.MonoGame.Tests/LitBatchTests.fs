@@ -128,14 +128,16 @@ let cornerTests =
     }
 
     test "90 degree rotation around a centered origin rotates the corners" {
-      // Rotating a 32x32 quad by 90° (Pi/2) around its center (16,16) swaps the
-      // local axes: the TL corner moves to where TR was, etc. Dest origin stays
-      // at (100,100), origin (16,16).
+      // Rotating a 32x32 quad by 90° around its center (16,16) swaps the
+      // local axes: the TL corner moves to where TR was, etc. Rotation is
+      // specified in degrees (the raylib/SpriteState convention; the backend
+      // converts to radians internally). Dest origin stays at (100,100),
+      // origin (16,16).
       let dest = Rectangle(100, 100, 32, 32)
       let origin = Vector2(16.0f, 16.0f)
 
       let struct (tl, tr, bl, br) =
-        LitBatchTessellation.computeCorners dest origin (float32(Math.PI / 2.0))
+        LitBatchTessellation.computeCorners dest origin 90.0f
 
       // Before rotation, local corners relative to origin:
       //   TL=(-16,-16), TR=(16,-16), BL=(-16,16), BR=(16,16).

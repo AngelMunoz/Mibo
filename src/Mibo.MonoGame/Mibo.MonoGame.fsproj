@@ -18,6 +18,8 @@
     <Compile Include="Assets.fs" />
     <Compile Include="Program.fs" />
     <Compile Include="Runtime.fs" />
+    <Compile Include="AdaptiveProgram.fs" />
+    <Compile Include="Adaptive.Runtime.fs" />
     <Compile Include="Animation.fs" />
     <Compile Include="Camera.fs" />
     <Compile Include="Culling.fs" />
