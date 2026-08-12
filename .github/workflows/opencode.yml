@@ -28,6 +28,8 @@ jobs:
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
-          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          OPENCODE_PERMISSION: '{ "bash": {  "*": "deny", "gh*": "allow", "gh pr review*": "deny", "dotnet*": "allow" }, "external_directory": { "*": "deny" } }'
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: kimi-for-coding/k3-256k
+          model: opencode-go/deepseek-v4-flash
+          variant: max
