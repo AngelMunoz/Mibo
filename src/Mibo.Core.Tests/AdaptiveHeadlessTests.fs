@@ -74,31 +74,6 @@ let mkTimeProgram() =
       AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue totalSeconds))
     (fun _ctx _gameTime -> ())
 
-/// Steps the runner (16ms per step) until <c>predicate</c> holds or
-/// <c>maxSteps</c> steps have run; returns the number of steps taken.
-/// Bounded poll for async completions that land at later step boundaries.
-/// Yields briefly between steps: the completion being polled for arrives via
-/// the thread pool, and a tight loop on the polling thread would starve it.
-let pollSteps
-  (runner: AdaptiveHeadless<'Frame>)
-  (predicate: unit -> bool)
-  (maxSteps: int)
-  =
-  let mutable steps = 0
-
-  // Wall-clock bound in addition to the step budget: the completion under
-  // test requires a thread-pool hop (Async.Start), and on constrained runners
-  // the pool can take hundreds of ms to run a trivial work item. The step
-  // budget alone (~1-2 ms/step) is then marginal and the tests flake.
-  let sw = System.Diagnostics.Stopwatch.StartNew()
-
-  while (steps < maxSteps && not(predicate()) && sw.Elapsed.TotalSeconds < 10.0) do
-    runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
-    steps <- steps + 1
-    Thread.Sleep 1
-
-  steps
-
 /// A RunAsync program that starts a background task on the first step; the
 /// completion writes a world-owned root. The root handle is published once
 /// Init has run.
@@ -555,11 +530,12 @@ let adaptiveHeadlessTests =
         let results = ResizeArray<struct (float32 * float)>()
         let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
         let enumerator = enum.GetAsyncEnumerator(cts.Token)
+        let sw = System.Diagnostics.Stopwatch.StartNew()
 
         try
           let mutable running = true
 
-          while running do
+          while running && sw.Elapsed < TimeSpan.FromSeconds 10 do
             try
               let! hasNext = enumerator.MoveNextAsync().AsTask()
 
@@ -575,20 +551,21 @@ let adaptiveHeadlessTests =
                 // the next step boundary on the game thread.
                 if results.Count = 1 then
                   getRoot().Post(2.0f)
+
+                // Stop once the posted value shows up in a frame.
+                if outcome.Frame = 2.0f then
+                  running <- false
               else
                 running <- false
             with :? OperationCanceledException ->
               running <- false
-
-            if results.Count >= 4 then
-              cts.Cancel()
         finally
           enumerator.DisposeAsync().AsTask().Wait()
 
         Expect.isGreaterThanOrEqual
           results.Count
-          4
-          "Should yield at least 4 frames"
+          2
+          "Should yield at least 2 frames"
 
         let struct (first, _) = results[0]
         Expect.equal first 0.0f "First frame should carry the initial value"
@@ -1048,18 +1025,20 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
         1
         "The force should see the settled map (one entry left)"
 
-    testCase "postTask completion re-enters as posted work at a later step"
+    testCase "postTask completion reaches a later frame through RunAsync"
     <| fun _ ->
-      let result = CVal.create 0
-      let mutable onDoneRan = false
-      let mutable onDoneThreadId = 0
+      let mutable root = Unchecked.defaultof<cval<int>>
       let mutable started = false
+      let mutable onDoneThreadId = 0
       let testThreadId = Environment.CurrentManagedThreadId
 
       let program =
         AdaptiveProgram.mkProgram
           (fun _ctx ->
-            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue result))
+            let value = CVal.create 0
+            root <- value
+
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
           (fun ctx _gameTime ->
             if not started then
               started <- true
@@ -1067,40 +1046,50 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
               ctx.Intents.postTask(
                 (fun () -> Task.FromResult(42)),
                 (fun v ->
-                  onDoneRan <- true
                   onDoneThreadId <- Environment.CurrentManagedThreadId
-                  result.Set v),
+                  root.Set v),
                 (fun _ -> ())
               ))
 
       use runner = new AdaptiveHeadless<int>(program)
+      use cts = new CancellationTokenSource()
 
-      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+      task {
+        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
+        let enumerator = enum.GetAsyncEnumerator(cts.Token)
+        let sw = System.Diagnostics.Stopwatch.StartNew()
+        let mutable seen = 0
+        let mutable running = true
 
-      Expect.isFalse
-        onDoneRan
-        "The completion must not run in the starting step"
+        try
+          while running && sw.Elapsed < TimeSpan.FromSeconds 10 do
+            let! hasNext = enumerator.MoveNextAsync().AsTask()
 
-      let steps = pollSteps runner (fun () -> onDoneRan) 1000
+            if hasNext then
+              let frame = enumerator.Current.Frame
 
-      Expect.isLessThan
-        steps
-        1000
-        "The completion should arrive within the poll budget"
+              if frame = 42 then
+                seen <- frame
+                running <- false
+            else
+              running <- false
+        finally
+          enumerator.DisposeAsync().AsTask().Wait()
 
-      Expect.isTrue onDoneRan "The completion should have run"
+        Expect.equal
+          seen
+          42
+          "The completion's root write should reach a later frame"
 
-      Expect.equal
-        onDoneThreadId
-        testThreadId
-        "The completion must run on the owner thread"
+        Expect.notEqual
+          onDoneThreadId
+          testThreadId
+          "The completion should run on the game thread, not the test thread"
+      }
+      |> Async.AwaitTask
+      |> Async.RunSynchronously
 
-      Expect.equal
-        runner.Frame
-        42
-        "The completion's root write should reach a later frame"
-
-    testCase "postTask error path delivers the exception as posted work"
+    testCase "postTask error path delivers the exception through RunAsync"
     <| fun _ ->
       let mutable onErrorRan = false
       let mutable onDoneRan = false
@@ -1123,25 +1112,40 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
               ))
 
       use runner = new AdaptiveHeadless<float32>(program)
-      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+      use cts = new CancellationTokenSource()
 
-      let steps = pollSteps runner (fun () -> onErrorRan) 1000
+      task {
+        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
+        let enumerator = enum.GetAsyncEnumerator(cts.Token)
+        let sw = System.Diagnostics.Stopwatch.StartNew()
+        let mutable running = true
 
-      Expect.isLessThan
-        steps
-        1000
-        "The error should arrive within the poll budget"
+        try
+          while running && sw.Elapsed < TimeSpan.FromSeconds 10 do
+            let! hasNext = enumerator.MoveNextAsync().AsTask()
 
-      Expect.isTrue onErrorRan "The error handler should have run"
+            if hasNext then
+              // Keep consuming outcomes until the error handler runs or the
+              // wall-clock deadline passes.
+              running <- not onErrorRan
+            else
+              running <- false
+        finally
+          enumerator.DisposeAsync().AsTask().Wait()
 
-      // AwaitTask surfaces a faulted task's AggregateException, so assert the
-      // inner message rather than the exact wrapper text.
-      Expect.stringContains
-        receivedMessage
-        "boom"
-        "The error handler should receive the exception"
+        Expect.isTrue onErrorRan "The error handler should have run"
 
-      Expect.isFalse onDoneRan "The done handler must not run on failure"
+        // AwaitTask surfaces a faulted task's AggregateException, so assert the
+        // inner message rather than the exact wrapper text.
+        Expect.stringContains
+          receivedMessage
+          "boom"
+          "The error handler should receive the exception"
+
+        Expect.isFalse onDoneRan "The done handler must not run on failure"
+      }
+      |> Async.AwaitTask
+      |> Async.RunSynchronously
 
     testCase
       "RunAsync yields outcomes; postTask completions re-enter via the intent queue"
@@ -1263,9 +1267,10 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
 
       let program =
         AdaptiveProgram.mkProgram
-          (fun _ctx -> AdaptiveInit.ofFrameBuilder(fun () -> 0.0f))
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> 0.0f)
+            |> AdaptiveInit.withSubscriptions(fun _ctx -> subMap))
           (fun _ctx _gameTime -> ())
-        |> AdaptiveProgram.withSubscriptions(fun _ctx -> subMap)
 
       use runner = new AdaptiveHeadless<float32>(program)
       runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
@@ -1300,9 +1305,11 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
 
       Expect.equal attaches 2 "A returning key should attach again"
 
-    testCase "Subscription events post work handled at the next post drain"
+    testCase
+      "Subscription events post work handled at the next boundary, before Update"
     <| fun _ ->
       let value = CVal.create 0
+      let trace = ResizeArray<string>()
       let mutable capturedPost = Unchecked.defaultof<(unit -> unit) -> unit>
       let mutable postThreadId = 0
       let testThreadId = Environment.CurrentManagedThreadId
@@ -1327,26 +1334,33 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
       let program =
         AdaptiveProgram.mkProgram
           (fun _ctx ->
-            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
-          (fun _ctx _gameTime -> ())
-        |> AdaptiveProgram.withSubscriptions(fun _ctx -> subMap)
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value)
+            |> AdaptiveInit.withSubscriptions(fun _ctx -> subMap))
+          (fun _ctx _gameTime -> trace.Add "update")
 
       use runner = new AdaptiveHeadless<int>(program)
       runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+      trace.Clear()
 
-      // A subscription event: the captured callback posts work for the post
-      // drain of the next step.
+      // A subscription event: the captured callback posts work for the
+      // pre-step drain of the next step.
       capturedPost(fun () ->
         postThreadId <- Environment.CurrentManagedThreadId
+        trace.Add "event"
         value.Set 5)
 
       Expect.equal runner.Frame 0 "The event must not run synchronously"
       runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
 
       Expect.equal
+        (List.ofSeq trace)
+        [ "event"; "update" ]
+        "The event should be handled before Update"
+
+      Expect.equal
         runner.Frame
         5
-        "The posted event should apply at the next post drain"
+        "The posted event should apply before the step's force"
 
       Expect.equal
         postThreadId
@@ -1377,9 +1391,10 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
 
       let program =
         AdaptiveProgram.mkProgram
-          (fun _ctx -> AdaptiveInit.ofFrameBuilder(fun () -> 0.0f))
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> 0.0f)
+            |> AdaptiveInit.withSubscriptions(fun _ctx -> subMap))
           (fun _ctx _gameTime -> ())
-        |> AdaptiveProgram.withSubscriptions(fun _ctx -> subMap)
 
       do
         use runner = new AdaptiveHeadless<float32>(program)

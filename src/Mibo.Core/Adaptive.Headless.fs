@@ -30,9 +30,10 @@ type StepOutcome<'Frame> = {
 /// <para>
 /// The runner owns the frame boundary. Each
 /// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>:
-/// (1) applies cross-thread posts and drains the next-frame lane at the
-/// frame boundary, then compares the program's subscription projection
-/// against the attached table,
+/// (1) applies cross-thread posts, drains the next-frame lane and the
+/// pre-step lane (subscription events, e.g. input) at the frame boundary,
+/// then compares the program's subscription projection against the attached
+/// table,
 /// (2) writes the current game time into the time root (once, or once per
 /// fixed step when <see cref="F:Mibo.Adaptive.AdaptiveProgram`1.FixedStep"/> is set),
 /// (3) runs the program's <c>Update</c> phase,
@@ -93,6 +94,14 @@ type AdaptiveHeadless<'Frame>
   // ResizeArray per step would cost ~96 B even on clean steps).
   let staleSubIds = ResizeArray<SubId>()
 
+  // The version of the last map the projection returned. The runner checks
+  // it every step and skips the subscription diff when it did not change —
+  // clean steps stay allocation-free even with subscriptions attached. The
+  // version increases on every applied delta. If a projection returns maps
+  // whose content changes without a version change, that projection is
+  // responsible for the staleness.
+  let mutable lastSubMapVersion = -1L
+
   let mutable fixedAccSeconds = 0.0f
 
   let mutable gameTime = {
@@ -102,6 +111,9 @@ type AdaptiveHeadless<'Frame>
 
   let mutable frame = Unchecked.defaultof<'Frame>
   let mutable frameBuilder: unit -> 'Frame = Unchecked.defaultof<unit -> 'Frame>
+
+  let mutable subscriptions: AdaptiveFrameContext -> amap<SubId, AdaptiveSub> =
+    Unchecked.defaultof<AdaptiveFrameContext -> amap<SubId, AdaptiveSub>>
   // Guards RunAsync: at most one enumerator may drive the runner at a time.
   let mutable runAsyncActive = 0
 
@@ -127,6 +139,7 @@ type AdaptiveHeadless<'Frame>
 
       let init = program.Init frameCtx
       frameBuilder <- init.FrameBuilder
+      subscriptions <- init.Subscriptions
       disposables.AddRange init.Disposables
 
       // Force the first frame so Frame is never default after initialization.
@@ -140,36 +153,33 @@ type AdaptiveHeadless<'Frame>
       initialized <- true
 
 
-  /// Diff the program's subscription projection against the attached table.
+  /// Diff the subscription projection against the attached table.
   /// Runs on the owner thread at the frame boundary, after the next-frame lane
   /// drain and before the time root write. The projection is an amap
   /// keyed by SubId: reading it is incremental — no work when no dependency
   /// moved — and the comparison decides what to attach, keep, and detach.
   let diffSubscriptions() =
-    match program.Subscriptions with
-    | ValueNone ->
-      // No projection: detach anything left over (the projection is fixed at
-      // program build, so this is a safety net rather than a live path).
-      for KeyValueV(_, d) in attachedSubs do
-        d.Dispose()
+    let map = subscriptions frameCtx
 
-      attachedSubs.Clear()
-    | ValueSome subscribe ->
-      // Reads the current map content without forcing it (AMap.getValue, not
-      // AMap.force): zero allocation on clean steps — the recompute only runs
-      // when a dependency moved. The result is used and discarded within this
-      // step, so it is always fresh.
-      let current = subscribe frameCtx |> AMap.getValue
+    if map.Version <> lastSubMapVersion then
+      lastSubMapVersion <- map.Version
 
-      // New key → attach, handing the subscription the post function:
-      // events never run handlers directly, they post work for the next
-      // post drain, on the owner thread, in order.
+      // Reads the current map content without forcing it (AMap.getValue,
+      // not AMap.force): zero allocation on clean steps — the recompute
+      // only runs when a dependency moved. The result is used and
+      // discarded within this step, so it is always fresh.
+      let current = map |> AMap.getValue
+
+      // New key → attach, handing the subscription the pre-step post
+      // function: events never run handlers directly, they post work that
+      // the runner handles on the owner thread at the next step's boundary,
+      // before Update, in order.
       for KeyValueV(id, sub) in current do
         if not(attachedSubs.ContainsKey id) then
-          attachedSubs[id] <- sub.Attach intents.post
+          attachedSubs[id] <- sub.Attach intents.postPreStep
 
-      // Missing key → detach. Surviving keys are kept as-is: the key is the
-      // identity, never re-attach on a fresh closure value.
+      // Missing key → detach. Surviving keys are kept as-is: the key is
+      // the identity, never re-attach on a fresh closure value.
       if attachedSubs.Count > 0 then
         staleSubIds.Clear()
 
@@ -244,9 +254,12 @@ type AdaptiveHeadless<'Frame>
 
       // Frame boundary: apply cross-thread
       // posts (e.g. input-thread writes), then drain the next-frame lane —
-      // explicit postNextFrame deferrals, once per Step, before the time write.
+      // explicit postNextFrame deferrals, once per Step, before the time
+      // write — and the pre-step lane, which holds subscription events
+      // (input): they are handled before Update reads state.
       Posting.pump()
       intents.DrainNextFrame()
+      intents.DrainPreStep()
 
       // Subscription lifecycle: diff the program's subscription projection
       // against the attached table.

@@ -17,20 +17,22 @@ open Mibo.Elmish
 /// — closures capture the handler, so no message type is needed.
 /// </summary>
 /// <remarks>
-/// Both lanes are multi-producer, single-consumer queues: a
+/// All three lanes are multi-producer, single-consumer queues: a
 /// <see cref="T:System.Collections.Concurrent.ConcurrentQueue`1"/> for
 /// producers, drained by the single consumer (the runner) on the
 /// owner thread. The post drain runs until empty — work posted during the
 /// drain runs in the same drain, in post order, mirroring MVU's
 /// <c>DispatchMode.Immediate</c> semantics; work that posts more work is the
 /// user's responsibility, exactly as message cycles are in MVU. The
-/// next-frame lane drains once per <c>Step</c> at the boundary, never per
-/// sub-step.
+/// pre-step lane holds subscription events and drains once per <c>Step</c>
+/// at the boundary, before <c>Update</c>; the next-frame lane also drains
+/// once per <c>Step</c> at the boundary, never per sub-step.
 /// Allocation: one queue node per posted work item — acceptable on the cold
 /// path, zero on steps with no posted work.
 /// </remarks>
 type IntentQueue() =
   let posted = ConcurrentQueue<unit -> unit>()
+  let preStep = ConcurrentQueue<unit -> unit>()
   let nextFrame = ConcurrentQueue<unit -> unit>()
 
   /// <summary>
@@ -44,6 +46,15 @@ type IntentQueue() =
   /// </summary>
   /// <param name="work">The work to run at the post drain.</param>
   member _.post(work: unit -> unit) = posted.Enqueue work
+
+  /// <summary>
+  /// Posts work for the pre-step drain: it runs on the owner thread at the
+  /// next step's boundary, after cross-thread posts are applied and before
+  /// <c>Update</c>. Used by the subscription machinery — subscription events
+  /// are handled before the step's <c>Update</c> reads state.
+  /// </summary>
+  /// <param name="work">The work to run at the next step's boundary.</param>
+  member internal _.postPreStep(work: unit -> unit) = preStep.Enqueue work
 
   /// <summary>
   /// Defers <c>work</c> to the top of the NEXT
@@ -130,11 +141,22 @@ type IntentQueue() =
     while nextFrame.TryDequeue(&next) do
       next()
 
+  /// <summary>
+  /// Runs the pre-step lane on the calling (owner) thread: subscription
+  /// events queued at the step boundary, in post order. Work posted during
+  /// this drain also runs in the same drain.
+  /// </summary>
+  member internal _.DrainPreStep() =
+    let mutable next = Unchecked.defaultof<unit -> unit>
+
+    while preStep.TryDequeue(&next) do
+      next()
+
 /// <summary>
 /// The graph-building context handed to an
 /// <see cref="T:Mibo.Adaptive.AdaptiveProgram`1"/> <c>Init</c> function and to
 /// the subscription projection
-/// (<see cref="M:Mibo.Adaptive.AdaptiveProgram.withSubscriptions"/>).
+/// (<see cref="M:Mibo.Adaptive.AdaptiveInit.withSubscriptions"/>).
 /// </summary>
 /// <remarks>
 /// The context exposes the framework-owned roots: the time cell, written by
@@ -221,6 +243,44 @@ type AdaptiveContext
   /// </summary>
   member _.Intents = intents
 
+/// <summary>
+/// A subscription spec: a stable identifier plus an attach function. The
+/// adaptive counterpart of <see cref="T:Mibo.Elmish.Sub`1"/>: the attach
+/// function receives the pre-step post function instead of
+/// <c>Dispatch&lt;'Msg&gt;</c>, so subscription events never run handlers
+/// directly — they post work, handled on the owner thread at the next step's
+/// boundary, before <c>Update</c>, in order.
+/// </summary>
+[<Struct>]
+type AdaptiveSub = {
+  /// <summary>Stable key the runtime uses to diff subscriptions across steps.</summary>
+  Id: SubId
+
+  /// <summary>
+  /// Attaches the subscription and returns a disposable that detaches it. The
+  /// <c>post</c> argument is the pre-step lane's entry point: event callbacks
+  /// (possibly on foreign threads) may only enqueue work, and the runner
+  /// handles it on the owner thread at the next step's boundary, before
+  /// <c>Update</c> — a foreign-thread callback can never run game code
+  /// directly.
+  /// </summary>
+  Attach: ((unit -> unit) -> unit) -> IDisposable
+}
+
+/// <summary>Functions for composing <see cref="T:Mibo.Adaptive.AdaptiveSub"/> values.</summary>
+module AdaptiveSub =
+
+  /// <summary>
+  /// Prefixes the subscription's <see cref="T:Mibo.Elmish.SubId"/> with a
+  /// namespace, for parent-child composition — the adaptive counterpart of
+  /// <c>Sub.map</c> without the message mapping. Delegates to
+  /// <see cref="M:Mibo.Elmish.SubId.prefix"/>.
+  /// </summary>
+  let inline prefix (prefix: string) (sub: AdaptiveSub) : AdaptiveSub = {
+    sub with
+        Id = SubId.prefix prefix sub.Id
+  }
+
 /// <summary>The result of building an adaptive program's graph.</summary>
 [<Struct>]
 type AdaptiveInit<'Frame> = {
@@ -231,30 +291,79 @@ type AdaptiveInit<'Frame> = {
   /// </summary>
   FrameBuilder: unit -> 'Frame
 
+  /// <summary>
+  /// The subscription projection, built in <c>Init</c> alongside the frame
+  /// builder — both capture the world from the same place. The runner calls
+  /// it once per step and compares the returned map against its attached
+  /// table to start, keep, and stop subscriptions. See
+  /// <see cref="M:Mibo.Adaptive.AdaptiveInit.withSubscriptions"/> for the
+  /// stable-map requirement.
+  /// </summary>
+  Subscriptions: AdaptiveFrameContext -> amap<SubId, AdaptiveSub>
+
   /// <summary>Disposables released when the runner is disposed.</summary>
   Disposables: IDisposable list
 }
 
 /// <summary>Helpers for building an <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/>.</summary>
 /// <remarks>
-/// These keep the <c>Disposables</c> list hidden: <see cref="M:Mibo.Adaptive.AdaptiveInit.ofFrameBuilder"/>
-/// defaults it to empty, and <see cref="M:Mibo.Adaptive.AdaptiveInit.withDisposables"/> /
-/// <see cref="M:Mibo.Adaptive.AdaptiveInit.withDisposable"/> append to it. Callers never write
-/// <c>Disposables = []</c> by hand.
+/// These keep the <c>Disposables</c> list and the default subscription
+/// projection hidden: <see cref="M:Mibo.Adaptive.AdaptiveInit.ofFrameBuilder"/>
+/// defaults them (empty subscriptions, no disposables), and
+/// <see cref="M:Mibo.Adaptive.AdaptiveInit.withSubscriptions"/> /
+/// <see cref="M:Mibo.Adaptive.AdaptiveInit.withDisposables"/> /
+/// <see cref="M:Mibo.Adaptive.AdaptiveInit.withDisposable"/> replace or append
+/// to them. Callers never write <c>Disposables = []</c> by hand.
 /// </remarks>
 module AdaptiveInit =
 
   /// <summary>
-  /// Creates an init from a frame builder with no disposables.
+  /// Creates an init from a frame builder with no subscriptions and no
+  /// disposables.
   /// </summary>
   /// <param name="frameBuilder">Forces the frame's output projections and packs them into <c>'Frame</c>.</param>
   let inline ofFrameBuilder
     ([<InlineIfLambda>] frameBuilder: unit -> 'Frame)
     : AdaptiveInit<'Frame> =
+    // One shared empty map: a fresh AMap.empty per call would defeat the
+    // runner's version check and allocate every step.
+    let emptySubs: AdaptiveFrameContext -> amap<SubId, AdaptiveSub> =
+      let empty = AMap.empty
+      fun _ -> empty
+
     {
       FrameBuilder = frameBuilder
+      Subscriptions = emptySubs
       Disposables = []
     }
+
+  /// <summary>
+  /// Sets the subscription projection. The runner reads the map once per step
+  /// (skipping the read when nothing changed), compares it by
+  /// <see cref="T:Mibo.Elmish.SubId"/> against its attached table, and starts
+  /// new, keeps matching, and stops vanished subscriptions. The adaptive
+  /// counterpart of <see cref="M:Mibo.Elmish.Program.withSubscription"/>.
+  /// </summary>
+  /// <remarks>
+  /// The projection must return a stable map: build it once and return the
+  /// same instance. The runner checks the map's version every step and skips
+  /// the diff when nothing changed.
+  /// If you need subscriptions that change with game state, use
+  /// <c>AMap.custom</c> and describe the changes yourself — do not build a
+  /// fresh map from adaptive values (for example <c>AMap.ofAVal</c>) inside
+  /// the projection, that would create a new graph every step.
+  /// Subscription work feeds the step cycle: it runs at the next step's
+  /// boundary, before <c>Update</c>. Do not modify game state from it beyond
+  /// what the step cycle expects.
+  /// </remarks>
+  /// <param name="subscribe">Builds the subscription map from the context.</param>
+  /// <param name="init">The init to configure.</param>
+  let inline withSubscriptions
+    ([<InlineIfLambda>] subscribe:
+      AdaptiveFrameContext -> amap<SubId, AdaptiveSub>)
+    (init: AdaptiveInit<'Frame>)
+    : AdaptiveInit<'Frame> =
+    { init with Subscriptions = subscribe }
 
   /// <summary>
   /// Appends a list of disposables to the init. The disposables are released
@@ -324,44 +433,6 @@ type AdaptiveFixedStepConfig = {
 }
 
 /// <summary>
-/// A subscription spec: a stable identifier plus an attach function. The
-/// adaptive counterpart of <see cref="T:Mibo.Elmish.Sub`1"/>: the attach
-/// function receives the post function instead of
-/// <c>Dispatch&lt;'Msg&gt;</c>, so subscription events never run handlers
-/// directly — they post work, handled on the owner thread at the next post
-/// drain, in order.
-/// </summary>
-[<Struct>]
-type AdaptiveSub = {
-  /// <summary>Stable key the runtime uses to diff subscriptions across steps.</summary>
-  Id: SubId
-
-  /// <summary>
-  /// Attaches the subscription and returns a disposable that detaches it. The
-  /// <c>post</c> argument is the same-step lane's entry point
-  /// (<see cref="M:Mibo.Adaptive.IntentQueue.post"/>): event callbacks
-  /// (possibly on foreign threads) may only enqueue work for the next post
-  /// drain — a foreign-thread callback can never run game code directly, it
-  /// only schedules work for the owner thread.
-  /// </summary>
-  Attach: ((unit -> unit) -> unit) -> IDisposable
-}
-
-/// <summary>Functions for composing <see cref="T:Mibo.Adaptive.AdaptiveSub"/> values.</summary>
-module AdaptiveSub =
-
-  /// <summary>
-  /// Prefixes the subscription's <see cref="T:Mibo.Elmish.SubId"/> with a
-  /// namespace, for parent-child composition — the adaptive counterpart of
-  /// <c>Sub.map</c> without the message mapping. Delegates to
-  /// <see cref="M:Mibo.Elmish.SubId.prefix"/>.
-  /// </summary>
-  let inline prefix (prefix: string) (sub: AdaptiveSub) : AdaptiveSub = {
-    sub with
-        Id = SubId.prefix prefix sub.Id
-  }
-
-/// <summary>
 /// An adaptive program: the complete description of an adaptive game.
 /// </summary>
 /// <remarks>
@@ -380,15 +451,15 @@ module AdaptiveSub =
 /// post work.
 /// </para>
 /// <para>
-/// The two contexts are split by phase: <c>Init</c> and the subscription
-/// projection receive the queue-less
+/// The two contexts are split by phase: <c>Init</c> — and the subscription
+/// projection it returns — receive the queue-less
 /// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> (roots and services
 /// only), while <c>Update</c> receives the full
 /// <see cref="T:Mibo.Adaptive.AdaptiveContext"/> with the intent queue — so
 /// the force phase cannot enqueue work.
 /// </para>
 /// <para>
-/// The <c>Init</c>/<c>Update</c>/<c>Observers</c>/<c>Subscriptions</c> slots
+/// The <c>Init</c>/<c>Update</c>/<c>Observers</c> slots
 /// are the dependency graph (the simulation). The <c>Config</c>/
 /// <c>Renderers</c>/<c>ServiceRegistrations</c>/<c>AssetsBasePath</c> slots are
 /// host configuration (the presentation) consumed by the windowed hosts. The
@@ -430,23 +501,6 @@ type AdaptiveProgram<'Frame> = {
   /// <summary>Observer factories for receiving the forced frame each step.</summary>
   Observers: (unit -> IObserver<struct (GameContext * 'Frame * GameTime)>) list
 
-  /// <summary>
-  /// Optional subscription projection: an <c>amap</c> keyed by
-  /// <see cref="T:Mibo.Elmish.SubId"/> over
-  /// <see cref="T:Mibo.Adaptive.AdaptiveSub"/> specs, built from the
-  /// queue-less <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/>. The runner
-  /// forces it once per step — incrementally, with no work when no dependency
-  /// moved — and diffs it by key against its attached table to start, keep,
-  /// and stop subscriptions. Wired via
-  /// <see cref="M:Mibo.Adaptive.AdaptiveProgram.withSubscriptions"/>.
-  /// </summary>
-  Subscriptions: (AdaptiveFrameContext -> amap<SubId, AdaptiveSub>) voption
-
-  /// <summary>
-  /// Configuration callbacks that transform the default
-  /// <see cref="T:Mibo.Elmish.GameConfig"/>. Each callback receives the current
-  /// config and returns a modified copy. Applied in registration order.
-  /// </summary>
   Config: (GameConfig -> GameConfig) list
 
   /// <summary>
@@ -517,7 +571,6 @@ module AdaptiveProgram =
       Init = init
       Update = update
       Observers = []
-      Subscriptions = ValueNone
       Config = []
       Renderers = []
       ServiceRegistrations = []
@@ -545,27 +598,6 @@ module AdaptiveProgram =
     {
       program with
           Observers = factory :: program.Observers
-    }
-
-  /// <summary>
-  /// Sets the program's subscription projection. The runner forces the map
-  /// once per step (incremental — no work when no dependency moved), diffs it
-  /// by <see cref="T:Mibo.Elmish.SubId"/> against its attached table, and
-  /// starts new, keeps matching, and stops vanished subscriptions. The
-  /// projection receives the queue-less
-  /// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/>. The adaptive
-  /// counterpart of <see cref="M:Mibo.Elmish.Program.withSubscription"/>.
-  /// </summary>
-  /// <param name="subscribe">Builds the subscription map from the context.</param>
-  /// <param name="program">The program to configure.</param>
-  let inline withSubscriptions
-    ([<InlineIfLambda>] subscribe:
-      AdaptiveFrameContext -> amap<SubId, AdaptiveSub>)
-    (program: AdaptiveProgram<'Frame>)
-    : AdaptiveProgram<'Frame> =
-    {
-      program with
-          Subscriptions = ValueSome subscribe
     }
 
   /// <summary>
