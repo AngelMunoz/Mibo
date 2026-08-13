@@ -1,42 +1,182 @@
 namespace Mibo.Adaptive
 
 open System
+open System.Collections.Concurrent
+open System.Threading.Tasks
 open Mibo.Elmish
 
 /// <summary>
-/// The graph-building context handed to an
-/// <see cref="T:Mibo.Adaptive.AdaptiveProgram`1"/> <c>Init</c> function.
+/// The intent queue of an adaptive program: the single place to post
+/// <c>unit -> unit</c> work during <c>Update</c>. Intents are work items deferred
+/// to a moment the runtime owns, exposed as moment-named entry points:
+/// <see cref="M:Mibo.Adaptive.IntentQueue.post"/> (later in this step),
+/// <see cref="M:Mibo.Adaptive.IntentQueue.postNextFrame"/> (top of the next
+/// step), and <see cref="M:Mibo.Adaptive.IntentQueue.postTask"/> /
+/// <see cref="M:Mibo.Adaptive.IntentQueue.postAsync"/> (background work whose
+/// completion returns via <c>post</c>). The adaptive counterpart of <c>Cmd</c>
+/// — closures capture the handler, so no message type is needed.
 /// </summary>
 /// <remarks>
-/// The context exposes the framework-owned roots: the time cell, written by the
-/// runner at the start of every <c>Step</c>, the exit-request cell, read by the
-/// runner to decide whether to stop, and the restart-request cell, read by the
-/// host to decide whether to rebuild the program. The program reads these cells
-/// and derives its projections from them like any other root; only
-/// <c>ExitRequested</c>/<c>RestartRequested</c> are written by the program.
+/// All three lanes are multi-producer, single-consumer queues: a
+/// <see cref="T:System.Collections.Concurrent.ConcurrentQueue`1"/> for
+/// producers, drained by the single consumer (the runner) on the
+/// owner thread. The post drain runs until empty — work posted during the
+/// drain runs in the same drain, in post order, mirroring MVU's
+/// <c>DispatchMode.Immediate</c> semantics; work that posts more work is the
+/// user's responsibility, exactly as message cycles are in MVU. The
+/// pre-step lane holds subscription events and drains once per <c>Step</c>
+/// at the boundary, before <c>Update</c>; the next-frame lane also drains
+/// once per <c>Step</c> at the boundary, never per sub-step.
+/// Allocation: one queue node per posted work item — acceptable on the cold
+/// path, zero on steps with no posted work.
 /// </remarks>
-type AdaptiveContext
-  internal
-  (
-    ctx: GameContext,
-    time: cval<GameTime>,
-    exitRequested: cval<bool>,
-    restartRequested: cval<bool>
-  ) =
-  /// <summary>The framework-owned time root. The runner writes it at the start of every <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>; projections may depend on it (animation, physics, timers).</summary>
+type IntentQueue() =
+  let posted = ConcurrentQueue<unit -> unit>()
+  let preStep = ConcurrentQueue<unit -> unit>()
+  let nextFrame = ConcurrentQueue<unit -> unit>()
+
+  /// <summary>
+  /// Defers <c>work</c> to the next post drain: it runs on the owner thread
+  /// after the next <c>Update</c> (after each sub-step's <c>Update</c> under
+  /// fixed-step), in post order, drained until empty, before the frame is
+  /// forced. Cross-system reactions, foreign-thread posts, and async
+  /// completions go here. Safe to call from any thread; the work itself must
+  /// only run owner-thread legal writes (plain <c>Set</c> calls). The
+  /// adaptive counterpart of <c>Cmd.ofMsg</c>.
+  /// </summary>
+  /// <param name="work">The work to run at the post drain.</param>
+  member _.post(work: unit -> unit) = posted.Enqueue work
+
+  /// <summary>
+  /// Posts work for the pre-step drain: it runs on the owner thread at the
+  /// next step's boundary, after cross-thread posts are applied and before
+  /// <c>Update</c>. Used by the subscription machinery — subscription events
+  /// are handled before the step's <c>Update</c> reads state.
+  /// </summary>
+  /// <param name="work">The work to run at the next step's boundary.</param>
+  member internal _.postPreStep(work: unit -> unit) = preStep.Enqueue work
+
+  /// <summary>
+  /// Defers <c>work</c> to the top of the NEXT
+  /// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>: it runs on the
+  /// owner thread at the frame boundary, after cross-thread posts are applied
+  /// (<c>Posting.pump</c>) and before the time root is written. The adaptive
+  /// counterpart of <c>Cmd.deferNextFrame</c> — the lane exists for work that
+  /// must not run in the step that posted it. Safe to call
+  /// from any thread.
+  /// </summary>
+  /// <param name="work">The work to run at the next step's boundary.</param>
+  member _.postNextFrame(work: unit -> unit) = nextFrame.Enqueue work
+
+  /// <summary>
+  /// Defers a background task to this queue: the starter runs on the
+  /// owner thread at the next post drain and hands the work to the
+  /// thread pool — <c>work</c> (the task creation call) and the task itself
+  /// run off the owner thread — and the completion (<c>ofSuccess</c> or
+  /// <c>ofError</c>) is posted to the same lane and runs on the owner thread
+  /// at a later post drain, where root writes are legal. The runtime handles
+  /// the thread handoff for you — you never post or pump directly. The
+  /// adaptive counterpart of <c>Cmd.ofTask</c>.
+  /// </summary>
+  /// <param name="work">The background work to start; must not touch the graph.</param>
+  /// <param name="ofSuccess">Receives the result on the owner thread at a later post drain.</param>
+  /// <param name="ofError">Receives the exception on the owner thread at a later post drain.</param>
+  member this.postTask
+    (work: unit -> Task<'T>, ofSuccess: 'T -> unit, ofError: exn -> unit)
+    =
+    this.post(fun () ->
+      async {
+        try
+          let! r = work() |> Async.AwaitTask
+          posted.Enqueue(fun () -> ofSuccess r)
+        with ex ->
+          posted.Enqueue(fun () -> ofError ex)
+      }
+      |> Async.Start)
+
+  /// <summary>
+  /// Defers an F# async workflow to this queue: the starter runs on the
+  /// owner thread at the next post drain and starts the workflow on the
+  /// thread pool — the workflow body runs off the owner thread — and the
+  /// completion (<c>ofSuccess</c> or <c>ofError</c>) is posted to the same
+  /// lane and runs on the owner thread at a later post drain, where root
+  /// writes are legal. The runtime handles the thread handoff for you — you
+  /// never post or pump directly. The adaptive counterpart of <c>Cmd.ofAsync</c>.
+  /// </summary>
+  /// <param name="work">The async workflow to start; must not touch the graph.</param>
+  /// <param name="ofSuccess">Receives the result on the owner thread at a later post drain.</param>
+  /// <param name="ofError">Receives the exception on the owner thread at a later post drain.</param>
+  member this.postAsync
+    (work: Async<'T>, ofSuccess: 'T -> unit, ofError: exn -> unit)
+    =
+    this.post(fun () ->
+      async {
+        try
+          let! r = work
+          posted.Enqueue(fun () -> ofSuccess r)
+        with ex ->
+          posted.Enqueue(fun () -> ofError ex)
+      }
+      |> Async.Start)
+
+  /// <summary>
+  /// Runs every pending work item in post order on the calling (owner)
+  /// thread until the lane is empty: work posted during the drain (from
+  /// any thread) runs in the same drain, in post order. No termination bound.
+  /// </summary>
+  member internal _.Drain() =
+    let mutable next = Unchecked.defaultof<unit -> unit>
+
+    while posted.TryDequeue(&next) do
+      next()
+
+  /// <summary>
+  /// Runs the next-frame lane on the calling (owner) thread: everything queued
+  /// at the top of the step, in post order. Work posted during this drain
+  /// also runs in the same drain (same semantics as the post drain).
+  /// </summary>
+  member internal _.DrainNextFrame() =
+    let mutable next = Unchecked.defaultof<unit -> unit>
+
+    while nextFrame.TryDequeue(&next) do
+      next()
+
+  /// <summary>
+  /// Runs the pre-step lane on the calling (owner) thread: subscription
+  /// events queued at the step boundary, in post order. Work posted during
+  /// this drain also runs in the same drain.
+  /// </summary>
+  member internal _.DrainPreStep() =
+    let mutable next = Unchecked.defaultof<unit -> unit>
+
+    while preStep.TryDequeue(&next) do
+      next()
+
+/// <summary>
+/// The graph-building context handed to an
+/// <see cref="T:Mibo.Adaptive.AdaptiveProgram`1"/> <c>Init</c> function and to
+/// the subscription projection
+/// (<see cref="M:Mibo.Adaptive.AdaptiveInit.withSubscriptions"/>).
+/// </summary>
+/// <remarks>
+/// The context exposes the framework-owned roots: the time cell, written by
+/// the runner at the start of every <c>Step</c> (once per fixed sub-step),
+/// the exit-request cell, read by the runner to decide whether to stop, plus
+/// the <see cref="T:Mibo.Elmish.GameContext"/> holding the window dimensions
+/// and the registered services. The program reads these cells and derives
+/// its projections from them like any other root; only <c>ExitRequested</c>
+/// is written by the program. The context deliberately does NOT expose the
+/// intent queue: the frame builder and init/projection construction must not
+/// be able to defer work. Only the <c>Update</c> phase can reach the queue,
+/// via <see cref="T:Mibo.Adaptive.AdaptiveContext"/>.
+/// </remarks>
+type AdaptiveFrameContext
+  internal (ctx: GameContext, time: cval<GameTime>, exitRequested: cval<bool>) =
+  /// <summary>The framework-owned time root. The runner writes it at the start of every <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/> (once per fixed sub-step); projections may depend on it (animation, physics, timers).</summary>
   member _.Time = time
 
   /// <summary>The exit-request root. Set it to <c>true</c> to make the runner stop — the adaptive counterpart of <c>Cmd.signalExit</c>.</summary>
   member _.ExitRequested = exitRequested
-
-  /// <summary>
-  /// The restart-request root. Set it to <c>true</c> to rebuild the program: the
-  /// runner disposes the program's disposables, re-runs <c>Init</c> — a fresh
-  /// graph over the same roots — and forces the first frame. The windowed
-  /// hosts consume it after <c>Step</c>; headless users call
-  /// <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Restart"/> themselves.
-  /// </summary>
-  member _.RestartRequested = restartRequested
 
   /// <summary>
   /// The <see cref="T:Mibo.Elmish.GameContext"/> the runner owns: the window
@@ -53,6 +193,94 @@ type AdaptiveContext
   /// <summary>Current window height in pixels. Default: 600.</summary>
   member _.WindowHeight = ctx.WindowHeight
 
+/// <summary>
+/// The <c>Update</c>-phase context: everything on
+/// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> plus the framework-owned
+/// intent queue, <see cref="P:Mibo.Adaptive.AdaptiveContext.Intents"/> —
+/// intents are <c>unit -> unit</c> work items deferred to a
+/// framework-owned moment (after <c>Update</c>, at the top of the next step,
+/// or as background work whose completion returns via <c>post</c>).
+/// </summary>
+/// <remarks>
+/// The queue is reachable only here, where posting is legal: <c>Update</c>
+/// reacts to what it read and defers work; the frame builder and projection
+/// construction see only
+/// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/>, so the force phase
+/// cannot enqueue work — the design makes it impossible, no runtime checks.
+/// </remarks>
+type AdaptiveContext
+  internal (frameCtx: AdaptiveFrameContext, intents: IntentQueue) =
+  /// <summary>The framework-owned time root. The runner writes it at the start of every <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/> (once per fixed sub-step); projections may depend on it (animation, physics, timers).</summary>
+  member _.Time = frameCtx.Time
+
+  /// <summary>The exit-request root. Set it to <c>true</c> to make the runner stop — the adaptive counterpart of <c>Cmd.signalExit</c>.</summary>
+  member _.ExitRequested = frameCtx.ExitRequested
+
+  /// <summary>
+  /// The <see cref="T:Mibo.Elmish.GameContext"/> the runner owns: the window
+  /// dimensions and the registered services (IAssets, IInput, custom). Programs
+  /// read services directly from here in <c>Init</c> and <c>Update</c> — the
+  /// host registers what it owns and the program pulls the rest; there is no
+  /// registration ceremony.
+  /// </summary>
+  member _.Context = frameCtx.Context
+
+  /// <summary>Current window width in pixels. Default: 800.</summary>
+  member _.WindowWidth = frameCtx.WindowWidth
+
+  /// <summary>Current window height in pixels. Default: 600.</summary>
+  member _.WindowHeight = frameCtx.WindowHeight
+
+  /// <summary>
+  /// The intent queue: the single place to post <c>unit -> unit</c> work
+  /// during <c>Update</c>. Choose the moment by name —
+  /// <see cref="M:Mibo.Adaptive.IntentQueue.post"/> (after this step's
+  /// <c>Update</c>, until empty), <see cref="M:Mibo.Adaptive.IntentQueue.postNextFrame"/>
+  /// (at the top of the next step), or
+  /// <see cref="M:Mibo.Adaptive.IntentQueue.postTask"/>/<c>postAsync</c>
+  /// (background work whose completion returns via <c>post</c>). The adaptive
+  /// counterpart of <c>Cmd</c>.
+  /// </summary>
+  member _.Intents = intents
+
+/// <summary>
+/// A subscription spec: a stable identifier plus an attach function. The
+/// adaptive counterpart of <see cref="T:Mibo.Elmish.Sub`1"/>: the attach
+/// function receives the pre-step post function instead of
+/// <c>Dispatch&lt;'Msg&gt;</c>, so subscription events never run handlers
+/// directly — they post work, handled on the owner thread at the next step's
+/// boundary, before <c>Update</c>, in order.
+/// </summary>
+[<Struct>]
+type AdaptiveSub = {
+  /// <summary>Stable key the runtime uses to diff subscriptions across steps.</summary>
+  Id: SubId
+
+  /// <summary>
+  /// Attaches the subscription and returns a disposable that detaches it. The
+  /// <c>post</c> argument is the pre-step lane's entry point: event callbacks
+  /// (possibly on foreign threads) may only enqueue work, and the runner
+  /// handles it on the owner thread at the next step's boundary, before
+  /// <c>Update</c> — a foreign-thread callback can never run game code
+  /// directly.
+  /// </summary>
+  Attach: ((unit -> unit) -> unit) -> IDisposable
+}
+
+/// <summary>Functions for composing <see cref="T:Mibo.Adaptive.AdaptiveSub"/> values.</summary>
+module AdaptiveSub =
+
+  /// <summary>
+  /// Prefixes the subscription's <see cref="T:Mibo.Elmish.SubId"/> with a
+  /// namespace, for parent-child composition — the adaptive counterpart of
+  /// <c>Sub.map</c> without the message mapping. Delegates to
+  /// <see cref="M:Mibo.Elmish.SubId.prefix"/>.
+  /// </summary>
+  let inline prefix (prefix: string) (sub: AdaptiveSub) : AdaptiveSub = {
+    sub with
+        Id = SubId.prefix prefix sub.Id
+  }
+
 /// <summary>The result of building an adaptive program's graph.</summary>
 [<Struct>]
 type AdaptiveInit<'Frame> = {
@@ -63,33 +291,85 @@ type AdaptiveInit<'Frame> = {
   /// </summary>
   FrameBuilder: unit -> 'Frame
 
-  /// <summary>Disposables released when the runner is disposed or restarted.</summary>
+  /// <summary>
+  /// The subscription projection, built in <c>Init</c> alongside the frame
+  /// builder — both capture the world from the same place. The runner calls
+  /// it once per step and compares the returned map against its attached
+  /// table to start, keep, and stop subscriptions. See
+  /// <see cref="M:Mibo.Adaptive.AdaptiveInit.withSubscriptions"/> for the
+  /// stable-map requirement.
+  /// </summary>
+  Subscriptions: AdaptiveFrameContext -> amap<SubId, AdaptiveSub>
+
+  /// <summary>Disposables released when the runner is disposed.</summary>
   Disposables: IDisposable list
 }
 
 /// <summary>Helpers for building an <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/>.</summary>
 /// <remarks>
-/// These keep the <c>Disposables</c> list hidden: <see cref="M:Mibo.Adaptive.AdaptiveInit.ofFrameBuilder"/>
-/// defaults it to empty, and <see cref="M:Mibo.Adaptive.AdaptiveInit.withDisposables"/> /
-/// <see cref="M:Mibo.Adaptive.AdaptiveInit.withDisposable"/> append to it. Callers never write
-/// <c>Disposables = []</c> by hand.
+/// These keep the <c>Disposables</c> list and the default subscription
+/// projection hidden: <see cref="M:Mibo.Adaptive.AdaptiveInit.ofFrameBuilder"/>
+/// defaults them (empty subscriptions, no disposables), and
+/// <see cref="M:Mibo.Adaptive.AdaptiveInit.withSubscriptions"/> /
+/// <see cref="M:Mibo.Adaptive.AdaptiveInit.withDisposables"/> /
+/// <see cref="M:Mibo.Adaptive.AdaptiveInit.withDisposable"/> replace or append
+/// to them. Callers never write <c>Disposables = []</c> by hand.
 /// </remarks>
 module AdaptiveInit =
 
   /// <summary>
-  /// Creates an init from a frame builder with no disposables.
+  /// Creates an init from a frame builder with no subscriptions and no
+  /// disposables.
   /// </summary>
   /// <param name="frameBuilder">Forces the frame's output projections and packs them into <c>'Frame</c>.</param>
-  let ofFrameBuilder(frameBuilder: unit -> 'Frame) : AdaptiveInit<'Frame> = {
-    FrameBuilder = frameBuilder
-    Disposables = []
-  }
+  let inline ofFrameBuilder
+    ([<InlineIfLambda>] frameBuilder: unit -> 'Frame)
+    : AdaptiveInit<'Frame> =
+    // One shared empty map: a fresh AMap.empty per call would defeat the
+    // runner's version check and allocate every step.
+    let emptySubs: AdaptiveFrameContext -> amap<SubId, AdaptiveSub> =
+      let empty = AMap.empty
+      fun _ -> empty
+
+    {
+      FrameBuilder = frameBuilder
+      Subscriptions = emptySubs
+      Disposables = []
+    }
+
+  /// <summary>
+  /// Sets the subscription projection. The runner reads the map once per step
+  /// (skipping the read when nothing changed), compares it by
+  /// <see cref="T:Mibo.Elmish.SubId"/> against its attached table, and starts
+  /// new, keeps matching, and stops vanished subscriptions. The adaptive
+  /// counterpart of <see cref="M:Mibo.Elmish.Program.withSubscription"/>.
+  /// </summary>
+  /// <remarks>
+  /// The projection must return a stable map: build it once and return the
+  /// same instance. The runner checks the map's version every step and skips
+  /// the diff when nothing changed.
+  /// If you need subscriptions that change with game state, use
+  /// <c>AMap.custom</c> and describe the changes yourself — do not build a
+  /// fresh map from adaptive values (for example <c>AMap.ofAVal</c>) inside
+  /// the projection, that would create a new graph every step.
+  /// Subscription work feeds the step cycle: it runs at the next step's
+  /// boundary, before <c>Update</c>. Do not modify game state from it beyond
+  /// what the step cycle expects.
+  /// </remarks>
+  /// <param name="subscribe">Builds the subscription map from the context.</param>
+  /// <param name="init">The init to configure.</param>
+  let inline withSubscriptions
+    ([<InlineIfLambda>] subscribe:
+      AdaptiveFrameContext -> amap<SubId, AdaptiveSub>)
+    (init: AdaptiveInit<'Frame>)
+    : AdaptiveInit<'Frame> =
+    { init with Subscriptions = subscribe }
 
   /// <summary>
   /// Appends a list of disposables to the init. The disposables are released
-  /// when the runner is disposed or when the program is restarted.
+  /// when the runner is disposed.
   /// </summary>
-  let withDisposables
+  let inline withDisposables
     (disposables: IDisposable list)
     (init: AdaptiveInit<'Frame>)
     : AdaptiveInit<'Frame> =
@@ -100,9 +380,9 @@ module AdaptiveInit =
 
   /// <summary>
   /// Adds a single disposable to the init. The disposable is released when the
-  /// runner is disposed or when the program is restarted.
+  /// runner is disposed.
   /// </summary>
-  let withDisposable
+  let inline withDisposable
     (disposable: IDisposable)
     (init: AdaptiveInit<'Frame>)
     : AdaptiveInit<'Frame> =
@@ -119,10 +399,12 @@ module AdaptiveInit =
 /// <remarks>
 /// <para>
 /// When enabled, the runner converts the variable frame time into zero or more
-/// fixed-size steps per <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>: for
-/// each step it applies cross-thread posts, writes the time root, and runs the
-/// program's <c>Update</c> phase. The frame is forced once at the end, so the
-/// intermediate steps are integrated but not observed by the frame.
+/// fixed-size steps per <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/>: it
+/// applies cross-thread posts once at the boundary, then per fixed-size step
+/// writes the time root, runs the program's <c>Update</c> phase, and drains the
+/// intent queue until empty — each sub-step reads settled state. The frame is
+/// forced once at the end, so the intermediate steps are integrated but not
+/// observed by the frame.
 /// </para>
 /// <para>
 /// This mirrors the MVU <c>TickFrame</c> fixed-step loop, calling
@@ -156,18 +438,32 @@ type AdaptiveFixedStepConfig = {
 /// <remarks>
 /// <para>
 /// This is the adaptive counterpart of <see cref="T:Mibo.Elmish.Program`2"/>,
-/// with the message/command/subscription machinery removed. Changeable roots
-/// hold the state, derived projections compose it, and the runner forces the
-/// frame's projections at the end of every step. There is no <c>'Msg</c>, no
-/// <c>Cmd</c> and no <c>Sub</c> — handlers write roots directly and effects run
-/// directly.
+/// with the message/command machinery removed. Changeable roots hold the state,
+/// derived projections compose it, and the runner forces the frame's
+/// projections at the end of every step. There is no <c>'Msg</c> and no
+/// <c>Cmd</c> — handlers write roots directly. Deferred work and subscriptions
+/// have adaptive counterparts: systems post <c>unit -> unit</c> work through
+/// <see cref="P:Mibo.Adaptive.AdaptiveContext.Intents"/> — post (after this
+/// step's <c>Update</c>), postNextFrame (top of the next step), or
+/// postTask/postAsync (background work whose completion returns via post) —
+/// and external events arrive through
+/// <see cref="T:Mibo.Adaptive.AdaptiveSub"/> subscriptions whose callbacks
+/// post work.
 /// </para>
 /// <para>
-/// The <c>Init</c>/<c>Update</c>/<c>Observers</c> slots are the dependency
-/// graph (the simulation). The <c>Config</c>/<c>Renderers</c>/
-/// <c>ServiceRegistrations</c>/<c>AssetsBasePath</c> slots are host
-/// configuration (the presentation) consumed by the windowed hosts. The headless
-/// runner consumes only the simulation slots plus <c>FixedStep</c>.
+/// The two contexts are split by phase: <c>Init</c> — and the subscription
+/// projection it returns — receive the queue-less
+/// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> (roots and services
+/// only), while <c>Update</c> receives the full
+/// <see cref="T:Mibo.Adaptive.AdaptiveContext"/> with the intent queue — so
+/// the force phase cannot enqueue work.
+/// </para>
+/// <para>
+/// The <c>Init</c>/<c>Update</c>/<c>Observers</c> slots
+/// are the dependency graph (the simulation). The <c>Config</c>/
+/// <c>Renderers</c>/<c>ServiceRegistrations</c>/<c>AssetsBasePath</c> slots are
+/// host configuration (the presentation) consumed by the windowed hosts. The
+/// headless runner consumes only the simulation slots plus <c>FixedStep</c>.
 /// </para>
 /// </remarks>
 /// <example>
@@ -187,27 +483,24 @@ type AdaptiveFixedStepConfig = {
 type AdaptiveProgram<'Frame> = {
   /// <summary>
   /// Builds the graph (roots and projections) and registers handlers.
-  /// Returns the <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/> — the frame
-  /// builder plus the disposables released when the runner is disposed or
-  /// restarted.
+  /// Receives the queue-less <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/>:
+  /// graph building must not reach the intent queue. Returns the
+  /// <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/> — the frame builder plus the
+  /// disposables released when the runner is disposed.
   /// </summary>
-  Init: AdaptiveContext -> AdaptiveInit<'Frame>
+  Init: AdaptiveFrameContext -> AdaptiveInit<'Frame>
 
   /// <summary>
   /// Optional per-frame phase. Runs after the time root is written and before
-  /// the frame is forced. Reads projections, writes roots. Under fixed-step it
-  /// runs once per fixed step.
+  /// the frame is forced. Reads projections, writes roots, posts intents
+  /// through the full <see cref="T:Mibo.Adaptive.AdaptiveContext"/>. Under
+  /// fixed-step it runs once per fixed step, each followed by the post drain.
   /// </summary>
   Update: AdaptiveContext -> GameTime -> unit
 
   /// <summary>Observer factories for receiving the forced frame each step.</summary>
   Observers: (unit -> IObserver<struct (GameContext * 'Frame * GameTime)>) list
 
-  /// <summary>
-  /// Configuration callbacks that transform the default
-  /// <see cref="T:Mibo.Elmish.GameConfig"/>. Each callback receives the current
-  /// config and returns a modified copy. Applied in registration order.
-  /// </summary>
   Config: (GameConfig -> GameConfig) list
 
   /// <summary>
@@ -249,7 +542,7 @@ module AdaptiveProgram =
   /// the <c>OnError</c> and <c>OnCompleted</c> boilerplate.
   /// </summary>
   let inline observe
-    (onNext: struct (GameContext * 'Frame * GameTime) -> unit)
+    ([<InlineIfLambda>] onNext: struct (GameContext * 'Frame * GameTime) -> unit)
     : IObserver<struct (GameContext * 'Frame * GameTime)> =
     { new IObserver<struct (GameContext * 'Frame * GameTime)> with
         member _.OnNext value = onNext value
@@ -268,11 +561,11 @@ module AdaptiveProgram =
   /// update function is the per-frame imperative phase that reads projections
   /// and writes roots.
   /// </remarks>
-  /// <param name="init">Builds the graph and returns the <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/>.</param>
-  /// <param name="update">Per-frame phase: reads projections, writes roots.</param>
-  let mkProgram
-    (init: AdaptiveContext -> AdaptiveInit<'Frame>)
-    (update: AdaptiveContext -> GameTime -> unit)
+  /// <param name="init">Builds the graph and returns the <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/>. Receives the queue-less <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> — no deferred work.</param>
+  /// <param name="update">Per-frame phase: reads projections, writes roots, posts intents. Receives the full <see cref="T:Mibo.Adaptive.AdaptiveContext"/>.</param>
+  let inline mkProgram
+    ([<InlineIfLambda>] init: AdaptiveFrameContext -> AdaptiveInit<'Frame>)
+    ([<InlineIfLambda>] update: AdaptiveContext -> GameTime -> unit)
     : AdaptiveProgram<'Frame> =
     {
       Init = init
@@ -287,8 +580,8 @@ module AdaptiveProgram =
     }
 
   /// <summary>Sets the per-frame phase of the program.</summary>
-  let withUpdate
-    (update: AdaptiveContext -> GameTime -> unit)
+  let inline withUpdate
+    ([<InlineIfLambda>] update: AdaptiveContext -> GameTime -> unit)
     (program: AdaptiveProgram<'Frame>)
     : AdaptiveProgram<'Frame> =
     { program with Update = update }
@@ -297,8 +590,9 @@ module AdaptiveProgram =
   /// Adds an observer factory to the program. Observers receive the forced
   /// frame each step, in registration order.
   /// </summary>
-  let withObserver
-    (factory: unit -> IObserver<struct (GameContext * 'Frame * GameTime)>)
+  let inline withObserver
+    ([<InlineIfLambda>] factory:
+      unit -> IObserver<struct (GameContext * 'Frame * GameTime)>)
     (program: AdaptiveProgram<'Frame>)
     : AdaptiveProgram<'Frame> =
     {
@@ -311,8 +605,8 @@ module AdaptiveProgram =
   /// receives the current <see cref="T:Mibo.Elmish.GameConfig"/> and returns a
   /// modified copy.
   /// </summary>
-  let withConfig
-    (configure: GameConfig -> GameConfig)
+  let inline withConfig
+    ([<InlineIfLambda>] configure: GameConfig -> GameConfig)
     (program: AdaptiveProgram<'Frame>)
     : AdaptiveProgram<'Frame> =
     {
@@ -324,8 +618,8 @@ module AdaptiveProgram =
   /// Adds a renderer factory to the program. Renderers are called each frame to
   /// draw the forced frame, in registration order.
   /// </summary>
-  let withRenderer
-    (factory: unit -> IRenderer<'Frame>)
+  let inline withRenderer
+    ([<InlineIfLambda>] factory: unit -> IRenderer<'Frame>)
     (program: AdaptiveProgram<'Frame>)
     : AdaptiveProgram<'Frame> =
     {
@@ -338,8 +632,8 @@ module AdaptiveProgram =
   /// after core services (assets, input) are registered but before
   /// <c>Init</c>.
   /// </summary>
-  let withServiceRegistration
-    (register: GameContext -> unit)
+  let inline withServiceRegistration
+    ([<InlineIfLambda>] register: GameContext -> unit)
     (program: AdaptiveProgram<'Frame>)
     : AdaptiveProgram<'Frame> =
     {
@@ -350,7 +644,7 @@ module AdaptiveProgram =
   /// <summary>
   /// Configures a base path for asset loading.
   /// </summary>
-  let withAssetsBasePath
+  let inline withAssetsBasePath
     (basePath: string)
     (program: AdaptiveProgram<'Frame>)
     : AdaptiveProgram<'Frame> =
@@ -362,10 +656,10 @@ module AdaptiveProgram =
   /// <summary>
   /// Enables a framework-managed fixed timestep. When enabled, the runner
   /// converts the variable frame time into zero or more fixed-size steps per
-  /// <c>Step</c>, running <c>Update</c> once per step and forcing the frame
-  /// once at the end.
+  /// <c>Step</c>, running <c>Update</c> once per step (each followed by the
+  /// post drain) and forcing the frame once at the end.
   /// </summary>
-  let withFixedStep
+  let inline withFixedStep
     (cfg: AdaptiveFixedStepConfig)
     (program: AdaptiveProgram<'Frame>)
     : AdaptiveProgram<'Frame> =
@@ -389,7 +683,7 @@ module AdaptiveProgram =
   /// programs that read keyboard, mouse, touch, or gamepad input. Off by
   /// default — mirrors <see cref="M:Mibo.Elmish.Program.withInput"/>.
   /// </remarks>
-  let withInput(program: AdaptiveProgram<'Frame>) : AdaptiveProgram<'Frame> = {
-    program with
-        HasInput = true
-  }
+  let inline withInput
+    (program: AdaptiveProgram<'Frame>)
+    : AdaptiveProgram<'Frame> =
+    { program with HasInput = true }

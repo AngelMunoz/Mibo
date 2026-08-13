@@ -17,7 +17,7 @@ open Mibo.Elmish
 //
 // Work ordering each frame (matches MiboGame + AdaptiveHeadless.Step):
 //   Update: poll input → resize check → Step (posts → time root → Update →
-//           force frame) → consume restart request → exit check
+//           force frame) → exit check
 //   Draw:   iterate renderers in add-order (reversed, since the list is
 //           ::-prepended)
 //
@@ -26,7 +26,6 @@ open Mibo.Elmish
 //   - Input is opt-in: registered and polled only when the program opted in
 //     via AdaptiveProgram.withInput (mirrors MiboGame's HasInput gate).
 //   - The runner builds the graph lazily on the first Step.
-//   - Restart: the program may request a rebuild (fresh graph, fresh clock).
 //   - The runner owns the GameTime; the host reads runner.GameTime for draw.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -162,11 +161,6 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
       // The runner owns the clock: it builds the GameTime from the elapsed
       // delta and exposes runner.GameTime for the draw call.
       runner.Step(gameTime.ElapsedGameTime) |> ignore
-
-      // The program may have requested a rebuild (e.g. restart after game
-      // over): re-run Init — fresh graph, fresh clock, first frame forced.
-      if runner.RestartRequested then
-        runner.Restart()
 
       if runner.ShouldQuit then
         this.Exit()
