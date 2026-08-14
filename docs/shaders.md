@@ -155,6 +155,29 @@ For the **full list of uniform names** the `beginEffect` scope uploads (so you
 know exactly what to declare in your shader to inherit the scene), see
 [Shader Uniform Reference](shader-uniforms.html).
 
+### MonoGame native DX12: upload ordering and DynamicVertexBuffer (upstream issue)
+
+When custom-shader geometry is re-uploaded more than once per frame, the
+MonoGame **native DX12 backend** orders the work differently than the other
+backends: `SetData` on a *static* `VertexBuffer` is recorded into a separate
+command list that executes immediately, while draw calls execute at end of
+frame. Every draw in the frame therefore reads the **last** upload's data —
+garbage or flickering geometry. This is an upstream MonoGame behavior, not a
+Mibo-specific one.
+
+The workaround (what the built-in forward PBR machinery does — see the
+`stageInstanceData` comment in `PbrShading.fs` and the shadow pass): keep any
+buffer that is re-uploaded per frame, per instance group, or per draw as a
+**`DynamicVertexBuffer`**, and upload with
+`SetData(..., SetDataOptions.Discard)`. Dynamic buffers take the discard-rename
+path — each upload gets a fresh backing buffer — so each draw's data stays
+intact. Per-frame `SetData` on static buffers is only safe when the buffer is
+uploaded once per frame and read once per frame.
+
+The same guidance applies to 2D custom effects drawn through raw device calls:
+upload their geometry through a `DynamicVertexBuffer` and draw with
+`SetVertexBuffer` + `DrawPrimitives`.
+
 ## DisableRuntimeMarshalling and `SetShaderValue` (raylib only)
 
 > This caveat applies **only to the raylib backend**, which uses

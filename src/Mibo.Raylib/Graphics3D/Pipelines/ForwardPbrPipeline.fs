@@ -1916,6 +1916,15 @@ module internal PipelineFunctions =
 
     Raylib.BeginBlendMode bb.Blend
 
+    // Alpha-blended billboards must NOT write depth: a transparent texel that
+    // writes depth occludes the geometry/particles behind it. raylib defers
+    // rlBegin/rlEnd into the render batch, so the quad is NOT drawn at
+    // DrawBillboardPro — it draws at the next batch flush. The depth mask must
+    // therefore stay disabled across an explicit flush, otherwise the mask is
+    // restored before the deferred draw and the write-off has no effect
+    // (matches MonoGame's DepthRead for the same reason).
+    Rlgl.DisableDepthMask()
+
     Raylib.DrawBillboardPro(
       currentCamera,
       bb.Texture,
@@ -1928,6 +1937,9 @@ module internal PipelineFunctions =
       bb.Color
     )
 
+    Rlgl.DrawRenderBatchActive()
+    Rlgl.EnableDepthMask()
+
     Raylib.EndBlendMode()
 
   /// Handle billboard batch draw using default shader.
@@ -1936,6 +1948,11 @@ module internal PipelineFunctions =
     =
     Rlgl.EnableShader(Rlgl.GetShaderIdDefault())
     Raylib.BeginBlendMode batch.Blend
+
+    // See handleDrawBillboard: billboards must draw with depth-write off. raylib
+    // buffers rlBegin/rlEnd, so the mask must stay disabled across the explicit
+    // flush below — otherwise the deferred draw happens after EnableDepthMask.
+    Rlgl.DisableDepthMask()
 
     for bi = 0 to batch.Count - 1 do
       let tex = batch.Textures[bi]
@@ -1965,6 +1982,9 @@ module internal PipelineFunctions =
         rotation,
         batch.Colors[bi]
       )
+
+    Rlgl.DrawRenderBatchActive()
+    Rlgl.EnableDepthMask()
 
     Raylib.EndBlendMode()
 
