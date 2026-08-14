@@ -702,7 +702,9 @@ type Draw =
 
   /// <summary>
   /// Filled triangle fan, in any winding order; points[0] is the shared
-  /// center. Points array is a backend handle (see LineStrip).
+  /// center. The rim auto-closes: the last rim vertex is connected back
+  /// to points[1], so a full convex rim fills its polygon on every
+  /// backend. Points array is a backend handle (see LineStrip).
   /// </summary>
   [<Extension>]
   static member inline triangleFan<'B, 'P

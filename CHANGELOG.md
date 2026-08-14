@@ -23,6 +23,10 @@
 - **Raylib 3D:** alpha-blended billboards — particles and other transparent quads — no longer write depth, so a transparent billboard no longer hides the geometry or particles behind it.
 - **Raylib 2D:** full-circle ring outlines no longer show a radial line where the ring closes. Partial arcs keep their end caps.
 - **Raylib 2D:** filled triangles, triangle fans and triangle strips now render in any winding order. Clockwise point lists drew nothing on raylib while MonoGame rendered them; both backends now agree.
+- **MonoGame 2D:** ring outlines draw as two clean rings — the outline no longer fills in as a band, and full circles no longer show a radial seam where the ring closes. Partial arcs keep their end caps.
+- **MonoGame 2D:** sprites and shapes now keep their draw order when sampler-state commands are interleaved — text no longer renders behind shapes on top of it.
+- **MonoGame 3D:** cube, plane and cone primitives now face outward under the default cull mode — the cube no longer shows its interior and the plane no longer vanishes from one side.
+- **2D:** triangle fans now auto-close the rim on every backend — the last rim vertex connects back to the first, so a full convex rim fills its polygon. raylib previously left the wedge between the last and first rim vertex unfilled while MonoGame closed it.
 
 ## [4.2.0] - 2026-08-11
 

@@ -456,19 +456,25 @@ module private CommandHandlers =
         else
           Raylib.DrawTriangle(v1, v2, v3, color)
       | Command2D.TriangleFan(points, color, _) ->
-        if fanWinding points > 0f then
-          // clockwise rim: reverse it (the center stays points[0]) into
-          // scratch — the caller's array is never mutated
-          let n = points.Length
-          ensurePolyScratch n
-          polyScratch[0] <- points[0]
+        // Auto-close parity with MonoGame: the scratch copy appends the
+        // first rim vertex so the native fan emits the wrap triangle
+        // (center, last rim, first rim). A clockwise rim is reversed at
+        // the same time — raylib culls clockwise triangles — and the
+        // caller's array is never mutated.
+        let n = points.Length
+        ensurePolyScratch(n + 1)
+        polyScratch[0] <- points[0]
 
+        if fanWinding points > 0f then
           for i = 1 to n - 1 do
             polyScratch[i] <- points[n - i]
-
-          Raylib.DrawTriangleFan(polyScratch, n, color)
         else
-          Raylib.DrawTriangleFan(points, points.Length, color)
+          for i = 1 to n - 1 do
+            polyScratch[i] <- points[i]
+
+        polyScratch[n] <- polyScratch[1]
+
+        Raylib.DrawTriangleFan(polyScratch, n + 1, color)
       | Command2D.TriangleStrip(points, color, _) ->
         if stripWinding points > 0f then
           // clockwise base winding: reversing the whole array flips every
