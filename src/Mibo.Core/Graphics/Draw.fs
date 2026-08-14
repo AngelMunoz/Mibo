@@ -686,7 +686,7 @@ type Draw =
   // 2D — Triangles & Polygons
   // ──────────────────────────────────────────────
 
-  /// <summary>Filled triangle from 3 vertices.</summary>
+  /// <summary>Filled triangle from 3 vertices, in any winding order.</summary>
   [<Extension>]
   static member inline triangle<'B when WithPolygons2D<'B>>
     (
@@ -700,7 +700,10 @@ type Draw =
     buffer.AddTriangle(v1, v2, v3, color, defaultValueArg layer 0<RenderLayer>)
     buffer
 
-  /// <summary>Filled triangle fan. Points array is a backend handle (see LineStrip).</summary>
+  /// <summary>
+  /// Filled triangle fan, in any winding order; points[0] is the shared
+  /// center. Points array is a backend handle (see LineStrip).
+  /// </summary>
   [<Extension>]
   static member inline triangleFan<'B, 'P
     when 'B: (member AddTriangleFan: 'P[] * Color * int<RenderLayer> -> unit)>
@@ -708,7 +711,10 @@ type Draw =
     buffer.AddTriangleFan(points, color, defaultValueArg layer 0<RenderLayer>)
     buffer
 
-  /// <summary>Filled triangle strip. Points array is a backend handle (see LineStrip).</summary>
+  /// <summary>
+  /// Filled triangle strip from consecutive point pairs, in any winding
+  /// order. Points array is a backend handle (see LineStrip).
+  /// </summary>
   [<Extension>]
   static member inline triangleStrip<'B, 'P
     when 'B: (member AddTriangleStrip: 'P[] * Color * int<RenderLayer> -> unit)>
