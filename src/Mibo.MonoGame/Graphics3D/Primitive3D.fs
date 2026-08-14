@@ -495,13 +495,18 @@ module Primitive3D =
       for k = 0 to 3 do
         verts[v + k] <- VertexPositionNormalTexture(corners[k], normal, uv[k])
 
-      // Two triangles: (v0,v1,v2) and (v0,v2,v3)
+      // Two triangles, wound CLOCKWISE viewed from outside — MonoGame treats
+      // clockwise screen-space winding as the front face (the pipeline draws
+      // with CullCounterClockwise), the opposite of raylib/OpenGL. Cube,
+      // plane and cone follow that flip; sphere, cylinder and torus were
+      // originally built with winding that already faces outward under
+      // MonoGame culling, and keep it.
       indices[i + 0] <- v + 0
-      indices[i + 1] <- v + 1
-      indices[i + 2] <- v + 2
+      indices[i + 1] <- v + 2
+      indices[i + 2] <- v + 1
       indices[i + 3] <- v + 0
-      indices[i + 4] <- v + 2
-      indices[i + 5] <- v + 3
+      indices[i + 4] <- v + 3
+      indices[i + 5] <- v + 2
       v <- v + 4
       i <- i + 6
 
@@ -551,7 +556,12 @@ module Primitive3D =
     struct (verts, indices)
 
   let private buildPlane() : struct (VertexPositionNormalTexture[] * int[]) =
-    // 1×1 plane on XY (normal +Z), 4 verts / 2 tris.
+    // 1×1 plane on XY (normal +Z), 4 verts / 2 tris. NOTE: this orientation
+    // deliberately differs from raylib's GenMeshPlane (XZ, normal +Y) —
+    // FPSSample orients its decals against the +Z plane. Unifying the two
+    // orientations is a cross-sample change; consumers compensate per-backend
+    // until then. Indices wind clockwise viewed from +Z so the +Z face is the
+    // MonoGame front face (see the winding note by buildCube).
     let verts = [|
       VertexPositionNormalTexture(
         Vector3(-0.5f, -0.5f, 0f),
@@ -575,7 +585,8 @@ module Primitive3D =
       )
     |]
 
-    let indices = [| 0; 1; 2; 0; 2; 3 |]
+    // (v0,v1,v2) would be counter-clockwise from +Z; flip both triangles.
+    let indices = [| 0; 2; 1; 0; 3; 2 |]
     struct (verts, indices)
 
   let private buildSphere
@@ -813,12 +824,13 @@ module Primitive3D =
       let i1 = i0 + 1
       let i2 = i0 + 2
       let i3 = i0 + 3
+      // flipped triples — clockwise-outside for MonoGame's front face
       indices[ii + 0] <- i0
-      indices[ii + 1] <- i3
-      indices[ii + 2] <- i1
+      indices[ii + 1] <- i1
+      indices[ii + 2] <- i3
       indices[ii + 3] <- i0
-      indices[ii + 4] <- i2
-      indices[ii + 5] <- i3
+      indices[ii + 4] <- i3
+      indices[ii + 5] <- i2
       ii <- ii + 6
 
     // Base fan (normal -Y).
@@ -850,8 +862,8 @@ module Primitive3D =
     vi <- vi + 1
 
     for seg = 0 to segments - 1 do
-      indices[ii + 0] <- baseBase + seg + 1
-      indices[ii + 1] <- baseBase + seg
+      indices[ii + 0] <- baseBase + seg
+      indices[ii + 1] <- baseBase + seg + 1
       indices[ii + 2] <- baseBase + segments + 1 // center
       ii <- ii + 3
 

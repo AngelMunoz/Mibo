@@ -1028,19 +1028,57 @@ module private CommandHandlers =
     let endRad = MathHelper.ToRadians(endAngle)
     let sweep = endRad - startRad
     let step = sweep / float32 segments
-    let points = Array.zeroCreate<Vector2>((segments + 1) * 2)
-    let mutable idx = 0
 
-    for i = 0 to segments do
-      let a = startRad + float32 i * step
-      let c = MathF.Cos(a)
-      let s = MathF.Sin(a)
-      points[idx] <- Vector2(center.X + c * outerR, center.Y + s * outerR)
-      idx <- idx + 1
-      points[idx] <- Vector2(center.X + c * innerR, center.Y + s * innerR)
-      idx <- idx + 1
+    // Two concentric rings, each emitted as independent line SEGMENTS
+    // (LineList). Two consecutive AddLineStrip calls would MERGE into one
+    // GPU strip group and draw a connector segment from the end of the
+    // outer ring to the start of the inner ring — a radial line cutting
+    // through the ring. (The original implementation fed interleaved
+    // outer/inner points to AddTriangleStrip — a zigzag strip FILLS the
+    // ring instead of outlining it.)
+    for rim = 0 to 1 do
+      let radius = if rim = 0 then outerR else innerR
+      let mutable px = center.X + MathF.Cos(startRad) * radius
+      let mutable py = center.Y + MathF.Sin(startRad) * radius
 
-    pb.AddTriangleStrip(points, color)
+      for i = 1 to segments do
+        let a = startRad + float32 i * step
+        let nx = center.X + MathF.Cos(a) * radius
+        let ny = center.Y + MathF.Sin(a) * radius
+        pb.AddLine(Vector2(px, py), Vector2(nx, ny), color)
+        px <- nx
+        py <- ny
+
+    // Open arcs get cap lines at both ends, closing the outline. Full
+    // circles skip the caps — on a closed ring a cap shows as a radial seam
+    // line (degrees here, matching the raylib backend's full-circle check).
+    if abs(endAngle - startAngle) < 360f then
+      let csOuter =
+        Vector2(
+          center.X + MathF.Cos(startRad) * outerR,
+          center.Y + MathF.Sin(startRad) * outerR
+        )
+
+      let csInner =
+        Vector2(
+          center.X + MathF.Cos(startRad) * innerR,
+          center.Y + MathF.Sin(startRad) * innerR
+        )
+
+      let ceOuter =
+        Vector2(
+          center.X + MathF.Cos(endRad) * outerR,
+          center.Y + MathF.Sin(endRad) * outerR
+        )
+
+      let ceInner =
+        Vector2(
+          center.X + MathF.Cos(endRad) * innerR,
+          center.Y + MathF.Sin(endRad) * innerR
+        )
+
+      pb.AddLine(csOuter, csInner, color)
+      pb.AddLine(ceOuter, ceInner, color)
 
   let private fillEllipse
     (pb: PrimitiveBatch)
@@ -1611,6 +1649,15 @@ module private CommandHandlers =
     let sb = res.SpriteBatch
     let pb = res.PrimitiveBatch
 
+    // Sprites (SpriteBatch) and shapes (PrimitiveBatch) only submit at flush
+    // time, so a bulk flush reorders whole segments: every pending sprite
+    // would draw under every pending shape regardless of layer (text behind
+    // shapes, fillRects under outlines). Track which batch the previous
+    // DRAWING command used and submit the outgoing batch the moment the kind
+    // switches, so the GPU submission order matches the sorted command order.
+    // 0 = does not draw / flushes on its own, 1 = SpriteBatch, 2 = PrimitiveBatch.
+    let mutable lastBatchKind = 0
+
     for i = 0 to buffer.Count - 1 do
       let cmd = buffer[i]
 
@@ -1633,6 +1680,55 @@ module private CommandHandlers =
         // restartBatches a second time (double-Begin).
         res.LitBatch.BatchesSuspended <- false
       | _ -> ()
+
+      // Batch interleave guard (see lastBatchKind above). Runs after the lit
+      // guard: a lit-run exit has already flushed and restarted both batches,
+      // so this is a no-op there. State commands are TRANSPARENT to the
+      // tracker: many of them flush nothing (e.g. a SetSamplerState whose
+      // value is unchanged), and resetting on them would lose the pending
+      // batch and reorder the frame — text ended up behind shapes exactly
+      // that way. A stale tracker after a real flush can only cause a
+      // harmless extra flush of an already-empty batch.
+      let batchKind =
+        match cmd with
+        | Command2D.Sprite _
+        | Command2D.Text _
+        | Command2D.FillRect _
+        | Command2D.Particle _ -> 1
+        | Command2D.BeginCamera _
+        | Command2D.BeginCameraConfig _
+        | Command2D.EndCamera _
+        | Command2D.BeginShader _
+        | Command2D.EndShader _
+        | Command2D.BeginTarget _
+        | Command2D.EndTarget _
+        | Command2D.SetBlend _
+        | Command2D.SetSamplerState _
+        | Command2D.SetScissor _
+        | Command2D.ClearScissor _
+        | Command2D.SetViewport _
+        | Command2D.DrawImmediate _
+        | Command2D.Clear _
+        | Command2D.NoopLight _
+        | Command2D.LitSprite _
+        | Command2D.EndLighting _
+        | Command2D.EnableShadows _
+        | Command2D.DisableShadows _
+        | Command2D.PostProcess _ -> 0
+        // Everything left draws through PrimitiveBatch (SetLineWidth rides
+        // along — it changes pb state, never draws, and keeps the tracker
+        // honest for the next sprite command).
+        | _ -> 2
+
+      if batchKind > 0 && batchKind <> lastBatchKind then
+        if lastBatchKind = 1 then
+          // sprites were pending — submit them before shapes draw on top
+          endAndRestart res &state gd
+        elif lastBatchKind = 2 then
+          // shapes were pending — submit them before sprites draw on top
+          pb.Flush()
+
+        lastBatchKind <- batchKind
 
       match cmd with
       // Sprite & Text
