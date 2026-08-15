@@ -32,6 +32,7 @@
 - **MonoGame 2D:** sprites and shapes now keep their draw order when sampler-state commands are interleaved — text no longer renders behind shapes on top of it.
 - **MonoGame 3D:** cube, plane and cone primitives now face outward under the default cull mode — the cube no longer shows its interior and the plane no longer vanishes from one side.
 - **2D:** triangle fans now auto-close the rim on every backend — the last rim vertex connects back to the first, so a full convex rim fills its polygon. raylib previously left the wedge between the last and first rim vertex unfilled while MonoGame closed it.
+- **MonoGame 3D:** translucent materials, alpha-blended billboards and alpha-blended line draws now fade their tint with alpha — a material at `Opacity 0.3` shows 30% of its color over the background. They previously added the tint at full strength while only fading the background, so translucent tints now match the raylib backend.
 
 ## [4.2.0] - 2026-08-11
 

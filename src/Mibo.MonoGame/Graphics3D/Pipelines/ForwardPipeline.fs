@@ -18,11 +18,14 @@ module private ForwardHelpers =
   // LightBuffers lives in SceneContext.fs; referenced here as Pipelines.LightBuffers.
 
   /// <summary>Maps a <see cref="T:Mibo.Elmish.Graphics2D.BlendMode"/> to the corresponding
-  /// MonoGame <see cref="T:Microsoft.Xna.Framework.Graphics.BlendState"/> (mirrors
-  /// Renderer2D.toBlendState).</summary>
+  /// MonoGame <see cref="T:Microsoft.Xna.Framework.Graphics.BlendState"/> for the 3D pass.
+  /// The 3D shaders (ForwardPbr, BasicEffect billboards/lines) output STRAIGHT color,
+  /// so AlphaBlend maps to the straight-alpha blend state — premultiplied
+  /// BlendState.AlphaBlend would add the tint at full strength regardless of alpha
+  /// (deliberately differs from Renderer2D, whose SpriteBatch path is premultiplied).</summary>
   let toBlendState(mode: BlendMode) : BlendState =
     match mode with
-    | BlendMode.AlphaBlend -> BlendState.AlphaBlend
+    | BlendMode.AlphaBlend -> BlendState.NonPremultiplied
     | BlendMode.NonPremultiplied -> BlendState.NonPremultiplied
     | BlendMode.Additive -> BlendState.Additive
     | BlendMode.Opaque -> BlendState.Opaque
@@ -853,7 +856,10 @@ type ForwardPipelineBase
     effect.Projection <- state.Projection
     effect.Alpha <- 1.0f
 
-    gd.BlendState <- BlendState.AlphaBlend
+    // BasicEffect outputs straight color — straight-alpha blend (same
+    // convention as the translucent mesh pass; premultiplied AlphaBlend
+    // would add the tint at full strength).
+    gd.BlendState <- BlendState.NonPremultiplied
 
     for p in effect.CurrentTechnique.Passes do
       p.Apply()
@@ -1261,7 +1267,10 @@ type ForwardPipelineBase
       state.HasCamera <- false
 
       // Transparent flush: draws the deferred transparents (sorted far-to-near) with alpha
-      // blending + depth-read, then clears the list. Opaque geometry already wrote depth and
+      // blending + depth-read, then clears the list. The PBR fragment outputs STRAIGHT
+      // color (ForwardPbr.fx), so the blend state is the straight-alpha NonPremultiplied —
+      // premultiplied AlphaBlend would add the tint at full strength regardless of opacity.
+      // Opaque geometry already wrote depth and
       // the far-to-near sort guarantees each successive transparent is nearer, so it passes
       // the depth test against everything already drawn. Called at camera boundaries, before
       // DrawImmediate, and at the end of the frame — must run while the deferring camera's
@@ -1273,7 +1282,7 @@ type ForwardPipelineBase
           let prevBlend = gd.BlendState
           let prevDepth = gd.DepthStencilState
 
-          gd.BlendState <- BlendState.AlphaBlend
+          gd.BlendState <- BlendState.NonPremultiplied
           gd.DepthStencilState <- DepthStencilState.DepthRead
           transparentDraws.Sort(transparentComparer)
 
