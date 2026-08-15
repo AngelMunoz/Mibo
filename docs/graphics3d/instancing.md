@@ -58,7 +58,41 @@ The array may be shorter than `count` — instances beyond `colors.Length` rende
 
 > _**NOTE**_: Per-instance color is **MonoGame only**. Passing `colors` on raylib raises `NotSupportedException` — its instanced draw has a fixed instance attribute layout.
 
-> _**NOTE**_: On MonoGame, use `.instancedSlice(...)` when the mesh wraps one part of a shared content-pipeline buffer — pass the part's `vertexOffset`/`startIndex` (`0`/`0` for self-contained meshes), and give the mesh record the part's `PrimitiveCount` and `Bounds`. See [3D Buffer & Commands](buffer-and-commands.html#slices-of-shared-buffers-monogame).
+> _**NOTE**_: On MonoGame, use `.instancedSlice(...)` when the mesh wraps one part of a shared content-pipeline buffer — pass the part's `vertexOffset`/`startIndex` (`0`/`0` for self-contained meshes), and give the mesh record the part's `PrimitiveCount` and `Bounds`. `ModelParts.ofModel` builds those wraps and offsets for you — see [Instancing content-pipeline models (MonoGame)](#instancing-content-pipeline-models-monogame) below, and [3D Buffer & Commands](buffer-and-commands.html#slices-of-shared-buffers-monogame) for the buffer rules.
+
+## Instancing content-pipeline models (MonoGame)
+
+A content-pipeline `Model` packs all of its parts into shared vertex/index buffers and stores vertices bone-local, so its parts cannot go straight into `.instanced(...)` — they need slice offsets and a bone fold. `ModelParts.ofModel` resolves a model into per-part records that carry everything an instanced draw needs:
+
+> _**IMPORTANT**_: `ModelParts` is for **static** models. The instanced draw path carries no bone palette — a skinned model (parts baked with `SkinnedEffect`) renders in its **bind pose**, with no error. Use [`.animatedModelInstanced(...)`](../animation3d.html#skinned--instanced-draws) for skinned models.
+
+> _**IMPORTANT**_: Treat the `ModelPart[]` from `ofModel` as **read-only** — it is the cached result shared by every caller, and mutating an element (for example swapping `Material`) corrupts it for the model's lifetime. Copy the array (`Array.map`) when you need adjusted parts.
+
+```fsharp
+let parts = ModelParts.ofModel(model)   // cached per model instance
+
+for part in parts do
+    // Fold the part's absolute bone in front of each instance transform —
+    // content vertices are bone-local. (Skip the copy when part.Bone
+    // is Matrix.Identity.)
+    let folded = Array.map(fun t -> part.Bone * t) transforms
+
+    buffer
+      .instancedSlice(part.Mesh, folded, part.Material, count,
+                      vertexOffset = part.VertexOffset,
+                      startIndex = part.StartIndex)
+      .drop()
+```
+
+For cell grids, `InstancedRenderContext` has a parts constructor that does the folding and the offsets for you — return `ModelPart[]` instead of `(mesh, material)` pairs, and pass the **raw** cell matrix as the transform (do not fold bones into `getTransform`; the context folds each part's own bone and passes the part's real offsets):
+
+```fsharp
+let instancedCtx =
+    InstancedRenderContext<CellBake, string>(
+        getKey = (fun cell -> cell.ModelName),
+        getParts = (fun cell -> ModelParts.ofModel(loadedModels[cell.ModelName])),
+        getTransform = fun pos cell -> Matrix.CreateTranslation(pos))
+```
 
 ## InstancedRenderContext for cell grids
 

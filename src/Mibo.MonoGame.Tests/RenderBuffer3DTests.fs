@@ -58,4 +58,24 @@ let tests =
         Expect.equal t[1] transforms[1] "transform 1 copied"
       | other -> failtest $"expected DrawInstanced, got %A{other}"
     }
+
+    test "keeps nonzero vertexOffset/startIndex through the command" {
+      use buffer = new RenderBuffer3D()
+
+      buffer.AddDrawInstancedSlice(
+        stubMesh,
+        [| Matrix.Identity |],
+        Material3D.defaults,
+        1,
+        ValueNone,
+        7,
+        12
+      )
+
+      match buffer[0] with
+      | Command3D.DrawInstanced(_, _, _, _, _, vertexOffset, startIndex) ->
+        Expect.equal vertexOffset 7 "vertexOffset reaches the command"
+        Expect.equal startIndex 12 "startIndex reaches the command"
+      | other -> failtest $"expected DrawInstanced, got %A{other}"
+    }
   ]

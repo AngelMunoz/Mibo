@@ -44,6 +44,14 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
         Microsoft.Xna.Framework.Graphics.Effect voption)[]) voption =
     ValueNone
 
+  // ModelPart resolver. ValueNone on the primary ctor; the parts-overload ctor
+  // installs a ValueSome. Emit paths branch on it FIRST: each group draws one
+  // instanced command per part, with the part's own bone folded into a pooled
+  // per-part snapshot and the part's real buffer offsets (zero-copy wraps of
+  // shared content-pipeline buffers — offset 0,0 would draw the first part's
+  // triangles).
+  let mutable partsResolver: ('T -> ModelPart[]) voption = ValueNone
+
   member internal _.Storage = storage
   member internal _.SnapshotPool = snapshotPool
   member _.GetKey = getKey
@@ -55,6 +63,10 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
   member internal _.SetPerMeshShaderResolver f = perMeshShader <- ValueSome f
 
   member internal _.PerMeshShaderResolver = perMeshShader
+
+  member internal _.SetPartsResolver f = partsResolver <- ValueSome f
+
+  member internal _.PartsResolver = partsResolver
 
   /// <summary>
   /// Overload constructor for per-sub-mesh shaders: each triple may carry an
@@ -82,6 +94,65 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
     )
 
     then this.SetPerMeshShaderResolver getMeshesMaterialAndShader
+
+  /// <summary>
+  /// Constructs a context over zero-copy <see cref="T:Mibo.Elmish.Graphics3D.ModelPart"/> slices
+  /// (e.g. <see cref="M:Mibo.Elmish.Graphics3D.ModelParts.ofModel"/> results): each group emits one
+  /// instanced command per part, folding the part's own absolute bone into a pooled
+  /// per-part snapshot and passing the part's real buffer offsets. The
+  /// <paramref name="getTransform"/> bone fold of the two-element ctor must NOT be
+  /// used here — the context applies per-part bones itself.
+  /// </summary>
+  new
+    (
+      getKey: 'T -> 'K,
+      getParts: 'T -> ModelPart[],
+      getTransform: Vector3 -> 'T -> Matrix
+    ) as this =
+    // The pairs wrapper exists only for direct GetMeshesAndMaterial calls —
+    // the emit paths branch on the parts resolver first and never reach it,
+    // so the Array.map never runs on the draw path.
+    InstancedRenderContext(
+      getKey,
+      (fun sample ->
+        getParts sample
+        |> Array.map(fun part -> struct (part.Mesh, part.Material))),
+      getTransform
+    )
+
+    then this.SetPartsResolver getParts
+
+  /// <summary>
+  /// Records one <see cref="T:Mibo.Elmish.Graphics3D.ModelPart"/> instanced draw: folds the part's
+  /// absolute bone into a pooled per-part snapshot (reusing the group snapshot for
+  /// identity bones) and passes the part's real buffer offsets.
+  /// </summary>
+  member private _.EmitPartInstanced
+    (buffer: RenderBuffer3D, part: ModelPart, snapshot: Matrix[], count: int)
+    =
+    let transforms =
+      if part.Bone = Matrix.Identity then
+        snapshot
+      else
+        let folded = ArrayPool<Matrix>.Shared.Rent count
+
+        for j = 0 to count - 1 do
+          folded[j] <- part.Bone * snapshot[j]
+
+        snapshotPool.Add struct (folded, count)
+        folded
+
+    buffer.Add(
+      Command3D.DrawInstanced(
+        part.Mesh,
+        transforms,
+        ValueNone,
+        part.Material,
+        count,
+        part.VertexOffset,
+        part.StartIndex
+      )
+    )
 
   /// <summary>
   /// Returns pooled snapshot arrays to <see cref="T:System.Buffers.ArrayPool`1"/>
@@ -114,47 +185,21 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
 
         snapshots.Add struct (snapshot, count)
 
-        match this.PerMeshShaderResolver with
+        match this.PartsResolver with
+        | ValueSome getParts ->
+          // Parts path — one draw per part, bone folded and offsets honored.
+          let parts = getParts sample
+
+          for pi = 0 to parts.Length - 1 do
+            this.EmitPartInstanced(buffer, parts[pi], snapshot, count)
         | ValueNone ->
-          // Legacy path — one DrawInstanced per sub-mesh, default PBR instanced shader.
-          let meshesAndMaterials = this.GetMeshesAndMaterial sample
+          match this.PerMeshShaderResolver with
+          | ValueNone ->
+            // Legacy path — one DrawInstanced per sub-mesh, default PBR instanced shader.
+            let meshesAndMaterials = this.GetMeshesAndMaterial sample
 
-          for mi = 0 to meshesAndMaterials.Length - 1 do
-            let struct (mesh, material) = meshesAndMaterials[mi]
-
-            buffer.Add(
-              Command3D.DrawInstanced(
-                mesh,
-                snapshot,
-                ValueNone,
-                material,
-                count,
-                0,
-                0
-              )
-            )
-        | ValueSome triples ->
-          // Per-sub-mesh path — wrap each ValueSome sub-mesh in its own BeginEffect/EndEffect.
-          let arr = triples sample
-
-          for mi = 0 to arr.Length - 1 do
-            let struct (mesh, material, shader) = arr[mi]
-
-            match shader with
-            | ValueNone ->
-              buffer.Add(
-                Command3D.DrawInstanced(
-                  mesh,
-                  snapshot,
-                  ValueNone,
-                  material,
-                  count,
-                  0,
-                  0
-                )
-              )
-            | ValueSome s ->
-              buffer.Add(Command3D.BeginEffect s)
+            for mi = 0 to meshesAndMaterials.Length - 1 do
+              let struct (mesh, material) = meshesAndMaterials[mi]
 
               buffer.Add(
                 Command3D.DrawInstanced(
@@ -167,8 +212,42 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
                   0
                 )
               )
+          | ValueSome triples ->
+            // Per-sub-mesh path — wrap each ValueSome sub-mesh in its own BeginEffect/EndEffect.
+            let arr = triples sample
 
-              buffer.Add(Command3D.EndEffect)
+            for mi = 0 to arr.Length - 1 do
+              let struct (mesh, material, shader) = arr[mi]
+
+              match shader with
+              | ValueNone ->
+                buffer.Add(
+                  Command3D.DrawInstanced(
+                    mesh,
+                    snapshot,
+                    ValueNone,
+                    material,
+                    count,
+                    0,
+                    0
+                  )
+                )
+              | ValueSome s ->
+                buffer.Add(Command3D.BeginEffect s)
+
+                buffer.Add(
+                  Command3D.DrawInstanced(
+                    mesh,
+                    snapshot,
+                    ValueNone,
+                    material,
+                    count,
+                    0,
+                    0
+                  )
+                )
+
+                buffer.Add(Command3D.EndEffect)
 
   /// <summary>
   /// Emits instanced draws with one <c>BeginEffect</c>/<c>EndEffect</c> scope per grid
@@ -205,41 +284,49 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
         // GetMeshesAndMaterial would run its Array.map wrapper and allocate a fresh array
         // per group per frame (the shader component is unused here — the per-key scope
         // supersedes per-sub-mesh shaders).
-        match this.PerMeshShaderResolver with
-        | ValueSome triples ->
-          let meshMaterialShaders = triples sample
+        match this.PartsResolver with
+        | ValueSome getParts ->
+          // Parts path — one draw per part, bone folded and offsets honored.
+          let parts = getParts sample
 
-          for mi = 0 to meshMaterialShaders.Length - 1 do
-            let struct (mesh, material, _) = meshMaterialShaders[mi]
-
-            buffer.Add(
-              Command3D.DrawInstanced(
-                mesh,
-                snapshot,
-                ValueNone,
-                material,
-                count,
-                0,
-                0
-              )
-            )
+          for pi = 0 to parts.Length - 1 do
+            this.EmitPartInstanced(buffer, parts[pi], snapshot, count)
         | ValueNone ->
-          let meshesAndMaterials = this.GetMeshesAndMaterial sample
+          match this.PerMeshShaderResolver with
+          | ValueSome triples ->
+            let meshMaterialShaders = triples sample
 
-          for mi = 0 to meshesAndMaterials.Length - 1 do
-            let struct (mesh, material) = meshesAndMaterials[mi]
+            for mi = 0 to meshMaterialShaders.Length - 1 do
+              let struct (mesh, material, _) = meshMaterialShaders[mi]
 
-            buffer.Add(
-              Command3D.DrawInstanced(
-                mesh,
-                snapshot,
-                ValueNone,
-                material,
-                count,
-                0,
-                0
+              buffer.Add(
+                Command3D.DrawInstanced(
+                  mesh,
+                  snapshot,
+                  ValueNone,
+                  material,
+                  count,
+                  0,
+                  0
+                )
               )
-            )
+          | ValueNone ->
+            let meshesAndMaterials = this.GetMeshesAndMaterial sample
+
+            for mi = 0 to meshesAndMaterials.Length - 1 do
+              let struct (mesh, material) = meshesAndMaterials[mi]
+
+              buffer.Add(
+                Command3D.DrawInstanced(
+                  mesh,
+                  snapshot,
+                  ValueNone,
+                  material,
+                  count,
+                  0,
+                  0
+                )
+              )
 
         match scope with
         | ValueSome _ -> buffer.Add(Command3D.EndEffect)

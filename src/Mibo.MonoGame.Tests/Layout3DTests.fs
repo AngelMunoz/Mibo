@@ -66,6 +66,24 @@ let private singleCellGrid value =
     System.Numerics.Vector3.Zero
   |> Layout3D.run(fun s -> s |> Layout3D.set 0 0 0 value)
 
+let private partFor
+  (vertexOffset: int, startIndex: int, bone: Matrix)
+  : ModelPart =
+  {
+    Mesh = dummyMesh()
+    VertexOffset = vertexOffset
+    StartIndex = startIndex
+    Bone = bone
+    Material = dummyMat()
+  }
+
+let private ctxFromParts(parts: ModelPart[]) =
+  InstancedRenderContext<int, int>(
+    getKey = id,
+    getParts = (fun _ -> parts),
+    getTransform = fun _ _ -> Matrix.CreateTranslation(1f, 0f, 0f)
+  )
+
 [<Tests>]
 let tests =
   testList "Layout3D InstancedRenderer3D (MonoGame)" [
@@ -141,6 +159,109 @@ let tests =
 
       Expect.equal buf.Count 1 "draw only"
       Expect.equal (cmdSequence buf) [| "draw" |] "no scope"
+
+    testCase "parts ctor emits one draw per part with offsets and bone fold"
+    <| fun _ ->
+      // Zero-copy ModelPart wraps: each part must draw with its own buffer
+      // offsets, and a non-identity absolute bone must be folded in front of
+      // the instance transform (a per-part snapshot, not the shared one).
+      use buf = new RenderBuffer3D()
+
+      let bone = Matrix.CreateTranslation(2f, 0f, 0f)
+
+      let parts = [| partFor(0, 0, Matrix.Identity); partFor(7, 12, bone) |]
+      let ctx = ctxFromParts parts
+      let grid = singleCellGrid 0
+
+      CellGridRenderer3D.renderInstanced ctx grid buf
+
+      Expect.equal buf.Count 2 "two parts → two draws"
+
+      match buf.Item 0 with
+      | Command3D.DrawInstanced(_, t, _, _, _, vo, si) ->
+        Expect.equal (vo, si) (0, 0) "identity-bone part keeps zero offsets"
+
+        Expect.equal
+          t[0]
+          (Matrix.CreateTranslation(1f, 0f, 0f))
+          "identity bone reuses the group snapshot unchanged"
+      | other -> failtest $"expected DrawInstanced, got %A{other}"
+
+      match buf.Item 1 with
+      | Command3D.DrawInstanced(_, t, _, _, _, vo, si) ->
+        Expect.equal (vo, si) (7, 12) "part offsets reach the command"
+
+        Expect.equal
+          t[0]
+          (bone * Matrix.CreateTranslation(1f, 0f, 0f))
+          "bone folded in front of the instance transform"
+      | other -> failtest $"expected DrawInstanced, got %A{other}"
+
+    testCase
+      "parts ctor + renderInstancedWithEffect wraps every part in the key scope"
+    <| fun _ ->
+      // The parts branch of EmitInstancedWithEffect: one BeginEffect/EndEffect
+      // scope per ValueSome key, with every part's draw (and its offsets)
+      // inside it. A ValueNone key would draw bare.
+      use buf = new RenderBuffer3D()
+
+      let parts = [|
+        partFor(0, 0, Matrix.Identity)
+        partFor(7, 12, Matrix.Identity)
+      |]
+
+      let ctx = ctxFromParts parts
+      let grid = singleCellGrid 0
+
+      CellGridRenderer3D.renderInstancedWithEffect
+        ctx
+        grid
+        (fun _ -> ValueSome(dummyEffect()))
+        buf
+
+      Expect.equal buf.Count 4 "begin + draw + draw + end"
+
+      Expect.equal
+        (cmdSequence buf)
+        [| "begin"; "draw"; "draw"; "end" |]
+        "one key scope over every part"
+
+      match buf.Item 1, buf.Item 2 with
+      | Command3D.DrawInstanced(_, _, _, _, _, vo1, _),
+        Command3D.DrawInstanced(_, _, _, _, _, vo2, si2) ->
+        Expect.equal vo1 0 "first part keeps its offsets inside the scope"
+
+        Expect.equal
+          (vo2, si2)
+          (7, 12)
+          "second part keeps its offsets inside the scope"
+      | other -> failtest $"expected two DrawInstanced, got %A{other}"
+
+    testCase "ResetFrameBuffers returns group and folded snapshots to the pool"
+    <| fun _ ->
+      // EmitPartInstanced rents a folded copy for non-identity bones and
+      // tracks it in the snapshot pool; ResetFrameBuffers must return every
+      // tracked array (group snapshot + folds) to ArrayPool.
+      use buf = new RenderBuffer3D()
+
+      let bone = Matrix.CreateTranslation(2f, 0f, 0f)
+      let parts = [| partFor(0, 0, bone) |]
+      let ctx = ctxFromParts parts
+      let grid = singleCellGrid 0
+
+      CellGridRenderer3D.renderInstanced ctx grid buf
+
+      Expect.equal
+        ctx.SnapshotPool.Count
+        2
+        "one group snapshot + one folded per-part snapshot tracked"
+
+      ctx.ResetFrameBuffers()
+
+      Expect.equal
+        ctx.SnapshotPool.Count
+        0
+        "all snapshots returned to ArrayPool"
 
     testCase "mixed keys interleave scopes correctly"
     <| fun _ ->
