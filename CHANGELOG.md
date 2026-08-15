@@ -4,6 +4,7 @@
 
 ### Added
 
+- **MonoGame 3D:** `Draw.meshSlice`/`Draw.instancedSlice` draw a slice of a mesh within shared content-pipeline vertex/index buffers — pass the part's `vertexOffset`/`startIndex` (`0, 0` for self-contained buffers) and the mesh draws that part's own geometry instead of the first part's triangles. The offsets default to 0, so existing self-contained meshes call them unchanged.
 - **Adaptive (experimental):** deferred work — the adaptive counterpart of `Cmd`. `AdaptiveContext.Intents` takes `unit -> unit` work from `Update` (or any thread) and runs it at the moment the name says: `post` (after this step's `Update`, drained until empty so reaction chains settle before the frame is forced), `postNextFrame` (top of the next step), `postTask`/`postAsync` (background work; the completion returns on the owner thread where root writes are legal). `AdaptiveHeadless.Post` injects work without holding the `Update` context.
 - **Adaptive (experimental):** subscriptions — the adaptive counterpart of `Sub`. `AdaptiveInit.withSubscriptions` takes a keyed `amap` of `AdaptiveSub` specs (dynamic, state-driven subscription sets can use `AMap.custom`); the runner diffs it per step — gated on the map's version, so clean steps do no diff work — to attach, keep, or detach, and detaches everything on `Dispose`. Callbacks receive the queue's pre-step `post`: events drain at the frame boundary before `Update`, so input published right before a `Step` reaches the sim in that same step.
 - **Templates:** `Mibo.Templates` (the `mibo-2d`/`mibo-3d`/`mibo-mg-2d`/`mibo-mg-3d` starters) is now packed and published with each release, versioned from the repo changelog like the libraries.
@@ -12,6 +13,10 @@
 
 - **Breaking (experimental): Adaptive:** `AdaptiveProgram.Init` and the subscription projection now receive the new `AdaptiveFrameContext` (framework roots + `GameContext`, no work queue); only `Update` receives `AdaptiveContext` with `Intents` — the frame builder cannot defer work by construction.
 - **Breaking (experimental): Adaptive:** `AdaptiveHeadless.RunAsync` yields `StepOutcome<'Frame>` (`GameTime` + `Frame`) instead of `struct (GameTime * 'Frame)`.
+
+### Deprecated
+
+- **MonoGame 3D:** `Draw.mesh`/`Draw.instanced` are deprecated on MonoGame — they draw from buffer offset 0, which renders the first part's triangles for a mesh wrapping a part of a shared content-pipeline buffer. Use `meshSlice`/`instancedSlice` (see Added); raylib's `mesh`/`instanced` are unchanged.
 
 ### Removed
 

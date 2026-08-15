@@ -167,7 +167,7 @@ module Draw3D =
     (material: Material3D)
     (buffer: RenderBuffer3D)
     =
-    buffer.Add(Command3D.DrawPrimitive(mesh, transform, material))
+    buffer.Add(Command3D.DrawPrimitive(mesh, transform, material, 0, 0))
     buffer
 
   /// <summary>
@@ -188,7 +188,9 @@ module Draw3D =
         transforms,
         ValueNone,
         material,
-        instanceCount
+        instanceCount,
+        0,
+        0
       )
     )
 

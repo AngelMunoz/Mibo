@@ -118,11 +118,19 @@ type Command3D =
     transforms: Matrix[] *
     colors: Color[] voption *
     material: Material3D *
-    instanceCount: int
+    instanceCount: int *
+    /// <summary>First vertex of the mesh's slice within its shared buffer (baseVertex).</summary>
+    vertexOffset: int *
+    /// <summary>First index of the mesh's slice within its shared buffer (startIndex).</summary>
+    startIndex: int
   | DrawPrimitive of
     mesh: PrimitiveMesh *
     transform: Matrix *
-    material: Material3D
+    material: Material3D *
+    /// <summary>First vertex of the mesh's slice within its shared buffer (baseVertex).</summary>
+    vertexOffset: int *
+    /// <summary>First index of the mesh's slice within its shared buffer (startIndex).</summary>
+    startIndex: int
   | DrawMeshEffect of
     meshPart: ModelMeshPart *
     transform: Matrix *

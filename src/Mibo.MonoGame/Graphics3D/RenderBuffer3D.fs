@@ -194,12 +194,45 @@ type RenderBuffer3D with
 
   // ── Geometry ──
 
-  /// MonoGame's mesh-level draw is the effectless PrimitiveMesh.
+  /// <summary>
+  /// MonoGame's mesh-level draw is the effectless PrimitiveMesh. Draws the whole
+  /// buffer from offset 0 — see <c>AddDrawMeshSlice</c> for shared content-pipeline
+  /// buffers (multi-part models).
+  /// </summary>
+  [<Obsolete("AddDrawMesh draws from buffer offset 0. Use AddDrawMeshSlice to draw a part's slice of shared content-pipeline buffers (vertexOffset/startIndex); procedural meshes pass 0, 0.")>]
   member inline b.AddDrawMesh
     (mesh: PrimitiveMesh, transform: Matrix, material: Material3D)
     =
-    b.Add(Command3D.DrawPrimitive(mesh, transform, material))
+    b.Add(Command3D.DrawPrimitive(mesh, transform, material, 0, 0))
 
+  /// <summary>
+  /// Draws a slice of a mesh within shared content-pipeline vertex/index buffers:
+  /// <c>vertexOffset</c> is the part's first vertex (<c>baseVertex</c>) and
+  /// <c>startIndex</c> the part's first index. Self-contained buffers pass 0, 0.
+  /// </summary>
+  member inline b.AddDrawMeshSlice
+    (
+      mesh: PrimitiveMesh,
+      transform: Matrix,
+      material: Material3D,
+      vertexOffset: int,
+      startIndex: int
+    ) =
+    b.Add(
+      Command3D.DrawPrimitive(
+        mesh,
+        transform,
+        material,
+        vertexOffset,
+        startIndex
+      )
+    )
+
+  /// <summary>
+  /// Draws many instances of the same mesh, whole buffers from offset 0 — see
+  /// <c>AddDrawInstancedSlice</c> for shared content-pipeline buffers.
+  /// </summary>
+  [<Obsolete("AddDrawInstanced draws from buffer offset 0. Use AddDrawInstancedSlice to draw a part's slice of shared content-pipeline buffers (vertexOffset/startIndex); procedural meshes pass 0, 0.")>]
   member inline b.AddDrawInstanced
     (
       mesh: PrimitiveMesh,
@@ -223,7 +256,57 @@ type RenderBuffer3D with
     // count, and the pipeline clamps draws to transforms.Length — with the
     // pooled length that clamp could read past the copied rows.
     b.Add(
-      Command3D.DrawInstanced(mesh, transformsCopy, colors, material, count)
+      Command3D.DrawInstanced(
+        mesh,
+        transformsCopy,
+        colors,
+        material,
+        count,
+        0,
+        0
+      )
+    )
+
+  /// <summary>
+  /// Draws many instances of a slice of a mesh within shared content-pipeline
+  /// vertex/index buffers: <c>vertexOffset</c> is the part's first vertex
+  /// (<c>baseVertex</c>) and <c>startIndex</c> the part's first index.
+  /// Self-contained buffers pass 0, 0.
+  /// </summary>
+  member inline b.AddDrawInstancedSlice
+    (
+      mesh: PrimitiveMesh,
+      transforms: Matrix[],
+      material: Material3D,
+      instanceCount: int,
+      colors: Microsoft.Xna.Framework.Color[] voption,
+      vertexOffset: int,
+      startIndex: int
+    ) =
+    // Copy the transforms into a rented array: the command executes after
+    // the whole view has been recorded, so a caller reusing its backing
+    // array (across camera blocks or frames) must not be able to overwrite
+    // this command's transforms before they execute. Same by-reference
+    // fix as AddAnimatedModelInstanced.
+    // max 0: ArrayPool.Rent throws on a negative length — a negative
+    // instanceCount was (and stays) a recorded no-op.
+    let count = max 0 (min instanceCount transforms.Length)
+    let transformsCopy = b.RentMatrixArray(count)
+    Array.Copy(transforms, 0, transformsCopy, 0, count)
+
+    // Pass count (not instanceCount): the rented array may be longer than
+    // count, and the pipeline clamps draws to transforms.Length — with the
+    // pooled length that clamp could read past the copied rows.
+    b.Add(
+      Command3D.DrawInstanced(
+        mesh,
+        transformsCopy,
+        colors,
+        material,
+        count,
+        vertexOffset,
+        startIndex
+      )
     )
 
   member inline b.AddDrawModel(model: Model, transform: Matrix) =
@@ -407,7 +490,9 @@ type RenderBuffer3D with
         Command3D.DrawPrimitive(
           mesh,
           localTransform * boneWorld * transform,
-          material
+          material,
+          0,
+          0
         )
       ))
 

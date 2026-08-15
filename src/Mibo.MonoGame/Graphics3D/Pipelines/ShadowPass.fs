@@ -25,6 +25,10 @@ open Mibo.Elmish.Graphics3D
 [<Struct>]
 type ShadowMeshDraw = {
   Mesh: PrimitiveMesh
+  /// <summary>First vertex of the mesh's slice within its shared buffer (baseVertex).</summary>
+  VertexOffset: int
+  /// <summary>First index of the mesh's slice within its shared buffer (startIndex).</summary>
+  StartIndex: int
   Transform: Matrix
   /// World-space bounds (mesh.Bounds transformed by Transform). Precomputed at collection
   /// time so the per-caster frustum cull in runShadowPass is a single ContainmentType check.
@@ -78,6 +82,10 @@ type ShadowModelPartDraw = {
 [<Struct>]
 type ShadowInstancedDraw = {
   Mesh: PrimitiveMesh
+  /// <summary>First vertex of the mesh's slice within its shared buffer (baseVertex).</summary>
+  VertexOffset: int
+  /// <summary>First index of the mesh's slice within its shared buffer (startIndex).</summary>
+  StartIndex: int
   Transforms: Matrix[]
   InstanceCount: int
   /// Whether this draw was emitted while shadows were enabled (see ShadowMeshDraw).
@@ -548,7 +556,11 @@ module internal ShadowPass =
     match cmd with
     | Command3D.EnableShadows -> res.CollectCastEnabled <- true
     | Command3D.DisableShadows -> res.CollectCastEnabled <- false
-    | Command3D.DrawPrimitive(mesh, transform, material) ->
+    | Command3D.DrawPrimitive(mesh,
+                              transform,
+                              material,
+                              vertexOffset,
+                              startIndex) ->
       // Transparent primitives (Opacity < 1 in the forward pass) don't cast shadows: the
       // depth pass is binary (no alpha test), so a transparent caster would occlude at
       // full strength.
@@ -561,6 +573,8 @@ module internal ShadowPass =
 
         shadowDraws[res.CollectedDrawCount] <- {
           Mesh = mesh
+          VertexOffset = vertexOffset
+          StartIndex = startIndex
           Transform = transform
           WorldBounds = worldBounds
           CastsShadow = castEnabled
@@ -702,7 +716,9 @@ module internal ShadowPass =
                               transforms,
                               _colors,
                               _material,
-                              instanceCount) when instanceCount > 0 ->
+                              instanceCount,
+                              vertexOffset,
+                              startIndex) when instanceCount > 0 ->
       // The world's instanced geometry (block grid, platforms, etc.). Collected whole (one entry
       // per emitted DrawInstanced). No per-instance cull — the sample chunk-culls the source
       // commands, so the emitted count is already bounded.
@@ -712,6 +728,8 @@ module internal ShadowPass =
 
       shadowInstancedDraws[res.CollectedInstancedCount] <- {
         Mesh = mesh
+        VertexOffset = vertexOffset
+        StartIndex = startIndex
         Transforms = transforms
         InstanceCount = instanceCount
         CastsShadow = castEnabled
@@ -867,9 +885,20 @@ module internal ShadowPass =
         PbrUniforms.setMatrix shadowParams.MatModel draw.Transform
         PbrUniforms.setMatrix shadowParams.ViewProj viewProj
 
+        // Slice-aware: content-pipeline parts share one buffer pair and draw with the
+        // part's baseVertex/startIndex; self-contained meshes carry 0, 0.
+        gd.SetVertexBuffer(draw.Mesh.Vertices)
+        gd.Indices <- draw.Mesh.Indices
+
         for pass in effect.CurrentTechnique.Passes do
           pass.Apply()
-          draw.Mesh.Draw(gd, effect)
+
+          gd.DrawIndexedPrimitives(
+            PrimitiveType.TriangleList,
+            draw.VertexOffset,
+            draw.StartIndex,
+            draw.Mesh.PrimitiveCount
+          )
 
   let renderModelPartSpan
     (gd: GraphicsDevice)
@@ -1008,8 +1037,8 @@ module internal ShadowPass =
 
             gd.DrawInstancedPrimitives(
               PrimitiveType.TriangleList,
-              0,
-              0,
+              draw.VertexOffset,
+              draw.StartIndex,
               draw.Mesh.PrimitiveCount,
               instanceCount
             )

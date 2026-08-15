@@ -128,7 +128,9 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
                 snapshot,
                 ValueNone,
                 material,
-                count
+                count,
+                0,
+                0
               )
             )
         | ValueSome triples ->
@@ -146,7 +148,9 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
                   snapshot,
                   ValueNone,
                   material,
-                  count
+                  count,
+                  0,
+                  0
                 )
               )
             | ValueSome s ->
@@ -158,7 +162,9 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
                   snapshot,
                   ValueNone,
                   material,
-                  count
+                  count,
+                  0,
+                  0
                 )
               )
 
@@ -212,7 +218,9 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
                 snapshot,
                 ValueNone,
                 material,
-                count
+                count,
+                0,
+                0
               )
             )
         | ValueNone ->
@@ -227,7 +235,9 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
                 snapshot,
                 ValueNone,
                 material,
-                count
+                count,
+                0,
+                0
               )
             )
 

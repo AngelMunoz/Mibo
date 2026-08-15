@@ -465,7 +465,11 @@ type ForwardPipelineBase
           ValueSome matOverride,
           transparentDraws
         )
-      | Command3D.DrawPrimitive(mesh, transform, material) ->
+      | Command3D.DrawPrimitive(mesh,
+                                transform,
+                                material,
+                                vertexOffset,
+                                startIndex) ->
         PbrShading.drawPrimitive(
           gd,
           &state,
@@ -474,13 +478,17 @@ type ForwardPipelineBase
           mesh,
           transform,
           material,
+          vertexOffset,
+          startIndex,
           transparentDraws
         )
       | Command3D.DrawInstanced(mesh,
                                 transforms,
                                 colors,
                                 material,
-                                instanceCount) ->
+                                instanceCount,
+                                vertexOffset,
+                                startIndex) ->
         PbrShading.drawInstanced(
           gd,
           &state,
@@ -490,7 +498,9 @@ type ForwardPipelineBase
           transforms,
           colors,
           material,
-          instanceCount
+          instanceCount,
+          vertexOffset,
+          startIndex
         )
       | Command3D.DrawAnimatedModelInstanced(model,
                                              transforms,

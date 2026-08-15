@@ -41,7 +41,7 @@ let tests =
       Expect.equal buffer.Count 1 "expected exactly one command"
 
       match buffer[0] with
-      | Command3D.DrawInstanced(_, t, _, _, count) ->
+      | Command3D.DrawInstanced(_, t, _, _, count, _, _) ->
         Expect.equal count 2 "count clamps to transforms.Length (was 5)"
 
         Expect.isFalse
