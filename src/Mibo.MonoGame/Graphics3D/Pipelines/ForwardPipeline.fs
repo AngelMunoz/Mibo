@@ -4,6 +4,7 @@ open System
 open System.Collections.Generic
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open MonoGame.Framework.Utilities
 open Mibo.Elmish
 open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics3D
@@ -393,8 +394,14 @@ type ForwardPipelineBase
   // Shared index pattern for N quads: [0,1,2, 0,2,3] offset by quad*4. Grown on demand.
   let mutable billboardIndices: int[] = Array.zeroCreate<int>(64 * 6)
   // Reused across DrawLine3D calls — avoids per-call heap allocation on the hot path.
+  // 6 slots: 2 for the LineList path, 6 for the DX12 camera-facing quad path.
   let mutable lineStaging: VertexPositionColorTexture[] =
-    Array.zeroCreate<VertexPositionColorTexture> 2
+    Array.zeroCreate<VertexPositionColorTexture> 6
+
+  // Half-width (world units) of the camera-facing quad the DX12 backend draws
+  // for 3D lines — its PSOs hardcode a TRIANGLE topology type, so line
+  // topologies render as triangles there (2-vertex draws render nothing).
+  let line3DQuadHalfWidth = 0.015f
 
   // ----------------------------------------------------------------
   // Per-draw shading hook — overridable.
@@ -861,9 +868,61 @@ type ForwardPipelineBase
     // would add the tint at full strength).
     gd.BlendState <- BlendState.NonPremultiplied
 
-    for p in effect.CurrentTechnique.Passes do
-      p.Apply()
-      gd.DrawUserPrimitives(PrimitiveType.LineList, lineStaging, 0, 1)
+    if PlatformInfo.GraphicsBackend = GraphicsBackend.DirectX12 then
+      // Line topologies render as triangles on DX12 — emit a camera-facing quad.
+      let dir = finish - start
+      let len = dir.Length()
+
+      if len > 0.0f then
+        let dirN = dir / len
+        let mid = (start + finish) * 0.5f
+
+        let mutable side =
+          Vector3.Cross(dirN, mid - state.CurrentCamera.Position)
+
+        if side.LengthSquared() < 0.000001f then
+          // line points at the camera — any perpendicular basis works
+          side <- Vector3.Cross(dirN, Vector3.Up)
+
+        if side.LengthSquared() < 0.000001f then
+          side <- Vector3.Cross(dirN, Vector3.UnitX)
+
+        side <- Vector3.Normalize(side) * line3DQuadHalfWidth
+
+        lineStaging[0] <-
+          VertexPositionColorTexture(start + side, color, Vector2.Zero)
+
+        lineStaging[1] <-
+          VertexPositionColorTexture(finish + side, color, Vector2.Zero)
+
+        lineStaging[2] <-
+          VertexPositionColorTexture(finish - side, color, Vector2.Zero)
+
+        lineStaging[3] <-
+          VertexPositionColorTexture(start + side, color, Vector2.Zero)
+
+        lineStaging[4] <-
+          VertexPositionColorTexture(finish - side, color, Vector2.Zero)
+
+        lineStaging[5] <-
+          VertexPositionColorTexture(start - side, color, Vector2.Zero)
+
+        let prevRaster = gd.RasterizerState
+        gd.RasterizerState <- RasterizerState.CullNone
+
+        for p in effect.CurrentTechnique.Passes do
+          p.Apply()
+
+          gd.DrawUserPrimitives(PrimitiveType.TriangleList, lineStaging, 0, 2)
+          |> ignore
+
+        gd.RasterizerState <- prevRaster
+    else
+      for p in effect.CurrentTechnique.Passes do
+        p.Apply()
+
+        gd.DrawUserPrimitives(PrimitiveType.LineList, lineStaging, 0, 1)
+        |> ignore
 
     gd.BlendState <- BlendState.Opaque
 

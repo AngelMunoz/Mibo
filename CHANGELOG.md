@@ -33,6 +33,7 @@
 - **MonoGame 3D:** cube, plane and cone primitives now face outward under the default cull mode — the cube no longer shows its interior and the plane no longer vanishes from one side.
 - **2D:** triangle fans now auto-close the rim on every backend — the last rim vertex connects back to the first, so a full convex rim fills its polygon. raylib previously left the wedge between the last and first rim vertex unfilled while MonoGame closed it.
 - **MonoGame 3D:** translucent materials, alpha-blended billboards and alpha-blended line draws now fade their tint with alpha — a material at `Opacity 0.3` shows 30% of its color over the background. They previously added the tint at full strength while only fading the background, so translucent tints now match the raylib backend.
+- **MonoGame (DirectX 12):** lines now render on the DX12 backend. Thin lines, line strips and 3D lines drew as filled shapes or vanished there — the DX12 runtime interprets line topologies as triangles. On that backend 2D lines now draw as thin quads and 3D lines as camera-facing quads, close to the native lines the other backends draw.
 
 ## [4.2.0] - 2026-08-11
 
