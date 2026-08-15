@@ -109,6 +109,9 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
       getParts: 'T -> ModelPart[],
       getTransform: Vector3 -> 'T -> Matrix
     ) as this =
+    // The pairs wrapper exists only for direct GetMeshesAndMaterial calls —
+    // the emit paths branch on the parts resolver first and never reach it,
+    // so the Array.map never runs on the draw path.
     InstancedRenderContext(
       getKey,
       (fun sample ->

@@ -17,6 +17,11 @@ open Microsoft.Xna.Framework.Graphics
 /// <see cref="F:Mibo.Elmish.Graphics3D.ModelPart.StartIndex"/>) and its bone must be folded in front
 /// of every world/instance transform — stock <c>ModelMesh.Draw</c> does both
 /// internally. Resolve with <see cref="M:Mibo.Elmish.Graphics3D.ModelParts.ofModel"/>.
+/// <para>
+/// <b>Static models only.</b> The instanced draw path carries no bone palette,
+/// so skinned parts (baked with <c>SkinnedEffect</c>) render in their bind pose.
+/// Use <c>Draw.animatedModelInstanced</c> for skinned models.
+/// </para>
 /// </remarks>
 [<Struct>]
 type ModelPart = {
@@ -70,6 +75,16 @@ module ModelParts =
   /// Cached per model instance: the <c>ContentManager</c> hands back the same
   /// <c>Model</c> per asset name, so the cache follows the model's lifetime and
   /// never keeps one alive.
+  /// <para>
+  /// Treat the returned array as <b>read-only</b>: it is the cached result shared
+  /// by every caller, and mutating an element (for example swapping
+  /// <see cref="F:Mibo.Elmish.Graphics3D.ModelPart.Material"/>) corrupts it for the model's lifetime.
+  /// Copy the array (<c>Array.map</c>) when you need adjusted parts.
+  /// </para>
+  /// <para>
+  /// Static models only — see the <see cref="T:Mibo.Elmish.Graphics3D.ModelPart"/> remarks about
+  /// skinned parts.
+  /// </para>
   /// </summary>
   let ofModel(model: Model) : ModelPart[] =
     cache.GetValue(

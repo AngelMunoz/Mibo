@@ -99,7 +99,7 @@ for part in parts do
                      vertexOffset = part.VertexOffset, startIndex = part.StartIndex)
 ```
 
-Content vertices are stored **bone-local** — fold `part.Bone` in front of every world/instance transform (stock `ModelMesh.Draw` does this internally). `part.Bone` is `Matrix.Identity` for models without bones. See [GPU Instancing](instancing.html#instancing-content-pipeline-models-monogame) for the instanced form and the grid-context shortcut.
+Content vertices are stored **bone-local** — fold `part.Bone` in front of every world/instance transform (stock `ModelMesh.Draw` does this internally). `part.Bone` is `Matrix.Identity` for models without bones. Treat the returned array as **read-only**: it is the cached result shared by every caller, and mutating an element corrupts it for the model's lifetime — copy it (`Array.map`) when you need adjusted parts. `ModelParts` is for **static** models only: the instanced path carries no bone palette, so skinned parts render in their bind pose — use `animatedModelInstanced` for skinned models. See [GPU Instancing](instancing.html#instancing-content-pipeline-models-monogame) for the instanced form and the grid-context shortcut.
 
 ## Camera commands
 

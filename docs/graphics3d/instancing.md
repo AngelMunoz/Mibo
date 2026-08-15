@@ -64,6 +64,10 @@ The array may be shorter than `count` — instances beyond `colors.Length` rende
 
 A content-pipeline `Model` packs all of its parts into shared vertex/index buffers and stores vertices bone-local, so its parts cannot go straight into `.instanced(...)` — they need slice offsets and a bone fold. `ModelParts.ofModel` resolves a model into per-part records that carry everything an instanced draw needs:
 
+> _**IMPORTANT**_: `ModelParts` is for **static** models. The instanced draw path carries no bone palette — a skinned model (parts baked with `SkinnedEffect`) renders in its **bind pose**, with no error. Use [`.animatedModelInstanced(...)`](../animation3d.html#skinned--instanced-draws) for skinned models.
+
+> _**IMPORTANT**_: Treat the `ModelPart[]` from `ofModel` as **read-only** — it is the cached result shared by every caller, and mutating an element (for example swapping `Material`) corrupts it for the model's lifetime. Copy the array (`Array.map`) when you need adjusted parts.
+
 ```fsharp
 let parts = ModelParts.ofModel(model)   // cached per model instance
 
