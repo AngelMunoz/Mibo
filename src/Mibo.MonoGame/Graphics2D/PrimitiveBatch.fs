@@ -3,6 +3,7 @@ namespace Mibo.Elmish.Graphics2D
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open MonoGame.Framework.Utilities
 
 /// <summary>
 /// A primitive group tracked for flushing.
@@ -36,7 +37,11 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
   let gd = graphicsDevice
   let basicEffect = new BasicEffect(graphicsDevice)
   let mutable customEffect: Effect voption = ValueNone
-  let vertices = ResizeArray<VertexPositionColor>(1024)
+  // Raw grow-on-demand vertex store: Flush draws straight from this array
+  // (DrawUserPrimitives takes an offset+count), so a flush allocates nothing.
+  // A ResizeArray here would force a ToArray() copy — one array per flush.
+  let mutable vertexStore = Array.zeroCreate<VertexPositionColor> 1024
+  let mutable vertexCount = 0
   let groups = ResizeArray<PrimitiveGroup>(64)
   let mutable projectionDirty = true
   let mutable isInBatch = false
@@ -46,6 +51,13 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
   let mutable currentBlend = BlendState.NonPremultiplied
   let mutable currentRasterizer = RasterizerState.CullNone
   let mutable currentLineWidth = 1.0f
+
+  // The native DX12 runtime hardcodes a TRIANGLE pipeline topology type for
+  // every pipeline state object, so LineList/LineStrip draws render as
+  // triangles there (a 2-vertex line draw renders nothing). Line geometry is
+  // emitted as triangles instead when this is set.
+  let linesAsTriangles =
+    PlatformInfo.GraphicsBackend = GraphicsBackend.DirectX12
 
   do
     basicEffect.VertexColorEnabled <- true
@@ -119,8 +131,42 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
       | PrimitiveType.TriangleStrip when g.VertexCount >= 3 -> g.VertexCount - 2
       | _ -> 0
 
+  let ensureVertexCapacity(needed: int) =
+    if vertexStore.Length < needed then
+      let mutable size = vertexStore.Length
+
+      while size < needed do
+        size <- size * 2
+
+      let bigger = Array.zeroCreate<VertexPositionColor> size
+      Array.blit vertexStore 0 bigger 0 vertexCount
+      vertexStore <- bigger
+
+  let addVertex(x: VertexPositionColor) =
+    ensureVertexCapacity(vertexCount + 1)
+    vertexStore[vertexCount] <- x
+    vertexCount <- vertexCount + 1
+
+  // Scratch for the DX12 mitered-ribbon line-strip path (see linesAsTriangles).
+  let ribbonScratch = ResizeArray<Vector2>(256)
+
+  let appendRibbon(pts: ResizeArray<Vector2>, color: Color) =
+    if pts.Count >= 3 then
+      closeCurrentGroupIfDifferent PrimitiveType.TriangleStrip
+
+      let last = groups[groups.Count - 1]
+
+      groups[groups.Count - 1] <- {
+        last with
+            VertexCount = last.VertexCount + pts.Count
+      }
+
+      for i = 0 to pts.Count - 1 do
+        addVertex(VertexPositionColor(Vector3(pts[i].X, pts[i].Y, 0.0f), color))
+
+
   let flush() =
-    if vertices.Count > 0 && groups.Count > 0 then
+    if vertexCount > 0 && groups.Count > 0 then
       ensureProjection()
 
       let activeEffect =
@@ -145,8 +191,6 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
       gd.DepthStencilState <- DepthStencilState.None
       gd.RasterizerState <- currentRasterizer
 
-      let vertexArr = vertices.ToArray()
-
       for i = 0 to groups.Count - 1 do
         let g = groups[i]
         let count = primitiveCountOf g
@@ -157,7 +201,7 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
 
             gd.DrawUserPrimitives(
               g.PrimitiveType,
-              vertexArr,
+              vertexStore,
               g.StartVertex,
               count
             )
@@ -167,7 +211,7 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
       gd.DepthStencilState <- gdPrevDepth
       gd.RasterizerState <- gdPrevRaster
 
-      vertices.Clear()
+      vertexCount <- 0
       groups.Clear()
 
   /// <summary>Gets or sets the default thick-line width used by SetLineWidth.</summary>
@@ -183,7 +227,7 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
     projectionDirty <- true
     isInBatch <- true
     currentMatrix <- matrix
-    vertices.Clear()
+    vertexCount <- 0
     groups.Clear()
 
   /// <summary>Ends the batch, flushing any remaining vertices.</summary>
@@ -225,26 +269,95 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
       flush()
 
   /// <summary>Adds a single line segment with the given color.</summary>
-  member _.AddLine(start: Vector2, ``end``: Vector2, color: Color) =
-    closeCurrentGroupIfDifferent PrimitiveType.LineList
+  /// <remarks>On the DX12 backend the segment is emitted as a 1px quad —
+  /// see <c>linesAsTriangles</c>.</remarks>
+  member this.AddLine(start: Vector2, ``end``: Vector2, color: Color) =
+    if linesAsTriangles then
+      this.AddLineThick(start, ``end``, 1.0f, color)
+    else
+      closeCurrentGroupIfDifferent PrimitiveType.LineList
 
-    let last = groups[groups.Count - 1]
+      let last = groups[groups.Count - 1]
 
-    groups[groups.Count - 1] <- {
-      last with
-          VertexCount = last.VertexCount + 2
-    }
+      groups[groups.Count - 1] <- {
+        last with
+            VertexCount = last.VertexCount + 2
+      }
 
-    vertices.Add(VertexPositionColor(Vector3(start.X, start.Y, 0.0f), color))
-
-    vertices.Add(
-      VertexPositionColor(Vector3(``end``.X, ``end``.Y, 0.0f), color)
-    )
+      addVertex(VertexPositionColor(Vector3(start.X, start.Y, 0.0f), color))
+      addVertex(VertexPositionColor(Vector3(``end``.X, ``end``.Y, 0.0f), color))
 
   /// <summary>Adds a line strip with the given color.</summary>
+  /// <remarks>
+  /// On the DX12 backend the strip is emitted as a mitered 1px ribbon (triangle
+  /// strip) so joints stay closed — see <c>linesAsTriangles</c>. Closed strips
+  /// (first point equal to the last) miter across the wrap joint.
+  /// </remarks>
   member _.AddLineStrip(points: Vector2[], color: Color) =
     if points.Length < 2 then
       ()
+    elif linesAsTriangles then
+      let n = points.Length
+      let half = 0.5f
+
+      // Left-of-travel unit normal of segment (i, i+1); zero-length segments
+      // fall back to `fallback` so duplicate points don't break the ribbon.
+      let segNormal i (fallback: Vector2) =
+        let dx = points[i + 1].X - points[i].X
+        let dy = points[i + 1].Y - points[i].Y
+        let len2 = dx * dx + dy * dy
+
+        if len2 <= 0.0f then
+          fallback
+        else
+          let inv = 1.0f / sqrt len2
+          Vector2(-dy * inv, dx * inv)
+
+      // Miter offset where segments with unit normals n1/n2 meet, clamped to
+      // 2x half-width so sharp corners don't spike.
+      let miterOffset (n1: Vector2) (n2: Vector2) =
+        let mx = n1.X + n2.X
+        let my = n1.Y + n2.Y
+        let m2 = mx * mx + my * my
+
+        if m2 <= 0.0f then
+          n1 * half // 180° reversal: bevel with the incoming normal
+        else
+          let inv = 1.0f / sqrt m2
+          let cosHalf = max ((mx * n1.X + my * n1.Y) * inv) 0.5f
+          Vector2(mx, my) * (inv * half / cosHalf)
+
+      let closed =
+        n >= 3 && Vector2.DistanceSquared(points[0], points[n - 1]) < 0.0001f
+
+      let firstNorm = segNormal 0 Vector2.UnitY
+      let mutable prevNorm = firstNorm
+
+      ribbonScratch.Clear()
+
+      for i = 0 to n - 1 do
+        let offset =
+          if i = 0 then
+            if closed then
+              miterOffset (segNormal (n - 2) firstNorm) firstNorm
+            else
+              firstNorm * half
+          elif i = n - 1 then
+            if closed then
+              miterOffset prevNorm firstNorm
+            else
+              prevNorm * half
+          else
+            let next = segNormal i prevNorm
+            let off = miterOffset prevNorm next
+            prevNorm <- next
+            off
+
+        let p = points[i]
+        ribbonScratch.Add(p + offset)
+        ribbonScratch.Add(p - offset)
+
+      appendRibbon(ribbonScratch, color)
     else
       closeCurrentGroupIfDifferent PrimitiveType.LineStrip
 
@@ -256,7 +369,7 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
       }
 
       for i = 0 to points.Length - 1 do
-        vertices.Add(
+        addVertex(
           VertexPositionColor(Vector3(points[i].X, points[i].Y, 0.0f), color)
         )
 
@@ -275,7 +388,7 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
       }
 
       for i = 0 to verts.Length - 1 do
-        vertices.Add(verts[i])
+        addVertex(verts[i])
 
   /// <summary>Adds a triangle fan by decomposing into a triangle list.</summary>
   /// <param name="points">
@@ -314,15 +427,13 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
       for i = 1 to rimCount - 1 do
         let nextIdx = i + 1
 
-        vertices.Add(
-          VertexPositionColor(Vector3(center.X, center.Y, 0.0f), color)
-        )
+        addVertex(VertexPositionColor(Vector3(center.X, center.Y, 0.0f), color))
 
-        vertices.Add(
+        addVertex(
           VertexPositionColor(Vector3(points[i].X, points[i].Y, 0.0f), color)
         )
 
-        vertices.Add(
+        addVertex(
           VertexPositionColor(
             Vector3(points[nextIdx].X, points[nextIdx].Y, 0.0f),
             color
@@ -330,18 +441,16 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
         )
 
       if close && rimCount >= 2 then
-        vertices.Add(
-          VertexPositionColor(Vector3(center.X, center.Y, 0.0f), color)
-        )
+        addVertex(VertexPositionColor(Vector3(center.X, center.Y, 0.0f), color))
 
-        vertices.Add(
+        addVertex(
           VertexPositionColor(
             Vector3(points[rimCount].X, points[rimCount].Y, 0.0f),
             color
           )
         )
 
-        vertices.Add(
+        addVertex(
           VertexPositionColor(Vector3(points[1].X, points[1].Y, 0.0f), color)
         )
 
@@ -360,7 +469,7 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
       }
 
       for i = 0 to points.Length - 1 do
-        vertices.Add(
+        addVertex(
           VertexPositionColor(Vector3(points[i].X, points[i].Y, 0.0f), color)
         )
 
@@ -413,5 +522,5 @@ type PrimitiveBatch(graphicsDevice: GraphicsDevice) =
     member _.Dispose() =
       basicEffect.Dispose()
       customEffect <- ValueNone
-      vertices.Clear()
+      vertexCount <- 0
       groups.Clear()

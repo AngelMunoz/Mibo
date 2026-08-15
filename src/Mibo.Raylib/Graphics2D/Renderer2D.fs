@@ -112,7 +112,7 @@ module private CommandHandlers =
 
   // ── Camera state management ──────────────────────────────────
 
-  let private beginCamera (c: Camera2D) (state: byref<RendererState>) =
+  let inline beginCamera (c: Camera2D) (state: byref<RendererState>) =
     Rlgl.DrawRenderBatchActive()
 
     if state.Camera.IsSome then
@@ -121,7 +121,7 @@ module private CommandHandlers =
     Raylib.BeginMode2D(c)
     state.Camera <- ValueSome c
 
-  let private endCamera(state: byref<RendererState>) =
+  let inline endCamera(state: byref<RendererState>) =
     if state.Camera.IsSome then
       Rlgl.DrawRenderBatchActive()
       Raylib.EndMode2D()
@@ -133,7 +133,7 @@ module private CommandHandlers =
 
   // ── Shader state management ──────────────────────────────────
 
-  let private beginShader (s: Shader) (state: byref<RendererState>) =
+  let inline beginShader (s: Shader) (state: byref<RendererState>) =
     match state.Shader with
     | ValueSome cur when cur.Id = s.Id -> ()
     | _ ->
@@ -145,7 +145,7 @@ module private CommandHandlers =
       Raylib.BeginShaderMode(s)
       state.Shader <- ValueSome s
 
-  let private endShader(state: byref<RendererState>) =
+  let inline endShader(state: byref<RendererState>) =
     if state.Shader.IsSome then
       Rlgl.DrawRenderBatchActive()
       Raylib.EndShaderMode()
@@ -153,7 +153,7 @@ module private CommandHandlers =
 
   // ── Escape hatch ─────────────────────────────────────────────
 
-  let private drawImmediate
+  let inline drawImmediate
     (action: unit -> unit)
     (state: byref<RendererState>)
     =
@@ -186,7 +186,7 @@ module private CommandHandlers =
 
   // ── Lighting handlers ────────────────────────────────────────
 
-  let private handleLitSprite
+  let inline handleLitSprite
     (lightCtx: LightContext2D, sprite: SpriteState, state: byref<RendererState>)
     =
     let targetShader =
@@ -217,13 +217,100 @@ module private CommandHandlers =
       sprite.Color
     )
 
-  let private handleEndLighting
+  let inline handleEndLighting
     (lightCtx: LightContext2D, state: byref<RendererState>)
     =
     if lightCtx.ShaderActive then
       endShader &state
       lightCtx.ShaderActive <- false
       lightCtx.UniformsDirty <- true
+
+  // ── Scratch geometry buffers ─────────────────────────────────
+
+  // One grow-on-demand scratch array shared by the emission paths below
+  // (full-circle ring outlines, winding-normalized fans/strips). Reused
+  // across draws — execute is single-threaded — and never handed back, so
+  // caller point arrays are never mutated.
+  let mutable polyScratch: Vector2[] = Array.zeroCreate 66
+
+  let inline ensurePolyScratch(needed: int) =
+    if polyScratch.Length < needed then
+      let mutable size = polyScratch.Length
+
+      while size < needed do
+        size <- size * 2
+
+      polyScratch <- Array.zeroCreate size
+
+  // ── Ring outline ─────────────────────────────────────────────
+
+  // raylib's DrawRingLines unconditionally draws radial cap lines at the
+  // start and end angles; on a full circle both caps land on the same spot
+  // and show up as a seam line crossing the ring. Full-circle outlines are
+  // emitted as two closed polylines instead.
+  let inline fullCircleRingOutline
+    (center: Vector2)
+    (innerR: float32)
+    (outerR: float32)
+    (startAngle: float32)
+    (segments: int)
+    (color: Color)
+    =
+    let segments = max 4 segments
+    let pointCount = segments + 1
+    ensurePolyScratch pointCount
+
+    let start = startAngle * MathF.PI / 180f
+    let step = 2f * MathF.PI / float32 segments
+
+    for rim = 0 to 1 do
+      let radius = if rim = 0 then outerR else innerR
+
+      for i = 0 to segments do
+        let a = start + float32 i * step
+
+        polyScratch[i] <-
+          Vector2(
+            center.X + MathF.Cos(a) * radius,
+            center.Y + MathF.Sin(a) * radius
+          )
+
+      Raylib.DrawLineStrip(polyScratch, pointCount, color)
+
+  // ── Filled-triangle winding ──────────────────────────────────
+
+  // raylib culls clockwise triangles in 2D (backface culling is on by
+  // default), so filled primitives built from caller points must present
+  // counter-clockwise geometry. DSL users expect a filled shape to render
+  // regardless of the order points are listed in — MonoGame's batch draws
+  // with CullNone — so clockwise input is reversed before reaching raylib.
+  // Screen space has Y pointing down, so counter-clockwise triangles have a
+  // NEGATIVE (b-a)×(c-a) cross here; positive means clockwise.
+
+  let inline crossZ (a: Vector2) (b: Vector2) (c: Vector2) =
+    (b.X - a.X) * (c.Y - a.Y) - (b.Y - a.Y) * (c.X - a.X)
+
+  // Sign of the first non-degenerate fan triangle (0f when all are flat).
+  let fanWinding(pts: Vector2[]) =
+    let mutable i = 1
+    let mutable winding = 0f
+
+    while i < pts.Length - 1 && winding = 0f do
+      winding <- crossZ pts[0] pts[i] pts[i + 1]
+      i <- i + 1
+
+    winding
+
+  // Sign of the first non-degenerate triple of consecutive strip points.
+  let stripWinding(pts: Vector2[]) =
+    let mutable i = 0
+    let mutable winding = 0f
+
+    while i < pts.Length - 2 && winding = 0f do
+      winding <- crossZ pts[i] pts[i + 1] pts[i + 2]
+      i <- i + 1
+
+    winding
 
   // ── Main dispatch ────────────────────────────────────────────
 
@@ -328,15 +415,20 @@ module private CommandHandlers =
                               segments,
                               color,
                               _) ->
-        Raylib.DrawRingLines(
-          center,
-          innerR,
-          outerR,
-          startAngle,
-          endAngle,
-          segments,
-          color
-        )
+        // Full circles bypass DrawRingLines to avoid its closing cap seam;
+        // non-positive inner radii keep raylib's sector-lines delegation.
+        if innerR > 0f && abs(endAngle - startAngle) >= 360f then
+          fullCircleRingOutline center innerR outerR startAngle segments color
+        else
+          Raylib.DrawRingLines(
+            center,
+            innerR,
+            outerR,
+            startAngle,
+            endAngle,
+            segments,
+            color
+          )
       | Command2D.FillEllipse(centerX, centerY, radiusH, radiusV, color, _) ->
         Raylib.DrawEllipse(centerX, centerY, radiusH, radiusV, color)
       | Command2D.EllipseOutline(centerX, centerY, radiusH, radiusV, color, _) ->
@@ -358,11 +450,44 @@ module private CommandHandlers =
         )
       // Triangles & Polygons
       | Command2D.Triangle(v1, v2, v3, color, _) ->
-        Raylib.DrawTriangle(v1, v2, v3, color)
+        // clockwise input swaps v2/v3 so the fill is never culled
+        if crossZ v1 v2 v3 > 0f then
+          Raylib.DrawTriangle(v1, v3, v2, color)
+        else
+          Raylib.DrawTriangle(v1, v2, v3, color)
       | Command2D.TriangleFan(points, color, _) ->
-        Raylib.DrawTriangleFan(points, points.Length, color)
+        // Auto-close parity with MonoGame: the scratch copy appends the
+        // first rim vertex so the native fan emits the wrap triangle
+        // (center, last rim, first rim). A clockwise rim is reversed at
+        // the same time — raylib culls clockwise triangles — and the
+        // caller's array is never mutated.
+        let n = points.Length
+        ensurePolyScratch(n + 1)
+        polyScratch[0] <- points[0]
+
+        if fanWinding points > 0f then
+          for i = 1 to n - 1 do
+            polyScratch[i] <- points[n - i]
+        else
+          for i = 1 to n - 1 do
+            polyScratch[i] <- points[i]
+
+        polyScratch[n] <- polyScratch[1]
+
+        Raylib.DrawTriangleFan(polyScratch, n + 1, color)
       | Command2D.TriangleStrip(points, color, _) ->
-        Raylib.DrawTriangleStrip(points, points.Length, color)
+        if stripWinding points > 0f then
+          // clockwise base winding: reversing the whole array flips every
+          // triangle while emitting the same coverage
+          let n = points.Length
+          ensurePolyScratch n
+
+          for i = 0 to n - 1 do
+            polyScratch[i] <- points[n - 1 - i]
+
+          Raylib.DrawTriangleStrip(polyScratch, n, color)
+        else
+          Raylib.DrawTriangleStrip(points, points.Length, color)
       | Command2D.FillPoly(center, sides, radius, rotation, color, _) ->
         Raylib.DrawPoly(center, sides, radius, rotation, color)
       | Command2D.PolyOutline(center,

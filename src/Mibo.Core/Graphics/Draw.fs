@@ -686,7 +686,7 @@ type Draw =
   // 2D — Triangles & Polygons
   // ──────────────────────────────────────────────
 
-  /// <summary>Filled triangle from 3 vertices.</summary>
+  /// <summary>Filled triangle from 3 vertices, in any winding order.</summary>
   [<Extension>]
   static member inline triangle<'B when WithPolygons2D<'B>>
     (
@@ -700,7 +700,12 @@ type Draw =
     buffer.AddTriangle(v1, v2, v3, color, defaultValueArg layer 0<RenderLayer>)
     buffer
 
-  /// <summary>Filled triangle fan. Points array is a backend handle (see LineStrip).</summary>
+  /// <summary>
+  /// Filled triangle fan, in any winding order; points[0] is the shared
+  /// center. The rim auto-closes: the last rim vertex is connected back
+  /// to points[1], so a full convex rim fills its polygon on every
+  /// backend. Points array is a backend handle (see LineStrip).
+  /// </summary>
   [<Extension>]
   static member inline triangleFan<'B, 'P
     when 'B: (member AddTriangleFan: 'P[] * Color * int<RenderLayer> -> unit)>
@@ -708,7 +713,10 @@ type Draw =
     buffer.AddTriangleFan(points, color, defaultValueArg layer 0<RenderLayer>)
     buffer
 
-  /// <summary>Filled triangle strip. Points array is a backend handle (see LineStrip).</summary>
+  /// <summary>
+  /// Filled triangle strip from consecutive point pairs, in any winding
+  /// order. Points array is a backend handle (see LineStrip).
+  /// </summary>
   [<Extension>]
   static member inline triangleStrip<'B, 'P
     when 'B: (member AddTriangleStrip: 'P[] * Color * int<RenderLayer> -> unit)>
@@ -1127,6 +1135,40 @@ type Draw =
     buffer.AddDrawMesh(mesh, transform, material)
     buffer
 
+  /// <summary>
+  /// Draws a slice of a mesh within shared vertex/index buffers (MonoGame
+  /// content-pipeline parts). <c>vertexOffset</c>/<c>startIndex</c> default to 0 —
+  /// self-contained buffers (procedural primitives, raylib meshes) draw the whole
+  /// mesh with the defaults.
+  /// </summary>
+  /// <remarks>
+  /// <b>MonoGame:</b> when the mesh record wraps one part of a shared buffer,
+  /// <c>PrimitiveCount</c> must hold that part's triangle count and
+  /// <c>Bounds</c> that part's local-space bounding sphere — the draw is sized
+  /// by <c>PrimitiveCount</c> and the shadow pass culls by <c>Bounds</c>, both
+  /// taken from the record, never from the shared buffer.
+  /// </remarks>
+  [<Extension>]
+  static member inline meshSlice<'B, 'M, 'X, 'Mat
+    when 'B: (member AddDrawMeshSlice: 'M * 'X * 'Mat * int * int -> unit)>
+    (
+      buffer: 'B,
+      mesh: 'M,
+      transform: 'X,
+      material: 'Mat,
+      [<Struct>] ?vertexOffset: int,
+      [<Struct>] ?startIndex: int
+    ) : 'B =
+    buffer.AddDrawMeshSlice(
+      mesh,
+      transform,
+      material,
+      defaultValueArg vertexOffset 0,
+      defaultValueArg startIndex 0
+    )
+
+    buffer
+
   /// <summary>Draws many instances of the same mesh. Prefer over repeated Mesh calls.
   /// <paramref name="colors"/> tints each instance (albedo × color.rgb, alpha × color.a);
   /// <b>MonoGame only</b> — the raylib backend raises <see cref="T:System.NotSupportedException"/>
@@ -1144,6 +1186,46 @@ type Draw =
       [<Struct>] ?colors: 'C[]
     ) : 'B =
     buffer.AddDrawInstanced(mesh, transforms, material, instanceCount, colors)
+    buffer
+
+  /// <summary>
+  /// Draws many instances of a slice of a mesh within shared vertex/index buffers
+  /// (MonoGame content-pipeline parts). <c>vertexOffset</c>/<c>startIndex</c> default
+  /// to 0 — self-contained buffers (procedural primitives, raylib meshes) draw the
+  /// whole mesh with the defaults. <paramref name="colors"/> tints each instance
+  /// (MonoGame only, see <c>instanced</c>).
+  /// </summary>
+  /// <remarks>
+  /// <b>MonoGame:</b> when the mesh record wraps one part of a shared buffer,
+  /// <c>PrimitiveCount</c> must hold that part's triangle count and
+  /// <c>Bounds</c> that part's local-space bounding sphere — the draw is sized
+  /// by <c>PrimitiveCount</c> and the shadow pass culls by <c>Bounds</c>, both
+  /// taken from the record, never from the shared buffer.
+  /// </remarks>
+  [<Extension>]
+  static member inline instancedSlice<'B, 'M, 'X, 'Mat, 'C
+    when 'B: (member AddDrawInstancedSlice:
+      'M * 'X[] * 'Mat * int * 'C[] voption * int * int -> unit)>
+    (
+      buffer: 'B,
+      mesh: 'M,
+      transforms: 'X[],
+      material: 'Mat,
+      instanceCount: int,
+      [<Struct>] ?colors: 'C[],
+      [<Struct>] ?vertexOffset: int,
+      [<Struct>] ?startIndex: int
+    ) : 'B =
+    buffer.AddDrawInstancedSlice(
+      mesh,
+      transforms,
+      material,
+      instanceCount,
+      colors,
+      defaultValueArg vertexOffset 0,
+      defaultValueArg startIndex 0
+    )
+
     buffer
 
   /// <summary>Draws a model with a world transform and its authored materials.</summary>

@@ -305,6 +305,10 @@ module private CommandHandlers =
     mutable Shader: Effect voption
     mutable HasRenderTarget: bool
     mutable RenderTarget: RenderTarget2D voption
+    /// Batch-interleave tracker (see execute): 0 = no pending draw kind,
+    /// 1 = SpriteBatch, 2 = PrimitiveBatch. A field so the guard helpers can
+    /// take the state byref like every other command handler.
+    mutable LastBatchKind: int
     WindowWidth: int
     WindowHeight: int
   }
@@ -686,6 +690,41 @@ module private CommandHandlers =
     flushBatches res gd
     restartBatches res &state
 
+  // Sprites (SpriteBatch) and shapes (PrimitiveBatch) only submit at flush
+  // time, so a bulk flush reorders whole segments: every pending sprite
+  // would draw under every pending shape regardless of layer (text behind
+  // shapes, fillRects under outlines). Each drawing arm calls the guard for
+  // its batch kind, so the GPU submission order matches the sorted command
+  // order — one O(1) check per command, no separate classification pass
+  // ahead of the dispatch. State commands never call a guard: many of them
+  // flush nothing (e.g. a SetSamplerState whose value is unchanged), and
+  // resetting on them would lose the pending batch and reorder the frame —
+  // text ended up behind shapes exactly that way. A stale tracker after a
+  // real flush can only cause a harmless extra flush of an already-empty
+  // batch.
+  let inline private beginSpriteDraw
+    (pb: PrimitiveBatch)
+    (state: byref<RendererState>)
+    =
+    if state.LastBatchKind <> 1 then
+      if state.LastBatchKind = 2 then
+        // shapes were pending — submit them before sprites draw on top
+        pb.Flush()
+
+      state.LastBatchKind <- 1
+
+  let inline private beginShapeDraw
+    (res: RenderResources)
+    (state: byref<RendererState>)
+    (gd: GraphicsDevice)
+    =
+    if state.LastBatchKind <> 2 then
+      if state.LastBatchKind = 1 then
+        // sprites were pending — submit them before shapes draw on top
+        endAndRestart res &state gd
+
+      state.LastBatchKind <- 2
+
   // ── Camera / viewport stack ───────────────────────────────────
 
   let private pushFrame (res: RenderResources) (state: byref<RendererState>) =
@@ -1028,19 +1067,57 @@ module private CommandHandlers =
     let endRad = MathHelper.ToRadians(endAngle)
     let sweep = endRad - startRad
     let step = sweep / float32 segments
-    let points = Array.zeroCreate<Vector2>((segments + 1) * 2)
-    let mutable idx = 0
 
-    for i = 0 to segments do
-      let a = startRad + float32 i * step
-      let c = MathF.Cos(a)
-      let s = MathF.Sin(a)
-      points[idx] <- Vector2(center.X + c * outerR, center.Y + s * outerR)
-      idx <- idx + 1
-      points[idx] <- Vector2(center.X + c * innerR, center.Y + s * innerR)
-      idx <- idx + 1
+    // Two concentric rings, each emitted as independent line SEGMENTS
+    // (LineList). Two consecutive AddLineStrip calls would MERGE into one
+    // GPU strip group and draw a connector segment from the end of the
+    // outer ring to the start of the inner ring — a radial line cutting
+    // through the ring. (The original implementation fed interleaved
+    // outer/inner points to AddTriangleStrip — a zigzag strip FILLS the
+    // ring instead of outlining it.)
+    for rim = 0 to 1 do
+      let radius = if rim = 0 then outerR else innerR
+      let mutable px = center.X + MathF.Cos(startRad) * radius
+      let mutable py = center.Y + MathF.Sin(startRad) * radius
 
-    pb.AddTriangleStrip(points, color)
+      for i = 1 to segments do
+        let a = startRad + float32 i * step
+        let nx = center.X + MathF.Cos(a) * radius
+        let ny = center.Y + MathF.Sin(a) * radius
+        pb.AddLine(Vector2(px, py), Vector2(nx, ny), color)
+        px <- nx
+        py <- ny
+
+    // Open arcs get cap lines at both ends, closing the outline. Full
+    // circles skip the caps — on a closed ring a cap shows as a radial seam
+    // line (degrees here, matching the raylib backend's full-circle check).
+    if abs(endAngle - startAngle) < 360f then
+      let csOuter =
+        Vector2(
+          center.X + MathF.Cos(startRad) * outerR,
+          center.Y + MathF.Sin(startRad) * outerR
+        )
+
+      let csInner =
+        Vector2(
+          center.X + MathF.Cos(startRad) * innerR,
+          center.Y + MathF.Sin(startRad) * innerR
+        )
+
+      let ceOuter =
+        Vector2(
+          center.X + MathF.Cos(endRad) * outerR,
+          center.Y + MathF.Sin(endRad) * outerR
+        )
+
+      let ceInner =
+        Vector2(
+          center.X + MathF.Cos(endRad) * innerR,
+          center.Y + MathF.Sin(endRad) * innerR
+        )
+
+      pb.AddLine(csOuter, csInner, color)
+      pb.AddLine(ceOuter, ceInner, color)
 
   let private fillEllipse
     (pb: PrimitiveBatch)
@@ -1637,6 +1714,7 @@ module private CommandHandlers =
       match cmd with
       // Sprite & Text
       | Command2D.Sprite(texture, dest, source, origin, rotation, color, _) ->
+        beginSpriteDraw pb &state
         // Translate negative source rect dimensions into SpriteEffects
         let mutable effects = SpriteEffects.None
         let mutable src = source
@@ -1672,6 +1750,8 @@ module private CommandHandlers =
         )
 
       | Command2D.Text(font, text, position, scale, color, _) ->
+        beginSpriteDraw pb &state
+
         sb.DrawString(
           font,
           text,
@@ -1686,12 +1766,15 @@ module private CommandHandlers =
 
       // Rectangles
       | Command2D.FillRect(rect, color, _) ->
+        beginSpriteDraw pb &state
         sb.Draw(res.WhitePixel, rect, Nullable(), color)
 
       | Command2D.RectOutline(rect, thickness, color, _) ->
+        beginShapeDraw res &state gd
         rectOutline pb rect thickness color
 
       | Command2D.FillRectRounded(rect, roundness, segments, color, _) ->
+        beginShapeDraw res &state gd
         fillRectRounded pb rect roundness segments color
 
       | Command2D.RectRoundedOutline(rect,
@@ -1700,22 +1783,28 @@ module private CommandHandlers =
                                      thickness,
                                      color,
                                      _) ->
+        beginShapeDraw res &state gd
         rectRoundedOutline pb rect roundness segments thickness color
 
       | Command2D.RectGradientV(x, y, w, h, top, bottom, _) ->
+        beginShapeDraw res &state gd
         fillRectGradientV pb x y w h top bottom
 
       | Command2D.RectGradientH(x, y, w, h, left, right, _) ->
+        beginShapeDraw res &state gd
         fillRectGradientH pb x y w h left right
 
       | Command2D.RectGradient(rect, tl, bl, tr, br, _) ->
+        beginShapeDraw res &state gd
         fillRectGradient pb rect tl bl tr br
 
       // Circles & Ellipses
       | Command2D.FillCircle(center, radius, color, _) ->
+        beginShapeDraw res &state gd
         fillCircle pb center radius color
 
       | Command2D.CircleOutline(center, radius, color, _) ->
+        beginShapeDraw res &state gd
         circleOutline pb center radius color
 
       | Command2D.CircleSector(center,
@@ -1725,6 +1814,7 @@ module private CommandHandlers =
                                segments,
                                color,
                                _) ->
+        beginShapeDraw res &state gd
         circleSector pb center radius startAngle endAngle segments color
 
       | Command2D.CircleSectorOutline(center,
@@ -1734,9 +1824,11 @@ module private CommandHandlers =
                                       segments,
                                       color,
                                       _) ->
+        beginShapeDraw res &state gd
         circleSectorOutline pb center radius startAngle endAngle segments color
 
       | Command2D.CircleGradient(centerX, centerY, radius, inner, outer, _) ->
+        beginShapeDraw res &state gd
         circleGradient pb centerX centerY radius inner outer
 
       | Command2D.FillRing(center,
@@ -1747,6 +1839,7 @@ module private CommandHandlers =
                            segments,
                            color,
                            _) ->
+        beginShapeDraw res &state gd
         fillRing pb center innerR outerR startAngle endAngle segments color
 
       | Command2D.RingOutline(center,
@@ -1757,37 +1850,49 @@ module private CommandHandlers =
                               segments,
                               color,
                               _) ->
+        beginShapeDraw res &state gd
         ringOutline pb center innerR outerR startAngle endAngle segments color
 
       | Command2D.FillEllipse(centerX, centerY, radiusH, radiusV, color, _) ->
+        beginShapeDraw res &state gd
         fillEllipse pb centerX centerY radiusH radiusV color
 
       | Command2D.EllipseOutline(centerX, centerY, radiusH, radiusV, color, _) ->
+        beginShapeDraw res &state gd
         ellipseOutline pb centerX centerY radiusH radiusV color
 
       // Lines & Curves
       | Command2D.Line(start, finish, color, _) ->
+        beginShapeDraw res &state gd
         pb.AddLine(start, finish, color)
 
       | Command2D.LineThick(start, finish, thickness, color, _) ->
+        beginShapeDraw res &state gd
         pb.AddLineThick(start, finish, thickness, color)
 
-      | Command2D.LineStrip(points, color, _) -> pb.AddLineStrip(points, color)
+      | Command2D.LineStrip(points, color, _) ->
+        beginShapeDraw res &state gd
+        pb.AddLineStrip(points, color)
 
       | Command2D.Bezier(start, control, finish, thickness, color, _) ->
+        beginShapeDraw res &state gd
         bezier pb start control finish thickness color
 
       // Triangles & Polygons
       | Command2D.Triangle(v1, v2, v3, color, _) ->
+        beginShapeDraw res &state gd
         fillTriangle pb v1 v2 v3 color
 
       | Command2D.TriangleFan(points, color, _) ->
+        beginShapeDraw res &state gd
         pb.AddTriangleFan(points, color)
 
       | Command2D.TriangleStrip(points, color, _) ->
+        beginShapeDraw res &state gd
         pb.AddTriangleStrip(points, color)
 
       | Command2D.FillPoly(center, sides, radius, rotation, color, _) ->
+        beginShapeDraw res &state gd
         fillPoly pb center sides radius rotation color
 
       | Command2D.PolyOutline(center,
@@ -1797,6 +1902,7 @@ module private CommandHandlers =
                               thickness,
                               color,
                               _) ->
+        beginShapeDraw res &state gd
         polyOutline pb center sides radius rotation thickness color
 
       // Camera & Targets
@@ -1854,7 +1960,12 @@ module private CommandHandlers =
         state.HasScissor <- false
         endAndRestart res &state gd
 
-      | Command2D.SetLineWidth(width, _) -> pb.LineWidth <- width
+      | Command2D.SetLineWidth(width, _) ->
+        // Rides along as a shape command (see the tracker note above): it
+        // changes pb state and never draws, but keeps the tracker honest for
+        // the next sprite command.
+        beginShapeDraw res &state gd
+        pb.LineWidth <- width
 
       | Command2D.SetViewport(x, y, w, h, _) ->
         flushBatches res gd
@@ -1885,6 +1996,7 @@ module private CommandHandlers =
       | Command2D.DisableShadows(lightCtx, _) -> lightCtx.UniformsDirty <- true
       // Particles
       | Command2D.Particle(texture, particles, count, _) ->
+        beginSpriteDraw pb &state
         let fullSrc = Rectangle(0, 0, texture.Width, texture.Height)
 
         for j = 0 to count - 1 do
@@ -2029,6 +2141,7 @@ type Renderer2D<'Model>
         Shader = ValueNone
         HasRenderTarget = false
         RenderTarget = ValueNone
+        LastBatchKind = 0
         WindowWidth = _windowWidth
         WindowHeight = _windowHeight
       }

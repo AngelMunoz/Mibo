@@ -4,6 +4,7 @@
 
 ### Added
 
+- **MonoGame 3D:** `Draw.meshSlice`/`Draw.instancedSlice` draw a slice of a mesh within shared content-pipeline vertex/index buffers — pass the part's `vertexOffset`/`startIndex` (`0, 0` for self-contained buffers) and the mesh draws that part's own geometry instead of the first part's triangles. The offsets default to 0, so existing self-contained meshes call them unchanged. The mesh record must describe the part: `PrimitiveCount` is the part's triangle count and `Bounds` its local-space bounding sphere. Shared buffers with more than 65,536 vertices need a 32-bit index buffer (the merged-parts pipeline widens automatically).
 - **Adaptive (experimental):** deferred work — the adaptive counterpart of `Cmd`. `AdaptiveContext.Intents` takes `unit -> unit` work from `Update` (or any thread) and runs it at the moment the name says: `post` (after this step's `Update`, drained until empty so reaction chains settle before the frame is forced), `postNextFrame` (top of the next step), `postTask`/`postAsync` (background work; the completion returns on the owner thread where root writes are legal). `AdaptiveHeadless.Post` injects work without holding the `Update` context.
 - **Adaptive (experimental):** subscriptions — the adaptive counterpart of `Sub`. `AdaptiveInit.withSubscriptions` takes a keyed `amap` of `AdaptiveSub` specs (dynamic, state-driven subscription sets can use `AMap.custom`); the runner diffs it per step — gated on the map's version, so clean steps do no diff work — to attach, keep, or detach, and detaches everything on `Dispose`. Callbacks receive the queue's pre-step `post`: events drain at the frame boundary before `Update`, so input published right before a `Step` reaches the sim in that same step.
 - **Templates:** `Mibo.Templates` (the `mibo-2d`/`mibo-3d`/`mibo-mg-2d`/`mibo-mg-3d` starters) is now packed and published with each release, versioned from the repo changelog like the libraries.
@@ -13,6 +14,10 @@
 - **Breaking (experimental): Adaptive:** `AdaptiveProgram.Init` and the subscription projection now receive the new `AdaptiveFrameContext` (framework roots + `GameContext`, no work queue); only `Update` receives `AdaptiveContext` with `Intents` — the frame builder cannot defer work by construction.
 - **Breaking (experimental): Adaptive:** `AdaptiveHeadless.RunAsync` yields `StepOutcome<'Frame>` (`GameTime` + `Frame`) instead of `struct (GameTime * 'Frame)`.
 
+### Deprecated
+
+- **MonoGame 3D:** `Draw.mesh`/`Draw.instanced` are deprecated on MonoGame — they draw from buffer offset 0, which renders the first part's triangles for a mesh wrapping a part of a shared content-pipeline buffer. Use `meshSlice`/`instancedSlice` (see Added); raylib's `mesh`/`instanced` are unchanged.
+
 ### Removed
 
 - **Breaking (experimental): Adaptive:** the restart machinery (`AdaptiveContext.RestartRequested`, `AdaptiveHeadless.Restart()`) — dispose of the runner and create a new one.
@@ -20,6 +25,16 @@
 ### Fixed
 
 - **Mibo.Adaptive:** the NuGet package now ships its own readme — including the credit note for its AdaptiveSlop origin — instead of the repo root readme.
+- **Raylib 3D:** alpha-blended billboards — particles and other transparent quads — no longer write depth, so a transparent billboard no longer hides the geometry or particles behind it.
+- **Raylib 2D:** full-circle ring outlines no longer show a radial line where the ring closes. Partial arcs keep their end caps.
+- **Raylib 2D:** filled triangles, triangle fans and triangle strips now render in any winding order. Clockwise point lists drew nothing on raylib while MonoGame rendered them; both backends now agree.
+- **MonoGame 2D:** ring outlines draw as two clean rings — the outline no longer fills in as a band, and full circles no longer show a radial seam where the ring closes. Partial arcs keep their end caps.
+- **MonoGame 2D:** sprites and shapes now keep their draw order when sampler-state commands are interleaved — text no longer renders behind shapes on top of it.
+- **MonoGame 2D:** flushing the shape batch no longer copies its vertices into a new array — scenes that flush often (HUDs that interleave text and shapes) stop producing garbage on every flush.
+- **MonoGame 3D:** cube, plane and cone primitives now face outward under the default cull mode — the cube no longer shows its interior and the plane no longer vanishes from one side.
+- **2D:** triangle fans now auto-close the rim on every backend — the last rim vertex connects back to the first, so a full convex rim fills its polygon. raylib previously left the wedge between the last and first rim vertex unfilled while MonoGame closed it.
+- **MonoGame 3D:** translucent materials, alpha-blended billboards and alpha-blended line draws now fade their tint with alpha — a material at `Opacity 0.3` shows 30% of its color over the background. They previously added the tint at full strength while only fading the background, so translucent tints now match the raylib backend.
+- **MonoGame (DirectX 12):** lines now render on the DX12 backend. Thin lines, line strips and 3D lines drew as filled shapes or vanished there — the DX12 runtime interprets line topologies as triangles. On that backend 2D lines now draw as thin quads and 3D lines as camera-facing quads, close to the native lines the other backends draw.
 
 ## [4.2.0] - 2026-08-11
 

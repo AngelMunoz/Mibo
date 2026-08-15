@@ -58,6 +58,8 @@ The array may be shorter than `count` — instances beyond `colors.Length` rende
 
 > _**NOTE**_: Per-instance color is **MonoGame only**. Passing `colors` on raylib raises `NotSupportedException` — its instanced draw has a fixed instance attribute layout.
 
+> _**NOTE**_: On MonoGame, use `.instancedSlice(...)` when the mesh wraps one part of a shared content-pipeline buffer — pass the part's `vertexOffset`/`startIndex` (`0`/`0` for self-contained meshes), and give the mesh record the part's `PrimitiveCount` and `Bounds`. See [3D Buffer & Commands](buffer-and-commands.html#slices-of-shared-buffers-monogame).
+
 ## InstancedRenderContext for cell grids
 
 For grid-based worlds (voxels, tile maps), `InstancedRenderContext<'T, 'K>` handles grouping and batching automatically. It groups cells by a key function, then emits one instanced draw per group per sub-mesh.

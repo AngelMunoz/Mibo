@@ -303,7 +303,7 @@ let tests =
         Expect.equal buffer.Count 1 "expected exactly one command"
 
         match buffer[0] with
-        | Command3D.DrawPrimitive(_, actual, _) ->
+        | Command3D.DrawPrimitive(_, actual, _, _, _) ->
           let expected = local * expectedWorldPoses[2] * transform
 
           Expect.isTrue
@@ -328,7 +328,7 @@ let tests =
         Expect.equal buffer.Count 1 "expected exactly one command"
 
         match buffer[0] with
-        | Command3D.DrawPrimitive(_, actual, _) ->
+        | Command3D.DrawPrimitive(_, actual, _, _, _) ->
           Expect.isTrue
             (matrixApproxEqual actual expectedWorldPoses[1])
             "ByIndex attachment should land on the child bone world pose"
@@ -395,7 +395,7 @@ let tests =
         Expect.equal buffer.Count 1 "expected exactly one command"
 
         match buffer[0] with
-        | Command3D.DrawPrimitive(_, actual, _) ->
+        | Command3D.DrawPrimitive(_, actual, _, _, _) ->
           Expect.isTrue
             (matrixApproxEqual
               actual

@@ -89,6 +89,16 @@ type TransparentDraw = {
   Part: ModelMeshPart voption
   /// <summary>The primitive mesh to draw (ValueNone for model parts).</summary>
   Mesh: PrimitiveMesh voption
+  /// <summary>
+  /// The first vertex of the primitive's slice within its shared buffer
+  /// (<c>baseVertex</c>; 0 for self-contained buffers).
+  /// </summary>
+  VertexOffset: int
+  /// <summary>
+  /// The first index of the primitive's slice within its shared buffer
+  /// (<c>startIndex</c>; 0 for self-contained buffers).
+  /// </summary>
+  StartIndex: int
   /// <summary>The world transform of the mesh (per-mesh world for model parts).</summary>
   World: Matrix
   /// <summary>The resolved material (override + tint already applied).</summary>
@@ -597,6 +607,30 @@ module internal PbrShading =
           part.PrimitiveCount
         )
 
+  /// Binds a primitive's buffers and draws its slice (<c>vertexOffset</c> as
+  /// baseVertex, <c>startIndex</c> as the index start — 0, 0 for self-contained
+  /// buffers). Mirrors <c>PrimitiveMesh.Draw</c> with the shared-buffer offsets.
+  let private drawMeshSlice
+    (
+      gd: GraphicsDevice,
+      effect: Effect,
+      mesh: PrimitiveMesh,
+      vertexOffset: int,
+      startIndex: int
+    ) =
+    gd.SetVertexBuffer(mesh.Vertices)
+    gd.Indices <- mesh.Indices
+
+    for p in effect.CurrentTechnique.Passes do
+      p.Apply()
+
+      gd.DrawIndexedPrimitives(
+        PrimitiveType.TriangleList,
+        vertexOffset,
+        startIndex,
+        mesh.PrimitiveCount
+      )
+
   /// <summary>
   /// Handles <c>DrawModel</c>: routes every mesh part through the PBR effect. For each part the baked
   /// native effect is read into a Material3D, the part's effect is swapped to the PBR Standard technique
@@ -667,6 +701,8 @@ module internal PbrShading =
                 transparentDraws.Add {
                   Part = ValueSome part
                   Mesh = ValueNone
+                  VertexOffset = 0
+                  StartIndex = 0
                   World = world
                   Material = mat
                   Bones = ValueNone
@@ -825,6 +861,8 @@ module internal PbrShading =
                 draws.Add {
                   Part = ValueSome part
                   Mesh = ValueNone
+                  VertexOffset = 0
+                  StartIndex = 0
                   World = world
                   Material = mat
                   Bones = ValueSome bones
@@ -879,6 +917,8 @@ module internal PbrShading =
       mesh: PrimitiveMesh,
       transform: Matrix,
       material: Material3D,
+      vertexOffset: int,
+      startIndex: int,
       transparentDraws: ResizeArray<TransparentDraw>
     ) =
     if material.Opacity < 1.0f then
@@ -887,6 +927,8 @@ module internal PbrShading =
         transparentDraws.Add {
           Part = ValueNone
           Mesh = ValueSome mesh
+          VertexOffset = vertexOffset
+          StartIndex = startIndex
           World = transform
           Material = material
           Bones = ValueNone
@@ -928,7 +970,7 @@ module internal PbrShading =
 
           res.LightsDirty <- false
 
-        mesh.Draw(gd, e)
+        drawMeshSlice(gd, e, mesh, vertexOffset, startIndex)
       | _ -> ()
     else
       // ── BasicEffect fallback (B5/B6 floor) — albedo color only. ──
@@ -957,7 +999,7 @@ module internal PbrShading =
       effect.View <- state.View
       effect.Projection <- state.Projection
       applyLighting(effect, frame.Lights)
-      mesh.Draw(gd, effect)
+      drawMeshSlice(gd, effect, mesh, vertexOffset, startIndex)
 
   /// <summary>
   /// Draws one deferred transparent entry (<see cref="T:Mibo.Elmish.Graphics3D.Pipelines.TransparentDraw"/>)
@@ -1050,7 +1092,7 @@ module internal PbrShading =
           match entry.Mesh with
           | ValueSome mesh ->
             e.CurrentTechnique <- e.Techniques["Standard"]
-            mesh.Draw(gd, e)
+            drawMeshSlice(gd, e, mesh, entry.VertexOffset, entry.StartIndex)
           | ValueNone -> ()
       | _ -> ()
 
@@ -1233,7 +1275,9 @@ module internal PbrShading =
       transforms: Matrix[],
       colors: Color[] voption,
       material: Material3D,
-      instanceCount: int
+      instanceCount: int,
+      vertexOffset: int,
+      startIndex: int
     ) =
     let struct (instanceCount, _instVB) =
       match colors with
@@ -1279,8 +1323,8 @@ module internal PbrShading =
 
             gd.DrawInstancedPrimitives(
               PrimitiveType.TriangleList,
-              0,
-              0,
+              vertexOffset,
+              startIndex,
               mesh.PrimitiveCount,
               instanceCount
             )
@@ -1362,8 +1406,8 @@ module internal PbrShading =
 
             gd.DrawInstancedPrimitives(
               PrimitiveType.TriangleList,
-              0,
-              0,
+              vertexOffset,
+              startIndex,
               mesh.PrimitiveCount,
               instanceCount
             )
@@ -2173,7 +2217,11 @@ module internal PbrShading =
       | t -> Some t
 
     match draw with
-    | Command3D.DrawPrimitive(mesh, transform, material) ->
+    | Command3D.DrawPrimitive(mesh,
+                              transform,
+                              material,
+                              vertexOffset,
+                              startIndex) ->
       SceneUpload.uploadToEffect(
         gd,
         effect,
@@ -2189,7 +2237,7 @@ module internal PbrShading =
         frame.Time
       )
 
-      mesh.Draw(gd, effect)
+      drawMeshSlice(gd, effect, mesh, vertexOffset, startIndex)
 
     | Command3D.DrawModel(model, transform) ->
       let boneCount = model.Bones.Count
@@ -2417,7 +2465,13 @@ module internal PbrShading =
           finally
             part.Effect <- saved
 
-    | Command3D.DrawInstanced(mesh, transforms, colors, material, count) ->
+    | Command3D.DrawInstanced(mesh,
+                              transforms,
+                              colors,
+                              material,
+                              count,
+                              vertexOffset,
+                              startIndex) ->
       // Does the user effect opt into instancing? An effect exposing an `Instanced` technique
       // (the convention ForwardPbr.fx and Instanced.fx already use) shades the instances directly;
       // one that doesn't falls back to the PBR instanced path (see remarks). The probe result —
@@ -2436,7 +2490,9 @@ module internal PbrShading =
           transforms,
           colors,
           material,
-          count
+          count,
+          vertexOffset,
+          startIndex
         )
       | instancedTech ->
         let struct (instanceCount, _instVB) =
@@ -2477,8 +2533,8 @@ module internal PbrShading =
 
               gd.DrawInstancedPrimitives(
                 PrimitiveType.TriangleList,
-                0,
-                0,
+                vertexOffset,
+                startIndex,
                 mesh.PrimitiveCount,
                 instanceCount
               )
