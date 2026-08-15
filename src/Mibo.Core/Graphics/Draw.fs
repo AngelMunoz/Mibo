@@ -1141,6 +1141,13 @@ type Draw =
   /// self-contained buffers (procedural primitives, raylib meshes) draw the whole
   /// mesh with the defaults.
   /// </summary>
+  /// <remarks>
+  /// <b>MonoGame:</b> when the mesh record wraps one part of a shared buffer,
+  /// <c>PrimitiveCount</c> must hold that part's triangle count and
+  /// <c>Bounds</c> that part's local-space bounding sphere — the draw is sized
+  /// by <c>PrimitiveCount</c> and the shadow pass culls by <c>Bounds</c>, both
+  /// taken from the record, never from the shared buffer.
+  /// </remarks>
   [<Extension>]
   static member inline meshSlice<'B, 'M, 'X, 'Mat
     when 'B: (member AddDrawMeshSlice: 'M * 'X * 'Mat * int * int -> unit)>
@@ -1188,6 +1195,13 @@ type Draw =
   /// whole mesh with the defaults. <paramref name="colors"/> tints each instance
   /// (MonoGame only, see <c>instanced</c>).
   /// </summary>
+  /// <remarks>
+  /// <b>MonoGame:</b> when the mesh record wraps one part of a shared buffer,
+  /// <c>PrimitiveCount</c> must hold that part's triangle count and
+  /// <c>Bounds</c> that part's local-space bounding sphere — the draw is sized
+  /// by <c>PrimitiveCount</c> and the shadow pass culls by <c>Bounds</c>, both
+  /// taken from the record, never from the shared buffer.
+  /// </remarks>
   [<Extension>]
   static member inline instancedSlice<'B, 'M, 'X, 'Mat, 'C
     when 'B: (member AddDrawInstancedSlice:

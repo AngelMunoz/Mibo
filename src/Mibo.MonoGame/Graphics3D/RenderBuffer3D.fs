@@ -210,6 +210,12 @@ type RenderBuffer3D with
   /// <c>vertexOffset</c> is the part's first vertex (<c>baseVertex</c>) and
   /// <c>startIndex</c> the part's first index. Self-contained buffers pass 0, 0.
   /// </summary>
+  /// <remarks>
+  /// The mesh record must describe the part, not the whole shared buffer:
+  /// <c>PrimitiveCount</c> is the part's triangle count (the draw is sized by
+  /// it) and <c>Bounds</c> is the part's local-space bounding sphere (the
+  /// shadow pass frustum-culls by it).
+  /// </remarks>
   member inline b.AddDrawMeshSlice
     (
       mesh: PrimitiveMesh,
@@ -273,6 +279,12 @@ type RenderBuffer3D with
   /// (<c>baseVertex</c>) and <c>startIndex</c> the part's first index.
   /// Self-contained buffers pass 0, 0.
   /// </summary>
+  /// <remarks>
+  /// The mesh record must describe the part, not the whole shared buffer:
+  /// <c>PrimitiveCount</c> is the part's triangle count (the draw is sized by
+  /// it) and <c>Bounds</c> is the part's local-space bounding sphere (the
+  /// shadow pass frustum-culls by it).
+  /// </remarks>
   member inline b.AddDrawInstancedSlice
     (
       mesh: PrimitiveMesh,

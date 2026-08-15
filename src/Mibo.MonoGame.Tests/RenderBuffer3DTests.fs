@@ -4,8 +4,8 @@ open Expecto
 open Microsoft.Xna.Framework
 open Mibo.Elmish.Graphics3D
 
-// AddDrawInstanced witness: the buffer copies the caller's transforms into a
-// pooled array at record time, so refilling the array after the call (e.g.
+// AddDrawInstancedSlice witness: the buffer copies the caller's transforms into
+// a pooled array at record time, so refilling the array after the call (e.g.
 // for the next camera block) cannot corrupt the recorded command — the same
 // guarantee AddAnimatedModelInstanced gives.
 
@@ -18,7 +18,7 @@ let private stubMesh: PrimitiveMesh = {
 
 [<Tests>]
 let tests =
-  testList "AddDrawInstanced witness" [
+  testList "AddDrawInstancedSlice witness" [
     test "copies transforms at record time and clamps the count" {
       use buffer = new RenderBuffer3D()
 
@@ -27,12 +27,14 @@ let tests =
         Matrix.CreateTranslation(1.0f, 2.0f, 3.0f)
       |]
 
-      buffer.AddDrawInstanced(
+      buffer.AddDrawInstancedSlice(
         stubMesh,
         transforms,
         Material3D.defaults,
         5,
-        ValueNone
+        ValueNone,
+        0,
+        0
       )
 
       // Simulate the caller refilling its persistent array before execution.
