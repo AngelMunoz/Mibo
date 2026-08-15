@@ -142,6 +142,65 @@ let tests =
       Expect.equal buf.Count 1 "draw only"
       Expect.equal (cmdSequence buf) [| "draw" |] "no scope"
 
+    testCase "parts ctor emits one draw per part with offsets and bone fold"
+    <| fun _ ->
+      // Zero-copy ModelPart wraps: each part must draw with its own buffer
+      // offsets, and a non-identity absolute bone must be folded in front of
+      // the instance transform (a per-part snapshot, not the shared one).
+      use buf = new RenderBuffer3D()
+
+      let bone = Matrix.CreateTranslation(2f, 0f, 0f)
+
+      let parts = [|
+        {
+          Mesh = dummyMesh()
+          VertexOffset = 0
+          StartIndex = 0
+          Bone = Matrix.Identity
+          Material = dummyMat()
+        }
+        {
+          Mesh = dummyMesh()
+          VertexOffset = 7
+          StartIndex = 12
+          Bone = bone
+          Material = dummyMat()
+        }
+      |]
+
+      let ctx =
+        InstancedRenderContext<int, int>(
+          getKey = id,
+          getParts = (fun _ -> parts),
+          getTransform = fun _ _ -> Matrix.CreateTranslation(1f, 0f, 0f)
+        )
+
+      let grid = singleCellGrid 0
+
+      CellGridRenderer3D.renderInstanced ctx grid buf
+
+      Expect.equal buf.Count 2 "two parts → two draws"
+
+      match buf.Item 0 with
+      | Command3D.DrawInstanced(_, t, _, _, _, vo, si) ->
+        Expect.equal (vo, si) (0, 0) "identity-bone part keeps zero offsets"
+
+        Expect.equal
+          t[0]
+          (Matrix.CreateTranslation(1f, 0f, 0f))
+          "identity bone reuses the group snapshot unchanged"
+      | other -> failtest $"expected DrawInstanced, got %A{other}"
+
+      match buf.Item 1 with
+      | Command3D.DrawInstanced(_, t, _, _, _, vo, si) ->
+        Expect.equal (vo, si) (7, 12) "part offsets reach the command"
+
+        Expect.equal
+          t[0]
+          (bone * Matrix.CreateTranslation(1f, 0f, 0f))
+          "bone folded in front of the instance transform"
+      | other -> failtest $"expected DrawInstanced, got %A{other}"
+
     testCase "mixed keys interleave scopes correctly"
     <| fun _ ->
       // key 0 → no shader, key 1 → shader. Exercises the rocks/water/ground

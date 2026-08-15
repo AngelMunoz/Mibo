@@ -89,6 +89,18 @@ buffer.instancedSlice(partMesh, transforms, material, count, vertexOffset = base
 - The mesh record must describe the **part**, not the whole shared buffer: `PrimitiveCount` is the part's triangle count (the draw is sized by it) and `Bounds` is the part's local-space bounding sphere (the shadow pass frustum-culls by it). Both are read from the record, never from the shared buffer.
 - Shared buffers with more than 65,536 vertices need a 32-bit index buffer — `PrimitiveMesh.Indices` holds either element size, and the merged-parts pipeline widens automatically. Only a hand-built shared buffer requires you to pick the element size yourself. (The procedural `Primitive3D` meshes are 16-bit by construction; they are small, so the limit never applies to them.)
 
+Building the part-describing records by hand is the tedious part — `ModelParts.ofModel(model)` does it for you. It resolves every mesh part of a content `Model` into a `ModelPart`: a zero-copy wrap of the model's shared buffers (with the part's `PrimitiveCount` and the mesh's bounding sphere — both already in the part's bone-local space), the part's `VertexOffset`/`StartIndex`, the part's absolute parent-bone transform, and a `Material3D` read from the part's baked effect. Results are cached per model instance, so calling it every frame is a dictionary hit:
+
+```fsharp
+let parts = ModelParts.ofModel(model)
+
+for part in parts do
+    buffer.meshSlice(part.Mesh, transform, part.Material,
+                     vertexOffset = part.VertexOffset, startIndex = part.StartIndex)
+```
+
+Content vertices are stored **bone-local** — fold `part.Bone` in front of every world/instance transform (stock `ModelMesh.Draw` does this internally). `part.Bone` is `Matrix.Identity` for models without bones. See [GPU Instancing](instancing.html#instancing-content-pipeline-models-monogame) for the instanced form and the grid-context shortcut.
+
 ## Camera commands
 
 | Member | Description |
