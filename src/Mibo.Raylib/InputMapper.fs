@@ -199,23 +199,48 @@ module InputMapper =
   /// writing it into the <paramref name="actions"/> root through the pre-step lane —
   /// the adaptive counterpart of <see cref="M:Mibo.Input.InputMapper.subscribe"/> with
   /// the root as the sink (no <c>'Msg</c>, no dispatch). The state is built at event
-  /// time (owner thread, during the host's input poll — a pure computation); only the
-  /// root write is deferred, applied at the step boundary before <c>Update</c>, so the
-  /// update phase and the frame force read the settled state. Consumption is ordinary
-  /// derivation (<c>actions |&gt; AVal.map (fun s -> s.Started.Contains …)</c>); several
-  /// deltas in one frame are several cheap writes, collapsed into one recompute at the
-  /// force.
+  /// time (owner thread, during the host's input poll); only the root write is
+  /// deferred, applied at the step boundary before <c>Update</c>, so the update phase
+  /// and the frame force read the settled state.
   /// </summary>
   /// <remarks>
-  /// EDGES ACCUMULATE: every delta (keyboard, mouse, gamepad) builds and writes a full
-  /// state, and the write MERGES its <c>Started</c>/<c>Released</c> edges into the
-  /// root's current edges instead of overwriting them. Without the merge, a delta that
-  /// lands between a key press and its release (a mouse-move build has empty edges)
-  /// would drop the earlier delta's edges — a lost <c>Released</c> leaves an
-  /// edge-accumulating consumer stuck. <c>Held</c>/<c>Values</c> stay last-wins: they
-  /// are the current truth, not events. The consumer clears the edges when it reads
-  /// them (<c>ActionState.nextFrame</c> is the core idiom) — the next merge starts
-  /// from an empty edge set.
+  /// <para>
+  /// CONSUMING: <c>Held</c> is current truth — derive projections from it freely
+  /// (<c>actions |&gt; AVal.map (fun s -> s.Held.Contains Jump)</c>, or read it in the
+  /// frame builder). <c>Started</c>/<c>Released</c> are EDGE EVENTS and must be
+  /// consumed exactly once, in <c>Update</c>, read-then-clear — unlike the MVU
+  /// subscribe, where every delta dispatches and "Started" means "pressed this
+  /// frame", the root keeps the edges until they are cleared:
+  /// <code>
+  ///   let s = actions |&gt; AVal.getValue
+  ///   for a in s.Started do handleStarted a
+  ///   actions.Set(ActionState.nextFrame s)   // clear the consumed edges
+  /// </code>
+  /// Skip the clear and the edges stay for the whole session (a <c>Contains</c>
+  /// check would fire forever after the first press); derive a projection from
+  /// <c>Started</c> instead of reading it in <c>Update</c> and the clear hides the
+  /// events from that projection. Read the edges in <c>Update</c>, clear, done.
+  /// </para>
+  /// <para>
+  /// EDGES ACCUMULATE between consumptions: every delta (keyboard, mouse,
+  /// gamepad) builds a full state and the write MERGES its edges into the root's
+  /// unread edges (<see cref="M:Mibo.Input.ActionState.mergeEdges"/>) — a
+  /// mouse-move build between a key press and its release must not drop the key's
+  /// edges. <c>Held</c>/<c>Values</c> stay last-wins (current truth).
+  /// </para>
+  /// <para>
+  /// COST: the write is cheap (merging with empty edges reuses the existing sets;
+  /// the changeable's equality gate skips no-op writes), but the BUILD is real
+  /// per-event work — the same cost the Msg-dispatching <c>subscribe</c> pays, one
+  /// build per delta. Do not skip empty-delta builds: the rebuild re-derives
+  /// <c>Held</c> from live polling at event time, which is how a missed release
+  /// heals for Held-based consumers.
+  /// </para>
+  /// <para>
+  /// FRAME ONE: subscriptions attach at the first <c>Step</c>'s diff, which runs
+  /// after the host's first input poll — input from that first poll is dropped.
+  /// One startup frame; not observable in practice.
+  /// </para>
   /// </remarks>
   let subscribeAdaptive
     (getMap: unit -> InputMap<'Action>)
@@ -227,15 +252,7 @@ module InputMapper =
     let attach(post: (unit -> unit) -> unit) =
       attachDeltas getMap ctx (fun state ->
         post(fun () ->
-          let cur = actions.GetValue()
-
-          actions.Set {
-            state with
-                Started = Set.union cur.Started state.Started
-                Released = Set.union cur.Released state.Released
-          })
-
-      )
+          actions.Set(ActionState.mergeEdges (actions.GetValue()) state)))
 
     { Id = subId; Attach = attach }
 

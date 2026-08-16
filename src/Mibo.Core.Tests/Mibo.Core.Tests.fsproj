@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="InputMapperTests.fs" />
     <Compile Include="ElmishTests.fs" />
     <Compile Include="HeadlessTests.fs" />
     <Compile Include="LayoutTests.fs" />
