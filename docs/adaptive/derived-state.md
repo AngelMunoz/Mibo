@@ -46,7 +46,6 @@ type Projections(enemies: EnemiesModel, towers: TowersModel, ...) =
     member val Suppression: amap<int<TowerId>, float32> =
         AMap.mapA (fun _ t -> suppressedBy t enemies) towers.Statics
 ```
-
 Reserve the top-level `Projections` for cross-system data only. If a projection can live next to its feature, it should — putting a single-feature projection at the top level scatters that feature's logic for no benefit.
 
 ## Build once, never per frame
@@ -55,7 +54,7 @@ Construct each projection once — at startup, or when the feature's model is cr
 
 ## Performance, in practice
 
-The graph is cheap enough for real games. In the Defli tower-defense samples — a full nine-system world with homing projectiles, a per-tower boss-suppression join, and live HUD reads — the entire adaptive machinery costs well under a fifth of a millisecond per frame at 60 fps, with all entities active. You don't need to ration projections.
+The graph is cheap enough for real games. In a live simulation-shaped game — several systems, a spatial join per entity, HUD values that follow the world every frame — the adaptive machinery runs at a small fraction of a millisecond per frame at 60 fps. You don't need to ration projections.
 
 The costs that *do* show up in a profile are almost always one of these two, and both are yours to control:
 

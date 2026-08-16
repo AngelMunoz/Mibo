@@ -7,7 +7,7 @@ index: 5
 
 # Performance
 
-The first thing to internalize: **using adaptive data is rarely the bottleneck.** In the Defli tower-defense samples — a live nine-system world with homing projectiles, a per-tower boss-aura join, and live HUD reads — the entire adaptive machinery measures under a fifth of a millisecond per frame at 60 fps. The frame's real cost is almost always elsewhere: the GPU, the draw batch, vsync. A sane graph is essentially free.
+The first thing to internalize: **using adaptive data is rarely the bottleneck.** In a live simulation-shaped game — several systems, a spatial join per entity, HUD values that follow the world every frame — the adaptive machinery runs at a small fraction of a millisecond per frame at 60 fps. The frame's real cost is almost always elsewhere: the GPU, the draw batch, vsync. A sane graph is essentially free.
 
 Where the cost actually comes from, in order of likelihood:
 
@@ -27,7 +27,7 @@ If allocation matters to you, measure it rather than trusting anyone's claims: w
 
 `AMap.joinOn` — joining two maps on the same key — is cheap on writes: when one entry changes, only that entry's subgraph updates.
 
-`mapA` with a closure that reads another adaptive collection is the one shape to watch. When the inner collection changes, every element's closure re-runs — so the cost is linear in the outer collection, and it re-runs as often as the inner one changes. That's not a bug; it's what the shape does. The realistic takeaway from real games: a tower-defense world with homing projectiles and a per-tower boss-aura join keeps its entire adaptive machinery under a fifth of a millisecond per frame at 60 fps. Joins are fine.
+`mapA` with a closure that reads another adaptive collection is the one shape to watch. When the inner collection changes, every element's closure re-runs — so the cost is linear in the outer collection, and it re-runs as often as the inner one changes. That's not a bug; it's what the shape does. In practice a live simulation-shaped game with a per-entity join still keeps its adaptive work at a small fraction of a millisecond per frame at 60 fps. Joins are fine.
 
 The shape that stops paying is a join over inputs that change *every frame*. Mixing positions or time — which move constantly — into a join means the rescan never settles, and it grows with the collections. When that shows up in a profile, don't keep paying: derive from a single collection, or compute the pairing in a plain loop where you control the cost directly. The projection is a convenience for reads, not a rule that everything must stay derived.
 
