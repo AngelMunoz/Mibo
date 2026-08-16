@@ -322,10 +322,14 @@ module InputMapper =
   ///   for a in s.Started do handleStarted a
   /// </code>
   /// A manual <c>actions.Set(ActionState.nextFrame s)</c> write stays legal
-  /// but is redundant; the root's equality gate makes it free. Because the
-  /// clear runs before the frame force, a projection over <c>Started</c>
-  /// forced in the frame builder never sees the edges: read the edges (or
-  /// materialize the derived value) in <c>Update</c> instead.
+  /// but is redundant; the root's equality gate makes it free. The clear
+  /// runs before the frame force and before work posted from <c>Update</c>,
+  /// so a projection over <c>Started</c> forced in the frame builder and an
+  /// intent that reads <c>Started</c> both see the cleared state: read the
+  /// edges (or materialize the derived value) in <c>Update</c> instead. One
+  /// exception: a fixed-step frame with no sub-step runs no <c>Update</c>
+  /// and no drain, so the clear waits and the edges stay in the root for
+  /// the next sub-step's <c>Update</c>.
   /// </para>
   /// <para>
   /// EDGES ACCUMULATE between consumptions: every delta (keyboard, mouse,

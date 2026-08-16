@@ -243,35 +243,43 @@ type AdaptiveContext
   /// </summary>
   member _.Intents = intents
 
-/// The post lane of the runner that owns the step running on this thread.
-/// The input mapper's edge clear posts through it; there is no lane outside
-/// a step. Every step installs its lane before any drain runs, so a stale
-/// value from an earlier step is never read.
-type internal StepScope private () =
+/// <summary>
+/// The post surface handed to an <see cref="T:Mibo.Adaptive.AdaptiveSub"/>
+/// attach function: <see cref="M:Mibo.Adaptive.SubPosting.Post"/> queues work
+/// for the pre-step drain, which runs on the owner thread at the next step's
+/// boundary, before <c>Update</c>. Framework subscriptions also queue work
+/// for the post drain (after <c>Update</c>, before the frame is forced)
+/// through an internal member; that moment is not part of the public
+/// contract.
+/// </summary>
+type SubPosting
+  internal (post: (unit -> unit) -> unit, afterUpdate: (unit -> unit) -> unit) =
 
-  [<ThreadStatic; DefaultValue>]
-  static val mutable private postAfterUpdate: ((unit -> unit) -> unit) voption
+  /// <summary>
+  /// Queues work for the pre-step drain: it runs on the owner thread at the
+  /// next step's boundary, before <c>Update</c>, in post order. Subscription
+  /// events go here; the state they write is in place before the step's
+  /// <c>Update</c> reads it.
+  /// </summary>
+  /// <param name="work">The work to run at the next step's boundary.</param>
+  member _.Post(work: unit -> unit) = post work
 
-  /// Installs the post lane of the step about to run on this thread.
-  static member Install(postAfterUpdate: (unit -> unit) -> unit) =
-    StepScope.postAfterUpdate <- ValueSome postAfterUpdate
-
-  /// Posts work to the installed lane. Returns false outside a step, where
-  /// no lane exists.
-  static member TryPostAfterUpdate(work: unit -> unit) =
-    match StepScope.postAfterUpdate with
-    | ValueSome post ->
-      post work
-      true
-    | ValueNone -> false
+  /// <summary>
+  /// Queues work for the post drain: it runs on the owner thread after the
+  /// next step's <c>Update</c> (after each fixed sub-step's <c>Update</c>),
+  /// before the frame is forced. The framework's input mapper clears its
+  /// consumed edges at this moment.
+  /// </summary>
+  /// <param name="work">The work to run at the next post drain.</param>
+  member internal _.AfterUpdate(work: unit -> unit) = afterUpdate work
 
 /// <summary>
 /// A subscription spec: a stable identifier plus an attach function. The
 /// adaptive counterpart of <see cref="T:Mibo.Elmish.Sub`1"/>: the attach
-/// function receives the pre-step post function instead of
-/// <c>Dispatch&lt;'Msg&gt;</c>, so subscription events never run handlers
-/// directly — they post work, handled on the owner thread at the next step's
-/// boundary, before <c>Update</c>, in order.
+/// function receives the <see cref="T:Mibo.Adaptive.SubPosting"/> surface
+/// instead of <c>Dispatch&lt;'Msg&gt;</c>, so subscription events never run
+/// handlers directly — they post work, handled on the owner thread at the
+/// next step's boundary, before <c>Update</c>, in order.
 /// </summary>
 [<Struct>]
 type AdaptiveSub = {
@@ -280,13 +288,17 @@ type AdaptiveSub = {
 
   /// <summary>
   /// Attaches the subscription and returns a disposable that detaches it. The
-  /// <c>post</c> argument is the pre-step lane's entry point: event callbacks
-  /// (possibly on foreign threads) may only enqueue work, and the runner
-  /// handles it on the owner thread at the next step's boundary, before
-  /// <c>Update</c> — a foreign-thread callback can never run game code
-  /// directly.
+  /// <paramref name="posting"/> argument is the
+  /// <see cref="T:Mibo.Adaptive.SubPosting"/> surface: its
+  /// <see cref="M:Mibo.Adaptive.SubPosting.Post"/> queues work for the
+  /// pre-step drain, and the runner handles it on the owner thread at the
+  /// next step's boundary, before <c>Update</c> — a foreign-thread callback
+  /// can never run game code directly. Prefer the builders in the
+  /// <see cref="T:Mibo.Adaptive.AdaptiveSub"/> module
+  /// (<c>ofObservable</c>, <c>ofTimer</c>) over writing <c>Attach</c> by
+  /// hand.
   /// </summary>
-  Attach: ((unit -> unit) -> unit) -> IDisposable
+  Attach: SubPosting -> IDisposable
 }
 
 /// <summary>Functions for composing <see cref="T:Mibo.Adaptive.AdaptiveSub"/> values.</summary>
@@ -302,6 +314,55 @@ module AdaptiveSub =
     sub with
         Id = SubId.prefix prefix sub.Id
   }
+
+  /// <summary>
+  /// Builds a subscription from an <see cref="T:System.IObservable`1"/>: the
+  /// handler receives the <see cref="T:Mibo.Adaptive.SubPosting"/> surface and
+  /// each value, and queues work for the pre-step drain. The runner handles
+  /// the work on the owner thread at the next step's boundary, before
+  /// <c>Update</c>, so a callback thread never runs game code directly.
+  /// </summary>
+  /// <param name="id">Stable key the runtime uses to diff subscriptions across steps.</param>
+  /// <param name="source">The observable to subscribe to.</param>
+  /// <param name="handler">Receives the posting surface and each value.</param>
+  let ofObservable
+    (id: SubId)
+    (source: IObservable<'T>)
+    (handler: SubPosting -> 'T -> unit)
+    : AdaptiveSub =
+    {
+      Id = id
+      Attach = fun posting -> source.Subscribe(handler posting)
+    }
+
+  /// <summary>
+  /// Builds a subscription that ticks on a timer: the handler receives the
+  /// <see cref="T:Mibo.Adaptive.SubPosting"/> surface once per tick and
+  /// queues work for the pre-step drain. The timer ticks on a thread-pool
+  /// thread; only the queued work's drain runs on the owner thread.
+  /// </summary>
+  /// <param name="id">Stable key the runtime uses to diff subscriptions across steps.</param>
+  /// <param name="interval">Tick interval.</param>
+  /// <param name="tick">Receives the posting surface once per tick.</param>
+  let ofTimer
+    (id: SubId)
+    (interval: TimeSpan)
+    (tick: SubPosting -> unit)
+    : AdaptiveSub =
+    {
+      Id = id
+      Attach =
+        fun posting ->
+          let timer = new Timers.Timer(interval.TotalMilliseconds)
+          timer.Elapsed.Add(fun _ -> tick posting)
+          timer.Start()
+
+          { new IDisposable with
+              member _.Dispose() =
+                timer.Stop()
+                timer.Dispose()
+          }
+    }
 
 /// <summary>The result of building an adaptive program's graph.</summary>
 [<Struct>]
@@ -730,9 +791,8 @@ module AdaptiveInput =
   /// <see cref="M:Mibo.Input.ActionState.mergeEdges"/>); the consumed edges
   /// are cleared after <c>Update</c>, before the frame is forced. So
   /// <c>Update</c> reads each edge exactly once, and the next step starts
-  /// from an empty edge set. The after-update clear is internal to the
-  /// framework runner; the public <c>AdaptiveSub</c> contract is a single
-  /// pre-step post function.
+  /// from an empty edge set. The after-update clear goes through an internal
+  /// member of the posting surface; it is not part of the public contract.
   /// </summary>
   /// <param name="attachDeltas">
   /// Subscribes to the input deltas and invokes the callback with each newly
@@ -743,22 +803,27 @@ module AdaptiveInput =
     (attachDeltas: (ActionState<'Action> -> unit) -> IDisposable)
     (actions: cval<ActionState<'Action>>)
     : AdaptiveSub =
-    let attach(post: (unit -> unit) -> unit) =
+    let attach(posting: SubPosting) =
+      // One clear per drain cycle: several events in one frame queue several
+      // merged states, but only the first queues the clear (the flag resets
+      // when the clear runs). A build without edges (a mouse move) queues
+      // nothing.
+      let mutable clearPending = false
+
       attachDeltas(fun state ->
-        post(fun () ->
+        posting.Post(fun () ->
           let merged = ActionState.mergeEdges (actions.GetValue()) state
           actions.Set merged
 
-          // The clear must land in the post lane: after Update, before the
-          // frame force. This merge runs inside the runner's step, where
-          // the step scope holds that lane. Post one clear for every merged
-          // state that has edges; a state without edges (a mouse move)
-          // posts nothing. Outside a step there is no lane and the edges
-          // persist, which is the behavior of a manual attach.
-          if not(merged.Started.IsEmpty) || not(merged.Released.IsEmpty) then
-            StepScope.TryPostAfterUpdate(fun () ->
-              actions.Set(ActionState.nextFrame(actions.GetValue())))
-            |> ignore))
+          if
+            (not merged.Started.IsEmpty || not merged.Released.IsEmpty)
+            && not clearPending
+          then
+            clearPending <- true
+
+            posting.AfterUpdate(fun () ->
+              actions.Set(ActionState.nextFrame(actions.GetValue()))
+              clearPending <- false)))
 
     {
       Id = SubId.ofString "Mibo/Input/InputMapper/subscribeAdaptive"

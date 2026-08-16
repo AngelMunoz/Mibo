@@ -84,11 +84,6 @@ type AdaptiveHeadless<'Frame>
   // no thread affinity — only its drains do (owner thread, inside Step).
   let intents = IntentQueue()
 
-  // The post lane as a function, captured once for the step scope: reading
-  // a member per step (member eta) allocates a fresh closure on the frame
-  // path.
-  let postLane = intents.post
-
   // Attached subscription disposables, keyed by SubId. The runtime diffs the
   // program's subscription projection against this table every step: new key
   // → attach, missing key → detach, surviving key → keep (identity is the key).
@@ -175,13 +170,15 @@ type AdaptiveHeadless<'Frame>
       // discarded within this step, so it is always fresh.
       let current = map |> AMap.getValue
 
-      // New key → attach, handing the subscription the pre-step post
-      // function: events never run handlers directly, they post work that
-      // the runner handles on the owner thread at the next step's boundary,
-      // before Update, in order.
+      // New key → attach, handing the subscription the posting surface:
+      // events never run handlers directly, they post work to the pre-step
+      // drain and the runner handles it on the owner thread at the next
+      // step's boundary, before Update, in order. The surface is built once
+      // per attach, on the cold path.
       for KeyValueV(id, sub) in current do
         if not(attachedSubs.ContainsKey id) then
-          attachedSubs[id] <- sub.Attach intents.postPreStep
+          attachedSubs[id] <-
+            sub.Attach(SubPosting(intents.postPreStep, intents.post))
 
       // Missing key → detach. Surviving keys are kept as-is: the key is
       // the identity, never re-attach on a fresh closure value.
@@ -256,13 +253,6 @@ type AdaptiveHeadless<'Frame>
       // Note: ticks comparison, not `elapsed < TimeSpan.Zero` — F# generic
       // comparison boxes both operands (48 bytes/call on the frame path).
       let elapsed = if elapsed.Ticks < 0L then TimeSpan.Zero else elapsed
-
-      // Install this step's post lane in the step scope before any drain
-      // runs: the input mapper's edge clear posts through it. Every step
-      // installs its lane first, so a stale value from a failed step is
-      // never read. postLane is captured once per runner; the install does
-      // not allocate.
-      StepScope.Install postLane
 
       // Frame boundary: apply cross-thread
       // posts (e.g. input-thread writes), then drain the next-frame lane —
