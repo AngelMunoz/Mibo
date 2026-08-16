@@ -1,8 +1,8 @@
 ---
 title: Building Interior Spaces
 category: Level Design
-categoryindex: 2
-index: 25
+categoryindex: 6
+index: 8
 ---
 
 # Building Interior Spaces

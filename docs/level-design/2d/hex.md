@@ -1,8 +1,8 @@
 ---
 title: Hex Grid Layout (2D)
 category: Level Design
-categoryindex: 2
-index: 27
+categoryindex: 6
+index: 5
 ---
 
 # Hex Grid Layout (2D)

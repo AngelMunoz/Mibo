@@ -1,8 +1,8 @@
 ---
 title: Animation 3D
 category: Amenities
-categoryindex: 5
-index: 23
+categoryindex: 10
+index: 3
 ---
 
 # Animation 3D (Skeletal Animation)

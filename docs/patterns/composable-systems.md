@@ -1,11 +1,13 @@
 ---
 title: Composable Systems
 category: Patterns
-categoryindex: 6
-index: 62
+categoryindex: 11
+index: 2
 ---
 
 # Composable Systems
+
+> **NOTE:** these rules are runtime-agnostic. In adaptive programs the router becomes one update function that ticks systems and translates events through posted intents, and query objects become direct values pulled from transient views — the full translation lives in [Adaptive Systems](../adaptive/systems.html).
 
 ## The problem
 
@@ -179,6 +181,6 @@ You don't need it for a small game where a single `update` with pattern matching
 
 ## See also
 
-- [System Pipeline](../system.html) — the `System.start`, `pipeMutable`, `snapshot` API.
-- [Commands](../commands.html) — `Cmd.map` and `Cmd.batch` for lifting/combining sub-system commands.
+- [System Pipeline](../mvu/system.html) — the `System.start`, `pipeMutable`, `snapshot` API.
+- [Commands](../mvu/commands.html) — `Cmd.map` and `Cmd.batch` for lifting/combining sub-system commands.
 - [Scaling Mibo](../scaling.html) — where this pattern sits on the complexity ladder.

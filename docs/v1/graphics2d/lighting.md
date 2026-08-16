@@ -1,7 +1,5 @@
 ---
 title: 2D Lighting & Shadows
-category: v1
-categoryindex: 200
 index: 12
 ---
 

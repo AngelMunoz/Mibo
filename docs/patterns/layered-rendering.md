@@ -1,8 +1,8 @@
 ---
 title: Layered Rendering
 category: Patterns
-categoryindex: 6
-index: 65
+categoryindex: 11
+index: 5
 ---
 
 # Layered Rendering

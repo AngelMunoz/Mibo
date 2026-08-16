@@ -1,8 +1,8 @@
 ---
 title: Shader Uniform Reference
 category: Rendering
-categoryindex: 3
-index: 16
+categoryindex: 7
+index: 6
 ---
 
 # Shader Uniform Reference

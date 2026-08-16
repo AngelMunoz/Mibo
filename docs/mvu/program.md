@@ -1,7 +1,7 @@
 ---
 title: Programs & Composition
-category: Architecture
-categoryindex: 1
+category: MVU
+categoryindex: 2
 index: 2
 ---
 
@@ -140,7 +140,7 @@ Gives you direct access to the `GameConfig` record before the game initializes.
     { cfg with Width = 1280; Height = 720; Title = "My Game" })
 ```
 
-> _**NOTE**_: `Width`/`Height` here are **config-time** values. For the **live, resizable** window size at runtime (in `init`/`update`/`view`), read `ctx.WindowWidth`/`ctx.WindowHeight` — these update on resize. See the "Window size" section of [MonoGame type quirks](monogame-types.html) for the full note.
+> _**NOTE**_: `Width`/`Height` here are **config-time** values. For the **live, resizable** window size at runtime (in `init`/`update`/`view`), read `ctx.WindowWidth`/`ctx.WindowHeight` — these update on resize. See the "Window size" section of [MonoGame type quirks](../monogame-types.html) for the full note.
 
 > _**TIP**_: **Cumulative Pipeline**: You can call `withConfig` multiple times; each callback is executed in the order it was added, allowing you to layer configuration.
 

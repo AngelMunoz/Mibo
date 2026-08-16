@@ -1,8 +1,8 @@
 ---
 title: Custom Commands & Escape Hatches
 category: 2D Rendering
-categoryindex: 4
-index: 16
+categoryindex: 8
+index: 3
 ---
 
 # Custom Commands & Escape Hatches

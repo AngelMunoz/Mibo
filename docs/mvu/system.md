@@ -1,8 +1,8 @@
 ---
 title: System Pipeline
-category: Architecture
-categoryindex: 1
-index: 3
+category: MVU
+categoryindex: 2
+index: 5
 ---
 
 # System Pipeline
@@ -106,4 +106,4 @@ Skip it when:
 - your game is small and `update` is still easy to read
 - you're mostly event-driven (menus, turn-based)
 
-See also: [Scaling Mibo (Simple → Complex)](scaling.html) (how this fits into the ladder).
+See also: [Scaling Mibo (Simple → Complex)](../scaling.html) (how this fits into the ladder).

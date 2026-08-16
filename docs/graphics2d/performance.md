@@ -1,8 +1,8 @@
 ---
 title: 2D Performance
 category: 2D Rendering
-categoryindex: 4
-index: 17
+categoryindex: 8
+index: 4
 ---
 
 # 2D Rendering Performance

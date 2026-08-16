@@ -1,7 +1,5 @@
 ---
 title: Custom Commands & Escape Hatches
-category: v1
-categoryindex: 200
 index: 14
 ---
 

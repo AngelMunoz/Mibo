@@ -1,7 +1,5 @@
 ---
 title: 3D Lighting
-category: v1
-categoryindex: 200
 index: 18
 ---
 

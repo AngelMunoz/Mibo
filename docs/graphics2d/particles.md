@@ -1,8 +1,8 @@
 ---
 title: 2D Particles
 category: 2D Rendering
-categoryindex: 4
-index: 19
+categoryindex: 8
+index: 6
 ---
 
 # 2D Particles

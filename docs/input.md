@@ -1,8 +1,8 @@
 ---
 title: Input
 category: Amenities
-categoryindex: 5
-index: 20
+categoryindex: 10
+index: 1
 ---
 
 # Input (raw + mapped)
@@ -101,5 +101,5 @@ This registers `IInput` automatically; you can then query the `IInputMapper<'Act
 
 ## See Also
 
-- [Subscriptions](subscriptions.html) - Continuous input handling
+- [Subscriptions](mvu/subscriptions.html) - Continuous input handling
 - [Scaling](scaling.html) - Input handling patterns

@@ -1,8 +1,8 @@
 ---
 title: Migrating to Mibo v4
 category: Migrating
-categoryindex: 2
-index: 3
+categoryindex: 5
+index: 2
 ---
 
 # Migrating to Mibo v4

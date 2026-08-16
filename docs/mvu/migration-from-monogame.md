@@ -1,8 +1,8 @@
 ---
 title: Migrating from Mibo (MonoGame)
-category: Migrating
+category: MVU
 categoryindex: 2
-index: 2
+index: 7
 ---
 
 # Migrating from Mibo (MonoGame) to Mibo.MonoGame
@@ -583,7 +583,7 @@ The fluent DSL chains members on the buffer: `.sprite(...)`, `.text(...)`,
 `.fillRect(...)`, `.lineThick(...)`, `.fillCircle(...)`, `.beginCamera(...)`,
 `.beginShader(...)`, `.particles(...)`, etc. Each returns the buffer for
 chaining; end the chain with `.drop()`. See
-[Draw DSL](draw-dsl.html).
+[Draw DSL](../draw-dsl.html).
 
 #### 2D lighting & shadows
 
@@ -606,7 +606,7 @@ shadows, normal maps, and per-instance lit-sprite quads are all supported.
 | `PostProcessConfig` (+ `withBloom`/`withToneMapping`)                                                                | `PostProcessConfig3D` + `PostProcessPass3D`                                                                                                       |
 | `PipelineBuffer<RenderCommand>`                                                                                      | `RenderBuffer3D` (= `RenderBuffer<unit, Command3D>`)                                                                                              |
 | `RenderCommand` DU (`SetCamera`, `AddLight`, `Draw`, `DrawSpriteBillboard`, …)                                       | `Command3D` DU (`BeginCamera`, `AddPointLight`, `DrawModel`, `DrawBillboard`, …)                                                                  |
-| `draw { }` / `quad { }` / `billboard { }` CEs + `PipelineBuffer` extensions (`.Camera(...).Draw(...).AddLight(...)`) | the fluent Draw DSL (`buffer.model(...)`, `buffer.addPointLight(...)`, `buffer.beginCamera(...)` — see [Draw DSL](draw-dsl.html))                                           |
+| `draw { }` / `quad { }` / `billboard { }` CEs + `PipelineBuffer` extensions (`.Camera(...).Draw(...).AddLight(...)`) | the fluent Draw DSL (`buffer.model(...)`, `buffer.addPointLight(...)`, `buffer.beginCamera(...)` — see [Draw DSL](../draw-dsl.html))                                           |
 | `Light` DU (`Directional`/`Point`/`Spot`), `DirectionalLight`, `PointLight`, `SpotLight`, `ShadowSettings`           | `AmbientLight3D` + `DirectionalLight3D` + `PointLight3D` + `SpotLight3D` records (ambient is now its own record, not a field of a lighting state) |
 | `Material` / `PBRMaterial` / `MaterialFlags`                                                                         | `Material3D` record (+ `Material3D.defaults`, `Material3D.fromModelMeshPart`)                                                                     |
 | `Mesh` + `Mesh.fromModel`                                                                                            | `PrimitiveMesh` / `Primitive3D` (unit cube/sphere/cylinder/plane/torus/cone)                                                                      |
@@ -663,7 +663,7 @@ The fluent 3D surface: `model`, `animatedModel`, `mesh`, `instanced`,
 `addDirectionalLight`/`addPointLight`/`addSpotLight`, `setShadowOrigin`,
 `enableShadows`/`disableShadows`, `beginEffect`/`endEffect` (per-group custom
 shading), `drawImmediate` (raw `GraphicsDevice` access with a gathered
-`SceneContext`), `drop`. See [Draw DSL](draw-dsl.html) for the full surface.
+`SceneContext`), `drop`. See [Draw DSL](../draw-dsl.html) for the full surface.
 
 #### What you can still use from Core
 

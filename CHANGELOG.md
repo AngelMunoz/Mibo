@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs:** reorganized around the two program runtimes — the MVU guides (Elmish, programs, commands, subscriptions, system pipeline, headless, MonoGame migration) live under their own section; a new Adaptive section documents the adaptive program shape (programs, sub-systems, input, services); and a new Mibo.Adaptive section documents the incremental-computation library as its own package. The v1 (raylib-only) archive leaves the sidebar and is linked from the front page instead. Docs now build on fsdocs 22.1.0.
+
 ### Added
 
 - **MonoGame 3D:** `ModelParts.ofModel(model)` turns a content-pipeline model into per-part records ready for `meshSlice`/`instancedSlice` — each part draws straight from the model's shared buffers (no per-part buffer copies) with its slice offsets, its absolute bone transform, and its material; results are cached per model and must be treated as read-only. Static models only — skinned parts render in their bind pose (use `animatedModelInstanced` for those). `InstancedRenderContext` accepts a parts resolver, so grid renderers can instance content models directly with correct bones and offsets.

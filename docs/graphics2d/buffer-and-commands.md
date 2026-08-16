@@ -1,8 +1,8 @@
 ---
 title: Buffer & Commands
 category: 2D Rendering
-categoryindex: 4
-index: 12
+categoryindex: 8
+index: 2
 ---
 
 # Buffer & Commands

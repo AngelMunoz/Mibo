@@ -1,8 +1,8 @@
 ---
 title: Pre-computed Derived State
 category: Patterns
-categoryindex: 6
-index: 66
+categoryindex: 11
+index: 6
 ---
 
 # Pre-computed Derived State

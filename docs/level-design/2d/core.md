@@ -1,8 +1,8 @@
 ---
 title: 2D Layout Engine
 category: Level Design
-categoryindex: 2
-index: 21
+categoryindex: 6
+index: 2
 ---
 
 # 2D Layout Engine

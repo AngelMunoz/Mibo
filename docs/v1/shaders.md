@@ -1,7 +1,5 @@
 ---
 title: Shaders
-category: v1
-categoryindex: 200
 index: 2
 ---
 

@@ -1,7 +1,5 @@
 ---
 title: Animation 3D
-category: v1
-categoryindex: 200
 index: 7
 ---
 

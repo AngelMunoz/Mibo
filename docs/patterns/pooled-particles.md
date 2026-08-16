@@ -1,8 +1,8 @@
 ---
 title: Pooled Particles
 category: Patterns
-categoryindex: 6
-index: 64
+categoryindex: 11
+index: 4
 ---
 
 # Pooled Particles

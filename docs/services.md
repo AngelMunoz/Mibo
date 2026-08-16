@@ -2,12 +2,14 @@
 title: Service Composition
 category: Architecture
 categoryindex: 1
-index: 4
+index: 2
 ---
 
 # Service Composition
 
 As your game grows, you will likely need services that are shared across your `init`, `update`, and `view` functions—things like Networking, Leaderboards, or Save Data.
+
+> **NOTE:** the Env pattern here is runtime-agnostic — it applies verbatim to adaptive programs, with one improvement: `boot ctx` receives the `GameContext` before init runs, so context-dependent services initialize without escape hatches. See [Adaptive Services](adaptive/services.html).
 
 Instead of passing these individually or relying on global state, we recommend creating a strongly typed "Composition Root" or "Environment" record.
 

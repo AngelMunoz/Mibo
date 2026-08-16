@@ -1,7 +1,5 @@
 ---
 title: Camera
-category: v1
-categoryindex: 200
 index: 4
 ---
 

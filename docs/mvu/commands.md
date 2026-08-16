@@ -1,8 +1,8 @@
 ---
 title: Commands (async + effects)
-category: Amenities
-categoryindex: 5
-index: 23
+category: MVU
+categoryindex: 2
+index: 3
 ---
 
 # Commands
@@ -220,4 +220,4 @@ model, maybeSave model
 
 - [Elmish runtime](elmish.html) - The update loop
 - [Subscriptions](subscriptions.html) - External event sources
-- [Service composition](services.html) - Dependency injection patterns
+- [Service composition](../services.html) - Dependency injection patterns

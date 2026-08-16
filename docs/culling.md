@@ -1,8 +1,8 @@
 ---
 title: Culling
 category: Rendering
-categoryindex: 3
-index: 14
+categoryindex: 7
+index: 4
 ---
 
 # Culling (visibility helpers)

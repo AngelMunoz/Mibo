@@ -1,8 +1,8 @@
 ---
 title: Building Top-Down Levels
 category: Level Design
-categoryindex: 2
-index: 23
+categoryindex: 6
+index: 4
 ---
 
 # Building Top-Down Levels
