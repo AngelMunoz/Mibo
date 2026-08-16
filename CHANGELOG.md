@@ -26,6 +26,7 @@
 
 ### Fixed
 
+- **Input mapping:** `Started` in the subscription mapper's `buildActions` (both backends) is now a per-ACTION transition, matching core `ActionState.update`: it fires only when the action was NOT already held. Previously each binding press fired `Started` — pressing Left while A already holds the same action re-fired it — while `Released` only fired at full release, so an add-on-Started/subtract-on-Released consumer went +N/−1 and stuck (Defli3D's keyboard pan locked when mixing WASD with arrow synonyms). The `IInputMapper` service's poll loop applies the same transition rule now.
 - **Mibo.Adaptive:** the NuGet package now ships its own readme — including the credit note for its AdaptiveSlop origin — instead of the repo root readme.
 - **Raylib 3D:** alpha-blended billboards — particles and other transparent quads — no longer write depth, so a transparent billboard no longer hides the geometry or particles behind it.
 - **Raylib 2D:** full-circle ring outlines no longer show a radial line where the ring closes. Partial arcs keep their end caps.

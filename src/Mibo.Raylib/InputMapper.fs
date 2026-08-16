@@ -17,6 +17,7 @@ module InputMapper =
   let internal buildActions
     (getMap: unit -> InputMap<'Action>)
     (prevComboStates: Map<Set<KeyCode>, bool>)
+    (prevHeldActions: Set<'Action>)
     (pressed: Trigger[])
     (released: Trigger[])
     (isKeyDown: KeyCode -> bool)
@@ -30,6 +31,18 @@ module InputMapper =
     let mutable heldTriggers = Set.empty
     let mutable values = Map.empty
     let mutable comboStates = prevComboStates
+
+    // Started is a TRANSITION, matching core ActionState.update: it
+    // fires only when the action was NOT already held. Pressing a
+    // synonym binding (Left while A already holds the action) must not
+    // re-fire Started — Released only fires when the action FULLY
+    // releases, so a per-trigger Started unbalances edge-arithmetic
+    // consumers (add on Started, subtract on Released): one add per
+    // binding press against a single subtract at full release leaves
+    // them stuck.
+    let startIfNew(a: 'Action) =
+      if not(prevHeldActions.Contains a) then
+        started <- started |> Set.add a
 
     for kv in map.TriggerToActions do
       let isDown =
@@ -55,7 +68,7 @@ module InputMapper =
 
         if isDown && not wasHeld then
           for a in kv.Value do
-            started <- started |> Set.add a
+            startIfNew a
         elif not isDown && wasHeld then
           for a in kv.Value do
             releasedSet <- releasedSet |> Set.add a
@@ -66,7 +79,7 @@ module InputMapper =
       |> Map.tryFind t
       |> Option.iter(fun actions ->
         for a in actions do
-          started <- started |> Set.add a)
+          startIfNew a)
 
     for t in released do
       map.TriggerToActions
@@ -99,12 +112,14 @@ module InputMapper =
     : IDisposable =
     let input = Input.getService ctx
     let mutable prevComboStates = Map.empty<Set<KeyCode>, bool>
+    let mutable prevHeldActions = Set.empty<'Action>
 
     let doBuild (pressed: Trigger[]) (released: Trigger[]) =
       let state, newComboStates =
         buildActions
           getMap
           prevComboStates
+          prevHeldActions
           pressed
           released
           (fun k -> Raylib.IsKeyDown(KeyCode.toRaylibKey k).AsBool())
@@ -116,6 +131,7 @@ module InputMapper =
               .AsBool())
 
       prevComboStates <- newComboStates
+      prevHeldActions <- state.Held
       state
 
     let subKey: IDisposable =
@@ -244,6 +260,7 @@ module InputMapper =
     let mutable map = initialMap
     let mutable state = ActionState.empty
     let mutable prevComboStates = Map.empty<Set<KeyCode>, bool>
+    let mutable prevHeldActions = Set.empty<'Action>
 
     { new IInputMapper<'Action> with
         member _.CurrentState = state
@@ -291,8 +308,11 @@ module InputMapper =
                 Raylib.IsGamepadButtonDown(p, btn).AsBool()
 
             if isPressed then
+              // Transition semantics, as in buildActions: Started fires
+              // only when the action was NOT already held.
               for a in kv.Value do
-                started <- started |> Set.add a
+                if not(prevHeldActions.Contains a) then
+                  started <- started |> Set.add a
 
             if isReleased then
               for a in kv.Value do
@@ -307,10 +327,12 @@ module InputMapper =
 
           // An action may appear in releasedSet via a KeyCombo release while
           // still held by another trigger. Filter rather than mutate held —
-          // matches buildActions (line ~77). Mutating held here would
+          // matches buildActions. Mutating held here would
           // incorrectly deactivate an action still held by another binding.
           releasedSet <-
             releasedSet |> Set.filter(fun a -> not(held.Contains a))
+
+          prevHeldActions <- held
 
           state <- {
             Held = held

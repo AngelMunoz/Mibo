@@ -233,6 +233,7 @@ let tests =
         InputMapper.buildActions
           getMap
           Map.empty
+          Set.empty
           [| Key KeyCode.LeftControl |]
           [||]
           isKeyDown
@@ -254,6 +255,7 @@ let tests =
         InputMapper.buildActions
           getMap
           comboStates1
+          state1.Held
           [| Key KeyCode.S |]
           [||]
           isKeyDown
@@ -291,6 +293,7 @@ let tests =
         InputMapper.buildActions
           getMap
           initialComboStates
+          (Set.ofList [ Save ])
           [||]
           [| Key KeyCode.S |]
           isKeyDown
@@ -302,6 +305,75 @@ let tests =
         "Save should not be held after S released"
 
       Expect.contains state1.Released Save "Save should be in released set"
+
+    testCase
+      "buildActions: synonym bindings — Started is a transition, Released only at full release"
+    <| fun _ ->
+      // The regression that locked Defli3D's pan: A and Left both map
+      // MoveUp. Pressing Left while A already holds the action must
+      // NOT re-fire Started (edge arithmetic — add on Started,
+      // subtract on Released — would go +2/−1 and stick), and
+      // releasing A while Left still holds must NOT fire Released.
+      let map =
+        emptyMap
+        |> InputMap.key MoveUp KeyCode.A
+        |> InputMap.key MoveUp KeyCode.Left
+
+      let mutable heldKeys = Set.empty
+
+      let isKeyDown k = heldKeys |> Set.contains k
+      let isMouseButtonDown(_b: MouseButtonCode) = false
+      let isGamepadButtonDown _ _ = false
+
+      let getMap() = map
+
+      let build prevState pressed released =
+        InputMapper.buildActions
+          getMap
+          Map.empty
+          prevState
+          pressed
+          released
+          isKeyDown
+          isMouseButtonDown
+          isGamepadButtonDown
+
+      // Press A → Started once.
+      heldKeys <- heldKeys |> Set.add KeyCode.A
+
+      let s1, _ = build Set.empty [| Key KeyCode.A |] [||]
+
+      Expect.contains s1.Started MoveUp "starts from the first binding"
+
+      // Press Left (synonym) while A holds → Held stays, NO new Started.
+      heldKeys <- heldKeys |> Set.add KeyCode.Left
+
+      let s2, _ = build s1.Held [| Key KeyCode.Left |] [||]
+
+      Expect.contains s2.Held MoveUp "still held"
+
+      Expect.isFalse
+        (s2.Started.Contains MoveUp)
+        "synonym press is not a new start"
+
+      // Release A while Left holds → NO Released.
+      heldKeys <- heldKeys |> Set.remove KeyCode.A
+
+      let s3, _ = build s2.Held [||] [| Key KeyCode.A |]
+
+      Expect.contains s3.Held MoveUp "held by the remaining binding"
+
+      Expect.isFalse
+        (s3.Released.Contains MoveUp)
+        "partial release is not a release"
+
+      // Release Left → the one Released, edges balanced (+1/−1).
+      heldKeys <- heldKeys |> Set.remove KeyCode.Left
+
+      let s4, _ = build s3.Held [||] [| Key KeyCode.Left |]
+
+      Expect.isFalse (s4.Held.Contains MoveUp) "fully released"
+      Expect.contains s4.Released MoveUp "full release fires exactly once"
 
     testCase "buildActions: KeyCombo does not trigger from mouse events"
     <| fun _ ->
@@ -326,6 +398,7 @@ let tests =
         InputMapper.buildActions
           getMap
           Map.empty
+          Set.empty
           [| MouseButton MouseButtonCode.Left |]
           [||]
           isKeyDown
@@ -363,6 +436,7 @@ let tests =
         InputMapper.buildActions
           getMap
           Map.empty
+          Set.empty
           [| Key KeyCode.LeftControl |]
           [||]
           isKeyDown
@@ -380,6 +454,7 @@ let tests =
         InputMapper.buildActions
           getMap
           cs1
+          state1.Held
           [| Key KeyCode.G |]
           [||]
           isKeyDown
@@ -398,6 +473,7 @@ let tests =
         InputMapper.buildActions
           getMap
           cs2
+          state2.Held
           [| Key KeyCode.D |]
           [||]
           isKeyDown
@@ -413,6 +489,7 @@ let tests =
         InputMapper.buildActions
           getMap
           cs3
+          state3.Held
           [||]
           [| Key KeyCode.G |]
           isKeyDown
@@ -435,6 +512,7 @@ let tests =
         InputMapper.buildActions
           getMap
           cs4
+          state4.Held
           [||]
           [| Key KeyCode.D |]
           isKeyDown
