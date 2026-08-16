@@ -1,7 +1,5 @@
 ---
 title: Subscriptions (external events)
-category: v1
-categoryindex: 200
 index: 9
 ---
 
@@ -229,4 +227,4 @@ fun dispatch ->
 
 - [Input](input.html) - Input handling
 - [Commands](commands.html) - One-time side effects
-- [Elmish runtime](../elmish.html) - How the loop works
+- [Elmish runtime](../mvu/elmish.html) - How the loop works

@@ -1,14 +1,16 @@
 ---
 title: Scaling Mibo
-category: Architecture
-categoryindex: 1
-index: 5
+category: MVU
+categoryindex: 2
+index: 6
 ---
 
 # Scaling Mibo (Simple → Complex)
 
 Mibo is designed to stay fun for small games while still giving you an upgrade path for "serious" games.
 This document is a practical ladder you can climb as complexity increases—without rewriting your engine.
+
+> **NOTE:** this ladder climbs within the **MVU** runtime. Past Level 3 — when derived state recomputed by hand and the model re-read per frame stop being free — the next rung is a change of runtime, not a level: the [Adaptive architecture](../adaptive/overview.html), where a derived state graph replaces the recomputation.
 
 The recurring theme is:
 

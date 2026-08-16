@@ -1,8 +1,8 @@
 ---
 title: Animation
 category: Amenities
-categoryindex: 5
-index: 22
+categoryindex: 12
+index: 2
 ---
 
 # Animation (2D Sprite Animation)

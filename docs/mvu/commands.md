@@ -1,8 +1,8 @@
 ---
 title: Commands (async + effects)
-category: Amenities
-categoryindex: 5
-index: 23
+category: MVU
+categoryindex: 2
+index: 3
 ---
 
 # Commands

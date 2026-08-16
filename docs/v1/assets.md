@@ -1,7 +1,5 @@
 ---
 title: Assets
-category: v1
-categoryindex: 200
 index: 3
 ---
 

@@ -1,8 +1,8 @@
 ---
 title: 3D Layout Engine
 category: Level Design
-categoryindex: 2
-index: 24
+categoryindex: 8
+index: 6
 ---
 
 # 3D Layout Engine

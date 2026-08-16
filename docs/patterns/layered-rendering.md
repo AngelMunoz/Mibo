@@ -1,8 +1,8 @@
 ---
 title: Layered Rendering
 category: Patterns
-categoryindex: 6
-index: 65
+categoryindex: 13
+index: 5
 ---
 
 # Layered Rendering
@@ -45,7 +45,7 @@ Program.mkProgram init update
     Renderer3D.create pipeline sceneView)
 ```
 
-The 2D overlay is registered first so it draws second (on top). The `noClear` flag prevents it from erasing the 3D scene.
+The 2D overlay is registered first so it draws second (on top). The `noClear` flag prevents it from erasing the 3D scene. The example shows the Elmish program builder; the adaptive runtime registers renderers exactly the same way — `AdaptiveProgram.withRenderer` with a draw function that reads the frame.
 
 Each renderer has its own view function:
 

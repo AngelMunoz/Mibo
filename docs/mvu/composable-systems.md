@@ -1,11 +1,13 @@
 ---
 title: Composable Systems
-category: Patterns
-categoryindex: 6
-index: 62
+category: MVU
+categoryindex: 2
+index: 9
 ---
 
 # Composable Systems
+
+> **NOTE:** these rules apply to adaptive programs too — features own their data, report what happened as data, and one place reacts. See [Adaptive Systems](../adaptive/systems.html).
 
 ## The problem
 
@@ -175,10 +177,10 @@ System.start model
 - You have cross-cutting interactions ("enemy died" should trigger a sound, a score bump, and a particle burst) and they're currently implemented by one system reaching into several models.
 - You want sub-systems to be unit-testable without standing up the whole game.
 
-You don't need it for a small game where a single `update` with pattern matching is still easy to read — see [Scaling Mibo](../scaling.html) for when each rung pays off.
+You don't need it for a small game where a single `update` with pattern matching is still easy to read — see [Scaling Mibo](scaling.html) for when each rung pays off.
 
 ## See also
 
-- [System Pipeline](../system.html) — the `System.start`, `pipeMutable`, `snapshot` API.
-- [Commands](../commands.html) — `Cmd.map` and `Cmd.batch` for lifting/combining sub-system commands.
-- [Scaling Mibo](../scaling.html) — where this pattern sits on the complexity ladder.
+- [System Pipeline](system.html) — the `System.start`, `pipeMutable`, `snapshot` API.
+- [Commands](commands.html) — `Cmd.map` and `Cmd.batch` for lifting/combining sub-system commands.
+- [Scaling Mibo](scaling.html) — where this pattern sits on the complexity ladder.

@@ -48,7 +48,7 @@ jobs:
 
       - name: Build Documentation
         run: |
-          dotnet fsdocs build --output output --clean --properties Configuration=Release
+          dotnet fsdocs build --output output --clean --ignoreuncategorized --properties Configuration=Release
 
       - name: Upload Docs Artifact
         uses: actions/upload-artifact@v4

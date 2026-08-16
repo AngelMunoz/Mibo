@@ -1,8 +1,8 @@
 ---
 title: Level Design Overview
 category: Level Design
-categoryindex: 2
-index: 20
+categoryindex: 8
+index: 1
 ---
 
 # Level Design

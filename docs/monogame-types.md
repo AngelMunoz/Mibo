@@ -1,7 +1,7 @@
 ---
 title: MonoGame type quirks
 category: Documentation
-categoryindex: 0
+categoryindex: 6
 index: 1
 ---
 

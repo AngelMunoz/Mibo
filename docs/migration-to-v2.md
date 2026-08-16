@@ -1,7 +1,7 @@
 ---
 title: Migrating to Mibo v2
 category: Migrating
-categoryindex: 2
+categoryindex: 7
 index: 1
 ---
 

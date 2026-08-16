@@ -1,8 +1,8 @@
 ---
 title: Building Platformer Levels
 category: Level Design
-categoryindex: 2
-index: 22
+categoryindex: 8
+index: 3
 ---
 
 # Building Platformer Levels

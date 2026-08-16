@@ -1,8 +1,8 @@
 ---
 title: 3D Buffer & Commands
 category: 3D Rendering
-categoryindex: 5
-index: 21
+categoryindex: 11
+index: 2
 ---
 
 # 3D Buffer & Commands

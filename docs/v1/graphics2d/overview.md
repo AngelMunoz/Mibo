@@ -1,7 +1,5 @@
 ---
 title: 2D Rendering Overview
-category: v1
-categoryindex: 200
 index: 10
 ---
 

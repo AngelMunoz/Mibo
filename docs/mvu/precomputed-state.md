@@ -1,8 +1,8 @@
 ---
 title: Pre-computed Derived State
-category: Patterns
-categoryindex: 6
-index: 66
+category: MVU
+categoryindex: 2
+index: 11
 ---
 
 # Pre-computed Derived State
@@ -97,3 +97,4 @@ The same derived value can feed multiple consumers. Lighting affects rendering, 
 
 - [ThreeDSample/DayNight.fs](https://github.com/...) and [ThreeDSample/Lighting.fs](https://github.com/...) — day/night cycle as pre-computed state.
 - [Composable Systems](composable-systems.html) — how pre-computed state fits into the system pipeline.
+- [Mibo.Adaptive](../mibo-adaptive/overview.html) — on the adaptive runtime this pattern is built in: derived values recompute on change instead of once per frame.

@@ -1,7 +1,7 @@
 ---
 title: The Elmish Architecture
-category: Architecture
-categoryindex: 1
+category: MVU
+categoryindex: 2
 index: 1
 ---
 

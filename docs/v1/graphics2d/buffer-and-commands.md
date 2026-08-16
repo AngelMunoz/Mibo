@@ -1,7 +1,5 @@
 ---
 title: Buffer & Commands
-category: v1
-categoryindex: 200
 index: 11
 ---
 

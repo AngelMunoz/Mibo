@@ -1,8 +1,8 @@
 ---
 title: Shaders
 category: Rendering
-categoryindex: 3
-index: 15
+categoryindex: 9
+index: 5
 ---
 
 # Shaders

@@ -10,26 +10,34 @@ index: 0
 
 Following that spirit, Mibo keeps it lean — no editors, no pipelines, no wizards. Just F# and the Elmish loop, with a handful of commodities to get out of your way and let you enjoy the craft.
 
-Mibo is a lightweight, **Elmish-based game framework** built on a **backend-agnostic core** with pluggable rendering backends. It brings the power of the **Model-View-Update (MVU)** architecture to game development, encouraging pure game logic and predictable state management — and lets you choose the graphics backend that fits your target platform.
+Mibo is a lightweight, **functional game framework** built on a **backend-agnostic core** with pluggable rendering backends. It ships **two sanctioned program runtimes** — pick per project, share everything below them:
+
+- The classic **Model-View-Update (MVU)** loop: pure update functions, `Cmd`/`Sub`, deterministic message replay. See [The Elmish Architecture](mvu/elmish.html).
+- The **Adaptive** architecture: a derived state graph forced once per step, for simulation-shaped games. See [The Adaptive Architecture](adaptive/overview.html).
+
+Both encourage pure game logic and predictable state management, and both let you choose the graphics backend that fits your target platform.
 
 ## The Mibo packages
 
-Mibo is split into three packages so your game logic stays portable while the rendering backend stays swappable:
+Mibo is split into four packages so your game logic stays portable while the rendering backend stays swappable:
 
 ```text
-Mibo.Core          ← the shared core (Cmd, Sub, System, GameTime, Program, IRenderer,
-                     GameContext, IInput/IInputMapper contracts, IAssetCache,
-                     HeadlessProgram, Layout/Layout3D)
-Mibo.Raylib        ← the raylib backend (host: RaylibGame, GLSL shaders)
-Mibo.MonoGame      ← the MonoGame backend (host: MiboGame, HLSL .fx shaders)
+Mibo.Core          ← the shared core (Program builders for both runtimes, Cmd/Sub,
+                     System pipeline, GameTime, IRenderer, GameContext,
+                     IInput/IInputMapper contracts, IAssetCache, HeadlessProgram,
+                     AdaptiveProgram/AdaptiveHeadless, Layout/Layout3D)
+Mibo.Adaptive      ← the incremental-computation library powering the adaptive
+                     runtime (cval/aval, cset/cmap/clist + views) — usable standalone
+Mibo.Raylib        ← the raylib backend (hosts: RaylibGame, AdaptiveRaylibGame; GLSL shaders)
+Mibo.MonoGame      ← the MonoGame backend (hosts: MiboGame, AdaptiveMonoGameGame; HLSL .fx shaders)
 ```
 
 **The guiding rule:** if it is a contract that the Program builder, a runtime host, the headless runner, or portable user code needs, it lives in Mibo.Core. Backend-specific implementations and any type that leaks a backend handle stay in the backend.
 
-| Backend | Host | Shaders | Best for |
-|---------|------|---------|----------|
-| Mibo.Raylib | RaylibGame<'Model,'Msg> | GLSL | Cross-platform Desktop OpenGL; lean, no content pipeline |
-| Mibo.MonoGame | MiboGame<'Model,'Msg> | HLSL (.fx → .mgfx) | Windows Desktop DirectX 11, plus OpenGL cross-platform via MonoGame |
+| Backend | MVU host | Adaptive host | Shaders | Best for |
+|---------|----------|---------------|---------|----------|
+| Mibo.Raylib | RaylibGame<'Model,'Msg> | AdaptiveRaylibGame<'Frame> | GLSL | Cross-platform Desktop OpenGL; lean, no content pipeline |
+| Mibo.MonoGame | MiboGame<'Model,'Msg> | AdaptiveMonoGameGame<'Frame> | HLSL (.fx → .mgfx) | Windows Desktop DirectX 11, plus OpenGL cross-platform via MonoGame |
 
 Both backends ship the same rendering surface: a 2D batch renderer and a 3D **Forward PBR pipeline** with a shadow atlas, post-processing, and built-in shaders — so the same fluent view code drives both backends.
 
@@ -77,6 +85,8 @@ You can then start building your game using any of the following:
 The samples developed for the initial Raylib version and the new MonoGame Samples are stored in their own repository.
 [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) is the place to visit.
 
+> **NOTE:** the [v1 (raylib-only) docs](v1/index.html) are archived — reachable from this link, not from the sidebar.
+
 You'll find examples of
 
 **2D:**:
@@ -107,10 +117,10 @@ Traditional game engines often rely heavily on complex object hierarchies, vendo
 - **Predictable State**
   - The MVU architecture enforces a clear separation of concerns with a single source of truth for your game state, making it easier to reason about and debug.
   - The unidirectional data flow ensures that state changes are predictable and traceable, which is especially beneficial in complex game logic.
-- **Elmish Architecture**
-  - A well-known architecture in the F# community with a twist for games.
+- **Elmish and Adaptive**
+  - Start with the well-known Elmish architecture; graduate to the adaptive derived-state graph when your simulation outgrows per-frame recomputation.
 - **Backend-agnostic core**
-  - Game logic, the MVU loop, input contracts, and layout engines live in Mibo.Core and work on any backend.
+  - Game logic, both program runtimes, input contracts, and layout engines live in Mibo.Core and work on any backend.
   - Swap between raylib and MonoGame (or run headless) without rewriting your model or update logic.
 - **Deferred Rendering**
   - Be ready for efficient lighting and post-processing effects without coupling your render logic to the update loop.

@@ -1,7 +1,5 @@
 ---
 title: Mibo v1 (Raylib-only) Archive
-category: v1
-categoryindex: 200
 index: 0
 ---
 
@@ -27,7 +25,7 @@ Mibo.MonoGame      ← MonoGame backend (host: MiboGame, HLSL .fx shaders)
 ```
 
 See [Migrating to Mibo v2](../migration-to-v2.html) for the full list of breaking
-changes, and [Migrating from MonoGame](../migration-from-monogame.html) for the original
+changes, and [Migrating from MonoGame](../mvu/migration-from-monogame.html) for the original
 MonoGame → Mibo migration guide.
 
 ## Archived pages

@@ -1,8 +1,8 @@
 ---
 title: 3D Rendering Overview
 category: 3D Rendering
-categoryindex: 5
-index: 12
+categoryindex: 11
+index: 1
 ---
 
 # 3D Rendering

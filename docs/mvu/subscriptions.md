@@ -1,8 +1,8 @@
 ---
 title: Subscriptions (external events)
-category: Amenities
-categoryindex: 5
-index: 24
+category: MVU
+categoryindex: 2
+index: 4
 ---
 
 # Subscriptions
@@ -152,7 +152,7 @@ let inputSub : Sub<Msg> =
   ]
 ```
 
-See [Input](input.html) for `InputMapper.subscribe` for semantic action mapping.
+See [Input](../input.html) for `InputMapper.subscribe` for semantic action mapping.
 
 ### Network Events
 
@@ -224,6 +224,6 @@ fun dispatch ->
 
 ## See Also
 
-- [Input](input.html) - Input handling
+- [Input](../input.html) - Input handling
 - [Commands](commands.html) - One-time side effects
 - [Elmish runtime](elmish.html) - How the loop works

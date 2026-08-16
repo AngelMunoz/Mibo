@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **Docs:** reorganized around the two program runtimes — the MVU guides (Elmish, programs, commands, subscriptions, system pipeline, headless, MonoGame migration) live under their own section; a new Adaptive section mirrors the MVU coverage (overview, programs, intents, subscriptions, systems, scaling, services, headless, background work, derived state); and a new Mibo.Adaptive section documents the incremental-computation library as its own package. Runtime-specific patterns (composable systems, background work, pre-computed state) move under MVU; Patterns keeps the runtime-agnostic pages (pooled particles, layered rendering). The scaling guide splits per runtime — the MVU complexity ladder lives under MVU, a new adaptive scaling ladder under Adaptive. The v1 (raylib-only) archive leaves the sidebar and is linked from the front page instead. Docs now build on fsdocs 22.1.0.
 - **Breaking (experimental): Adaptive:** `AdaptiveProgram.Init` and the subscription projection now receive the new `AdaptiveFrameContext` (framework roots + `GameContext`, no work queue); only `Update` receives `AdaptiveContext` with `Intents` — the frame builder cannot defer work by construction.
 - **Breaking (experimental): Adaptive:** `AdaptiveHeadless.RunAsync` yields `StepOutcome<'Frame>` (`GameTime` + `Frame`) instead of `struct (GameTime * 'Frame)`.
 

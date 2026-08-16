@@ -1,7 +1,5 @@
 ---
 title: 3D Buffer & Commands
-category: v1
-categoryindex: 200
 index: 17
 ---
 
