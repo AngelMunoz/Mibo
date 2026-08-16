@@ -31,8 +31,13 @@ module RaylibProgram =
   /// <para>The mapper is registered as a service via a <see cref="F:Mibo.Elmish.Program.ServiceRegistrations"/>
   /// callback that the runtime host runs before <c>Init</c>, so the Core Program
   /// type does not reference the raylib factory directly.</para>
+  /// <para>The service is registered, not driven: nothing polls
+  /// <c>Update()</c> automatically — call it yourself each frame if you read
+  /// <c>CurrentState</c>, or prefer the subscription path below, which the
+  /// input deltas drive on their own.</para>
   /// <para>If you want to stay fully "Elmish" (no service access), consider using
-  /// <see cref="M:Mibo.Input.InputMapper.subscribe"/> instead and handle a single message.</para>
+  /// <see cref="M:Mibo.Input.InputMapper.subscribe"/> instead and handle a single message
+  /// (adaptive programs: <see cref="M:Mibo.Input.InputMapper.subscribeAdaptive"/>).</para>
   /// </remarks>
   /// <example>
   /// <code>
