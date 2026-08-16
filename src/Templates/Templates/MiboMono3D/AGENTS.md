@@ -1,53 +1,53 @@
-# AGENTS.md — Mibo MonoGame 3D Game
+# AGENTS.md: Mibo MonoGame 3D Game
 
 This is a **Mibo** game project. Mibo is an Elmish-based F# game framework.
 This template targets the **MonoGame** backend (`Mibo.MonoGame`, host `MiboGame`)
 and ships **three interchangeable thin clients** sharing one library:
 
-- `src/` — shared library (`Library.fs` + `MiboMono3D.fsproj`, net10.0). All
+- `src/`: shared library (`Library.fs` + `MiboMono3D.fsproj`, net10.0). All
   game logic, the view, and a `create()` composition root that builds the
   `MonoGameProgram` (with the content root already configured). References
   `Mibo.MonoGame` + `MonoGame.Framework.Native` (the compile-time,
   backend-neutral types).
-- `Content/` — shared MonoGame content pipeline (`Content.mgcb`). Each thin
+- `Content/`: shared MonoGame content pipeline (`Content.mgcb`). Each thin
   client builds it via `MonoGame.Content.Builder.Task`, so assets land in all
   clients' output.
-- `DesktopGL/` — thin client. Adds `MonoGame.Framework.DesktopGL` (**OpenGL**),
+- `DesktopGL/`: thin client. Adds `MonoGame.Framework.DesktopGL` (**OpenGL**),
   references `../src/MiboMono3D.fsproj` and the shared content, calls
   `MiboMono3D.create()` and runs `MiboGame`.
-- `DesktopVK/` — thin client (**Vulkan**, cross-platform). Adds
+- `DesktopVK/`: thin client (**Vulkan**, cross-platform). Adds
   `MonoGame.Framework.Native` + the `MonoGame.Runtime.*.Vulkan` runtime packages
   and sets `<MonoGamePlatform>DesktopVK</MonoGamePlatform>`. Same wiring as
   DesktopGL.
-- `WindowsDX12/` — thin client (net10.0-windows, **DirectX 12**). Adds
+- `WindowsDX12/`: thin client (net10.0-windows, **DirectX 12**). Adds
   `MonoGame.Framework.Native` + `MonoGame.Runtime.Windows.DX12`, sets
   `<MonoGamePlatform>WindowsDX12</MonoGamePlatform>`, `[<STAThread>]`,
   `app.manifest`. References `../src/MiboMono3D.fsproj` and the shared content,
   same three lines as DesktopGL.
 
 Mibo is an Elmish-based F# game framework that ships **composable building blocks**
-for games — grids and level layout, input mapping, lighting and shadows, GPU
+for games: grids and level layout, input mapping, lighting and shadows, GPU
 instancing, skeletal animation, the `System` pipeline, a deferred command-buffer
-renderer, and more. **Before creating a new sub-module, check the docs** — the
+renderer, and more. **Before creating a new sub-module, check the docs**; the
 building block you are about to write likely already exists. Compose existing
 pieces; do not reinvent them.
 
 > **Default renderer.** `create()` wires a `Renderer3D` with Mibo's built-in
-> **Forward PBR** pipeline and a **shadow atlas** — physically-based shading,
+> **Forward PBR** pipeline and a **shadow atlas**: physically-based shading,
 > point/spot/directional lights with shadows, and post-processing are already
 > available; don't re-implement a rendering strategy. See
 > [3D Rendering](https://angelmunoz.github.io/Mibo/graphics3d/overview.html),
 > [3D Lighting](https://angelmunoz.github.io/Mibo/graphics3d/lighting.html),
 > and [3D Materials](https://angelmunoz.github.io/Mibo/graphics3d/materials.html).
 
-## MonoGame type quirks — read this first
+## MonoGame type quirks: read this first
 
 MonoGame type quirks. You **MUST** read the
 [MonoGame type quirks](https://angelmunoz.github.io/Mibo/monogame-types.html)
 document before writing or extending any code in this project. MonoGame's native
 types (`Microsoft.Xna.Framework.Vector2`/`Matrix`/`Color`/`Rectangle`) differ
 from the raylib types most snippets use, and `Mibo.Core` layout/spatial/light
-APIs take `System.Numerics` on **both** backends — so a bare `Vector2(...)`
+APIs take `System.Numerics` on **both** backends, so a bare `Vector2(...)`
 resolves to the wrong type and fails to compile. Read that doc, then qualify your
 Core-facing vectors explicitly and use MonoGame's native types at the draw edge.
 
@@ -61,12 +61,12 @@ projects. Keep the split:
   the shared library (`src/`) only.** They must stay backend-neutral (compile
   against `MonoGame.Framework.Native`). Never reference `DesktopGL`, `DesktopVK`,
   or `WindowsDX12` from the shared lib.
-- **Thin clients stay thin.** They only call `MiboMono3D.create()` — which
+- **Thin clients stay thin.** They only call `MiboMono3D.create()`, which
   already returns a `MonoGameProgram` with the content root
-  (`Content.RootDirectory`) configured — and `new MiboGame<_,_>().Run()`. They
+  (`Content.RootDirectory`) configured, and `new MiboGame<_,_>().Run()`. They
   no longer call `MonoGameProgram.ofProgram` themselves. Put no game logic in a
   client.
-- All clients build from the same shared source — **do not fork logic per
+- All clients build from the same shared source. **Do not fork logic per
   backend.** If you need a backend-specific service (audio, animation),
   define an interface in the shared lib (or `Mibo.Core`) and implement it once,
   injecting it through an `Env`/composition-root record like `create()` does.
@@ -76,7 +76,7 @@ projects. Keep the split:
 Assets live under `Content/` and are listed in `Content/Content.mgcb`. Each thin
 client builds that pipeline via `MonoGame.Content.Builder.Task`, so the assets
 land in both clients' output directories and load at runtime through
-`GameContext.getService<IAssets> ctx` (asset names carry no file extension —
+`GameContext.getService<IAssets> ctx` (asset names carry no file extension;
 e.g. load `Content/foo.png` as `"foo"`). To edit the pipeline visually, run
 `dotnet tool restore` then `dotnet mgcb-editor`.
 
@@ -84,20 +84,20 @@ e.g. load `Content/foo.png` as `"foo"`). To edit the pipeline visually, run
 
 As this game grows, do **not** let the `update` function become a dumping ground.
 Split the game into independent sub-systems coordinated by a **router**. This is
-the [Composable Systems](https://angelmunoz.github.io/Mibo/patterns/composable-systems.html)
+the [Composable Systems](https://angelmunoz.github.io/Mibo/mvu/composable-systems.html)
 pattern and it is mandatory once the game outgrows a single `update`.
 
 - **The root `update` is a router, not game logic.** It routes messages to
   sub-systems and translates their emitted events into `Cmd<Msg>` for consumers.
-  It contains no game logic — only dispatch and translation.
+  It contains no game logic, only dispatch and translation.
 - **Each sub-system owns its slice.** A sub-system owns its model, its message
   type, and its update. It mutates/returns **only its own state**. It never
   imports another sub-system's update or reaches into another sub-system's model.
 - **Cross-system communication is declarative.** Sub-systems never call each
   other. They return **Events** (what happened) / **Intents** (what should
-  happen) — pure data. The router translates each into `Cmd<Msg>` for the
+  happen): pure data. The router translates each into `Cmd<Msg>` for the
   relevant systems. The emitter does not know (or import) its consumers.
-- **Read access goes through a read-only query — mind the hot path.**
+- **Read access goes through a read-only query; mind the hot path.**
   - *Cold path* (event-driven, turn-based): a closure query record the router
     builds per-message (`{ UnitAt: Vector2 -> UnitId voption; ... }`).
   - *Hot path* (per-`Tick`, real-time): pass **direct values**, not closures.
@@ -107,33 +107,33 @@ pattern and it is mandatory once the game outgrows a single `update`.
   them into the root `Msg` with `Cmd.map SubMsg`.
 
 When several sub-systems must run every frame in a fixed order, compose them
-with the [System pipeline](https://angelmunoz.github.io/Mibo/system.html)
+with the [System pipeline](https://angelmunoz.github.io/Mibo/mvu/system.html)
 (`System.start` → `pipeMutable` → `snapshot` → `pipe` → `finish`). The snapshot
 call is a **compile-enforced** boundary: mutation phases run before it, readonly
-query phases after it. See [Scaling Mibo](https://angelmunoz.github.io/Mibo/scaling.html)
-for when each rung pays off — you can ship a lot of games at Level 2–3.
+query phases after it. See [Scaling Mibo](https://angelmunoz.github.io/Mibo/mvu/scaling.html)
+for when each rung pays off. You can ship a lot of games at Level 2 or 3.
 
 ## Pointers by topic
 
 > **Read before you build.** These links are not suggestions. Before writing or
 > extending code in any area below, open the linked doc(s) for that area and
 > verify whether Mibo already ships a building block for what you need. Do not
-> re-implement existing functionality — compose what is already there.
+> re-implement existing functionality; compose what is already there.
 
 **Core loop / the code you're looking at**
-- How the MVU loop, `Tick`, and dispatch modes work → [Elmish](https://angelmunoz.github.io/Mibo/elmish.html)
-- The `Program` builder pipeline (`mkProgram`/`withConfig`/`withTick`/`withRenderer`/`withSubscription`) → [Programs](https://angelmunoz.github.io/Mibo/program.html)
-- Side-effect command API (`Cmd.ofMsg`/`ofAsync`/`batch`/`map`/`deferNextFrame`) → [Commands](https://angelmunoz.github.io/Mibo/commands.html)
-- Continuous external event sources (`Sub`, diffing, `Sub.batch`) → [Subscriptions](https://angelmunoz.github.io/Mibo/subscriptions.html)
-- Wiring backend services through an `Env` composition root → [Service Composition](https://angelmunoz.github.io/Mibo/services.html)
+- How the MVU loop, `Tick`, and dispatch modes work → [Elmish](https://angelmunoz.github.io/Mibo/mvu/elmish.html)
+- The `Program` builder pipeline (`mkProgram`/`withConfig`/`withTick`/`withRenderer`/`withSubscription`) → [Programs](https://angelmunoz.github.io/Mibo/mvu/program.html)
+- Side-effect command API (`Cmd.ofMsg`/`ofAsync`/`batch`/`map`/`deferNextFrame`) → [Commands](https://angelmunoz.github.io/Mibo/mvu/commands.html)
+- Continuous external event sources (`Sub`, diffing, `Sub.batch`) → [Subscriptions](https://angelmunoz.github.io/Mibo/mvu/subscriptions.html)
+- Wiring backend services through an `Env` composition root → [Service Composition](https://angelmunoz.github.io/Mibo/mvu/services.html)
 
 **Growing the game**
 - Turn input into semantic actions (`InputMap`/`ActionState`/`InputMapper.subscribe`) → [Input](https://angelmunoz.github.io/Mibo/input.html)
 - Load textures/fonts/sounds/models (`IAssets`, caching) → [Assets](https://angelmunoz.github.io/Mibo/assets.html)
 - Camera movement, follow, orbit, screen↔world, mouse picking → [Camera](https://angelmunoz.github.io/Mibo/camera.html)
 - Frustum/rectangle visibility culling → [Culling](https://angelmunoz.github.io/Mibo/culling.html)
-- Where the upgrade ladder is and which rung to pick → [Scaling Mibo](https://angelmunoz.github.io/Mibo/scaling.html)
-- Architecture: composable sub-systems, events/intents, snapshot boundary → [Composable Systems](https://angelmunoz.github.io/Mibo/patterns/composable-systems.html)
+- Where the upgrade ladder is and which rung to pick → [Scaling Mibo](https://angelmunoz.github.io/Mibo/mvu/scaling.html)
+- Architecture: composable sub-systems, events/intents, snapshot boundary → [Composable Systems](https://angelmunoz.github.io/Mibo/mvu/composable-systems.html)
 
 **3D rendering (this is a 3D project)**
 - The `Draw3D.*` DSL the view already uses (`beginCamera`/`drawPrimitive`/`endCamera`/`drop`) → [3D Buffer & Commands](https://angelmunoz.github.io/Mibo/graphics3d/buffer-and-commands.html)
@@ -141,23 +141,23 @@ for when each rung pays off — you can ship a lot of games at Level 2–3.
 - Turn the flat cube into a textured/PBR surface (`Material3D`, primitive meshes) → [3D Materials](https://angelmunoz.github.io/Mibo/graphics3d/materials.html)
 - Ambient/directional/point/spot lights + shadows → [3D Lighting](https://angelmunoz.github.io/Mibo/graphics3d/lighting.html)
 - Skeletal animation once you swap the cube for a character model → [Animation 3D](https://angelmunoz.github.io/Mibo/animation3d.html)
-- Many copies of a mesh — voxel worlds, forests (`drawMeshInstanced`, `InstancedRenderContext`) → [GPU Instancing](https://angelmunoz.github.io/Mibo/graphics3d/instancing.html)
+- Many copies of a mesh: voxel worlds, forests (`drawMeshInstanced`, `InstancedRenderContext`) → [GPU Instancing](https://angelmunoz.github.io/Mibo/graphics3d/instancing.html)
 - HUD/2D overlay over the 3D scene (multi-renderer, the `noClear` rule) → [Layered Rendering](https://angelmunoz.github.io/Mibo/patterns/layered-rendering.html)
-- Voxel/grid 3D levels (`CellGrid3D`, stamps, `CellGridRenderer3D`) — start at the [Level Design overview](https://angelmunoz.github.io/Mibo/level-design/overview.html), then the [3D Layout Engine](https://angelmunoz.github.io/Mibo/level-design/3d/core.html); genre stamps: [Interior](https://angelmunoz.github.io/Mibo/level-design/3d/interior.html), [Terrain](https://angelmunoz.github.io/Mibo/level-design/3d/terrain.html), [Hex](https://angelmunoz.github.io/Mibo/level-design/3d/hex.html)
+- Voxel/grid 3D levels (`CellGrid3D`, stamps, `CellGridRenderer3D`): start at the [Level Design overview](https://angelmunoz.github.io/Mibo/level-design/overview.html), then the [3D Layout Engine](https://angelmunoz.github.io/Mibo/level-design/3d/core.html); genre stamps: [Interior](https://angelmunoz.github.io/Mibo/level-design/3d/interior.html), [Terrain](https://angelmunoz.github.io/Mibo/level-design/3d/terrain.html), [Hex](https://angelmunoz.github.io/Mibo/level-design/3d/hex.html)
 - Custom HLSL look (toon/cel/post-processing; `.fx`→`.mgfx`) → [Shaders](https://angelmunoz.github.io/Mibo/shaders.html) + [Shader Uniform Reference](https://angelmunoz.github.io/Mibo/shader-uniforms.html)
 
 **Performance**
 - General F# perf ladder (structs → struct tuples → mutable → ArrayPool → Span) → [F# For Perf](https://angelmunoz.github.io/Mibo/performance.html)
-- Off-main-thread heavy work (world-gen, pathfinding, save) → [Background Work](https://angelmunoz.github.io/Mibo/patterns/background-work.html)
+- Off-main-thread heavy work (world-gen, pathfinding, save) → [Background Work](https://angelmunoz.github.io/Mibo/mvu/background-work.html)
 
 **Tests / servers**
-- Run the MVU loop in virtual time, headless, for unit tests → [Headless Mode](https://angelmunoz.github.io/Mibo/headless.html)
+- Run the MVU loop in virtual time, headless, for unit tests → [Headless Mode](https://angelmunoz.github.io/Mibo/mvu/headless.html)
 
 ## Reference
 
 > **API shape vs usage.** If you need an exact signature, parameter list, return
 > type, or member set of a type/function, you **MUST** consult the
-> [API reference](https://angelmunoz.github.io/Mibo/reference/index.html) — not
+> [API reference](https://angelmunoz.github.io/Mibo/reference/index.html), not
 > the guides. The guides show patterns and general usage; they are not a complete
 > signature listing and you must not guess API shapes from prose. If you want
 > general usage or examples of a feature/module, use the documentation sections

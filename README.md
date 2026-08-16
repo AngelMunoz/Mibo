@@ -4,7 +4,8 @@
 >
 > ```bash
 > dotnet new install Mibo.Templates
-> dotnet new mibo-2d -o MyGame
+> dotnet new mibo-2d -o MyGame            # MVU runtime
+> dotnet new mibo-2d-adaptive -o MyGame   # adaptive runtime
 > cd MyGame
 > dotnet run
 > ```
