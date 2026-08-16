@@ -55,4 +55,4 @@ Task-based `map` variants exist for deriving nodes from asynchronous computation
 
 ## Reading
 
-`AVal.getValue` computes if dirty and caches — at most one recompute per change, per node. There is no push: no callbacks fire on write, so writes can never re-enter your code. When the [frame builder](../adaptive/program.html) resolves outputs once per step, every node on the path settles in dependency order.
+`AVal.getValue` computes if dirty and caches — at most one recompute per change, per node. There is no push: no callbacks fire on write, so a write can never re-enter your code. In a Mibo game you read your outputs once per frame when packing the frame ([Adaptive Programs](../adaptive/program.html)); each dirty node on the path settles in dependency order.

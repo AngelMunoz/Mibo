@@ -4,7 +4,7 @@
 
 ### Changed
 
-- **Docs:** reorganized around the two program runtimes — the MVU guides (Elmish, programs, commands, subscriptions, system pipeline, headless, MonoGame migration) live under their own section; a new Adaptive section documents the adaptive program shape (programs, sub-systems, input, services); and a new Mibo.Adaptive section documents the incremental-computation library as its own package. The v1 (raylib-only) archive leaves the sidebar and is linked from the front page instead. Docs now build on fsdocs 22.1.0.
+- **Docs:** reorganized around the two program runtimes — the MVU guides (Elmish, programs, commands, subscriptions, system pipeline, headless, MonoGame migration) live under their own section; a new Adaptive section documents the adaptive program shape (programs, sub-systems, input, services); and a new Mibo.Adaptive section documents the incremental-computation library as its own package. The scaling guide splits per runtime — the MVU complexity ladder lives under MVU, a new adaptive scaling ladder under Adaptive. The v1 (raylib-only) archive leaves the sidebar and is linked from the front page instead. Docs now build on fsdocs 22.1.0.
 
 ### Added
 

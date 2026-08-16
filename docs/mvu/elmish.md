@@ -154,7 +154,7 @@ In `DispatchMode.FrameBounded`, messages dispatched while the runtime is drainin
 
 If the effect starts async work and dispatches later, and that dispatch occurs while the runtime is draining messages, then `DispatchMode.FrameBounded` will push it to the following frame.
 
-For a deeper "upgrade path" overview, see [Scaling Mibo (Simple → Complex)](../scaling.html).
+For a deeper "upgrade path" overview, see [Scaling Mibo (Simple → Complex)](scaling.html).
 
 Related:
 

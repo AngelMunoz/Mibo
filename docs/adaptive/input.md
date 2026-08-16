@@ -2,57 +2,58 @@
 title: Adaptive Input
 category: Adaptive
 categoryindex: 3
-index: 4
+index: 5
 ---
 
 # Input in Adaptive Programs
 
-Adaptive programs do not dispatch input as messages. The host polls the input service once per frame **before** the step runs, and your subscriptions see the deltas. The discipline has two tracks:
+The host polls keyboard and mouse once per frame, before your update runs. You receive the results through subscriptions: small hooks you register at startup that get called with whatever changed.
 
-* **Continuous state** (where the cursor is, what is hovered) — write a `cval` root directly.
-* **Discrete actions** (a click, a key press, a restart) — post an intent.
+## A subscription
+
+A subscription is a stable id plus a function that attaches to an event source and returns a detacher. The attach function receives `post`, which schedules work to run inside the game loop:
 
 ```fsharp
-// A subscription: a stable id + an attach function that receives `post`
-// and returns the detaching disposable.
-let mouseSub (ctx: AdaptiveFrameContext) (cell: StateCell) : AdaptiveSub =
+let mouseSub (ctx: AdaptiveFrameContext) : AdaptiveSub =
     let input = ctx.Context |> GameContext.getService<IInput>
 
     {
       Id = SubId.ofString "mouse"
       Attach =
         fun post -> input.MouseDelta.Subscribe(fun delta ->
-            let state = cell.Value
+            // Hover: just remember where the cursor is. A cval write is
+            // enough — anything derived from it updates automatically.
+            hoverCell |> CVal.set(pickCell delta.Position)
 
-            // Continuous: write the root — the hover projections
-            // re-derive on the next force. The poll runs on the game
-            // thread before Step, so the write is legal.
-            state.HoverCell
-            |> CVal.set(pickCell state ctx delta.Position)
-
-            // Discrete: post the intent — it drains after Update,
-            // before the frame is forced.
+            // Click: this changes game state, so run it in the loop.
             if delta.Buttons.Pressed |> Array.contains MouseButtonCode.Left then
-                pickCell state ctx delta.Position
-                |> ValueOption.iter(fun c ->
-                    post(fun () -> Application.placeTower cell.Value c |> ignore)))
+                pickCell delta.Position
+                |> ValueOption.iter(fun cell ->
+                    post(fun () -> collectAt cell)))
     }
 ```
 
-## Why the split matters
+The split is the guideline:
 
-Hover state changes many times per second and only feeds projections — a root write is the cheapest possible path, and the graph re-derives exactly the dependent nodes on the next force. Actions cause work (gold spends, rows appear) — they must run at a framework-owned moment, so they post.
+* **Where things are** (cursor position, hover) — write a `cval` directly. It's cheap and derived values follow automatically.
+* **What the player did** (clicks, key presses) — `post` it, so it runs after your update, in order, on the game thread.
 
-The subscription set itself is an `amap<SubId, AdaptiveSub>` returned from `AdaptiveInit.withSubscriptions`: the runner diffs it every step, attaching new subscriptions and detaching removed ones. Because the map is derived from the current state, a restart that swaps the state can swap the subscription set too — cache the built map on the state's identity and the runner's version check makes clean steps diff-free.
+That second rule matters for callbacks that don't come from input at all — network messages, task completions. They arrive on other threads; `post` is the only safe way in. The shape of `AdaptiveSub` makes it so: attach gets `post` and nothing else that runs game code.
 
-## Callbacks only get `post`
+## Registering subscriptions
 
-The attach function receives a `post` function and nothing else that runs game code. A foreign-thread callback (a network thread, a task completion) can therefore never run game logic directly — it can only enqueue work, handled on the owner thread at the next step's boundary. This is enforced by the shape of `AdaptiveSub`, not by convention.
+Collect your subscriptions into a map and hand it to the program. The runner attaches them at startup, detaches on shutdown, and re-checks the map every frame — return a different set and the changes apply automatically:
 
-## Semantic input
+```fsharp
+AdaptiveInit.ofFrameBuilder frameBuilder
+|> AdaptiveInit.withSubscriptions(fun ctx ->
+    [ SubId.ofString "mouse", mouseSub ctx
+      SubId.ofString "keys", keyboardSub ctx ]
+    |> AMap.ofList)
+```
 
-For keyboard maps and held-key queries, the [input](../input.html) contracts apply unchanged — the input service and the `InputMap`/`ActionState` machinery are shared between runtimes. The semantic mapper produces an `AdaptiveSub` that writes an action-state root; the sim's `update` reads that root once per step. The difference from MVU is delivery only: MVU dispatches an `InputMapped` message, adaptive programs read the root inside `update`.
+## Keyboard and semantic actions
 
-## Backend seams
+For gameplay keys you rarely want raw keycodes scattered through your code. Define an action type and a key map, exactly like the [input guide](../input.html) shows — the `InputMap` and `ActionState` types are shared. The adaptive difference is only delivery: write the current action state into a `cval` from a subscription, and read it once at the top of your update.
 
-Keep them out of the sim. The one that matters here is the mouse wheel: raylib reports ±1 per notch while XNA reports ±120. Pass a `wheelScale` parameter from the client (raylib: `1.1`; MonoGame: `1.1 ** (1.0 / 120.0)`) and fold it into the zoom factor — no branching in shared code.
+One practical note: the mouse wheel reports ±1 per notch on raylib and ±120 on MonoGame. If zoom matters to your game, fold a scale factor in where you handle the wheel, so the feel matches on both backends.

@@ -51,13 +51,13 @@ let views =
         (fun _ healthV motionV -> healthV |> AVal.map2 (fun h m -> combine h m) motionV)
 ```
 
-Nested joins compose — a three-way view joins the two-way result with a third map the same way. Keep joins **owned by the composition root** when they span two systems' maps ([Adaptive Systems](../adaptive/systems.html) has the ownership rule).
+Nested joins compose — a three-way view joins the two-way result with a third map the same way. If a join spans two features of your game, build it at the top level rather than inside one feature, so each feature stays understandable alone ([Adaptive Systems](../adaptive/systems.html) covers the split).
 
-## Reading: transient views vs. forced checkpoints
+## Reading: snapshots vs. immutable copies
 
-* `ASet.getValue` / `AMap.getValue` / `AList.getValue` return a **transient view** — valid only until the next write. Consume it (the per-step tick, the frame pack); never retain or mutate it.
-* `ASet.force` / `AMap.force` / `AList.force` materialize an immutable checkpoint. This is the only collection operation that allocates, and the only result safe to retain — the library never touches a forced value again.
-* `ASet.toSet` / `AMap.toMap` (and `CSet.toSet` / `CMap.toMap`) materialize the F# `Set`/`Map` counterparts for sorted iteration and interop.
+* `ASet.getValue` / `AMap.getValue` / `AList.getValue` return a **snapshot** of the current state — valid only until the next write. Consume it and move on; never store it and never mutate it.
+* `ASet.force` / `AMap.force` / `AList.force` build an immutable copy. This is the only collection operation that allocates, and the only result safe to keep — the library never touches a forced value again.
+* `ASet.toSet` / `AMap.toMap` (and `CSet.toSet` / `CMap.toMap`) build the F# `Set`/`Map` counterparts for sorted iteration and interop.
 
 ## Lifetimes and capabilities
 

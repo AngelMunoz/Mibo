@@ -7,90 +7,141 @@ index: 2
 
 # Adaptive Programs & Hosts
 
-The adaptive counterpart of `Program<'Msg,'Model>` is `AdaptiveProgram<'Frame>` — with the message/command machinery removed. There is no `Msg` and no `Cmd`: handlers write roots and run effects directly, and reactions are deferred through an **intent queue**.
+An adaptive game is three things you write, plus one loop the framework runs.
+
+## The three things you write
+
+**The state.** A record holding the changeable containers (`cval`, `cmap`) plus whatever plain data your game wants.
+
+**The update.** A function that runs once per frame and advances the game by writing to those containers.
+
+**The frame.** A function that packs what the renderer needs into a single value. It runs after update, once per frame.
+
+Here is a complete, runnable game — bees fly around, and each one that leaves the meadow scores a honey:
 
 ```fsharp
+open System.Numerics
 open Mibo.Adaptive
 open Mibo.Elmish
 
-let program =
-    AdaptiveProgram.mkProgram
-        (fun (ctx: AdaptiveFrameContext) ->
-            // init: build the state, return the frame builder + subscriptions
-            boot ctx
-            AdaptiveInit.ofFrameBuilder (Frame.force ctx getState)
-            |> AdaptiveInit.withSubscriptions (Input.subscriptions ctx))
-        (fun (ctx: AdaptiveContext) (gameTime: GameTime) ->
-            // update: tick the sim, post reactions
-            Application.update getState ctx gameTime)
-    |> AdaptiveProgram.withConfig (fun _ -> config)
-    |> AdaptiveProgram.withRenderer (fun () -> Renderer2D.create view)
+type Bee = { Pos: Vector2; Dir: Vector2 }
+
+type World = {
+    Bees: cmap<int, Bee>
+    Honey: cval<int>
+}
+
+/// Everything the renderer needs, packed once per frame.
+type Frame = {
+    Bees: System.Collections.Generic.IReadOnlyDictionary<int, Bee>
+    Honey: int
+}
+
+let meadowWidth = 40f
+
+let update (world: World) (gameTime: GameTime) =
+    let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
+
+    // Move every bee; remember who flew past the edge
+    let leavers =
+        [ for KeyValue(id, bee) in world.Bees |> AMap.getValue ->
+            let moved = { bee with Pos = bee.Pos + bee.Dir * dt }
+            world.Bees |> CMap.addOrUpdate id moved
+            if moved.Pos.X > meadowWidth then Some id else None ]
+
+    // Score and despawn after the loop, one honey per leaver
+    for id in List.choose id leavers do
+        world.Bees |> CMap.remove id
+        world.Honey.UpdateTo((world.Honey |> AVal.getValue) + 1) |> ignore
+
+let frame (world: World) : Frame =
+    { Bees = world.Bees |> AMap.getValue
+      Honey = world.Honey |> AVal.getValue }
 ```
 
-## The contexts
+## Wiring it together
 
-Every phase sees exactly what it may use — the context split *is* the enforcement:
+`AdaptiveProgram.mkProgram` takes two functions: one that builds the initial state and returns the frame builder, one that runs each frame. Write a single `start` function that creates the world and closes over it — both halves see the same state, and nothing else has to know how to reach it:
 
-| Context | Members | Seen by |
-|---|---|---|
-| `AdaptiveFrameContext` | `Time` (the framework's time root), `ExitRequested`, `Context` (`GameContext`: window size + registered services) | init, frame builder, subscriptions, view |
-| `AdaptiveContext` | everything above **plus** `Intents` (the intent queue) | update only |
+```fsharp
+let start() =
+    let world = { Bees = CMap.ofList [ 0, { Pos = Vector2.Zero; Dir = Vector2.One } ]
+                  Honey = CVal.create 0 }
 
-The update phase reacts to what it read and defers work; the frame builder and projection construction see only the queue-less context, so **the force phase cannot enqueue work — the design makes it impossible**.
+    AdaptiveProgram.mkProgram
+        (fun _ -> AdaptiveInit.ofFrameBuilder(fun () -> frame world))
+        (fun _ gameTime -> update world gameTime)
+    |> AdaptiveProgram.withConfig (fun _ ->
+        { GameConfig.defaultConfig with
+            Title = "Bees"
+            Width = 1280
+            Height = 720 })
+    |> AdaptiveProgram.withRenderer (fun () -> Renderer2D.create draw)
 
-`ctx.Time` is a `cval<GameTime>` written by the runner at the start of every step. The frame reads it at force time, so the draw side animates on the sim's clock, never on a backend-specific one. Set `ExitRequested` to stop the runner — the counterpart of `Cmd.signalExit`.
+[<EntryPoint>]
+let main _ =
+    AdaptiveRaylibGame<Frame>(start()).Run()
+    0
+```
 
-## The intent queue (the `Cmd` replacement)
+> **NOTE:** if update grows to the point where you want each feature's logic in its own module, the same closure pattern still works — the world record is the thing you close over. See [Adaptive Systems](systems.html).
 
-`ctx.Intents` is a queue of `unit -> unit` work items, each drained at a framework-owned moment:
+## The loop the framework runs
 
-| Member | Runs |
+Every frame, in order:
+
+1. Poll input (keyboard, mouse).
+2. Run your `update`.
+3. Run any work you queued during update (more on `post` below).
+4. Call your `frame` function and hand the result to the renderers.
+5. Draw.
+
+You don't write this loop. The part that matters for your code: `update` always runs before `frame`, so the renderer never sees a half-updated world.
+
+## Other backends and headless runs
+
+Only the host line changes:
+
+```fsharp
+// MonoGame:
+let game = AdaptiveMonoGameGame<Frame>(start())
+game.Run()
+```
+
+| Host | Backend |
 |---|---|
-| `post` | after `Update`, before the frame is forced (the default — the old `Cmd` batch order) |
-| `postNextFrame` | at the top of the next step |
-| `postTask` / `postAsync` | background work; completion returns via `post` |
+| `AdaptiveRaylibGame<'Frame>` | raylib |
+| `AdaptiveMonoGameGame<'Frame>` | MonoGame |
+| `AdaptiveHeadless<'Frame>` | none — for tests and servers |
 
-The one-way rule that keeps event translation acyclic: systems emit events as data, update translates them by posting handlers, and only the handlers write other systems' roots.
+For tests, `AdaptiveHeadless` steps the same loop by hand: `runner.Step(dt)` runs one frame, `runner.Frame` gives you the packed frame to assert on, and `runner.StepUntil(predicate, dt, maxFrames)` plays the game until something becomes true.
 
-## The step order
+## Doing work after update
 
-One step, in order (same on every host):
+Sometimes update wants to say "do this next, not now" — usually to avoid changing a collection while looping over it, or to react to one feature's events with another feature's logic:
 
-1. Pump cross-thread posts (`Posting.pump` — only if you post from other threads).
-2. Drain the next-frame and pre-step lanes.
-3. Diff subscriptions (attach/detach `AdaptiveSub`s).
-4. Write the time root (`ctx.Time`).
-5. Run `Update`.
-6. Drain the intent queue.
-7. **Force the frame** — your frame builder resolves every output projection once.
+```fsharp
+let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
+    // ...move the bees...
+    ctx.Intents.post(fun () ->
+        world.Honey.UpdateTo((world.Honey |> AVal.getValue) + 1) |> ignore)
+```
 
-Fixed-step programs run `Update` + drain per sub-step and force once at the end (`AdaptiveProgram.withFixedStep`).
+Queued work runs right after `update` finishes, before the frame is packed. There are variants for "next frame" (`postNextFrame`) and for background work whose result comes back safely on the game thread (`postTask`, `postAsync`) — handy for file IO and network calls.
 
-## The frame builder
+## Time and one-time setup
 
-`AdaptiveInit.ofFrameBuilder` takes a `unit -> 'Frame`. Build `'Frame` as a **struct** with everything the renderer needs: transient views (`AMap.getValue` snapshots), scalars, and by-reference payloads for the non-adaptive partners (particle pools, the camera, the map). Resolve each projection exactly once — after this, drawing is plain struct reads with no graph access.
+The runner updates `ctx.Time`, a `cval<GameTime>`, every frame — read it for `dt`, or from your frame function so animations run on the game's clock instead of wall-clock.
 
-The builder closes over whatever it needs (a state cell, the context) — it is re-invoked every step, so a restart can swap the state under it without rebuilding the program.
+For setup that must happen before the first frame (connect a socket, warm a cache), take a `boot` function and call it first inside `start`'s init — it receives the context, so framework services like the asset cache are already available:
 
-## Hosts
+```fsharp
+let start() =
+    let world = { Bees = CMap.empty; Honey = CVal.create 0 }
 
-| Host | Backend | Loop |
-|---|---|---|
-| `AdaptiveRaylibGame<'Frame>` | raylib | poll input → step → renderers draw the forced frame |
-| `AdaptiveMonoGameGame<'Frame>` | MonoGame (all clients) | `Update(gameTime)` steps, `Draw` renders |
-| `AdaptiveHeadless<'Frame>` | none (tests, servers) | `Step`, `StepN`, `StepUntil`, `Run`, `RunAsync` |
-
-MonoGame programs wrap with `AdaptiveMonoGameProgram.ofProgram` for device-level configuration. The headless runner exposes `Frame`, `GameTime` and `Post` for test assertions — the same step order, no window.
-
-Renderers are registered in draw order with `AdaptiveProgram.withRenderer` and receive `(ctx, frame, buffer)` — the same renderer surface MVU uses, reading the frame instead of a model.
-
-## Composition checklist
-
-* `mkProgram init update` — the two-phase program.
-* `withConfig` — window title/size, target FPS.
-* `withRenderer` — one per pass, in draw order.
-* `withObserver` / `withInput` — per-step observer callbacks (diagnostics), the input service.
-* `withServiceRegistration` — register custom services into `GameContext` (see [Adaptive Services](services.html)).
-* `withAssetsBasePath`, `withFixedStep` — asset root, fixed timestep.
-
-For the graph itself — `cval`, `aval`, `cmap`, `amap`, transactions, cross-thread posting — see the [Mibo.Adaptive](../mibo-adaptive/overview.html) section.
+    AdaptiveProgram.mkProgram
+        (fun ctx ->
+            boot ctx
+            AdaptiveInit.ofFrameBuilder(fun () -> frame world))
+        (fun _ gameTime -> update world gameTime)
+```

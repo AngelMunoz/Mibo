@@ -88,4 +88,4 @@ For a zero-subscription alternative, use `Program.withInputMapper` which registe
 ## See Also
 
 - [Subscriptions](subscriptions.html) - Continuous input handling
-- [Scaling](../scaling.html) - Input handling patterns
+- [Scaling](../mvu/scaling.html) - Input handling patterns

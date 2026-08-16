@@ -7,42 +7,39 @@ index: 1
 
 # The Adaptive Architecture
 
-Mibo ships two runtimes for the same backends: the classic **MVU** loop (`Program.mkProgram`, `Cmd`, `Sub` — see the [MVU](../mvu/elmish.html) section) and the **Adaptive** architecture described here. Both use the same renderers, the same asset pipeline, and the same input contracts. The difference is how state changes flow to the draw side.
+In the adaptive architecture your game state lives in containers that know when they changed. You write facts into them, you describe the values you want derived from those facts, and the framework takes care of the rest: what to recompute, when, and how the renderer gets it.
 
-MVU serializes every state change through a message loop. That is simple and replayable, but at simulation scale it costs you: every derived value (counts, filtered views, joined tables) is recomputed by hand, and the whole model is re-read by the view every frame.
+```fsharp
+open Mibo.Adaptive
 
-The Adaptive architecture replaces the message loop with a **derived state graph** (the [Mibo.Adaptive](../mibo-adaptive/overview.html) library) plus a fixed per-step phase order:
+// Facts you write
+let honey = CVal.create 0
+let bees = CMap.empty<int, Bee>
 
+// Values derived from the facts — you never update these by hand
+let beeCount = bees |> AMap.count
+let status = honey |> AVal.map(fun h -> $"Honey: {h}")
 ```
-   State  →  Projection  →  Update  →  Force
-   (roots)    (derived)     (ticks)    (frame pack)
-```
 
-* **State** — the composition root. Changeable roots (`cval`, `cmap`) hold the facts; each sub-system owns its slice.
-* **Projection** — derived nodes (`aval`, `amap`) computed by the graph, only when dirty, at most once per change.
-* **Update** — one function per step that ticks the sub-systems in order and translates their events into posted intents (the replacement for `Cmd`).
-* **Force** — one call per step that resolves every output projection into a **frame**; the renderer reads the frame and never touches the graph.
+Write to `bees` ten times between two reads and the derived values recompute once, not ten times. Don't write at all and reads are free. That is the whole trick: you stop keeping derived state up to date, because the graph does it.
 
-## The three contracts
+## What a frame looks like
 
-These are the rules that make the architecture work. They are enforced by construction in the framework where possible:
+Once per frame the runner packs everything the renderer needs into one value — your "frame" — and hands it to your drawing code. The renderer never looks at the game state directly; it reads the frame. This keeps the two halves independent: you can reorganize your state without touching a single draw call, and vice versa.
 
-1. **The draw side never touches the graph.** Everything the renderer needs is packed into a frame struct once per step. Drawing is plain reads. Transient views inside the frame are valid until the next step — the draw window is exactly the gap between two steps.
-2. **Derived state lives in the graph, not in the tick.** If a value is a function of other state (a count, a filtered view, an upgraded stat), it is a projection node — it recomputes when its inputs change, not every frame, and never by hand in the update loop.
-3. **The force phase cannot enqueue work.** The frame builder and projection construction see a queue-less context; only the update phase can post intents. The design makes re-entrant work impossible — no runtime checks needed.
+The frame is packed after the update has run, so it always reflects this frame's world. Anything the renderer should see — positions, health bars, score, UI state — goes in there.
 
-## When to choose Adaptive
+## Is this for my game?
 
-Pick Adaptive when your game is simulation-shaped: many entities, per-frame derived views, HUD state that follows the world. The [Defli](https://github.com/AngelMunoz/Mibo.Samples) tower-defense samples are the reference implementation — a nine-system world where the graph serves the render side for a fraction of a millisecond per frame.
+Reach for the adaptive architecture when your game is mostly a simulation: things move, counts change, the HUD follows the world. The bigger that gets, the more this pays off.
 
-Stay with MVU (see [Scaling Mibo](../scaling.html)) when the model is small, the message stream *is* the domain (turn-based games, menus, networked lockstep), or you want deterministic replay of the message log. MVU remains the default starting point; the Adaptive rung sits past Level 3 on the ladder, for when re-reading the model and recomputing derived state by hand stops being free.
-
-> **NOTE:** The two runtimes are not a migration path in either direction — they share the backend layers, not the program shape. Choose per project.
+If your game is turn-based, menu-driven, or small enough that recomputing everything each frame doesn't show up in the profiler, the simpler [Elmish architecture](../mvu/elmish.html) is a better fit. Both run on the same backends and share the same rendering — pick one per project and go.
 
 ## Where to go next
 
-* [Adaptive Programs](program.html) — the `AdaptiveProgram` API, hosts, the step order, and the intent queue.
-* [Adaptive Systems](systems.html) — how the routed sub-system rules translate without `Cmd`.
-* [Adaptive Input](input.html) — continuous state vs. discrete actions.
-* [Adaptive Services](services.html) — the environment pattern with `boot ctx`.
-* [Mibo.Adaptive](../mibo-adaptive/overview.html) — the graph library itself, documented as its own package.
+* [Adaptive Programs](program.html) — writing your first adaptive game and running it.
+* [Adaptive Systems](systems.html) — keeping a growing game organized.
+* [Scaling Adaptive](scaling.html) — how the architecture grows with your game.
+* [Adaptive Input](input.html) — keyboard and mouse.
+* [Adaptive Services](services.html) — audio, networking, save data.
+* [Mibo.Adaptive](../mibo-adaptive/overview.html) — the library behind all of this, if you want the details.

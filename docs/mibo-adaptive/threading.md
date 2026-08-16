@@ -43,7 +43,7 @@ The posting rules:
 * The source equality check still applies at application: posting an equal value marks nothing.
 * `Posting.pump()` is optional: it forces application at a chosen boundary (for example, once per frame). It runs on the owner thread only and is cheap and allocation-free when the queue is empty.
 
-In a Mibo adaptive program you rarely touch this directly — [`ctx.Intents.postTask` / `postAsync`](../adaptive/program.html) wrap the pattern, and the host pumps at the start of every step.
+In a Mibo game you rarely touch this directly — [`ctx.Intents.postTask` / `postAsync`](../adaptive/program.html) do the posting for you, and the host applies pending posts at the start of every frame.
 
 ## The invariants, in short
 

@@ -2,7 +2,7 @@
 title: Headless Mode
 category: MVU
 categoryindex: 2
-index: 6
+index: 7
 ---
 
 # Headless Mode
