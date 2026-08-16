@@ -245,6 +245,17 @@ module InputMapper =
   /// deltas in one frame are several cheap writes, collapsed into one recompute at the
   /// force.
   /// </summary>
+  /// <remarks>
+  /// EDGES ACCUMULATE: every delta (keyboard, mouse, gamepad) builds and writes a full
+  /// state, and the write MERGES its <c>Started</c>/<c>Released</c> edges into the
+  /// root's current edges instead of overwriting them. Without the merge, a delta that
+  /// lands between a key press and its release (a mouse-move build has empty edges)
+  /// would drop the earlier delta's edges — a lost <c>Released</c> leaves an
+  /// edge-accumulating consumer stuck. <c>Held</c>/<c>Values</c> stay last-wins: they
+  /// are the current truth, not events. The consumer clears the edges when it reads
+  /// them (<c>ActionState.nextFrame</c> is the core idiom) — the next merge starts
+  /// from an empty edge set.
+  /// </remarks>
   let subscribeAdaptive
     (getMap: unit -> InputMap<'Action>)
     (actions: cval<ActionState<'Action>>)
@@ -253,7 +264,17 @@ module InputMapper =
     let subId = SubId.ofString "Mibo/Input/InputMapper/subscribeAdaptive"
 
     let attach(post: (unit -> unit) -> unit) =
-      attachDeltas getMap ctx (fun state -> post(fun () -> actions.Set state))
+      attachDeltas getMap ctx (fun state ->
+        post(fun () ->
+          let cur = actions.GetValue()
+
+          actions.Set {
+            state with
+                Started = Set.union cur.Started state.Started
+                Released = Set.union cur.Released state.Released
+          })
+
+      )
 
     { Id = subId; Attach = attach }
 
