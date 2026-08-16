@@ -7,6 +7,14 @@ index: 5
 
 # Performance
 
+The first thing to internalize: **using adaptive data is rarely the bottleneck.** In the Defli tower-defense samples — a live nine-system world with homing projectiles, a per-tower boss-aura join, and live HUD reads — the entire adaptive machinery measures under a fifth of a millisecond per frame at 60 fps. The frame's real cost is almost always elsewhere: the GPU, the draw batch, vsync. A sane graph is essentially free.
+
+Where the cost actually comes from, in order of likelihood:
+
+1. **Naive construction** — rebuilding a node per frame, or a hand-rolled join that re-scans instead of using the operator.
+2. **Allocation on the hot path** — `force`/`toMap` called every frame, or nodes created inside `update`.
+3. **The drawing phase** — not the graph at all.
+
 The library is built for tight-loop work, and its behavior there is something you can rely on:
 
 * **Steady state allocates nothing.** Once your graph has settled, reads, writes, and delta propagation don't allocate — buffers are reused. The exceptions are the deliberate materializations (`force`, `toSet`, `toMap`).
@@ -19,7 +27,9 @@ If allocation matters to you, measure it rather than trusting anyone's claims: w
 
 `AMap.joinOn` — joining two maps on the same key — is cheap on writes: when one entry changes, only that entry's subgraph updates.
 
-`mapA` with a closure that reads another adaptive collection is the one shape to watch. Say you map over 200 flowers, and each flower's lambda filters 500 bees. Every time the bee map changes, every flower's filter re-runs: 200 × 500 checks. That's not a bug — it's what the shape does — but at scale it dominates. When you hit it, restructure: derive from a single collection where possible, or compute the pairing yourself in a plain loop where you control the cost.
+`mapA` with a closure that reads another adaptive collection is the one shape to watch. When the inner collection changes, every element's closure re-runs — so the cost is linear in the outer collection, and it re-runs as often as the inner one changes. That's not a bug; it's what the shape does. The realistic takeaway from real games: a tower-defense world with homing projectiles and a per-tower boss-aura join keeps its entire adaptive machinery under a fifth of a millisecond per frame at 60 fps. Joins are fine.
+
+The shape that stops paying is a join over inputs that change *every frame*. Mixing positions or time — which move constantly — into a join means the rescan never settles, and it grows with the collections. When that shows up in a profile, don't keep paying: derive from a single collection, or compute the pairing in a plain loop where you control the cost directly. The projection is a convenience for reads, not a rule that everything must stay derived.
 
 The [benchmarks](https://github.com/AngelMunoz/Mibo/blob/main/src/Mibo.Adaptive/docs/BENCHMARKS.md) compare the combinators against FSharp.Data.Adaptive at several scales, if you want numbers.
 

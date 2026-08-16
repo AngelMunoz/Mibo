@@ -7,76 +7,59 @@ index: 10
 
 # Derived State — Organizing Projections
 
-Once your game has more than one feature, you start writing values that join, filter, and reduce across feature data — a count of alive enemies, a scoreboard, a tower's effective stats after upgrades, the list of flowers a bee can reach. These are projections. Where you put them and how you build them decides whether your game stays understandable or turns into a web of reads. This is the organizational pattern for projections.
+A growing game accumulates values that aren't facts but functions of facts: the alive count, a tower's upgraded stats, "is a boss near this tower", the scoreboard string. These are projections, and the question that matters is not *how* to build one (that's the [Mibo.Adaptive](../mibo-adaptive/overview.html) section) but **where it lives and when it stays cheap.**
 
 ## The two homes
 
-Every projection lives in one of two places, and the choice is one question: **does it touch more than one feature's data?**
+Every projection has one correct home, decided by a single question: **does it touch more than one feature's data?**
 
-**Inside the feature** when it reads only that feature's own containers. The feature builds it in its `init` and keeps it alongside the model:
+**Inside the feature** when it reads only that feature's own containers. Build it in the feature's `init`, store it on the model, done:
 
 ```fsharp
 module Towers =
+    let inline private withLevel (statics: TowerStatic) (level: int voption) : TowerDef =
+        effectiveDef statics.Def (level |> ValueOption.defaultValue 1)
+
     let init() : TowersModel =
         let m = TowersModel()
-        // EffectiveDef reads only Statics + Levels — the tower's own data
+
         m.EffectiveDef <-
-            m.Statics
-            |> AMap.joinOn m.Levels (fun tid _ -> tid) (fun _ s lvl ->
-                AVal.map2 (fun s (lvl: int voption) ->
-                    ValueSome(effectiveDef s.Def (lvl |> ValueOption.defaultValue 1)))
-                    s lvl)
+            AMap.joinOn m.Statics m.Levels (fun tid _ -> tid) (fun _ s lvl ->
+                AVal.map2 withLevel s lvl)
+
         m
 ```
 
-**At the top level** when it joins two features. Those live in one `Projections` object that the composition root owns, built after the feature models exist:
+**At the top level** when it joins two features that don't know about each other. Two unrelated systems each own their data; a third party (the frame, another system, a test) needs the combination. That cross-system projection goes in one `Projections` object the composition root owns — *not* inside either system, because then one system would have to know the other exists:
 
 ```fsharp
-type Projections(enemies, towers, projectiles, ...) =
-    // Suppression reads Towers.Statics and Enemies.BossPositions — two
-    // features, so it lives here, not inside either system
+let inline suppressedBy (tower: TowerStatic) (enemies: EnemiesModel) : aval<float32> =
+    enemies.BossPositions
+    |> AMap.filter(fun _ pos -> Vector2.Distance(pos, tower.Cell |> center) <= BossAura.Radius)
+    |> AMap.count
+    |> AVal.map(fun n -> if n > 0 then BossAura.Factor else 1f)
+
+type Projections(enemies: EnemiesModel, towers: TowersModel, ...) =
+
+    // Towers × Bosses: neither system knows the other. The frame and
+    // Towers.tick both need the per-tower suppression factor.
     member val Suppression: amap<int<TowerId>, float32> =
-        towers.Statics
-        |> AMap.mapA(fun _ s ->
-            enemies.BossPositions
-            |> AMap.filter(fun _ bossPos -> inRadius s bossPos)
-            |> AMap.count
-            |> AVal.map(fun n -> if n > 0 then factor else 1f))
+        AMap.mapA (fun _ t -> suppressedBy t enemies) towers.Statics
 ```
 
-The rule keeps each feature self-contained: nothing in `Towers` knows what a `Boss` is, and nothing in `Enemies` knows what a tower's range is. Only the top-level projection sees both.
+Reserve the top-level `Projections` for cross-system data only. If a projection can live next to its feature, it should — putting a single-feature projection at the top level scatters that feature's logic for no benefit.
 
-## Build once at init, never per frame
+## Build once, never per frame
 
-Projections are constructed once — at startup or when a feature's model is created — not inside `update`. A projection built per frame allocates a new graph node every frame and defeats the point (steady-state reads are free only if the node persists). Build it in `init`, store it on the model or the `Projections` object, and read it as many times as you like.
+Construct each projection once — at startup, or when the feature's model is created. A projection built inside `update` allocates a new graph node every frame and throws away the whole point (a settled node's reads are free only because the node persists). Build it in `init`, keep it, read it as often as you want.
 
-```fsharp
-// Bad: rebuilt every frame
-let update world ctx gameTime =
-    let alive = world.Enemies.Alive |> AMap.count   // new node each call
-    ...
+## Performance, in practice
 
-// Good: built once, stored, read each frame
-type World = { Enemies: EnemiesModel; AliveCount: aval<int>; ... }
-// AliveCount = enemies.Alive |> AMap.count  -- set in init
-```
+The graph is cheap enough for real games. In the Defli tower-defense samples — a full nine-system world with homing projectiles, a per-tower boss-suppression join, and live HUD reads — the entire adaptive machinery costs well under a fifth of a millisecond per frame at 60 fps, with all entities active. You don't need to ration projections.
 
-## What the frame reads
+The costs that *do* show up in a profile are almost always one of these two, and both are yours to control:
 
-The frame function reads projections and packs them. Read each once; don't re-read the same projection twice in one frame (the second read is a version check, but a wasted one). If two parts of the frame need the same derived value, read it into a local and reuse it.
+* **Allocating unknowingly.** Building a projection node per frame, or calling `force`/`toMap` in the frame loop "to be safe", allocates real garbage at 60 fps. Steady-state reads allocate nothing — the drip only appears when you create nodes or materialize copies on the hot path.
+* **A live join that rescans every frame.** A `mapA` over one collection that filters another collection rechecks the inner one whenever it changes. Mixing something that changes every frame (positions, time) with a join means the inner scan re-runs constantly, and it grows linearly with the collections. At some size it stops being worth it. The fix is not to fear joins — it's to notice, and drop to a plain loop over the data in `update` where you control the cost directly. A projection is a convenience for reads, not a rule that everything must stay derived.
 
-```fsharp
-let frame (world: World) () : Frame =
-    let alive = world.Enemies.Alive |> AMap.getValue
-    {
-      AliveEnemies = alive
-      AliveCount = alive.Count        // reuse, don't re-derive
-      ...
-    }
-```
-
-## When a join stops paying
-
-A projection that filters a large collection inside a `mapA` over another collection re-scans the inner one every time it changes. When that gets expensive — you'll see it in a profile — don't keep paying for the live join. Drop to a plain row map over one collection and move the cross-feature behavior into update as direct values. The projection is a convenience for reads, not a requirement that everything be derived live.
-
-For what each combinator costs, see [Mibo.Adaptive Performance](../mibo-adaptive/performance.html).
+For the per-combinator cost model, see [Mibo.Adaptive Performance](../mibo-adaptive/performance.html).
