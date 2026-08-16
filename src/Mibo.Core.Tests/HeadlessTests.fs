@@ -3,6 +3,7 @@ module Mibo.Core.Tests.Headless
 open System
 open System.Threading
 open Expecto
+open IcedTasks
 open Mibo.Elmish
 
 type TestMsg =
@@ -1037,47 +1038,40 @@ let headlessRun =
         new HeadlessRunner<_, _>(HeadlessProgram.mkHeadless init update)
 
       use cts = new CancellationTokenSource()
+      let results = ResizeArray<struct (int * float)>()
 
-      task {
-        let results = ResizeArray<struct (int * float)>()
-        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
-        let enumerator = enum.GetAsyncEnumerator(cts.Token)
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-        try
-          let mutable running = true
+        for struct (gt, model) in
+          runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          results.Add(struct (model.Count, gt.TotalTime.TotalSeconds))
 
-          while running do
-            try
-              let! hasNext = enumerator.MoveNextAsync().AsTask()
-
-              if hasNext then
-                let struct (gt, model) = enumerator.Current
-                results.Add(struct (model.Count, gt.TotalTime.TotalSeconds))
-              else
-                running <- false
-            with :? OperationCanceledException ->
-              running <- false
-
-            if results.Count >= 3 then
-              cts.Cancel()
-        finally
-          enumerator.DisposeAsync().AsTask().Wait()
-
-        Expect.isGreaterThanOrEqual
-          results.Count
-          3
-          "Should yield at least 3 frames"
-
-        for i = 0 to results.Count - 1 do
-          let struct (count, _) = results[i]
-          Expect.equal count 0 "Each frame should have Count=0 (no dispatches)"
-
-        let struct (_, t1) = results[0]
-        let struct (_, t2) = results[1]
-        Expect.isGreaterThan t2 t1 "Time should advance between frames"
+          if results.Count >= 3 then
+            cts.Cancel()
       }
-      |> Async.AwaitTask
-      |> Async.RunSynchronously
+
+      // The bound: the token fires on both exits — the in-loop stop and this
+      // timeout — so the runner never outlives the test.
+      cts.CancelAfter 10_000
+
+      try
+        Async.RunSynchronously(work, cancellationToken = cts.Token)
+      with :? OperationCanceledException ->
+        ()
+
+      Expect.isGreaterThanOrEqual
+        results.Count
+        3
+        "Should yield at least 3 frames"
+
+      for i = 0 to results.Count - 1 do
+        let struct (count, _) = results[i]
+        Expect.equal count 0 "Each frame should have Count=0 (no dispatches)"
+
+      let struct (_, t1) = results[0]
+      let struct (_, t2) = results[1]
+      Expect.isGreaterThan t2 t1 "Time should advance between frames"
 
     testCase "RunAsync with already-cancelled token yields nothing"
     <| fun _ ->
@@ -1086,29 +1080,25 @@ let headlessRun =
 
       use cts = new CancellationTokenSource()
       cts.Cancel()
+      let mutable count = 0
 
-      task {
-        let mutable count = 0
-        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
-        let enumerator = enum.GetAsyncEnumerator(cts.Token)
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-        try
-          let mutable running = true
-
-          while running do
-            try
-              let! hasNext = enumerator.MoveNextAsync().AsTask()
-
-              if hasNext then count <- count + 1 else running <- false
-            with :? OperationCanceledException ->
-              running <- false
-        finally
-          enumerator.DisposeAsync().AsTask().Wait()
-
-        Expect.equal count 0 "Should not yield any frames"
+        for _ in runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          count <- count + 1
       }
-      |> Async.AwaitTask
-      |> Async.RunSynchronously
+
+      // The bound: the token fires on both exits — the in-loop stop and this
+      // timeout — so the runner never outlives the test.
+      cts.CancelAfter 10_000
+
+      try
+        Async.RunSynchronously(work, cancellationToken = cts.Token)
+      with :? OperationCanceledException ->
+        ()
+
+      Expect.equal count 0 "Should not yield any frames"
 
     testCase "RunAsync yields frozen model after ShouldQuit"
     <| fun _ ->
@@ -1129,56 +1119,48 @@ let headlessRun =
         )
 
       use cts = new CancellationTokenSource()
+      let results = ResizeArray<struct (bool * int)>()
+      let mutable frameIdx = 0
 
-      task {
-        let results = ResizeArray<struct (bool * int)>()
-        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
-        let enumerator = enum.GetAsyncEnumerator(cts.Token)
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-        try
-          let mutable running = true
-          let mutable frameIdx = 0
+        for struct (_, model) in
+          runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          results.Add(struct (runner.ShouldQuit, model.Count))
+          frameIdx <- frameIdx + 1
 
-          while running do
-            try
-              // dispatch Increment for the first 3 frames
-              if frameIdx < 3 then
-                runner.Dispatch(Increment)
+          // dispatch Increment for the first 3 frames
+          if frameIdx <= 3 then
+            runner.Dispatch(Increment)
 
-              let! hasNext = enumerator.MoveNextAsync().AsTask()
-
-              if hasNext then
-                let struct (_, model) = enumerator.Current
-                results.Add(struct (runner.ShouldQuit, model.Count))
-              else
-                running <- false
-
-              frameIdx <- frameIdx + 1
-
-              // cancel after enough frames to avoid infinite loop
-              if frameIdx >= 10 then
-                cts.Cancel()
-            with :? OperationCanceledException ->
-              running <- false
-        finally
-          enumerator.DisposeAsync().AsTask().Wait()
-
-        Expect.isGreaterThan results.Count 0 "Should yield at least one frame"
-
-        let mutable foundQuit = false
-
-        for i = 0 to results.Count - 1 do
-          let struct (quit, count) = results[i]
-
-          if foundQuit then
-            Expect.isTrue quit "Should stay quit"
-            Expect.equal count 3 "Model should be frozen after quit"
-          elif quit then
-            foundQuit <- true
-            Expect.equal count 3 "Quit frame should have Count=3"
+          // cancel after enough frames to avoid infinite loop
+          if frameIdx >= 10 then
+            cts.Cancel()
       }
-      |> Async.AwaitTask
-      |> Async.RunSynchronously
+
+      // The bound: the token fires on both exits — the in-loop stop and this
+      // timeout — so the runner never outlives the test.
+      cts.CancelAfter 10_000
+
+      try
+        Async.RunSynchronously(work, cancellationToken = cts.Token)
+      with :? OperationCanceledException ->
+        ()
+
+      Expect.isGreaterThan results.Count 0 "Should yield at least one frame"
+
+      let mutable foundQuit = false
+
+      for i = 0 to results.Count - 1 do
+        let struct (quit, count) = results[i]
+
+        if foundQuit then
+          Expect.isTrue quit "Should stay quit"
+          Expect.equal count 3 "Model should be frozen after quit"
+        elif quit then
+          foundQuit <- true
+          Expect.equal count 3 "Quit frame should have Count=3"
 
     testCase "RunAsync dispatches via external dispatch during iteration"
     <| fun _ ->
@@ -1186,60 +1168,53 @@ let headlessRun =
         new HeadlessRunner<_, _>(HeadlessProgram.mkHeadless init update)
 
       use cts = new CancellationTokenSource()
+      let results = ResizeArray<int>()
+      let mutable frameIdx = 0
 
-      task {
-        let results = ResizeArray<int>()
-        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
-        let enumerator = enum.GetAsyncEnumerator(cts.Token)
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-        try
-          let mutable running = true
-          let mutable frameIdx = 0
+        for struct (_, model) in
+          runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          results.Add(model.Count)
+          frameIdx <- frameIdx + 1
 
-          while running do
-            try
-              let! hasNext = enumerator.MoveNextAsync().AsTask()
+          // dispatch two Increments after the third frame lands
+          if frameIdx = 3 then
+            runner.Dispatch(Increment)
+            runner.Dispatch(Increment)
 
-              if hasNext then
-                let struct (_, model) = enumerator.Current
-                results.Add(model.Count)
-
-                if frameIdx = 2 then
-                  runner.Dispatch(Increment)
-                  runner.Dispatch(Increment)
-
-                frameIdx <- frameIdx + 1
-
-                if frameIdx >= 6 then
-                  cts.Cancel()
-              else
-                running <- false
-            with :? OperationCanceledException ->
-              running <- false
-        finally
-          enumerator.DisposeAsync().AsTask().Wait()
-
-        Expect.isGreaterThan results.Count 3 "Should yield multiple frames"
-
-        Expect.equal results[0] 0 "Frame 0: no dispatches yet"
-        Expect.equal results[1] 0 "Frame 1: no dispatches yet"
-        Expect.equal results[2] 0 "Frame 2: no dispatches yet"
-
-        let mutable foundIncrease = false
-
-        for i = 3 to results.Count - 1 do
-          if results[i] > 0 && not foundIncrease then
-            foundIncrease <- true
-
-            Expect.equal
-              results[i]
-              2
-              "First frame after dispatch should have Count=2"
-
-        Expect.isTrue foundIncrease "Should see model increase after dispatch"
+          if frameIdx >= 6 then
+            cts.Cancel()
       }
-      |> Async.AwaitTask
-      |> Async.RunSynchronously
+
+      // The bound: the token fires on both exits — the in-loop stop and this
+      // timeout — so the runner never outlives the test.
+      cts.CancelAfter 10_000
+
+      try
+        Async.RunSynchronously(work, cancellationToken = cts.Token)
+      with :? OperationCanceledException ->
+        ()
+
+      Expect.isGreaterThan results.Count 3 "Should yield multiple frames"
+
+      Expect.equal results[0] 0 "Frame 0: no dispatches yet"
+      Expect.equal results[1] 0 "Frame 1: no dispatches yet"
+      Expect.equal results[2] 0 "Frame 2: no dispatches yet"
+
+      let mutable foundIncrease = false
+
+      for i = 3 to results.Count - 1 do
+        if results[i] > 0 && not foundIncrease then
+          foundIncrease <- true
+
+          Expect.equal
+            results[i]
+            2
+            "First frame after dispatch should have Count=2"
+
+      Expect.isTrue foundIncrease "Should see model increase after dispatch"
 
     testCase "Run with zero interval throws ArgumentException"
     <| fun _ ->
