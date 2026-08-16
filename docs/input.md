@@ -1,7 +1,7 @@
 ---
 title: Input
 category: Amenities
-categoryindex: 10
+categoryindex: 12
 index: 1
 ---
 

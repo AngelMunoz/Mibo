@@ -5,47 +5,78 @@ categoryindex: 3
 index: 10
 ---
 
-# Derived State
+# Derived State — Organizing Projections
 
-Most games keep values that aren't facts — they're functions of facts. The bee count, "any bee hungry?", the scoreboard string, the flower with the nearest bee. Two ways to keep them: recompute them yourself when something changes, or declare them and let the graph keep them current. This architecture is built on the second.
+Once your game has more than one feature, you start writing values that join, filter, and reduce across feature data — a count of alive enemies, a scoreboard, a tower's effective stats after upgrades, the list of flowers a bee can reach. These are projections. Where you put them and how you build them decides whether your game stays understandable or turns into a web of reads. This is the organizational pattern for projections.
 
-## Declare, don't recompute
+## The two homes
 
-```fsharp
-// Facts — you write these
-let bees = CMap.empty<int, Bee>
-let honey = CVal.create 0
+Every projection lives in one of two places, and the choice is one question: **does it touch more than one feature's data?**
 
-// Derived values — you never update these by hand
-let beeCount = bees |> AMap.count
-let scoreboard = honey |> AVal.map(fun h -> $"Honey: {h}")
-let anyHungry =
-    bees |> AMap.exists(fun _ bee -> bee.Energy < 0.2f)
-```
-
-Build these once at startup. After that they are always current: read them in update, in the frame, in a test — whenever a fact changed since your last read, the value recomputes; when nothing changed, the read is a cheap version check. The code that used to increment a count, rebuild a list, and format a string in three different places simply disappears.
-
-## Where derived values live
-
-The placement rule is one line: **a value derived from one feature's data lives next to that feature; a value derived from two features lives at the top level.**
+**Inside the feature** when it reads only that feature's own containers. The feature builds it in its `init` and keeps it alongside the model:
 
 ```fsharp
-// Next to Bees: only touches the bees map
-let alive = bees |> AMap.filter(fun _ bee -> bee.Hp > 0)
-
-// Top level: joins bees with flowers — not inside either feature
-let pollinated =
-    bees
-    |> AMap.mapA(fun _ bee ->
-        flowers |> AMap.tryFind bee.NearestFlower)
+module Towers =
+    let init() : TowersModel =
+        let m = TowersModel()
+        // EffectiveDef reads only Statics + Levels — the tower's own data
+        m.EffectiveDef <-
+            m.Statics
+            |> AMap.joinOn m.Levels (fun tid _ -> tid) (fun _ s lvl ->
+                AVal.map2 (fun s (lvl: int voption) ->
+                    ValueSome(effectiveDef s.Def (lvl |> ValueOption.defaultValue 1)))
+                    s lvl)
+        m
 ```
 
-The split keeps each feature understandable on its own: nothing in the flowers module should know what a bee is, and the join that needs both belongs where both are visible. [Systems](systems.html) covers the feature organization this builds on.
+**At the top level** when it joins two features. Those live in one `Projections` object that the composition root owns, built after the feature models exist:
 
-## What it buys
+```fsharp
+type Projections(enemies, towers, projectiles, ...) =
+    // Suppression reads Towers.Statics and Enemies.BossPositions — two
+    // features, so it lives here, not inside either system
+    member val Suppression: amap<int<TowerId>, float32> =
+        towers.Statics
+        |> AMap.mapA(fun _ s ->
+            enemies.BossPositions
+            |> AMap.filter(fun _ bossPos -> inRadius s bossPos)
+            |> AMap.count
+            |> AVal.map(fun n -> if n > 0 then factor else 1f))
+```
 
-* **No stale reads.** The HUD can't show last frame's count, because there is no last frame's count — only the derived value, always current.
-* **No wasted work.** The scoreboard recomputes only when honey changes. A paused frame recomputes nothing — every read is a version check.
-* **No allocation on steady state.** These reads are the per-frame hot path, and they're free.
+The rule keeps each feature self-contained: nothing in `Towers` knows what a `Boss` is, and nothing in `Enemies` knows what a tower's range is. Only the top-level projection sees both.
 
-For the mechanics — `map`/`bind`/`mapN` on values, `filter`/`mapA`/joins on collections, and what each costs — see the [Mibo.Adaptive](../mibo-adaptive/overview.html) section, particularly [Performance](../mibo-adaptive/performance.html) for how joins scale.
+## Build once at init, never per frame
+
+Projections are constructed once — at startup or when a feature's model is created — not inside `update`. A projection built per frame allocates a new graph node every frame and defeats the point (steady-state reads are free only if the node persists). Build it in `init`, store it on the model or the `Projections` object, and read it as many times as you like.
+
+```fsharp
+// Bad: rebuilt every frame
+let update world ctx gameTime =
+    let alive = world.Enemies.Alive |> AMap.count   // new node each call
+    ...
+
+// Good: built once, stored, read each frame
+type World = { Enemies: EnemiesModel; AliveCount: aval<int>; ... }
+// AliveCount = enemies.Alive |> AMap.count  -- set in init
+```
+
+## What the frame reads
+
+The frame function reads projections and packs them. Read each once; don't re-read the same projection twice in one frame (the second read is a version check, but a wasted one). If two parts of the frame need the same derived value, read it into a local and reuse it.
+
+```fsharp
+let frame (world: World) () : Frame =
+    let alive = world.Enemies.Alive |> AMap.getValue
+    {
+      AliveEnemies = alive
+      AliveCount = alive.Count        // reuse, don't re-derive
+      ...
+    }
+```
+
+## When a join stops paying
+
+A projection that filters a large collection inside a `mapA` over another collection re-scans the inner one every time it changes. When that gets expensive — you'll see it in a profile — don't keep paying for the live join. Drop to a plain row map over one collection and move the cross-feature behavior into update as direct values. The projection is a convenience for reads, not a requirement that everything be derived live.
+
+For what each combinator costs, see [Mibo.Adaptive Performance](../mibo-adaptive/performance.html).

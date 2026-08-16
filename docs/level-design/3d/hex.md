@@ -1,7 +1,7 @@
 ---
 title: Hex Grid Layout (3D)
 category: Level Design
-categoryindex: 6
+categoryindex: 8
 index: 9
 ---
 

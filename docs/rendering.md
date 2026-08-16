@@ -1,7 +1,7 @@
 ---
 title: Rendering Overview
 category: Rendering
-categoryindex: 7
+categoryindex: 9
 index: 1
 ---
 

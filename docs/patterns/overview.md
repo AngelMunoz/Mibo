@@ -1,7 +1,7 @@
 ---
 title: Patterns Overview
 category: Patterns
-categoryindex: 11
+categoryindex: 13
 index: 1
 ---
 

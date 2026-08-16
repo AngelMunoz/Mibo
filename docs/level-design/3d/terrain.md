@@ -1,7 +1,7 @@
 ---
 title: Building Outdoor Terrain
 category: Level Design
-categoryindex: 6
+categoryindex: 8
 index: 7
 ---
 

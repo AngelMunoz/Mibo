@@ -1,8 +1,8 @@
 ---
 title: Assets
 category: Amenities
-categoryindex: 5
-index: 21
+categoryindex: 12
+index: 4
 ---
 
 # Assets (loading + caching)
