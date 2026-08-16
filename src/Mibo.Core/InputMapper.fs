@@ -162,6 +162,28 @@ module ActionState =
         Released = Set.empty
   }
 
+  /// <summary>
+  /// Merges a freshly built state into the current one: the edge events
+  /// (<c>Started</c>/<c>Released</c>) UNION — several deltas arriving between two
+  /// consumptions must not drop the earlier deltas' edges (a mouse-move build has
+  /// empty edges and would otherwise wipe a key delta's events) — while
+  /// <c>Held</c>/<c>Values</c>/<c>HeldTriggers</c> stay last-wins: they are the current
+  /// truth, not events. Pairs with <see cref="M:Mibo.Input.ActionState.nextFrame"/>:
+  /// the consumer clears the edges when it reads them, so the next merge starts
+  /// from an empty edge set.
+  /// </summary>
+  /// <param name="current">The root's current state — its edges may already hold unread events.</param>
+  /// <param name="incoming">The freshly built state — its edges are the new delta's events.</param>
+  let mergeEdges
+    (current: ActionState<'Action>)
+    (incoming: ActionState<'Action>)
+    : ActionState<'Action> =
+    {
+      incoming with
+          Started = Set.union current.Started incoming.Started
+          Released = Set.union current.Released incoming.Released
+    }
+
 /// <summary>
 /// Service interface for input mapping. The contract lives in Core; each backend
 /// supplies an implementation that polls its native API to evaluate whether each
