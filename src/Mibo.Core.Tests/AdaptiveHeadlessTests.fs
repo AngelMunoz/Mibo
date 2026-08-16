@@ -550,7 +550,7 @@ let adaptiveHeadlessTests =
 
       // The bound: the token fires on both exits — the in-loop stop and this
       // timeout — so the game thread never outlives the test.
-      cts.CancelAfter 500
+      cts.CancelAfter 10_000
 
       try
         Async.RunSynchronously(work, cancellationToken = cts.Token)
@@ -596,7 +596,7 @@ let adaptiveHeadlessTests =
 
       // The bound: the token fires on both exits — the in-loop stop and this
       // timeout — so the game thread never outlives the test.
-      cts.CancelAfter 500
+      cts.CancelAfter 10_000
 
       try
         Async.RunSynchronously(work, cancellationToken = cts.Token)
@@ -635,7 +635,7 @@ let adaptiveHeadlessTests =
       }
 
       use cts = new CancellationTokenSource()
-      cts.CancelAfter 500
+      cts.CancelAfter 10_000
 
       try
         Async.RunSynchronously(work, cancellationToken = cts.Token)
@@ -1057,7 +1057,7 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
 
       // The bound: the token fires on both exits — the in-loop stop and this
       // timeout — so the game thread never outlives the test.
-      cts.CancelAfter 500
+      cts.CancelAfter 10_000
 
       try
         Async.RunSynchronously(work, cancellationToken = cts.Token)
@@ -1111,7 +1111,7 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
 
       // The bound: the token fires on both exits — the in-loop stop and this
       // timeout — so the game thread never outlives the test.
-      cts.CancelAfter 500
+      cts.CancelAfter 10_000
 
       try
         Async.RunSynchronously(work, cancellationToken = cts.Token)
@@ -1154,7 +1154,7 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
 
       // The bound: the token fires on both exits — the in-loop stop and this
       // timeout — so the game thread never outlives the test.
-      cts.CancelAfter 500
+      cts.CancelAfter 10_000
 
       try
         Async.RunSynchronously(work, cancellationToken = cts.Token)

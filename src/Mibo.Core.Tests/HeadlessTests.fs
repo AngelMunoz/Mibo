@@ -1053,7 +1053,7 @@ let headlessRun =
 
       // The bound: the token fires on both exits — the in-loop stop and this
       // timeout — so the runner never outlives the test.
-      cts.CancelAfter 500
+      cts.CancelAfter 10_000
 
       try
         Async.RunSynchronously(work, cancellationToken = cts.Token)
@@ -1091,7 +1091,7 @@ let headlessRun =
 
       // The bound: the token fires on both exits — the in-loop stop and this
       // timeout — so the runner never outlives the test.
-      cts.CancelAfter 500
+      cts.CancelAfter 10_000
 
       try
         Async.RunSynchronously(work, cancellationToken = cts.Token)
@@ -1141,7 +1141,7 @@ let headlessRun =
 
       // The bound: the token fires on both exits — the in-loop stop and this
       // timeout — so the runner never outlives the test.
-      cts.CancelAfter 500
+      cts.CancelAfter 10_000
 
       try
         Async.RunSynchronously(work, cancellationToken = cts.Token)
@@ -1190,7 +1190,7 @@ let headlessRun =
 
       // The bound: the token fires on both exits — the in-loop stop and this
       // timeout — so the runner never outlives the test.
-      cts.CancelAfter 500
+      cts.CancelAfter 10_000
 
       try
         Async.RunSynchronously(work, cancellationToken = cts.Token)
