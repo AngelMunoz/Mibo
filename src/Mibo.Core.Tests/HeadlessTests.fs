@@ -1051,12 +1051,12 @@ let headlessRun =
             cts.Cancel()
       }
 
+      // The bound: the token fires on both exits — the in-loop stop and this
+      // timeout — so the runner never outlives the test.
+      cts.CancelAfter 500
+
       try
-        Async.RunSynchronously(
-          work,
-          timeout = 500,
-          cancellationToken = cts.Token
-        )
+        Async.RunSynchronously(work, cancellationToken = cts.Token)
       with :? OperationCanceledException ->
         ()
 
@@ -1089,12 +1089,12 @@ let headlessRun =
           count <- count + 1
       }
 
+      // The bound: the token fires on both exits — the in-loop stop and this
+      // timeout — so the runner never outlives the test.
+      cts.CancelAfter 500
+
       try
-        Async.RunSynchronously(
-          work,
-          timeout = 500,
-          cancellationToken = cts.Token
-        )
+        Async.RunSynchronously(work, cancellationToken = cts.Token)
       with :? OperationCanceledException ->
         ()
 
@@ -1139,12 +1139,12 @@ let headlessRun =
             cts.Cancel()
       }
 
+      // The bound: the token fires on both exits — the in-loop stop and this
+      // timeout — so the runner never outlives the test.
+      cts.CancelAfter 500
+
       try
-        Async.RunSynchronously(
-          work,
-          timeout = 500,
-          cancellationToken = cts.Token
-        )
+        Async.RunSynchronously(work, cancellationToken = cts.Token)
       with :? OperationCanceledException ->
         ()
 
@@ -1188,12 +1188,12 @@ let headlessRun =
             cts.Cancel()
       }
 
+      // The bound: the token fires on both exits — the in-loop stop and this
+      // timeout — so the runner never outlives the test.
+      cts.CancelAfter 500
+
       try
-        Async.RunSynchronously(
-          work,
-          timeout = 500,
-          cancellationToken = cts.Token
-        )
+        Async.RunSynchronously(work, cancellationToken = cts.Token)
       with :? OperationCanceledException ->
         ()
 
