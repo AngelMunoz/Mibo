@@ -65,16 +65,16 @@ loop automatically and yield a `(GameTime * 'Model)` snapshot each tick:
 for (time, model) in runner.Run(TimeSpan.FromMilliseconds(16)) do
     printfn "Tick: %A" model
 
-// Asynchronous: PeriodicTimer for efficient, cancellation-friendly pacing.
-// Iterate with F# 8+ `for .. in` over IAsyncEnumerable.
+// Asynchronous: a dedicated game thread steps; you consume the snapshots.
 let cts = new CancellationTokenSource()
 
-async {
+asyncEx {
     for (time, model) in runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token) do
         printfn "Tick: %A" model
 }
-|> Async.RunSynchronously
 ```
+
+> **Note:** `for .. in` over `IAsyncEnumerable` comes from the [IcedTasks](https://www.nuget.org/packages/IcedTasks) package — the built-in `async`/`task` builders don't accept it. `open IcedTasks` gives you `asyncEx`; alternatively, `open IcedTasks.Polyfill.Async.PolyfillBuilders` upgrades the plain `async` builder, and `open IcedTasks.Polyfill.Task.Tasks` does the same for `task`.
 
 > **Warning:** Do not mix `Run`/`RunAsync` with `Step`/`StepN`/`StepUntil` on
 > the same runner — they all advance the simulation and will corrupt state.

@@ -70,13 +70,17 @@ for struct (gameTime, frame) in server.Run(TimeSpan.FromMilliseconds(16)) do
     broadcast frame
 
 // Asynchronous: a dedicated game thread steps; you consume the frames
-async {
+open IcedTasks
+
+asyncEx {
     for outcome in server.RunAsync(TimeSpan.FromMilliseconds(16)) do
         broadcast outcome.Frame
 }
 ```
 
 Nothing runs until you enumerate — a bare `server.Run(...)` statement builds the sequence and discards it.
+
+> **Note:** `for .. in` over `IAsyncEnumerable` comes from the [IcedTasks](https://www.nuget.org/packages/IcedTasks) package — the built-in `async`/`task` builders don't accept it. `open IcedTasks` gives you `asyncEx`; alternatively, `open IcedTasks.Polyfill.Async.PolyfillBuilders` upgrades the plain `async` builder, and `open IcedTasks.Polyfill.Task.Tasks` does the same for `task`.
 
 Pick one way to advance a runner and stay with it: `Step`/`StepN`/`StepUntil` for tests driven by hand, `Run`/`RunAsync` for servers that pace the loop automatically. Mixing them on the same runner double-advances the simulation.
 

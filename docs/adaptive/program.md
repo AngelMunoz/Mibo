@@ -39,9 +39,12 @@ type Frame = {
 
 let meadowWidth = 40f
 
+// Scratch buffer, created once and reused every frame — the posted
+// intent below clears it after draining, never during update
+let leavers = ResizeArray<int>()
+
 let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
     let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
-    let leavers = ResizeArray<int>()
 
     // Move every bee; remember who flew past the edge
     for KeyValue(id, bee) in world.Bees |> AMap.getValue do
@@ -49,11 +52,17 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
         world.Bees |> CMap.addOrUpdate id moved
         if moved.Pos.X > meadowWidth then leavers.Add id
 
-    // Score and despawn after the loop — the snapshot is a live view,
-    // so removals wait until the enumeration is done
-    for id in leavers do
-        world.Bees |> CMap.remove id
-        world.Honey.UpdateTo((world.Honey |> AVal.getValue) + 1) |> ignore
+    // Removing mid-loop would invalidate the enumeration, so the
+    // despawn — and the score that reacts to it — is posted work:
+    // the queue runs it after update, in order, before the frame packs
+    if leavers.Count > 0 then
+        ctx.Intents.post(fun () ->
+            world.Honey.UpdateTo((world.Honey |> AVal.getValue) + leavers.Count) |> ignore
+
+            for id in leavers do
+                world.Bees |> CMap.remove id
+
+            leavers.Clear())
 
 /// The frame builder: `frame world` is the `unit -> Frame`
 /// the program calls once per frame.

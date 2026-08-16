@@ -56,21 +56,30 @@ let env = createEnv()
 
 let world = { Gems = CMap.empty; Score = CVal.create 0 }
 
+// Scratch buffer, created once and reused every frame — the posted
+// intent below clears it after draining, never during update
+let taken = ResizeArray<int>()
+
 let update (ctx: AdaptiveContext) (gameTime: GameTime) =
     let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
-
-    let taken = ResizeArray<int>()
 
     for KeyValue(id, gem) in world.Gems |> AMap.getValue do
         let moved = { gem with Pos = gem.Pos + Vector2(dt, 0f) }
         world.Gems |> CMap.addOrUpdate id moved
         if moved.Pos.X > 10f then taken.Add id
 
-    for id in taken do
-        world.Gems |> CMap.remove id
-        world.Score.UpdateTo((world.Score |> AVal.getValue) + 1) |> ignore
-        // Synchronous service call — one-shot sounds are cheap
-        env.Audio.PlayPickup()
+    // Removals during the loop would invalidate the enumeration —
+    // post them; the queue runs the work after update, before the frame
+    if taken.Count > 0 then
+        ctx.Intents.post(fun () ->
+            world.Score.UpdateTo((world.Score |> AVal.getValue) + taken.Count) |> ignore
+
+            for id in taken do
+                world.Gems |> CMap.remove id
+                // Synchronous service call — one-shot sounds are cheap
+                env.Audio.PlayPickup()
+
+            taken.Clear())
 
     // Autosave every ten pickups, off the game thread
     if (world.Score |> AVal.getValue) % 10 = 0 then
