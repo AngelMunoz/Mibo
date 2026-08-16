@@ -136,14 +136,13 @@ For gameplay keys, the shared [input guide](../input.html) (`InputMap`, `ActionS
 The mapper gives you an `ActionState` root with `Started` (pressed this frame), `Released`, and `Held` sets. Your update consumes the edges: one-shots read `Started`, continuous movement reads `Held`.
 
 ```fsharp
-let update (cell: StateCell) (ctx: AdaptiveContext) (gameTime: GameTime) =
-    let actions = cell.Value.Actions |> AVal.getValue
+let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
+    let actions = world.Actions |> AVal.getValue
 
     // One-shots: started this frame
     for a in actions.Started do
         match a with
         | GameAction.SelectTower slot -> selectTower slot
-        | GameAction.Restart -> restart()
         | _ -> ()
 
     // Continuous: recomputed each frame from what's held right now
@@ -155,7 +154,7 @@ let update (cell: StateCell) (ctx: AdaptiveContext) (gameTime: GameTime) =
     Camera.setKeyboardPan pan
 
     // Clear the consumed edges so next frame sees fresh ones
-    cell.Value.Actions.Set(ActionState.nextFrame actions)
+    world.Actions.Set(ActionState.nextFrame actions)
 ```
 
 Two habits from that example:
