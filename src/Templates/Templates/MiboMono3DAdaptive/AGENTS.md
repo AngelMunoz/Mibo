@@ -120,9 +120,9 @@ grows, keep this shape:
   loop. It never runs game code itself. Build the subscription map once in
   `init`, keyed by id. Input is already wired this way
   (`InputMapper.subscribeStaticAdaptive` writes the `Actions` root). One-shot
-  actions read `Started`/`Released` and clear them with
-  `ActionState.nextFrame`, but only when there is something to clear. Continuous
-  movement reads `Held`.
+  actions read `Started`/`Released`; the subscription clears them after
+  `update`, so they are fresh every step and no manual clear is needed.
+  Continuous movement reads `Held`.
 - **Keep the per-frame work small.** Do not create closures inside `update`,
   and do not recompute each frame what a projection already gives you.
 

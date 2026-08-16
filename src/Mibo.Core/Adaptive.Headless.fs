@@ -170,13 +170,15 @@ type AdaptiveHeadless<'Frame>
       // discarded within this step, so it is always fresh.
       let current = map |> AMap.getValue
 
-      // New key → attach, handing the subscription the pre-step post
-      // function: events never run handlers directly, they post work that
-      // the runner handles on the owner thread at the next step's boundary,
-      // before Update, in order.
+      // New key → attach, handing the subscription the posting surface:
+      // events never run handlers directly, they post work to the pre-step
+      // drain and the runner handles it on the owner thread at the next
+      // step's boundary, before Update, in order. The surface is built once
+      // per attach, on the cold path.
       for KeyValueV(id, sub) in current do
         if not(attachedSubs.ContainsKey id) then
-          attachedSubs[id] <- sub.Attach intents.postPreStep
+          attachedSubs[id] <-
+            sub.Attach(SubPosting(intents.postPreStep, intents.post))
 
       // Missing key → detach. Surviving keys are kept as-is: the key is
       // the identity, never re-attach on a fresh closure value.

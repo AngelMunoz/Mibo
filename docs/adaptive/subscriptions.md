@@ -115,26 +115,24 @@ let subMap : amap<SubId, AdaptiveSub> =
 The same shape covers any event source. A timer that spawns a wave every thirty seconds:
 
 ```fsharp
-let waveTimer (interval: float32) : AdaptiveSub = {
-    Id = SubId.ofString "wave-timer"
-    Attach =
-        fun post ->
-            let timer = new System.Timers.Timer(float interval * 1000f)
-            timer.Elapsed.Add(fun _ -> post spawnWave)
-            timer.Start()
-            { new IDisposable with member _.Dispose() = timer.Stop() }
-}
+let waveTimer (interval: float32) : AdaptiveSub =
+    AdaptiveSub.ofTimer
+        (SubId.ofString "wave-timer")
+        (TimeSpan.FromSeconds(float interval))
+        (fun posting -> posting.Post spawnWave)
 ```
 
 A network client pushing opponent moves:
 
 ```fsharp
-let opponentMoves (client: IGameClient) : AdaptiveSub = {
-    Id = SubId.ofString "opponent"
-    Attach =
-        fun post -> client.OnMove.Subscribe(fun move -> post(fun () -> applyMove move))
-}
+let opponentMoves (client: IGameClient) : AdaptiveSub =
+    AdaptiveSub.ofObservable
+        (SubId.ofString "opponent")
+        client.OnMove
+        (fun posting move -> posting.Post(fun () -> applyMove move))
 ```
+
+`ofTimer` and `ofObservable` cover the common sources; the record with `Attach` is still there when you need full control. In every case the handler receives the posting surface and only queues work: `Post` runs it on the owner thread at the next step's boundary, before `Update`.
 
 One practical note on the mouse wheel: raylib reports ±1 per notch and MonoGame reports ±120. If zoom matters to your game, fold a scale factor in where you handle the wheel, so the feel matches on both backends.
 
@@ -160,13 +158,13 @@ let subMap =
 
 ### Edges, not just held keys
 
-The mapper maintains an `ActionState` root with `Started` (pressed since you last cleared), `Released`, and `Held` sets. Edges accumulate between consumptions — a mouse event between a key press and its release doesn't drop the key's edges. Your update consumes the edges: one-shots read `Started`, continuous movement reads `Held`.
+The mapper maintains an `ActionState` root with `Started`, `Released`, and `Held` sets. Edges accumulate within a step — a mouse event between a key press and its release doesn't drop the key's edges. Your update consumes the edges: one-shots read `Started`, continuous movement reads `Held`. The subscription clears `Started` and `Released` after `Update`, before the frame is forced, so every step reads fresh edges.
 
 ```fsharp
 let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
     let actions = world.Actions |> AVal.getValue
 
-    // One-shots: started since the last clear
+    // One-shots: started this step
     for a in actions.Started do
         match a with
         | GameAction.SelectTower slot -> selectTower slot
@@ -179,15 +177,9 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
         pan <- pan + panStep a
 
     world.Pan.Set pan
-
-    // Clear the consumed edges so next frame sees fresh ones,
-    // but only when there are any: an empty clear still marks the
-    // root as changed and re-runs everything derived from it
-    if not actions.Started.IsEmpty || not actions.Released.IsEmpty then
-        world.Actions.Set(ActionState.nextFrame actions)
 ```
 
 Two habits from that example:
 
 * **Continuous actions read `Held`, not edge arithmetic.** A direction is the sum of what's held right now — if a key-press edge is ever lost, an edge-based accumulation would leave the pan stuck; a rebuilt-from-held direction can't.
-* **Clear the edges after consuming them** (`ActionState.nextFrame`), or a one-shot fires on every frame it's held. Clear only when an edge set is non-empty; an empty clear still marks the root as changed and re-runs everything derived from it. Note that clearing hides the edges from anything derived off the root — if you need a projection over `Started`, derive it instead of clearing first.
+* **Read `Started` in `Update` and nowhere else.** The clear runs before the frame force and before work you post from `Update`, so a projection over `Started` forced in the frame builder and an intent that reads `Started` both see the cleared state. Read the edges (or materialize the derived value) in `Update` instead. One exception: under fixed step, a frame that converts to no sub-step runs no `Update` and no drain, so the clear waits and the edges stay in the root for the next sub-step's `Update`.

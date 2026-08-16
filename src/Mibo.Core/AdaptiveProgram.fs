@@ -244,12 +244,42 @@ type AdaptiveContext
   member _.Intents = intents
 
 /// <summary>
+/// The post surface handed to an <see cref="T:Mibo.Adaptive.AdaptiveSub"/>
+/// attach function: <see cref="M:Mibo.Adaptive.SubPosting.Post"/> queues work
+/// for the pre-step drain, which runs on the owner thread at the next step's
+/// boundary, before <c>Update</c>. Framework subscriptions also queue work
+/// for the post drain (after <c>Update</c>, before the frame is forced)
+/// through an internal member; that moment is not part of the public
+/// contract.
+/// </summary>
+type SubPosting
+  internal ([<InlineIfLambda>]post: (unit -> unit) -> unit, [<InlineIfLambda>]afterUpdate: (unit -> unit) -> unit) =
+
+  /// <summary>
+  /// Queues work for the pre-step drain: it runs on the owner thread at the
+  /// next step's boundary, before <c>Update</c>, in post order. Subscription
+  /// events go here; the state they write is in place before the step's
+  /// <c>Update</c> reads it.
+  /// </summary>
+  /// <param name="work">The work to run at the next step's boundary.</param>
+  member _.Post(work: unit -> unit) = post work
+
+  /// <summary>
+  /// Queues work for the post drain: it runs on the owner thread after the
+  /// next step's <c>Update</c> (after each fixed sub-step's <c>Update</c>),
+  /// before the frame is forced. The framework's input mapper clears its
+  /// consumed edges at this moment.
+  /// </summary>
+  /// <param name="work">The work to run at the next post drain.</param>
+  member internal _.AfterUpdate(work: unit -> unit) = afterUpdate work
+
+/// <summary>
 /// A subscription spec: a stable identifier plus an attach function. The
 /// adaptive counterpart of <see cref="T:Mibo.Elmish.Sub`1"/>: the attach
-/// function receives the pre-step post function instead of
-/// <c>Dispatch&lt;'Msg&gt;</c>, so subscription events never run handlers
-/// directly — they post work, handled on the owner thread at the next step's
-/// boundary, before <c>Update</c>, in order.
+/// function receives the <see cref="T:Mibo.Adaptive.SubPosting"/> surface
+/// instead of <c>Dispatch&lt;'Msg&gt;</c>, so subscription events never run
+/// handlers directly — they post work, handled on the owner thread at the
+/// next step's boundary, before <c>Update</c>, in order.
 /// </summary>
 [<Struct>]
 type AdaptiveSub = {
@@ -258,13 +288,17 @@ type AdaptiveSub = {
 
   /// <summary>
   /// Attaches the subscription and returns a disposable that detaches it. The
-  /// <c>post</c> argument is the pre-step lane's entry point: event callbacks
-  /// (possibly on foreign threads) may only enqueue work, and the runner
-  /// handles it on the owner thread at the next step's boundary, before
-  /// <c>Update</c> — a foreign-thread callback can never run game code
-  /// directly.
+  /// <paramref name="posting"/> argument is the
+  /// <see cref="T:Mibo.Adaptive.SubPosting"/> surface: its
+  /// <see cref="M:Mibo.Adaptive.SubPosting.Post"/> queues work for the
+  /// pre-step drain, and the runner handles it on the owner thread at the
+  /// next step's boundary, before <c>Update</c> — a foreign-thread callback
+  /// can never run game code directly. Prefer the builders in the
+  /// <see cref="T:Mibo.Adaptive.AdaptiveSub"/> module
+  /// (<c>ofObservable</c>, <c>ofTimer</c>) over writing <c>Attach</c> by
+  /// hand.
   /// </summary>
-  Attach: ((unit -> unit) -> unit) -> IDisposable
+  Attach: SubPosting -> IDisposable
 }
 
 /// <summary>Functions for composing <see cref="T:Mibo.Adaptive.AdaptiveSub"/> values.</summary>
@@ -280,6 +314,55 @@ module AdaptiveSub =
     sub with
         Id = SubId.prefix prefix sub.Id
   }
+
+  /// <summary>
+  /// Builds a subscription from an <see cref="T:System.IObservable`1"/>: the
+  /// handler receives the <see cref="T:Mibo.Adaptive.SubPosting"/> surface and
+  /// each value, and queues work for the pre-step drain. The runner handles
+  /// the work on the owner thread at the next step's boundary, before
+  /// <c>Update</c>, so a callback thread never runs game code directly.
+  /// </summary>
+  /// <param name="id">Stable key the runtime uses to diff subscriptions across steps.</param>
+  /// <param name="source">The observable to subscribe to.</param>
+  /// <param name="handler">Receives the posting surface and each value.</param>
+  let inline ofObservable
+    (id: SubId)
+    (source: IObservable<'T>)
+    ([<InlineIfLambda>]handler: SubPosting -> 'T -> unit)
+    : AdaptiveSub =
+    {
+      Id = id
+      Attach = fun posting -> source.Subscribe(handler posting)
+    }
+
+  /// <summary>
+  /// Builds a subscription that ticks on a timer: the handler receives the
+  /// <see cref="T:Mibo.Adaptive.SubPosting"/> surface once per tick and
+  /// queues work for the pre-step drain. The timer ticks on a thread-pool
+  /// thread; only the queued work's drain runs on the owner thread.
+  /// </summary>
+  /// <param name="id">Stable key the runtime uses to diff subscriptions across steps.</param>
+  /// <param name="interval">Tick interval.</param>
+  /// <param name="tick">Receives the posting surface once per tick.</param>
+  let inline ofTimer
+    (id: SubId)
+    (interval: TimeSpan)
+    ([<InlineIfLambda>]tick: SubPosting -> unit)
+    : AdaptiveSub =
+    {
+      Id = id
+      Attach =
+        fun posting ->
+          let timer = new Timers.Timer(interval.TotalMilliseconds)
+          timer.Elapsed.Add(fun _ -> tick posting)
+          timer.Start()
+
+          { new IDisposable with
+              member _.Dispose() =
+                timer.Stop()
+                timer.Dispose()
+          }
+    }
 
 /// <summary>The result of building an adaptive program's graph.</summary>
 [<Struct>]
@@ -687,3 +770,62 @@ module AdaptiveProgram =
     (program: AdaptiveProgram<'Frame>)
     : AdaptiveProgram<'Frame> =
     { program with HasInput = true }
+
+namespace Mibo.Input
+
+open System
+open Mibo.Elmish
+open Mibo.Adaptive
+
+/// <summary>
+/// Builds the adaptive <see cref="T:Mibo.Input.ActionState`1"/> subscription
+/// shared by the backend input mappers.
+/// </summary>
+module AdaptiveInput =
+
+  /// <summary>
+  /// Builds an <see cref="T:Mibo.Adaptive.AdaptiveSub"/> from a function that
+  /// subscribes to input deltas. Every state built from an input delta is
+  /// written into the root at the step boundary, before <c>Update</c>, with
+  /// the edges merged (see
+  /// <see cref="M:Mibo.Input.ActionState.mergeEdges"/>); the consumed edges
+  /// are cleared after <c>Update</c>, before the frame is forced. So
+  /// <c>Update</c> reads each edge exactly once, and the next step starts
+  /// from an empty edge set. The after-update clear goes through an internal
+  /// member of the posting surface; it is not part of the public contract.
+  /// </summary>
+  /// <param name="attachDeltas">
+  /// Subscribes to the input deltas and invokes the callback with each newly
+  /// built <c>ActionState</c>; the returned disposable detaches.
+  /// </param>
+  /// <param name="actions">The root the merged states are written into.</param>
+  let subscribe
+    (attachDeltas: (ActionState<'Action> -> unit) -> IDisposable)
+    (actions: cval<ActionState<'Action>>)
+    : AdaptiveSub =
+    let attach(posting: SubPosting) =
+      // One clear per drain cycle: several events in one frame queue several
+      // merged states, but only the first queues the clear (the flag resets
+      // when the clear runs). A build without edges (a mouse move) queues
+      // nothing.
+      let mutable clearPending = false
+
+      attachDeltas(fun state ->
+        posting.Post(fun () ->
+          let merged = ActionState.mergeEdges (actions.GetValue()) state
+          actions.Set merged
+
+          if
+            (not merged.Started.IsEmpty || not merged.Released.IsEmpty)
+            && not clearPending
+          then
+            clearPending <- true
+
+            posting.AfterUpdate(fun () ->
+              actions.Set(ActionState.nextFrame(actions.GetValue()))
+              clearPending <- false)))
+
+    {
+      Id = SubId.ofString "Mibo/Input/InputMapper/subscribeAdaptive"
+      Attach = attach
+    }

@@ -118,11 +118,8 @@ let update (world: World) (_ctx: AdaptiveContext) (gameTime: GameTime) =
   world.Position.Set position
   world.Velocity.Set velocity
 
-  // Started/Released collect every key event since the last
-  // clear. Clear them only when there is something to clear,
-  // so a frame without key events leaves the state untouched
-  if not actions.Started.IsEmpty || not actions.Released.IsEmpty then
-    world.Actions.Set(ActionState.nextFrame actions)
+// Started and Released are edge events. The runtime clears them
+// after update, so they are fresh every step. No manual clear is needed.
 
 // ─────────────────────────────────────────────────────────────
 // Frame builder: reads the state, builds the Frame

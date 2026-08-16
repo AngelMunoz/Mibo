@@ -169,8 +169,8 @@ module ActionState =
   /// empty edges and would otherwise wipe a key delta's events) — while
   /// <c>Held</c>/<c>Values</c>/<c>HeldTriggers</c> stay last-wins: they are the current
   /// truth, not events. Pairs with <see cref="M:Mibo.Input.ActionState.nextFrame"/>:
-  /// the consumer clears the edges when it reads them, so the next merge starts
-  /// from an empty edge set.
+  /// the adaptive input subscription clears the edges at the post drain after
+  /// <c>Update</c>, so the next merge starts from an empty edge set.
   /// </summary>
   /// <param name="current">The root's current state — its edges may already hold unread events.</param>
   /// <param name="incoming">The freshly built state — its edges are the new delta's events.</param>

@@ -6,6 +6,7 @@ open System.Threading.Tasks
 open Expecto
 open Mibo.Adaptive
 open Mibo.Elmish
+open Mibo.Input
 open IcedTasks
 
 [<Struct>]
@@ -1285,15 +1286,15 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
     <| fun _ ->
       let value = CVal.create 0
       let trace = ResizeArray<string>()
-      let mutable capturedPost = Unchecked.defaultof<(unit -> unit) -> unit>
+      let mutable capturedPost = Unchecked.defaultof<SubPosting>
       let mutable postThreadId = 0
       let testThreadId = Environment.CurrentManagedThreadId
 
       let sub = {
         Id = SubId.ofString "test/event"
         Attach =
-          fun post ->
-            capturedPost <- post
+          fun posting ->
+            capturedPost <- posting
 
             { new IDisposable with
                 member _.Dispose() = ()
@@ -1319,7 +1320,7 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
 
       // A subscription event: the captured callback posts work for the
       // pre-step drain of the next step.
-      capturedPost(fun () ->
+      capturedPost.Post(fun () ->
         postThreadId <- Environment.CurrentManagedThreadId
         trace.Add "event"
         value.Set 5)
@@ -1341,6 +1342,232 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
         postThreadId
         testThreadId
         "The posted work should run on the owner thread"
+
+    testCase
+      "AdaptiveInput.subscribe reads each edge once and clears before the force"
+    <| fun _ ->
+      let actions: cval<ActionState<string>> = CVal.create ActionState.empty
+      let mutable edgeReads = 0
+      let mutable forceSawStarted = false
+      let mutable fire: unit -> unit = fun () -> ()
+
+      // A delta attacher that hands out one fake input event on demand.
+      let attachDeltas(onState: ActionState<string> -> unit) =
+        fire <-
+          fun () ->
+            onState {
+              ActionState.empty with
+                  Started = Set.singleton "jump"
+                  Held = Set.singleton "jump"
+            }
+
+        { new IDisposable with
+            member _.Dispose() = ()
+        }
+
+      let sub = AdaptiveInput.subscribe attachDeltas actions
+      let subMap = AMap.ofList [ sub.Id, sub ]
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () ->
+              forceSawStarted <- not(actions.GetValue().Started.IsEmpty)
+              0)
+            |> AdaptiveInit.withSubscriptions(fun _ctx -> subMap))
+          (fun _ctx _gameTime ->
+            if not(actions.GetValue().Started.IsEmpty) then
+              edgeReads <- edgeReads + 1)
+
+      use runner = new AdaptiveHeadless<int>(program)
+
+      // Step 1 attaches the subscription and captures the emitter.
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal edgeReads 0 "No event has fired yet"
+
+      fire()
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal edgeReads 1 "Update must read the edge exactly once"
+
+      Expect.isFalse forceSawStarted "The clear must run before the frame force"
+
+      // A step with no event: the edge must not fire again.
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal edgeReads 1 "The cleared edge must not fire again"
+
+      Expect.isTrue
+        (actions.GetValue().Started.IsEmpty)
+        "The root must be cleared after the step"
+
+    testCase
+      "AdaptiveInput.subscribe reads edges once per step, even under fixed step"
+    <| fun _ ->
+      let actions: cval<ActionState<string>> = CVal.create ActionState.empty
+      let mutable edgeReads = 0
+      let mutable fire: unit -> unit = fun () -> ()
+
+      // A delta attacher that hands out one fake input event on demand.
+      let attachDeltas(onState: ActionState<string> -> unit) =
+        fire <-
+          fun () ->
+            onState {
+              ActionState.empty with
+                  Started = Set.singleton "jump"
+                  Held = Set.singleton "jump"
+            }
+
+        { new IDisposable with
+            member _.Dispose() = ()
+        }
+
+      let sub = AdaptiveInput.subscribe attachDeltas actions
+      let subMap = AMap.ofList [ sub.Id, sub ]
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> 0)
+            |> AdaptiveInit.withSubscriptions(fun _ctx -> subMap))
+          (fun _ctx _gameTime ->
+            if not(actions.GetValue().Started.IsEmpty) then
+              edgeReads <- edgeReads + 1)
+        |> AdaptiveProgram.withFixedStep {
+          StepSeconds = 0.01f
+          MaxStepsPerFrame = 5
+          MaxFrameSeconds = ValueNone
+        }
+
+      use runner = new AdaptiveHeadless<int>(program)
+
+      // Step 1 attaches the subscription and captures the emitter.
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+      fire()
+
+      // One 50ms frame at a 10ms step: 5 sub-steps, one force.
+      runner.Step(TimeSpan.FromMilliseconds 50) |> ignore
+
+      Expect.equal
+        edgeReads
+        1
+        "The edge must be read once, not once per sub-step"
+
+      Expect.isTrue
+        (actions.GetValue().Started.IsEmpty)
+        "The root must be cleared after the step"
+
+    testCase "AdaptiveInput.subscribe keeps edges across a zero-sub-step frame"
+    <| fun _ ->
+      let actions: cval<ActionState<string>> = CVal.create ActionState.empty
+      let mutable edgeReads = 0
+      let mutable fire: unit -> unit = fun () -> ()
+
+      let attachDeltas(onState: ActionState<string> -> unit) =
+        fire <-
+          fun () ->
+            onState {
+              ActionState.empty with
+                  Started = Set.singleton "jump"
+                  Held = Set.singleton "jump"
+            }
+
+        { new IDisposable with
+            member _.Dispose() = ()
+        }
+
+      let sub = AdaptiveInput.subscribe attachDeltas actions
+      let subMap = AMap.ofList [ sub.Id, sub ]
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> 0)
+            |> AdaptiveInit.withSubscriptions(fun _ctx -> subMap))
+          (fun _ctx _gameTime ->
+            if not(actions.GetValue().Started.IsEmpty) then
+              edgeReads <- edgeReads + 1)
+        |> AdaptiveProgram.withFixedStep {
+          StepSeconds = 0.01f
+          MaxStepsPerFrame = 5
+          MaxFrameSeconds = ValueNone
+        }
+
+      use runner = new AdaptiveHeadless<int>(program)
+
+      // Step 1 (10ms = one sub-step, empty accumulator) attaches the
+      // subscription and captures the emitter.
+      runner.Step(TimeSpan.FromMilliseconds 10) |> ignore
+      fire()
+
+      // A 5ms frame at a 10ms step converts to zero sub-steps: no Update
+      // runs, the queued clear stays queued, and the edges survive for the
+      // next sub-step's Update.
+      runner.Step(TimeSpan.FromMilliseconds 5) |> ignore
+
+      Expect.equal edgeReads 0 "A zero-sub-step frame runs no Update"
+
+      // 21ms accumulated: two sub-steps. The first reads the edges, the
+      // clear drains after it, the second reads a clean root.
+      runner.Step(TimeSpan.FromMilliseconds 16) |> ignore
+
+      Expect.equal
+        edgeReads
+        1
+        "The next sub-step's Update must read the surviving edges"
+
+    testCase "AdaptiveInput.subscribe clears again on every later frame"
+    <| fun _ ->
+      let actions: cval<ActionState<string>> = CVal.create ActionState.empty
+      let mutable edgeReads = 0
+      let mutable fire: unit -> unit = fun () -> ()
+
+      let attachDeltas(onState: ActionState<string> -> unit) =
+        fire <-
+          fun () ->
+            onState {
+              ActionState.empty with
+                  Started = Set.singleton "jump"
+                  Held = Set.singleton "jump"
+            }
+
+        { new IDisposable with
+            member _.Dispose() = ()
+        }
+
+      let sub = AdaptiveInput.subscribe attachDeltas actions
+      let subMap = AMap.ofList [ sub.Id, sub ]
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun _ctx ->
+            AdaptiveInit.ofFrameBuilder(fun () -> 0)
+            |> AdaptiveInit.withSubscriptions(fun _ctx -> subMap))
+          (fun _ctx _gameTime ->
+            if not(actions.GetValue().Started.IsEmpty) then
+              edgeReads <- edgeReads + 1)
+
+      use runner = new AdaptiveHeadless<int>(program)
+
+      // Step 1 attaches the subscription and captures the emitter.
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      // Three events in the first frame, two in the second: each frame's
+      // Update reads the merged edges exactly once, and the clear resets
+      // between frames.
+      fire()
+      fire()
+      fire()
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal edgeReads 1 "Three events in one frame are read once"
+
+      fire()
+      fire()
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal edgeReads 2 "A later frame's edges are read once more"
 
     testCase "Dispose detaches all subscriptions"
     <| fun _ ->
