@@ -243,6 +243,28 @@ type AdaptiveContext
   /// </summary>
   member _.Intents = intents
 
+/// The post lane of the runner that owns the step running on this thread.
+/// The input mapper's edge clear posts through it; there is no lane outside
+/// a step. Every step installs its lane before any drain runs, so a stale
+/// value from an earlier step is never read.
+type internal StepScope private () =
+
+  [<ThreadStatic; DefaultValue>]
+  static val mutable private postAfterUpdate: ((unit -> unit) -> unit) voption
+
+  /// Installs the post lane of the step about to run on this thread.
+  static member Install(postAfterUpdate: (unit -> unit) -> unit) =
+    StepScope.postAfterUpdate <- ValueSome postAfterUpdate
+
+  /// Posts work to the installed lane. Returns false outside a step, where
+  /// no lane exists.
+  static member TryPostAfterUpdate(work: unit -> unit) =
+    match StepScope.postAfterUpdate with
+    | ValueSome post ->
+      post work
+      true
+    | ValueNone -> false
+
 /// <summary>
 /// A subscription spec: a stable identifier plus an attach function. The
 /// adaptive counterpart of <see cref="T:Mibo.Elmish.Sub`1"/>: the attach
@@ -687,3 +709,58 @@ module AdaptiveProgram =
     (program: AdaptiveProgram<'Frame>)
     : AdaptiveProgram<'Frame> =
     { program with HasInput = true }
+
+namespace Mibo.Input
+
+open System
+open Mibo.Elmish
+open Mibo.Adaptive
+
+/// <summary>
+/// Builds the adaptive <see cref="T:Mibo.Input.ActionState`1"/> subscription
+/// shared by the backend input mappers.
+/// </summary>
+module AdaptiveInput =
+
+  /// <summary>
+  /// Builds an <see cref="T:Mibo.Adaptive.AdaptiveSub"/> from a function that
+  /// subscribes to input deltas. Every state built from an input delta is
+  /// written into the root at the step boundary, before <c>Update</c>, with
+  /// the edges merged (see
+  /// <see cref="M:Mibo.Input.ActionState.mergeEdges"/>); the consumed edges
+  /// are cleared after <c>Update</c>, before the frame is forced. So
+  /// <c>Update</c> reads each edge exactly once, and the next step starts
+  /// from an empty edge set. The after-update clear is internal to the
+  /// framework runner; the public <c>AdaptiveSub</c> contract is a single
+  /// pre-step post function.
+  /// </summary>
+  /// <param name="attachDeltas">
+  /// Subscribes to the input deltas and invokes the callback with each newly
+  /// built <c>ActionState</c>; the returned disposable detaches.
+  /// </param>
+  /// <param name="actions">The root the merged states are written into.</param>
+  let subscribe
+    (attachDeltas: (ActionState<'Action> -> unit) -> IDisposable)
+    (actions: cval<ActionState<'Action>>)
+    : AdaptiveSub =
+    let attach(post: (unit -> unit) -> unit) =
+      attachDeltas(fun state ->
+        post(fun () ->
+          let merged = ActionState.mergeEdges (actions.GetValue()) state
+          actions.Set merged
+
+          // The clear must land in the post lane: after Update, before the
+          // frame force. This merge runs inside the runner's step, where
+          // the step scope holds that lane. Post one clear for every merged
+          // state that has edges; a state without edges (a mouse move)
+          // posts nothing. Outside a step there is no lane and the edges
+          // persist, which is the behavior of a manual attach.
+          if not(merged.Started.IsEmpty) || not(merged.Released.IsEmpty) then
+            StepScope.TryPostAfterUpdate(fun () ->
+              actions.Set(ActionState.nextFrame(actions.GetValue())))
+            |> ignore))
+
+    {
+      Id = SubId.ofString "Mibo/Input/InputMapper/subscribeAdaptive"
+      Attach = attach
+    }

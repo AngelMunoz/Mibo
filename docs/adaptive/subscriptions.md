@@ -160,13 +160,13 @@ let subMap =
 
 ### Edges, not just held keys
 
-The mapper maintains an `ActionState` root with `Started` (pressed since you last cleared), `Released`, and `Held` sets. Edges accumulate between consumptions — a mouse event between a key press and its release doesn't drop the key's edges. Your update consumes the edges: one-shots read `Started`, continuous movement reads `Held`.
+The mapper maintains an `ActionState` root with `Started`, `Released`, and `Held` sets. Edges accumulate within a step — a mouse event between a key press and its release doesn't drop the key's edges. Your update consumes the edges: one-shots read `Started`, continuous movement reads `Held`. The subscription clears `Started` and `Released` after `Update`, before the frame is forced, so every step reads fresh edges.
 
 ```fsharp
 let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
     let actions = world.Actions |> AVal.getValue
 
-    // One-shots: started since the last clear
+    // One-shots: started this step
     for a in actions.Started do
         match a with
         | GameAction.SelectTower slot -> selectTower slot
@@ -179,15 +179,9 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
         pan <- pan + panStep a
 
     world.Pan.Set pan
-
-    // Clear the consumed edges so next frame sees fresh ones,
-    // but only when there are any: an empty clear still marks the
-    // root as changed and re-runs everything derived from it
-    if not actions.Started.IsEmpty || not actions.Released.IsEmpty then
-        world.Actions.Set(ActionState.nextFrame actions)
 ```
 
 Two habits from that example:
 
 * **Continuous actions read `Held`, not edge arithmetic.** A direction is the sum of what's held right now — if a key-press edge is ever lost, an edge-based accumulation would leave the pan stuck; a rebuilt-from-held direction can't.
-* **Clear the edges after consuming them** (`ActionState.nextFrame`), or a one-shot fires on every frame it's held. Clear only when an edge set is non-empty; an empty clear still marks the root as changed and re-runs everything derived from it. Note that clearing hides the edges from anything derived off the root — if you need a projection over `Started`, derive it instead of clearing first.
+* **Read `Started` in `Update` and nowhere else.** The edges are cleared after `Update`, before the frame is forced, so a projection over `Started` forced in the frame builder never sees them: read the edges (or materialize the derived value) in `Update` instead.

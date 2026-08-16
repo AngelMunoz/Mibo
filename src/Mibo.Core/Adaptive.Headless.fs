@@ -84,6 +84,11 @@ type AdaptiveHeadless<'Frame>
   // no thread affinity — only its drains do (owner thread, inside Step).
   let intents = IntentQueue()
 
+  // The post lane as a function, captured once for the step scope: reading
+  // a member per step (member eta) allocates a fresh closure on the frame
+  // path.
+  let postLane = intents.post
+
   // Attached subscription disposables, keyed by SubId. The runtime diffs the
   // program's subscription projection against this table every step: new key
   // → attach, missing key → detach, surviving key → keep (identity is the key).
@@ -251,6 +256,13 @@ type AdaptiveHeadless<'Frame>
       // Note: ticks comparison, not `elapsed < TimeSpan.Zero` — F# generic
       // comparison boxes both operands (48 bytes/call on the frame path).
       let elapsed = if elapsed.Ticks < 0L then TimeSpan.Zero else elapsed
+
+      // Install this step's post lane in the step scope before any drain
+      // runs: the input mapper's edge clear posts through it. Every step
+      // installs its lane first, so a stale value from a failed step is
+      // never read. postLane is captured once per runner; the install does
+      // not allocate.
+      StepScope.Install postLane
 
       // Frame boundary: apply cross-thread
       // posts (e.g. input-thread writes), then drain the next-frame lane —

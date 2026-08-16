@@ -299,30 +299,33 @@ module InputMapper =
   /// <summary>
   /// Adaptive subscription that builds an <see cref="T:Mibo.Input.ActionState`1"/> from
   /// the registered <see cref="T:Mibo.Input.IInput"/> observables and the supplied map,
-  /// writing it into the <paramref name="actions"/> root through the pre-step lane —
-  /// the adaptive counterpart of <see cref="M:Mibo.Input.InputMapper.subscribe"/> with
-  /// the root as the sink (no <c>'Msg</c>, no dispatch). The state is built at event
-  /// time (owner thread, during the host's input poll); only the root write is
-  /// deferred, applied at the step boundary before <c>Update</c>, so the update phase
-  /// and the frame force read the settled state.
+  /// and writes it into the <paramref name="actions"/> root. This is the
+  /// adaptive counterpart of <see cref="M:Mibo.Input.InputMapper.subscribe"/> with
+  /// the root as the sink (no <c>'Msg</c>, no dispatch). The state is built at
+  /// event time (owner thread, during the host's input poll); the writes are
+  /// deferred to framework-owned moments: each build is merged into the root
+  /// at the step boundary, before <c>Update</c>, and the consumed edges are
+  /// cleared after <c>Update</c>, before the frame is forced. Edge handling
+  /// is shared with the raylib backend (see
+  /// <see cref="M:Mibo.Input.AdaptiveInput.subscribe"/>).
   /// </summary>
   /// <remarks>
   /// <para>
   /// CONSUMING: <c>Held</c> is current truth — derive projections from it freely
-  /// (<c>actions |&gt; AVal.map (fun s -> s.Held.Contains Jump)</c>, or read it in the
-  /// frame builder). <c>Started</c>/<c>Released</c> are EDGE EVENTS and must be
-  /// consumed exactly once, in <c>Update</c>, read-then-clear — unlike the MVU
-  /// subscribe, where every delta dispatches and "Started" means "pressed this
-  /// frame", the root keeps the edges until they are cleared:
+  /// (<c>actions |&gt; AVal.map (fun s -&gt; s.Held.Contains Jump)</c>, or read it in the
+  /// frame builder). <c>Started</c>/<c>Released</c> are EDGE EVENTS: read them in
+  /// <c>Update</c> exactly once. The subscription clears them after
+  /// <c>Update</c> (after each fixed sub-step's <c>Update</c>, before the
+  /// frame is forced), so the next step reads fresh edges:
   /// <code>
   ///   let s = actions |&gt; AVal.getValue
   ///   for a in s.Started do handleStarted a
-  ///   actions.Set(ActionState.nextFrame s)   // clear the consumed edges
   /// </code>
-  /// Skip the clear and the edges stay for the whole session (a <c>Contains</c>
-  /// check would fire forever after the first press); derive a projection from
-  /// <c>Started</c> instead of reading it in <c>Update</c> and the clear hides the
-  /// events from that projection. Read the edges in <c>Update</c>, clear, done.
+  /// A manual <c>actions.Set(ActionState.nextFrame s)</c> write stays legal
+  /// but is redundant; the root's equality gate makes it free. Because the
+  /// clear runs before the frame force, a projection over <c>Started</c>
+  /// forced in the frame builder never sees the edges: read the edges (or
+  /// materialize the derived value) in <c>Update</c> instead.
   /// </para>
   /// <para>
   /// EDGES ACCUMULATE between consumptions: every delta (keyboard, mouse,
@@ -335,9 +338,10 @@ module InputMapper =
   /// COST: the write is cheap (merging with empty edges reuses the existing sets;
   /// the changeable's equality gate skips no-op writes), but the BUILD is real
   /// per-event work — the same cost the Msg-dispatching <c>subscribe</c> pays, one
-  /// build per delta. Do not skip empty-delta builds: the rebuild re-derives
-  /// <c>Held</c> from live polling at event time, which is how a missed release
-  /// heals for Held-based consumers.
+  /// build per delta. The edge clear costs one closure per state that has edges,
+  /// and nothing on frames without input events. Do not skip empty-delta builds:
+  /// the rebuild re-derives <c>Held</c> from live polling at event time, which is
+  /// how a missed release heals for Held-based consumers.
   /// </para>
   /// <para>
   /// FRAME ONE: subscriptions attach at the first <c>Step</c>'s diff, which runs
@@ -350,14 +354,7 @@ module InputMapper =
     (actions: cval<ActionState<'Action>>)
     (ctx: GameContext)
     : AdaptiveSub =
-    let subId = SubId.ofString "Mibo/Input/InputMapper/subscribeAdaptive"
-
-    let attach(post: (unit -> unit) -> unit) =
-      attachDeltas getMap ctx (fun state ->
-        post(fun () ->
-          actions.Set(ActionState.mergeEdges (actions.GetValue()) state)))
-
-    { Id = subId; Attach = attach }
+    AdaptiveInput.subscribe (attachDeltas getMap ctx) actions
 
   /// <summary>
   /// Adaptive subscription variant for a fixed (non-changing) InputMap.
