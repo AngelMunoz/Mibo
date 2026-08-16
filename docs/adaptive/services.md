@@ -1,52 +1,125 @@
 ---
-title: Adaptive Services
+title: Services
 category: Adaptive
 categoryindex: 3
-index: 6
+index: 7
 ---
 
 # Services in Adaptive Programs
 
-Games need things that aren't game state: audio, networking, save files. The [service composition guide](../services.html) covers the pattern in depth — build your services first, keep them in a record, pass them where needed. Everything there applies here too. This page is about the parts that work differently.
+As your game grows, you will likely need services that are shared across your update and frame functions—things like Audio, Networking, or Save Data.
 
-## Setup has a natural home
+Instead of passing these individually or relying on global state, create a strongly typed "Composition Root" or "Environment" record. The [Elmish version of this guide](../mvu/services.html) covers the same pattern for that runtime; this page is the adaptive one, end to end.
 
-Your program gets a `boot` function that runs once, before the first frame, and receives the game context. That's the place for anything a service needs before it can work — connecting, loading, subscribing:
+## The Environment Context
+
+You should initialize your services **before** you build the program. This ensures they are ready immediately and avoids the "circular dependency" trap.
 
 ```fsharp
-let boot (ctx: AdaptiveFrameContext) =
-    env.Network.Connect()
+// The "Env" pattern
+type Env = {
+    Audio: IAudioService
+    Save: ISaveService
+}
+
+// 1. Create the environment independent of the program
+let createEnv() = {
+    Audio = AudioService.create()
+    Save = SaveService.create()
+}
 ```
 
-On the Elmish side you sometimes need a service that can't be built until the game context exists, which forces awkward workarounds. Here there's no such corner: build what you can before the program, do the rest in `boot`.
+## Full Program Example
 
-## Framework services
+Here is the whole picture — an environment with two services, a small world, and the three functions from [Adaptive Programs](program.html). The environment is created in `main` and captured by `start`; update and frame receive it through their signatures.
 
-Some services are already there — the asset cache, the input service. Pull them from the context when you need them instead of building your own:
+```fsharp
+open System.Numerics
+open Mibo.Adaptive
+open Mibo.Elmish
+
+type Gem = { Pos: Vector2; Taken: bool }
+
+type World = {
+    Gems: cmap<int, Gem>
+    Score: cval<int>
+}
+
+/// Everything the renderer needs, packed once per frame.
+type Frame = {
+    Gems: System.Collections.Generic.IReadOnlyDictionary<int, Gem>
+    Score: int
+}
+
+let update (env: Env) (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
+    let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
+
+    let taken =
+        [ for KeyValue(id, gem) in world.Gems |> AMap.getValue do
+            let moved = { gem with Pos = gem.Pos + Vector2(dt, 0f) }
+            world.Gems |> CMap.addOrUpdate id moved
+            if moved.Pos.X > 10f then Some id else None ]
+
+    for id in List.choose id taken do
+        world.Gems |> CMap.remove id
+        world.Score.UpdateTo((world.Score |> AVal.getValue) + 1) |> ignore
+        // Synchronous service call — one-shot sounds are cheap
+        env.Audio.PlayPickup()
+
+    // Autosave every ten pickups, off the game thread
+    if (world.Score |> AVal.getValue) % 10 = 0 then
+        let snapshot = world.Score |> AVal.getValue
+
+        ctx.Intents.postTask(fun () -> env.Save.SaveScoreAsync(snapshot))
+
+let frame (world: World) : Frame =
+    { Gems = world.Gems |> AMap.getValue
+      Score = world.Score |> AVal.getValue }
+
+let start (env: Env) =
+    let world = { Gems = CMap.empty; Score = CVal.create 0 }
+
+    AdaptiveProgram.mkProgram
+        (fun ctx ->
+            // Services that need the game context (asset caches, audio
+            // devices) initialize here — once, before the first frame
+            env.Audio.Init(ctx.Context)
+            AdaptiveInit.ofFrameBuilder(fun () -> frame world))
+        (fun ctx gameTime -> update env world ctx gameTime)
+    |> AdaptiveProgram.withConfig (fun _ ->
+        { GameConfig.defaultConfig with Title = "Gems" })
+    |> AdaptiveProgram.withRenderer (fun () -> Renderer2D.create draw)
+
+[<EntryPoint>]
+let main _ =
+    // 2. Create the environment FIRST, then the program
+    let env = createEnv()
+    let game = AdaptiveRaylibGame<Frame>(start env)
+    game.Run()
+    0
+```
+
+## Avoiding Circular References
+
+A common pitfall is a service that needs the `GameContext` (to load sounds, say), which only exists once the host is running — so it feels like the service can't be built first.
+
+On the adaptive side this has a clean answer: build the service in `createEnv` without the context, and give it an `Init(ctx)` method you call where the example does — inside the program's setup, which runs before the first frame and already receives the context. No mutable "initialized later" fields, no `ref` cells.
+
+Framework services are already registered for you — pull them from the context instead of building your own:
 
 ```fsharp
 let assets = ctx.Context |> GameContext.getService<IAssets>
 ```
 
-## Background work comes back through post
+## A Note on Async & The Game Loop
 
-Never touch game state from a background thread — the containers are single-threaded by design. Use `ctx.Intents.postTask` (or `postAsync`), and its completion runs on the game thread where writes are allowed:
+Background work follows the same rules as everywhere in an adaptive game: never touch state containers from another thread. Queue the work with `ctx.Intents.postTask` or `postAsync`, and post the result back when it completes:
 
-```fsharp
-ctx.Intents.postTask(fun () ->
-    env.SaveData.SaveAsync(snapshot))
-```
+1. Your `update` returns immediately — the frame is not delayed.
+2. The work runs in the background.
+3. The game loop keeps running (updating, drawing).
+4. When it completes, post the result and it applies on the game thread.
 
-A task that needs the result back in the game posts it:
+This means you can safely perform heavy I/O (network requests, file saving) without frame stutters.
 
-```fsharp
-ctx.Intents.postTask(fun () ->
-    task {
-        let! scores = env.Leaderboard.Fetch()
-        do ctx.Intents.post(fun () -> scoresCVal.Set scores)
-    })
-```
-
-## Counters and diagnostics
-
-Frame counters, cost timers, "how many entities" stats: keep them as plain mutable fields on your world, and write to them from `update` (or the frame function). Resist the urge to increment a global from inside a derived value's computation — derived values are supposed to be pure, and a hidden write in one is invisible to everything else.
+One last habit worth keeping: frame counters, cost timers, and debug stats are plain mutable fields on your world, written from `update`. Don't increment a global from inside a derived value's computation — derived values are supposed to be pure, and a hidden write in one is invisible to everything else.

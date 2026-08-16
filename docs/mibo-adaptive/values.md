@@ -1,5 +1,5 @@
 ---
-title: Adaptive Values
+title: Values
 category: Mibo.Adaptive
 categoryindex: 4
 index: 2

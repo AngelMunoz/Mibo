@@ -1,5 +1,5 @@
 ---
-title: Adaptive Performance
+title: Performance
 category: Mibo.Adaptive
 categoryindex: 4
 index: 5

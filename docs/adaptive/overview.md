@@ -1,5 +1,5 @@
 ---
-title: Adaptive Overview
+title: Overview
 category: Adaptive
 categoryindex: 3
 index: 1
@@ -38,8 +38,10 @@ If your game is turn-based, menu-driven, or small enough that recomputing everyt
 ## Where to go next
 
 * [Adaptive Programs](program.html) — writing your first adaptive game and running it.
-* [Adaptive Systems](systems.html) — keeping a growing game organized.
+* [Intents](intents.html) — deferring work to the right moment.
+* [Subscriptions](subscriptions.html) — input, timers, network: events that arrive on their own.
+* [Systems](systems.html) — keeping a growing game organized.
 * [Scaling Adaptive](scaling.html) — how the architecture grows with your game.
-* [Adaptive Input](input.html) — keyboard and mouse.
-* [Adaptive Services](services.html) — audio, networking, save data.
+* [Services](services.html) — audio, networking, save data.
+* [Headless Mode](headless.html) — testing and servers, no window.
 * [Mibo.Adaptive](../mibo-adaptive/overview.html) — the library behind all of this, if you want the details.

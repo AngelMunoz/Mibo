@@ -1,5 +1,5 @@
 ---
-title: Mibo.Adaptive Overview
+title: Overview
 category: Mibo.Adaptive
 categoryindex: 4
 index: 1

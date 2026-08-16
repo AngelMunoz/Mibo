@@ -1,5 +1,5 @@
 ---
-title: Adaptive Collections
+title: Collections
 category: Mibo.Adaptive
 categoryindex: 4
 index: 3

@@ -1,8 +1,8 @@
 ---
-title: Scaling Adaptive
+title: Scaling
 category: Adaptive
 categoryindex: 3
-index: 4
+index: 6
 ---
 
 # Scaling an Adaptive Game (Simple → Complex)

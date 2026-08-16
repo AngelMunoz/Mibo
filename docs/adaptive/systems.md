@@ -1,8 +1,8 @@
 ---
-title: Adaptive Systems
+title: Systems
 category: Adaptive
 categoryindex: 3
-index: 3
+index: 5
 ---
 
 # Organizing a Growing Game

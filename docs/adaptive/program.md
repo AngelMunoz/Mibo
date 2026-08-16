@@ -1,5 +1,5 @@
 ---
-title: Adaptive Programs
+title: Programs
 category: Adaptive
 categoryindex: 3
 index: 2
@@ -114,7 +114,7 @@ game.Run()
 | `AdaptiveMonoGameGame<'Frame>` | MonoGame |
 | `AdaptiveHeadless<'Frame>` | none — for tests and servers |
 
-For tests, `AdaptiveHeadless` steps the same loop by hand: `runner.Step(dt)` runs one frame, `runner.Frame` gives you the packed frame to assert on, and `runner.StepUntil(predicate, dt, maxFrames)` plays the game until something becomes true.
+For tests, `AdaptiveHeadless` steps the same loop without a window — that's [Headless Mode](headless.html).
 
 ## Doing work after update
 
@@ -127,7 +127,7 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
         world.Honey.UpdateTo((world.Honey |> AVal.getValue) + 1) |> ignore)
 ```
 
-Queued work runs right after `update` finishes, before the frame is packed. There are variants for "next frame" (`postNextFrame`) and for background work whose result comes back safely on the game thread (`postTask`, `postAsync`) — handy for file IO and network calls.
+Queued work runs right after `update` finishes, before the frame is packed. There are variants for "next frame" and for background work — [Intents](intents.html) covers when to use which.
 
 ## Time and one-time setup
 
