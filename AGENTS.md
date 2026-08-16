@@ -23,7 +23,7 @@ All of the projects live in the `src` folder:
 - `Mibo.Raylib`: raylib backend (depends on `Mibo.Core`)
 - `Mibo.MonoGame`: MonoGame backend, DesktopGL/OpenGL and WindowsDX/DirectX (depends on `Mibo.Core`)
 - `Mibo.Core.Tests` / `Mibo.Raylib.Tests` / `Mibo.MonoGame.Tests`: the per-package test suites
-- `Templates`: the `Mibo.Templates` NuGet package — `mibo-2d`/`mibo-3d` (raylib) and `mibo-mg-2d`/`mibo-mg-3d` (MonoGame) `dotnet new` starters
+- `Templates`: the `Mibo.Templates` NuGet package — `dotnet new` starters for both runtimes: `mibo-2d`/`mibo-3d` (raylib) and `mibo-mg-2d`/`mibo-mg-3d` (MonoGame) scaffold the MVU runtime; the same names with an `-adaptive` suffix (`mibo-2d-adaptive`, `mibo-mg-3d-adaptive`, …) scaffold the adaptive runtime
 
 Sample games live in a separate repository: [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) — including the 2D platformer, the 3D platformer, SpaceBattle, PingPong, and the FPS sample.
 

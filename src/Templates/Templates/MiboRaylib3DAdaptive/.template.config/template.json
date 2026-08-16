@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Mibo Authors",
+  "classifications": ["Game", "Mibo", "Raylib", "3D", "Adaptive"],
+  "name": "Mibo Raylib 3D Adaptive Game",
+  "identity": "Mibo.Templates.Raylib.3D.Adaptive",
+  "shortName": "mibo-3d-adaptive",
+  "tags": {
+    "language": "F#",
+    "type": "project"
+  },
+  "sourceName": "MiboRaylib3DAdaptive",
+  "preferNameDirectory": true
+}

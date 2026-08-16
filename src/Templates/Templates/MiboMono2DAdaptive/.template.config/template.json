@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Mibo Authors",
+  "classifications": ["Game", "Mibo", "MonoGame", "2D", "Adaptive"],
+  "name": "Mibo MonoGame 2D Adaptive Game",
+  "identity": "Mibo.Templates.MonoGame.2D.Adaptive",
+  "shortName": "mibo-mg-2d-adaptive",
+  "tags": {
+    "language": "F#",
+    "type": "project"
+  },
+  "sourceName": "MiboMono2DAdaptive",
+  "preferNameDirectory": true
+}
