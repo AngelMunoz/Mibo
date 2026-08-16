@@ -6,6 +6,7 @@ open System.Threading.Tasks
 open Expecto
 open Mibo.Adaptive
 open Mibo.Elmish
+open IcedTasks
 
 [<Struct>]
 type TestFrame = { Position: float32; Velocity: float32 }
@@ -525,60 +526,51 @@ let adaptiveHeadlessTests =
       use runner = new AdaptiveHeadless<float32>(program)
 
       use cts = new CancellationTokenSource()
+      let results = ResizeArray<struct (float32 * float)>()
 
-      task {
-        let results = ResizeArray<struct (float32 * float)>()
-        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
-        let enumerator = enum.GetAsyncEnumerator(cts.Token)
-        let sw = System.Diagnostics.Stopwatch.StartNew()
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-        try
-          let mutable running = true
+        for outcome in runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          results.Add(
+            struct (outcome.Frame, outcome.GameTime.TotalTime.TotalSeconds)
+          )
 
-          while running && sw.Elapsed < TimeSpan.FromSeconds 10 do
-            try
-              let! hasNext = enumerator.MoveNextAsync().AsTask()
+          // Init has run by the first frame, so the root handle is
+          // published; cross-thread writes go through Post and land at
+          // the next step boundary on the game thread.
+          if results.Count = 1 then
+            getRoot().Post(2.0f)
 
-              if hasNext then
-                let outcome = enumerator.Current
-
-                results.Add(
-                  struct (outcome.Frame, outcome.GameTime.TotalTime.TotalSeconds)
-                )
-
-                // Init has run by the first frame, so the root handle is
-                // published; cross-thread writes go through Post and land at
-                // the next step boundary on the game thread.
-                if results.Count = 1 then
-                  getRoot().Post(2.0f)
-
-                // Stop once the posted value shows up in a frame.
-                if outcome.Frame = 2.0f then
-                  running <- false
-              else
-                running <- false
-            with :? OperationCanceledException ->
-              running <- false
-        finally
-          enumerator.DisposeAsync().AsTask().Wait()
-
-        Expect.isGreaterThanOrEqual
-          results.Count
-          2
-          "Should yield at least 2 frames"
-
-        let struct (first, _) = results[0]
-        Expect.equal first 0.0f "First frame should carry the initial value"
-
-        let posted = results |> Seq.exists(fun struct (v, _) -> v = 2.0f)
-        Expect.isTrue posted "Posted value should land in a later frame"
-
-        let struct (_, t1) = results[0]
-        let struct (_, t2) = results[1]
-        Expect.isGreaterThan t2 t1 "Time should advance between frames"
+          // Stop once the posted value shows up in a frame; the timeout
+          // bounds the wait if it never does.
+          if outcome.Frame = 2.0f then
+            cts.Cancel()
       }
-      |> Async.AwaitTask
-      |> Async.RunSynchronously
+
+      try
+        Async.RunSynchronously(
+          work,
+          timeout = 500,
+          cancellationToken = cts.Token
+        )
+      with :? OperationCanceledException ->
+        ()
+
+      Expect.isGreaterThanOrEqual
+        results.Count
+        2
+        "Should yield at least 2 frames"
+
+      let struct (first, _) = results[0]
+      Expect.equal first 0.0f "First frame should carry the initial value"
+
+      let posted = results |> Seq.exists(fun struct (v, _) -> v = 2.0f)
+      Expect.isTrue posted "Posted value should land in a later frame"
+
+      let struct (_, t1) = results[0]
+      let struct (_, t2) = results[1]
+      Expect.isGreaterThan t2 t1 "Time should advance between frames"
 
     testCase "RunAsync with already-cancelled token yields nothing"
     <| fun _ ->
@@ -593,29 +585,25 @@ let adaptiveHeadlessTests =
 
       use cts = new CancellationTokenSource()
       cts.Cancel()
+      let mutable count = 0
 
-      task {
-        let mutable count = 0
-        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
-        let enumerator = enum.GetAsyncEnumerator(cts.Token)
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-        try
-          let mutable running = true
-
-          while running do
-            try
-              let! hasNext = enumerator.MoveNextAsync().AsTask()
-
-              if hasNext then count <- count + 1 else running <- false
-            with :? OperationCanceledException ->
-              running <- false
-        finally
-          enumerator.DisposeAsync().AsTask().Wait()
-
-        Expect.equal count 0 "Should not yield any frames"
+        for _ in runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          count <- count + 1
       }
-      |> Async.AwaitTask
-      |> Async.RunSynchronously
+
+      try
+        Async.RunSynchronously(
+          work,
+          timeout = 500,
+          cancellationToken = cts.Token
+        )
+      with :? OperationCanceledException ->
+        ()
+
+      Expect.equal count 0 "Should not yield any frames"
 
     testCase "RunAsync with zero interval throws ArgumentException"
     <| fun _ ->
@@ -637,27 +625,25 @@ let adaptiveHeadlessTests =
           (fun _ctx _gameTime -> ())
 
       use runner = new AdaptiveHeadless<float32>(program)
+      let mutable sawBoom = false
 
-      task {
-        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16))
-        let enumerator = enum.GetAsyncEnumerator()
-        let mutable sawBoom = false
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-        try
-          try
-            let! _ = enumerator.MoveNextAsync().AsTask()
-            () // No throw: the failure was not surfaced.
-          with ex ->
-            sawBoom <- ex.Message = "boom"
-        finally
-          enumerator.DisposeAsync().AsTask().Wait()
-
-        Expect.isTrue
-          sawBoom
-          "MoveNextAsync should rethrow the game-thread failure"
+        for _ in runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          ()
       }
-      |> Async.AwaitTask
-      |> Async.RunSynchronously
+
+      try
+        Async.RunSynchronously(work, timeout = 500)
+      with ex ->
+        // No AggregateException unwrap: the runner rethrows the stored
+        // game-thread failure via ExceptionDispatchInfo.
+        sawBoom <- ex.Message = "boom"
+
+      Expect.isTrue
+        sawBoom
+        "MoveNextAsync should rethrow the game-thread failure"
 
     testCase "RunAsync rejects a second concurrent enumerator"
     <| fun _ ->
@@ -1053,41 +1039,37 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
 
       use runner = new AdaptiveHeadless<int>(program)
       use cts = new CancellationTokenSource()
+      let mutable seen = 0
 
-      task {
-        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
-        let enumerator = enum.GetAsyncEnumerator(cts.Token)
-        let sw = System.Diagnostics.Stopwatch.StartNew()
-        let mutable seen = 0
-        let mutable running = true
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-        try
-          while running && sw.Elapsed < TimeSpan.FromSeconds 10 do
-            let! hasNext = enumerator.MoveNextAsync().AsTask()
-
-            if hasNext then
-              let frame = enumerator.Current.Frame
-
-              if frame = 42 then
-                seen <- frame
-                running <- false
-            else
-              running <- false
-        finally
-          enumerator.DisposeAsync().AsTask().Wait()
-
-        Expect.equal
-          seen
-          42
-          "The completion's root write should reach a later frame"
-
-        Expect.notEqual
-          onDoneThreadId
-          testThreadId
-          "The completion should run on the game thread, not the test thread"
+        for outcome in runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          // The completion's write lands at a post drain; stop once it
+          // reaches a frame — bounded by the timeout if it never does.
+          if outcome.Frame = 42 then
+            seen <- outcome.Frame
+            cts.Cancel()
       }
-      |> Async.AwaitTask
-      |> Async.RunSynchronously
+
+      try
+        Async.RunSynchronously(
+          work,
+          timeout = 500,
+          cancellationToken = cts.Token
+        )
+      with :? OperationCanceledException ->
+        ()
+
+      Expect.equal
+        seen
+        42
+        "The completion's root write should reach a later frame"
+
+      Expect.notEqual
+        onDoneThreadId
+        testThreadId
+        "The completion should run on the game thread, not the test thread"
 
     testCase "postTask error path delivers the exception through RunAsync"
     <| fun _ ->
@@ -1114,38 +1096,35 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
       use runner = new AdaptiveHeadless<float32>(program)
       use cts = new CancellationTokenSource()
 
-      task {
-        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
-        let enumerator = enum.GetAsyncEnumerator(cts.Token)
-        let sw = System.Diagnostics.Stopwatch.StartNew()
-        let mutable running = true
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-        try
-          while running && sw.Elapsed < TimeSpan.FromSeconds 10 do
-            let! hasNext = enumerator.MoveNextAsync().AsTask()
-
-            if hasNext then
-              // Keep consuming outcomes until the error handler runs or the
-              // wall-clock deadline passes.
-              running <- not onErrorRan
-            else
-              running <- false
-        finally
-          enumerator.DisposeAsync().AsTask().Wait()
-
-        Expect.isTrue onErrorRan "The error handler should have run"
-
-        // AwaitTask surfaces a faulted task's AggregateException, so assert the
-        // inner message rather than the exact wrapper text.
-        Expect.stringContains
-          receivedMessage
-          "boom"
-          "The error handler should receive the exception"
-
-        Expect.isFalse onDoneRan "The done handler must not run on failure"
+        for _ in runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          // Keep consuming outcomes until the error handler runs —
+          // bounded by the timeout if it never does.
+          if onErrorRan then
+            cts.Cancel()
       }
-      |> Async.AwaitTask
-      |> Async.RunSynchronously
+
+      try
+        Async.RunSynchronously(
+          work,
+          timeout = 500,
+          cancellationToken = cts.Token
+        )
+      with :? OperationCanceledException ->
+        ()
+
+      Expect.isTrue onErrorRan "The error handler should have run"
+
+      // The handler runs on the game thread (posted intent); the message
+      // arrives unwrapped through the asyncEx/Async pipeline.
+      Expect.stringContains
+        receivedMessage
+        "boom"
+        "The error handler should receive the exception"
+
+      Expect.isFalse onDoneRan "The done handler must not run on failure"
 
     testCase
       "RunAsync yields outcomes; postTask completions re-enter via the intent queue"
@@ -1154,46 +1133,39 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
       use runner = new AdaptiveHeadless<int>(program)
       use cts = new CancellationTokenSource()
 
-      task {
-        let outcomes = ResizeArray<StepOutcome<int>>()
-        let enum = runner.RunAsync(TimeSpan.FromMilliseconds(16), cts.Token)
-        let enumerator = enum.GetAsyncEnumerator(cts.Token)
+      let outcomes = ResizeArray<StepOutcome<int>>()
 
-        try
-          let mutable running = true
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-          while running do
-            try
-              let! hasNext = enumerator.MoveNextAsync().AsTask()
+        for outcome in runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          outcomes.Add outcome
 
-              if hasNext then
-                outcomes.Add enumerator.Current
-
-                if outcomes.Count >= 12 then
-                  cts.Cancel()
-              else
-                running <- false
-            with :? OperationCanceledException ->
-              running <- false
-        finally
-          enumerator.DisposeAsync().AsTask().Wait()
-
-        Expect.isGreaterThanOrEqual
-          outcomes.Count
-          12
-          "Should yield at least 12 outcomes"
-
-        Expect.equal
-          outcomes[0].Frame
-          0
-          "The first outcome predates the async completion"
-
-        Expect.isTrue
-          (outcomes |> Seq.exists(fun outcome -> outcome.Frame = 99))
-          "The async completion's root write should appear in a later outcome"
+          // The completion's write lands at a post drain: stop once it
+          // shows up in a frame. No fixed frame budget — the timeout
+          // bounds the wait, so a slow completion still passes and a
+          // lost one fails loudly instead of flaking on timing.
+          if outcome.Frame = 99 then
+            cts.Cancel()
       }
-      |> Async.AwaitTask
-      |> Async.RunSynchronously
+
+      try
+        Async.RunSynchronously(
+          work,
+          timeout = 500,
+          cancellationToken = cts.Token
+        )
+      with :? OperationCanceledException ->
+        ()
+
+      Expect.equal
+        outcomes[0].Frame
+        0
+        "The first outcome predates the async completion"
+
+      Expect.isTrue
+        (outcomes |> Seq.exists(fun outcome -> outcome.Frame = 99))
+        "The async completion's root write should appear in a later outcome"
 
     testCase "FixedStep settles after each sub-step's Update"
     <| fun _ ->
