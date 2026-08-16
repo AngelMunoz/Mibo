@@ -17,7 +17,7 @@ An adaptive game is three things you write, plus one loop the framework runs.
 
 **The frame.** A function that packs what the renderer needs into a single value. It runs after update, once per frame.
 
-Here is a complete, runnable game — bees fly around, and each one that leaves the meadow scores a honey:
+Here is a complete game — bees fly around, and each one that leaves the meadow scores a honey:
 
 ```fsharp
 open System.Numerics
@@ -39,7 +39,7 @@ type Frame = {
 
 let meadowWidth = 40f
 
-let update (world: World) (gameTime: GameTime) =
+let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
     let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
 
     // Move every bee; remember who flew past the edge
@@ -48,43 +48,35 @@ let update (world: World) (gameTime: GameTime) =
             let moved = { bee with Pos = bee.Pos + bee.Dir * dt }
             world.Bees |> CMap.addOrUpdate id moved
             if moved.Pos.X > meadowWidth then Some id else None ]
+        |> List.choose id
 
     // Score and despawn after the loop, one honey per leaver
-    for id in List.choose id leavers do
+    for id in leavers do
         world.Bees |> CMap.remove id
         world.Honey.UpdateTo((world.Honey |> AVal.getValue) + 1) |> ignore
 
 let frame (world: World) : Frame =
     { Bees = world.Bees |> AMap.getValue
       Honey = world.Honey |> AVal.getValue }
-```
 
-## Wiring it together
+/// init: called once at startup with the frame context.
+let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
+    AdaptiveInit.ofFrameBuilder(fun () -> frame world)
 
-`AdaptiveProgram.mkProgram` takes two functions: one that builds the initial state and returns the frame builder, one that runs each frame. Write a single `start` function that creates the world and closes over it — both halves see the same state, and nothing else has to know how to reach it:
+let world = { Bees = CMap.ofList [ 0, { Pos = Vector2.Zero; Dir = Vector2.One } ]
+              Honey = CVal.create 0 }
 
-```fsharp
-let start() =
-    let world = { Bees = CMap.ofList [ 0, { Pos = Vector2.Zero; Dir = Vector2.One } ]
-                  Honey = CVal.create 0 }
-
-    AdaptiveProgram.mkProgram
-        (fun _ -> AdaptiveInit.ofFrameBuilder(fun () -> frame world))
-        (fun _ gameTime -> update world gameTime)
-    |> AdaptiveProgram.withConfig (fun _ ->
-        { GameConfig.defaultConfig with
-            Title = "Bees"
-            Width = 1280
-            Height = 720 })
+let program =
+    AdaptiveProgram.mkProgram (init world) (update world)
+    |> AdaptiveProgram.withConfig (GameConfig.withTitle "Bees")
     |> AdaptiveProgram.withRenderer (fun () -> Renderer2D.create draw)
 
-[<EntryPoint>]
-let main _ =
-    AdaptiveRaylibGame<Frame>(start()).Run()
-    0
+AdaptiveRaylibGame<Frame>(program).Run()
 ```
 
-> **NOTE:** if update grows to the point where you want each feature's logic in its own module, the same closure pattern still works — the world record is the thing you close over. See [Adaptive Systems](systems.html).
+`update world` and `init world` are your named functions, partially applied — `mkProgram` receives `init world : AdaptiveFrameContext -> AdaptiveInit<Frame>` and `update world : AdaptiveContext -> GameTime -> unit`, exactly the shapes it asks for. The renderer's `draw` is your drawing function, reading the `Frame` — [rendering](../rendering.html) covers how to write one.
+
+> **NOTE:** when the game grows, the world record is still the thing you apply — `init world` and `update world` keep working as features get added to `World`. See [Systems](systems.html).
 
 ## The loop the framework runs
 
@@ -92,7 +84,7 @@ Every frame, in order:
 
 1. Poll input (keyboard, mouse).
 2. Run your `update`.
-3. Run any work you queued during update (more on `post` below).
+3. Run any work you queued during update ([Intents](intents.html)).
 4. Call your `frame` function and hand the result to the renderers.
 5. Draw.
 
@@ -100,48 +92,43 @@ You don't write this loop. The part that matters for your code: `update` always 
 
 ## Other backends and headless runs
 
-Only the host line changes:
+Only the last line changes between backends — the program is the same:
 
 ```fsharp
 // MonoGame:
-let game = AdaptiveMonoGameGame<Frame>(start())
-game.Run()
+AdaptiveMonoGameGame<Frame>(program).Run()
+
+// No window at all — tests and servers:
+let runner = AdaptiveHeadless(program)
 ```
 
 | Host | Backend |
 |---|---|
 | `AdaptiveRaylibGame<'Frame>` | raylib |
 | `AdaptiveMonoGameGame<'Frame>` | MonoGame |
-| `AdaptiveHeadless<'Frame>` | none — for tests and servers |
-
-For tests, `AdaptiveHeadless` steps the same loop without a window — that's [Headless Mode](headless.html).
+| `AdaptiveHeadless<'Frame>` | none — [Headless Mode](headless.html) |
 
 ## Doing work after update
 
 Sometimes update wants to say "do this next, not now" — usually to avoid changing a collection while looping over it, or to react to one feature's events with another feature's logic:
 
 ```fsharp
-let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
-    // ...move the bees...
-    ctx.Intents.post(fun () ->
-        world.Honey.UpdateTo((world.Honey |> AVal.getValue) + 1) |> ignore)
+ctx.Intents.post(fun () ->
+    world.Honey.UpdateTo((world.Honey |> AVal.getValue) + 1) |> ignore)
 ```
 
-Queued work runs right after `update` finishes, before the frame is packed. There are variants for "next frame" and for background work — [Intents](intents.html) covers when to use which.
+Queued work runs right after `update` finishes, before the frame is packed. [Intents](intents.html) covers the variants — next frame, background tasks — and when to use which.
 
 ## Time and one-time setup
 
 The runner updates `ctx.Time`, a `cval<GameTime>`, every frame — read it for `dt`, or from your frame function so animations run on the game's clock instead of wall-clock.
 
-For setup that must happen before the first frame (connect a socket, warm a cache), take a `boot` function and call it first inside `start`'s init — it receives the context, so framework services like the asset cache are already available:
+For setup that must happen before the first frame (connect a socket, warm a cache), do it in `init` — it receives the context, so framework services like the asset cache are already available:
 
 ```fsharp
-let start() =
-    let world = { Bees = CMap.empty; Honey = CVal.create 0 }
-
-    AdaptiveProgram.mkProgram
-        (fun ctx ->
-            boot ctx
-            AdaptiveInit.ofFrameBuilder(fun () -> frame world))
-        (fun _ gameTime -> update world gameTime)
+let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
+    connectToServer()
+    AdaptiveInit.ofFrameBuilder(fun () -> frame world)
 ```
+
+Input, timers and network events arrive through subscriptions registered in `init` — see [Subscriptions](subscriptions.html).

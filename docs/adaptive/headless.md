@@ -16,7 +16,7 @@ Create the runner from your program, then step it. Each `Step` runs one full fra
 ```fsharp
 open Mibo.Adaptive
 
-let runner = AdaptiveHeadless(myProgram)
+let runner = AdaptiveHeadless(program)
 
 // one frame of 1/60s
 runner.Step(TimeSpan.FromSeconds(1.0 / 60.0)) |> ignore
@@ -44,7 +44,7 @@ A full test looks like:
 ```fsharp
 [<Test>]
 let ``clicking a gem scores it``() =
-    let runner = AdaptiveHeadless(start())
+    let runner = AdaptiveHeadless(program)
     runner.Frame.Gems.Count |> isGreaterThan 0
 
     runner.Post(fun () -> clickAt(Vector2(5f, 5f)))

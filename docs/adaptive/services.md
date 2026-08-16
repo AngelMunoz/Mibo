@@ -31,14 +31,14 @@ let createEnv() = {
 
 ## Full Program Example
 
-Here is the whole picture — an environment with two services, a small world, and the three functions from [Adaptive Programs](program.html). The environment is created in `main` and captured by `start`; update and frame receive it through their signatures.
+Here is the whole picture — an environment with two services, a small world, and the program from [Adaptive Programs](program.html). The environment is created first, at the top; `init`, `update` and the program are named and applied to it:
 
 ```fsharp
 open System.Numerics
 open Mibo.Adaptive
 open Mibo.Elmish
 
-type Gem = { Pos: Vector2; Taken: bool }
+type Gem = { Pos: Vector2 }
 
 type World = {
     Gems: cmap<int, Gem>
@@ -51,16 +51,22 @@ type Frame = {
     Score: int
 }
 
-let update (env: Env) (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
+// 1. The environment, built before the program
+let env = createEnv()
+
+let world = { Gems = CMap.empty; Score = CVal.create 0 }
+
+let update (ctx: AdaptiveContext) (gameTime: GameTime) =
     let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
 
     let taken =
-        [ for KeyValue(id, gem) in world.Gems |> AMap.getValue do
+        [ for KeyValue(id, gem) in world.Gems |> AMap.getValue ->
             let moved = { gem with Pos = gem.Pos + Vector2(dt, 0f) }
             world.Gems |> CMap.addOrUpdate id moved
             if moved.Pos.X > 10f then Some id else None ]
+        |> List.choose id
 
-    for id in List.choose id taken do
+    for id in taken do
         world.Gems |> CMap.remove id
         world.Score.UpdateTo((world.Score |> AVal.getValue) + 1) |> ignore
         // Synchronous service call — one-shot sounds are cheap
@@ -69,35 +75,30 @@ let update (env: Env) (world: World) (ctx: AdaptiveContext) (gameTime: GameTime)
     // Autosave every ten pickups, off the game thread
     if (world.Score |> AVal.getValue) % 10 = 0 then
         let snapshot = world.Score |> AVal.getValue
-
         ctx.Intents.postTask(fun () -> env.Save.SaveScoreAsync(snapshot))
 
-let frame (world: World) : Frame =
+let frame : Frame =
     { Gems = world.Gems |> AMap.getValue
       Score = world.Score |> AVal.getValue }
 
-let start (env: Env) =
-    let world = { Gems = CMap.empty; Score = CVal.create 0 }
+let init (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
+    // Services that need the game context (asset caches, audio devices)
+    // initialize here — once, before the first frame
+    env.Audio.Init(ctx.Context)
+    AdaptiveInit.ofFrameBuilder(fun () -> frame)
 
-    AdaptiveProgram.mkProgram
-        (fun ctx ->
-            // Services that need the game context (asset caches, audio
-            // devices) initialize here — once, before the first frame
-            env.Audio.Init(ctx.Context)
-            AdaptiveInit.ofFrameBuilder(fun () -> frame world))
-        (fun ctx gameTime -> update env world ctx gameTime)
-    |> AdaptiveProgram.withConfig (fun _ ->
-        { GameConfig.defaultConfig with Title = "Gems" })
+let program =
+    AdaptiveProgram.mkProgram init update
+    |> AdaptiveProgram.withConfig (GameConfig.withTitle "Gems")
     |> AdaptiveProgram.withRenderer (fun () -> Renderer2D.create draw)
 
 [<EntryPoint>]
 let main _ =
-    // 2. Create the environment FIRST, then the program
-    let env = createEnv()
-    let game = AdaptiveRaylibGame<Frame>(start env)
-    game.Run()
+    AdaptiveRaylibGame<Frame>(program).Run()
     0
 ```
+
+> **NOTE:** `frame` is shown as a value here because the world never changes identity. In a game with restarts, make it a function of the world — `let frame (world: World) = ...` — and apply it like `update` is applied.
 
 ## Avoiding Circular References
 

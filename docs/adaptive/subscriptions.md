@@ -55,17 +55,51 @@ The shape of `AdaptiveSub` makes the safe thing the only thing: the callback rec
 
 ## Registering subscriptions
 
-Collect your subscriptions into a map and hand it to the program:
+`AdaptiveInit.withSubscriptions` takes a function that returns the subscription set as an `amap<SubId, AdaptiveSub>` — a map, keyed by the subscription ids. Build a named function and register it in `init`:
 
 ```fsharp
-AdaptiveInit.ofFrameBuilder frameBuilder
-|> AdaptiveInit.withSubscriptions(fun ctx ->
+let subscriptions (ctx: AdaptiveFrameContext) : amap<SubId, AdaptiveSub> =
     [ SubId.ofString "mouse", mouseSub ctx
       SubId.ofString "keys", keyboardSub ctx ]
-    |> AMap.ofList)
+    |> AMap.ofList
+
+let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
+    AdaptiveInit.ofFrameBuilder(fun () -> frame world)
+    |> AdaptiveInit.withSubscriptions subscriptions
 ```
 
-The runner attaches them at startup and detaches on shutdown. It also re-checks the map every frame — if you return a different set of subscriptions next frame, the new ones attach and the removed ones detach, keyed by id. That is handy when the available inputs depend on game state (a menu vs. gameplay): derive the map from your state and let the runner do the diffing.
+The map has to be a **stable adaptive map** — the runner calls your function every step but only re-reads the map when its version moved, and it identifies subscriptions by key: a key that survives a change keeps its attachment, a key that vanishes gets detached (at the next step's boundary — a detachment lags one frame behind the change).
+
+Two consequences:
+
+* With `AMap.ofList` you get a fixed set — build it once and return it every step; clean steps do no diffing at all. Don't rebuild a fresh `ofList` per call and expect changes to be seen — return the same map.
+* When the set should follow game state (menus vs. gameplay, connected players), derive it: project your state into the entries and lift with `AMap.ofAVal`.
+
+## Dynamic subscription sets
+
+Deriving the map from a `cval` makes the runner follow the state. When `mode` changes, the map's version moves, the diff runs, and the right subscriptions attach or detach:
+
+```fsharp
+let subscriptions (world: World) : amap<SubId, AdaptiveSub> =
+    world.Mode                                  // cval<GameMode>
+    |> AVal.map(function
+        | Menu ->
+            [ SubId.ofString "menu-keys", menuKeySub ] |> Map.ofList |> Map.toSeq
+        | Playing ->
+            [ SubId.ofString "mouse", mouseSub
+              SubId.ofString "keys", keyboardSub ]
+            |> Map.ofList |> Map.toSeq)
+    |> AMap.ofAVal
+```
+
+For full control there is `AMap.custom`: its compute function receives the current entries and appends the operations describing what changed — useful when your subscription source is an event queue rather than state. The map contract is the same either way: keys are identity, version gates the diff.
+
+```fsharp
+let subMap : amap<SubId, AdaptiveSub> =
+    AMap.custom(fun current delta ->
+        // consume your own event queue, appending adds/removes
+        ())
+```
 
 ## Beyond input
 
