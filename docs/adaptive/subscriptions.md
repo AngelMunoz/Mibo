@@ -180,11 +180,14 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
 
     world.Pan.Set pan
 
-    // Clear the consumed edges so next frame sees fresh ones
-    world.Actions.Set(ActionState.nextFrame actions)
+    // Clear the consumed edges so next frame sees fresh ones,
+    // but only when there are any: an empty clear still marks the
+    // root as changed and re-runs everything derived from it
+    if not actions.Started.IsEmpty || not actions.Released.IsEmpty then
+        world.Actions.Set(ActionState.nextFrame actions)
 ```
 
 Two habits from that example:
 
 * **Continuous actions read `Held`, not edge arithmetic.** A direction is the sum of what's held right now — if a key-press edge is ever lost, an edge-based accumulation would leave the pan stuck; a rebuilt-from-held direction can't.
-* **Clear the edges after consuming them** (`ActionState.nextFrame`), or a one-shot fires on every frame it's held. Note that clearing hides the edges from anything derived off the root — if you need a projection over `Started`, derive it instead of clearing first.
+* **Clear the edges after consuming them** (`ActionState.nextFrame`), or a one-shot fires on every frame it's held. Clear only when an edge set is non-empty; an empty clear still marks the root as changed and re-runs everything derived from it. Note that clearing hides the edges from anything derived off the root — if you need a projection over `Started`, derive it instead of clearing first.
