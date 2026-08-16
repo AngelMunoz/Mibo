@@ -55,13 +55,15 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
         world.Bees |> CMap.remove id
         world.Honey.UpdateTo((world.Honey |> AVal.getValue) + 1) |> ignore
 
-let frame (world: World) : Frame =
+/// The frame builder: `frame world` is the `unit -> Frame`
+/// the program calls once per frame.
+let frame (world: World) () : Frame =
     { Bees = world.Bees |> AMap.getValue
       Honey = world.Honey |> AVal.getValue }
 
 /// init: called once at startup with the frame context.
 let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
-    AdaptiveInit.ofFrameBuilder(fun () -> frame world)
+    AdaptiveInit.ofFrameBuilder(frame world)
 
 let world = { Bees = CMap.ofList [ 0, { Pos = Vector2.Zero; Dir = Vector2.One } ]
               Honey = CVal.create 0 }
@@ -89,6 +91,45 @@ Every frame, in order:
 5. Draw.
 
 You don't write this loop. The part that matters for your code: `update` always runs before `frame`, so the renderer never sees a half-updated world.
+
+## Building the frame: `getValue` or `force`?
+
+The frame builder reads your state with one of two calls, and picking between them is an architecture decision, not a detail:
+
+* `getValue` (`AMap.getValue`, `AVal.getValue`) returns the current state directly. Free, zero allocation — but it is a *borrowed snapshot*: valid until the next write, and only safe on the game thread.
+* `force` (`AMap.force`, `ASet.force`, `AList.force`) builds an immutable copy. It allocates, and in exchange the result is *yours*: it never expires, and any thread can hold it.
+
+For a normal game the choice is already made, and the loop above is the reason. The frame is packed after update, nothing writes during packing or drawing, and the renderer consumes it on the same thread before the next step — exactly the lifetime a borrowed snapshot promises. So the default frame is all `getValue`:
+
+```fsharp
+let frame (world: World) () : Frame =
+    { Bees = world.Bees |> AMap.getValue
+      Honey = world.Honey |> AVal.getValue }
+```
+
+Switch a value to `force` when it has to leave that read window:
+
+| The packed data... | Read it with | Why |
+|---|---|---|
+| Goes straight to the renderer this frame | `getValue` | The default — free, consumed inside the window |
+| Is broadcast over the network (a headless server packing frames to send) | `force` | You serialize after packing, off the game thread is fine — an immutable copy can't change under the sender |
+| Is written to disk (saves, replays) | `force` | Same — the copy is stable while the file IO runs |
+| Feeds a render thread of your own | `force` | Borrowed snapshots belong to the game thread; copies don't |
+| Is kept for later frames (interpolation history, a pipelined renderer that lags one frame) | `force` | `getValue` results are invalid after the next write |
+
+The rule of thumb: **`force` at the boundary where data leaves the frame's lifetime — and only there.** Calling `force` on everything "to be safe" allocates on every packed value, every frame, and buys nothing: inside the read window the borrowed snapshot is already exactly as correct and faster to produce.
+
+A server packing a frame to broadcast mixes both, forcing only what travels:
+
+```fsharp
+let frame (world: World) () : ServerFrame =
+    { // the local HUD renderer reads this now — borrow it
+      Honey = world.Honey |> AVal.getValue
+      // the network thread serializes this later — own it
+      Entities = world.Bees |> AMap.force }
+```
+
+The collection-by-collection mechanics (including `toSet`/`toMap` for F# interop) are in [Mibo.Adaptive — which read, when](../mibo-adaptive/collections.html#which-one-when).
 
 ## Other backends and headless runs
 
@@ -128,7 +169,7 @@ For setup that must happen before the first frame (connect a socket, warm a cach
 ```fsharp
 let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
     connectToServer()
-    AdaptiveInit.ofFrameBuilder(fun () -> frame world)
+    AdaptiveInit.ofFrameBuilder (frame world)
 ```
 
 Input, timers and network events arrive through subscriptions registered in `init` — see [Subscriptions](subscriptions.html).

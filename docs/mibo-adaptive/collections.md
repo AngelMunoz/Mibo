@@ -59,6 +59,24 @@ Nested joins compose — a three-way view joins the two-way result with a third 
 * `ASet.force` / `AMap.force` / `AList.force` build an immutable copy. This is the only collection operation that allocates, and the only result safe to keep — the library never touches a forced value again.
 * `ASet.toSet` / `AMap.toMap` (and `CSet.toSet` / `CMap.toMap`) build the F# `Set`/`Map` counterparts for sorted iteration and interop.
 
+### Which one, when
+
+`getValue` is the default, and the per-frame rule in a game is simply this: **if the value is consumed before the next write, read it with `getValue`.** The frame function in a Mibo game runs right before drawing and nothing writes during it — so it packs with `getValue` and that's the end of it.
+
+Reach for `force` when the data has to survive past the next write, or leave the thread that owns the graph:
+
+| Situation | Use | Why |
+|---|---|---|
+| Packing the frame for the renderer | `getValue` | Free, consumed immediately on the same thread |
+| Handing data to another thread (your own render thread, a worker) | `force` | Snapshots belong to the graph's owner thread; an immutable copy doesn't |
+| Sending state over the network / saving to disk | `force` | You serialize an immutable value that can't change under you |
+| Keeping a value for later frames (history, interpolation buffers) | `force` | `getValue` results are invalid after the next write |
+| A one-time read in setup code, F# pattern matching on the structure | `toSet`/`toMap` | The immutable F# collections integrate with the rest of F# |
+
+Iteration speed itself is comparable — both enumerate the current contents. The difference is lifetime: a `getValue` snapshot is borrowed, a `force`d copy is yours.
+
+The one thing not to do is call `force` per frame out of caution — it allocates on every call, and at 60 fps that is real garbage for nothing.
+
 ## Lifetimes and capabilities
 
 * Derived collections register with their dependencies lazily (first read) and are `IDisposable`; disposal stops all delta processing. Reading a disposed node throws.

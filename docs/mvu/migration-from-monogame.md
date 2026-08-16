@@ -2,7 +2,7 @@
 title: Migrating from Mibo (MonoGame)
 category: MVU
 categoryindex: 2
-index: 9
+index: 12
 ---
 
 # Migrating from Mibo (MonoGame) to Mibo.MonoGame

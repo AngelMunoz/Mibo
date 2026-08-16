@@ -1,8 +1,8 @@
 ---
 title: Background Work
-category: Patterns
-categoryindex: 11
-index: 3
+category: MVU
+categoryindex: 2
+index: 10
 ---
 
 # Background Work
@@ -94,3 +94,4 @@ The Elmish `Cmd` system is the threading mechanism. You don't create threads, ma
 
 - [ThreeDSample/ChunkSystem.fs](https://github.com/...) — chunk generation and eviction in a real game.
 - [Composable Systems](composable-systems.html) — how background work fits into the system pipeline.
+- [Intents](../adaptive/intents.html) — the adaptive runtime's version of this pattern (`postTask`/`postAsync`).

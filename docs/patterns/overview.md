@@ -7,19 +7,24 @@ index: 1
 
 # Patterns Overview
 
-General game development patterns for Mibo. Each page presents a reusable technique — not an API reference, but a working recipe for problems every game developer faces.
+Reusable game development patterns that work the same on both runtimes — techniques about memory, rendering structure, and game feel rather than program shape.
 
-These patterns are independent. Apply one, two, or all of them depending on what your game needs.
+Each page presents a working recipe for a problem every game developer faces, not an API reference.
 
 ## Available Patterns
 
 | Pattern | What it solves |
 |---------|---------------|
-| [Composable Systems](composable-systems.html) | Splitting a game into independent sub-systems (owned state, declarative events) coordinated by a router |
-| [Background Work](background-work.html) | Running heavy computation off the main thread without blocking the game loop |
 | [Pooled Particles](pooled-particles.html) | Zero-GC particle effects with pre-allocated arrays and fade-and-compact |
 | [Layered Rendering](layered-rendering.html) | Compositing multiple render passes — HUDs, minimaps, debug overlays |
-| [Pre-computed State](precomputed-state.html) | Computing derived values once per frame, reading them cheaply everywhere |
+
+## Where the other patterns went
+
+The patterns that are about *program shape* live with their runtime, because that is where they differ:
+
+* Structuring a growing game — sub-systems that own their state and report events as data: [Composable Systems](../mvu/composable-systems.html) for the Elmish runtime, [Systems](../adaptive/systems.html) for the adaptive runtime.
+* Background work — [Background Work](../mvu/background-work.html) with `Cmd.ofAsync`; [Intents](../adaptive/intents.html) (`postTask`/`postAsync`) on the adaptive side.
+* Derived state computed once instead of every frame — [Pre-computed State](../mvu/precomputed-state.html) does it by hand; the adaptive runtime's derived values do it for you (see [Mibo.Adaptive](../mibo-adaptive/overview.html)).
 
 ## How to read these pages
 

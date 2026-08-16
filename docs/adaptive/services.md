@@ -77,7 +77,9 @@ let update (ctx: AdaptiveContext) (gameTime: GameTime) =
         let snapshot = world.Score |> AVal.getValue
         ctx.Intents.postTask(fun () -> env.Save.SaveScoreAsync(snapshot))
 
-let frame : Frame =
+/// The frame builder: `buildFrame world` is the `unit -> Frame`
+/// the program calls once per frame.
+let buildFrame (world: World) () : Frame =
     { Gems = world.Gems |> AMap.getValue
       Score = world.Score |> AVal.getValue }
 
@@ -85,7 +87,7 @@ let init (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
     // Services that need the game context (asset caches, audio devices)
     // initialize here — once, before the first frame
     env.Audio.Init(ctx.Context)
-    AdaptiveInit.ofFrameBuilder(fun () -> frame)
+    AdaptiveInit.ofFrameBuilder(buildFrame world)
 
 let program =
     AdaptiveProgram.mkProgram init update
@@ -97,8 +99,6 @@ let main _ =
     AdaptiveRaylibGame<Frame>(program).Run()
     0
 ```
-
-> **NOTE:** `frame` is shown as a value here because the world never changes identity. In a game with restarts, make it a function of the world — `let frame (world: World) = ...` — and apply it like `update` is applied.
 
 ## Avoiding Circular References
 

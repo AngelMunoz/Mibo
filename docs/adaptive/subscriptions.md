@@ -64,7 +64,7 @@ let subscriptions (ctx: AdaptiveFrameContext) : amap<SubId, AdaptiveSub> =
     |> AMap.ofList
 
 let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
-    AdaptiveInit.ofFrameBuilder(fun () -> frame world)
+    AdaptiveInit.ofFrameBuilder (frame world)
     |> AdaptiveInit.withSubscriptions subscriptions
 ```
 
