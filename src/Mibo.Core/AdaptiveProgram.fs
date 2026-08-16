@@ -616,8 +616,7 @@ type AdaptiveProgram<'Frame> = {
 }
 
 /// <summary>Functions for creating and configuring adaptive programs.</summary>
-[<Experimental("Under active development, the API may change without notice and carries no stability guarantees.");
-  RequireQualifiedAccess>]
+[<RequireQualifiedAccess>]
 module AdaptiveProgram =
 
   /// <summary>
@@ -799,11 +798,11 @@ module AdaptiveInput =
   /// built <c>ActionState</c>; the returned disposable detaches.
   /// </param>
   /// <param name="actions">The root the merged states are written into.</param>
-  let subscribe
-    (attachDeltas: (ActionState<'Action> -> unit) -> IDisposable)
+  let inline subscribe
+    ([<InlineIfLambda>] attachDeltas: (ActionState<'Action> -> unit) -> IDisposable)
     (actions: cval<ActionState<'Action>>)
     : AdaptiveSub =
-    let attach(posting: SubPosting) =
+    let inline attach(posting: SubPosting) =
       // One clear per drain cycle: several events in one frame queue several
       // merged states, but only the first queues the clear (the flag resets
       // when the clear runs). A build without edges (a mouse move) queues
