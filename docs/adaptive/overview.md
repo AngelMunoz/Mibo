@@ -44,4 +44,6 @@ If your game is turn-based, menu-driven, or small enough that recomputing everyt
 * [Scaling Adaptive](scaling.html) — how the architecture grows with your game.
 * [Services](services.html) — audio, networking, save data.
 * [Headless Mode](headless.html) — testing and servers, no window.
+* [Background Work](background-work.html) — heavy computation off the game thread.
+* [Derived State](derived-state.html) — values that follow your state, declared once.
 * [Mibo.Adaptive](../mibo-adaptive/overview.html) — the library behind all of this, if you want the details.

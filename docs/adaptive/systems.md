@@ -7,7 +7,7 @@ index: 5
 
 # Organizing a Growing Game
 
-A one-record world is fine until it isn't. When `update` starts touching bees, flowers, weather and score in the same function, split the game into features. A feature owns its data and its logic; features don't reach into each other.
+A one-record world is fine until it isn't. When `update` starts touching bees, flowers, weather and score in the same function, split the game into features. A feature owns its data and its logic; features don't reach into each other. (The Elmish runtime's version of this pattern is [Composable Systems](../mvu/composable-systems.html) — same rules, different plumbing.)
 
 ## One feature, one owner
 

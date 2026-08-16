@@ -20,11 +20,11 @@ Each page presents a working recipe for a problem every game developer faces, no
 
 ## Where the other patterns went
 
-The patterns that are about *program shape* live with their runtime, because that is where they differ:
+The patterns that are about *program shape* live with their runtime, because that is where they differ — each MVU pattern has its adaptive counterpart:
 
-* Structuring a growing game — sub-systems that own their state and report events as data: [Composable Systems](../mvu/composable-systems.html) for the Elmish runtime, [Systems](../adaptive/systems.html) for the adaptive runtime.
-* Background work — [Background Work](../mvu/background-work.html) with `Cmd.ofAsync`; [Intents](../adaptive/intents.html) (`postTask`/`postAsync`) on the adaptive side.
-* Derived state computed once instead of every frame — [Pre-computed State](../mvu/precomputed-state.html) does it by hand; the adaptive runtime's derived values do it for you (see [Mibo.Adaptive](../mibo-adaptive/overview.html)).
+* Structuring a growing game — sub-systems that own their state and report events as data: [Composable Systems](../mvu/composable-systems.html) (MVU) / [Systems](../adaptive/systems.html) (adaptive).
+* Running heavy work without blocking the loop: [Background Work](../mvu/background-work.html) (`Cmd.ofAsync`) / [Background Work](../adaptive/background-work.html) (`postTask`, slicing).
+* Computing derived values instead of refreshing them by hand: [Pre-computed State](../mvu/precomputed-state.html) (MVU, by hand) / [Derived State](../adaptive/derived-state.html) (adaptive, declared in the graph).
 
 ## How to read these pages
 
