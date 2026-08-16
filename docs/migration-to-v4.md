@@ -164,5 +164,6 @@ returned exactly as before.
 
 - [Draw DSL](draw-dsl.html) — the fluent draw surface for 2D and 3D
 - [Animation 3D](animation3d.html) — bone poses, queries, attachments, skinned instancing
+- [The Adaptive Architecture](adaptive/overview.html) — the other program runtime, if your game is simulation-shaped
 - [Migrating to Mibo v2](migration-to-v2.html) — if you are coming from 1.x
 - [Changelog](https://github.com/AngelMunoz/Mibo/blob/main/CHANGELOG.md) — full release notes

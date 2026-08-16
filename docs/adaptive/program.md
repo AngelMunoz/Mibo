@@ -164,6 +164,23 @@ Queued work runs right after `update` finishes, before the frame is packed. [Int
 
 The runner updates `ctx.Time`, a `cval<GameTime>`, every frame — read it for `dt`, or from your frame function so animations run on the game's clock instead of wall-clock.
 
+If you want animations to pause when the game does (and only when the game is *not* paused, some games animate through pause), keep a clock root on your state instead: write it in update, read it in the frame. That keeps the frame builder a pure `State -> Frame` mapping — the clock is part of the state, not a frame-context dependency:
+
+```fsharp
+type World = {
+    ...
+    Clock: cval<GameTime>
+}
+
+// update: write it every step (or skip while paused)
+world.Clock.Set gameTime
+
+// frame: read the state's own clock
+let frame (world: World) () : Frame =
+    { ...
+      Time = world.Clock |> AVal.getValue }
+```
+
 For setup that must happen before the first frame (connect a socket, warm a cache), do it in `init` — it receives the context, so framework services like the asset cache are already available:
 
 ```fsharp

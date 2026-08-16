@@ -67,3 +67,31 @@ server.Run(TimeSpan.FromSeconds(1.0 / 60.0))   // blocks; RunAsync for the async
 Pick one way to advance a runner and stay with it: `Step`/`StepN`/`StepUntil` for tests driven by hand, `Run`/`RunAsync` for a thread that owns the loop. Mixing them on the same runner double-advances the simulation.
 
 Because there is no window, there are no renderers — the frame your function packs is just data. A server serializes it and sends it; a test asserts on it.
+
+## Fixed step
+
+Physics and networked simulations want a fixed timestep: update in fixed slices, not once per drawn frame. `AdaptiveProgram.withFixedStep` runs update as many fixed sub-steps as the frame's elapsed time covers, then packs the frame once at the end:
+
+```fsharp
+AdaptiveProgram.mkProgram init update
+|> AdaptiveProgram.withFixedStep {
+    StepSeconds = 1.0f / 60.0f
+    MaxStepsPerFrame = 5
+  }
+```
+
+Variable `GameTime` arrives once per frame; your simulation runs in fixed steps (e.g. 1/60 s) potentially multiple times, and the frame packs once. On the headless runner, `Step(interval)` with an interval larger than `StepSeconds` runs the extra sub-steps automatically.
+
+## Observers
+
+Tests and diagnostics sometimes want to look at each packed frame without being a renderer — an FPS counter, a recorder, a per-frame assertion. `withObserver` adds a callback that receives every forced frame:
+
+```fsharp
+let program =
+    myProgram
+    |> AdaptiveProgram.withObserver(fun () ->
+        AdaptiveProgram.observe(fun struct (_ctx, frame, gameTime) ->
+            frameRate.See(gameTime)))
+```
+
+Observers run after the frame is forced, in registration order. They read the frame; they don't change the simulation. A headless runner keeps the same frame in `runner.Frame`, so in tests you can just read that instead of wiring an observer — observers are for code that runs alongside the game, not for the game's own assertions.

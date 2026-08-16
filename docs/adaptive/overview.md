@@ -46,4 +46,5 @@ If your game is turn-based, menu-driven, or small enough that recomputing everyt
 * [Headless Mode](headless.html) — testing and servers, no window.
 * [Background Work](background-work.html) — heavy computation off the game thread.
 * [Derived State](derived-state.html) — values that follow your state, declared once.
+* [Restarts & State](restarts.html) — resetting the world without restarting the app.
 * [Mibo.Adaptive](../mibo-adaptive/overview.html) — the library behind all of this, if you want the details.
