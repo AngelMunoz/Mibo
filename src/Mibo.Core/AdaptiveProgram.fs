@@ -253,7 +253,7 @@ type AdaptiveContext
 /// contract.
 /// </summary>
 type SubPosting
-  internal (post: (unit -> unit) -> unit, afterUpdate: (unit -> unit) -> unit) =
+  internal ([<InlineIfLambda>]post: (unit -> unit) -> unit, [<InlineIfLambda>]afterUpdate: (unit -> unit) -> unit) =
 
   /// <summary>
   /// Queues work for the pre-step drain: it runs on the owner thread at the
@@ -325,10 +325,10 @@ module AdaptiveSub =
   /// <param name="id">Stable key the runtime uses to diff subscriptions across steps.</param>
   /// <param name="source">The observable to subscribe to.</param>
   /// <param name="handler">Receives the posting surface and each value.</param>
-  let ofObservable
+  let inline ofObservable
     (id: SubId)
     (source: IObservable<'T>)
-    (handler: SubPosting -> 'T -> unit)
+    ([<InlineIfLambda>]handler: SubPosting -> 'T -> unit)
     : AdaptiveSub =
     {
       Id = id
@@ -344,10 +344,10 @@ module AdaptiveSub =
   /// <param name="id">Stable key the runtime uses to diff subscriptions across steps.</param>
   /// <param name="interval">Tick interval.</param>
   /// <param name="tick">Receives the posting surface once per tick.</param>
-  let ofTimer
+  let inline ofTimer
     (id: SubId)
     (interval: TimeSpan)
-    (tick: SubPosting -> unit)
+    ([<InlineIfLambda>]tick: SubPosting -> unit)
     : AdaptiveSub =
     {
       Id = id
