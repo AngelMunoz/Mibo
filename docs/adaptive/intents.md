@@ -43,15 +43,13 @@ Queued work runs **in the order you posted it**, and all of it finishes before t
 **`postTask` / `postAsync`** for anything slow: file IO, network calls, expensive computations that don't touch game state. The frame doesn't wait for them:
 
 ```fsharp
-ctx.Intents.postTask(fun () ->
-    task {
-        let! scores = env.Leaderboard.Fetch()
-        // back on the game thread — safe to write state
-        do ctx.Intents.post(fun () -> world.Scores.Set scores)
-    })
+ctx.Intents.postTask(
+    (fun () -> env.Leaderboard.Fetch()),
+    (fun scores -> world.Scores.Set scores),   // runs on the game thread
+    (fun ex -> eprintfn $"leaderboard fetch failed: {ex.Message}"))
 ```
 
-The rule that keeps this safe: work posted with `post`/`postNextFrame`, and task completions, always run on the game thread — the only thread allowed to touch your `cval`/`cmap` containers. Inside a background task you can read plain values you captured, but you write state by posting back.
+The rule that keeps this safe: work posted with `post`/`postNextFrame`, and the `ofSuccess`/`ofError` callbacks, always run on the game thread — the only thread allowed to touch your `cval`/`cmap` containers. The task body runs on the thread pool: it reads the plain values you captured before starting it, and hands its result back through `ofSuccess`.
 
 ## One caution
 

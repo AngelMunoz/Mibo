@@ -37,7 +37,7 @@ let cleared =
         maxFrames = 600)
 ```
 
-`StepUntil` steps until a condition on the frame holds, and tells you whether it ever did — the standard shape for "play until something happened" assertions. `StepN(dt, count)` runs a fixed number of frames when you want to test timing itself.
+`StepUntil` steps until a condition on the frame holds, and tells you whether it ever did — the standard shape for "play until something happened" assertions. `StepN(count, dt)` runs a fixed number of frames when you want to test timing itself.
 
 A full test looks like:
 
@@ -57,14 +57,28 @@ let ``clicking a gem scores it``() =
 
 ## Long-running servers
 
-`Run` and `RunAsync` keep stepping on a dedicated game thread until the program asks to exit — the shape for a headless server that steps a simulation and broadcasts frames. Both take the frame interval:
+A headless server steps a simulation and broadcasts frames. Two forms pace the loop for you, and they differ in whose thread does the stepping:
+
+* `Run` returns a lazy sequence — the loop advances only as you enumerate it, on your thread.
+* `RunAsync` returns an `IAsyncEnumerable` stepped by a dedicated game thread; you consume the outcomes.
 
 ```fsharp
 let server = AdaptiveHeadless(serverProgram)
-server.Run(TimeSpan.FromSeconds(1.0 / 60.0))   // blocks; RunAsync for the async version
+
+// Synchronous: steps as you enumerate — the loop owns the calling thread
+for struct (gameTime, frame) in server.Run(TimeSpan.FromMilliseconds(16)) do
+    broadcast frame
+
+// Asynchronous: a dedicated game thread steps; you consume the frames
+async {
+    for outcome in server.RunAsync(TimeSpan.FromMilliseconds(16)) do
+        broadcast outcome.Frame
+}
 ```
 
-Pick one way to advance a runner and stay with it: `Step`/`StepN`/`StepUntil` for tests driven by hand, `Run`/`RunAsync` for a thread that owns the loop. Mixing them on the same runner double-advances the simulation.
+Nothing runs until you enumerate — a bare `server.Run(...)` statement builds the sequence and discards it.
+
+Pick one way to advance a runner and stay with it: `Step`/`StepN`/`StepUntil` for tests driven by hand, `Run`/`RunAsync` for servers that pace the loop automatically. Mixing them on the same runner double-advances the simulation.
 
 Because there is no window, there are no renderers — the frame your function packs is just data. A server serializes it and sends it; a test asserts on it.
 
@@ -77,6 +91,7 @@ AdaptiveProgram.mkProgram init update
 |> AdaptiveProgram.withFixedStep {
     StepSeconds = 1.0f / 60.0f
     MaxStepsPerFrame = 5
+    MaxFrameSeconds = ValueNone
   }
 ```
 

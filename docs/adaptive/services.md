@@ -59,12 +59,12 @@ let world = { Gems = CMap.empty; Score = CVal.create 0 }
 let update (ctx: AdaptiveContext) (gameTime: GameTime) =
     let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
 
-    let taken =
-        [ for KeyValue(id, gem) in world.Gems |> AMap.getValue ->
-            let moved = { gem with Pos = gem.Pos + Vector2(dt, 0f) }
-            world.Gems |> CMap.addOrUpdate id moved
-            if moved.Pos.X > 10f then Some id else None ]
-        |> List.choose id
+    let taken = ResizeArray<int>()
+
+    for KeyValue(id, gem) in world.Gems |> AMap.getValue do
+        let moved = { gem with Pos = gem.Pos + Vector2(dt, 0f) }
+        world.Gems |> CMap.addOrUpdate id moved
+        if moved.Pos.X > 10f then taken.Add id
 
     for id in taken do
         world.Gems |> CMap.remove id
@@ -75,7 +75,11 @@ let update (ctx: AdaptiveContext) (gameTime: GameTime) =
     // Autosave every ten pickups, off the game thread
     if (world.Score |> AVal.getValue) % 10 = 0 then
         let snapshot = world.Score |> AVal.getValue
-        ctx.Intents.postTask(fun () -> env.Save.SaveScoreAsync(snapshot))
+
+        ctx.Intents.postTask(
+            (fun () -> env.Save.SaveScoreAsync(snapshot)),
+            (fun () -> ()),
+            (fun ex -> eprintfn $"autosave failed: {ex.Message}"))
 
 /// The frame builder: `buildFrame world` is the `unit -> Frame`
 /// the program calls once per frame.
@@ -114,12 +118,12 @@ let assets = ctx.Context |> GameContext.getService<IAssets>
 
 ## A Note on Async & The Game Loop
 
-Background work follows the same rules as everywhere in an adaptive game: never touch state containers from another thread. Queue the work with `ctx.Intents.postTask` or `postAsync`, and post the result back when it completes:
+Background work follows the same rules as everywhere in an adaptive game: never touch state containers from another thread. Queue the work with `ctx.Intents.postTask` or `postAsync`; when it completes, your `ofSuccess` callback applies the result on the game thread:
 
 1. Your `update` returns immediately — the frame is not delayed.
 2. The work runs in the background.
 3. The game loop keeps running (updating, drawing).
-4. When it completes, post the result and it applies on the game thread.
+4. When it completes, the callback runs on the game thread and writes the result.
 
 This means you can safely perform heavy I/O (network requests, file saving) without frame stutters.
 

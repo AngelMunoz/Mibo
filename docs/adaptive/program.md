@@ -41,16 +41,16 @@ let meadowWidth = 40f
 
 let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
     let dt = float32 gameTime.ElapsedGameTime.TotalSeconds
+    let leavers = ResizeArray<int>()
 
     // Move every bee; remember who flew past the edge
-    let leavers =
-        [ for KeyValue(id, bee) in world.Bees |> AMap.getValue ->
-            let moved = { bee with Pos = bee.Pos + bee.Dir * dt }
-            world.Bees |> CMap.addOrUpdate id moved
-            if moved.Pos.X > meadowWidth then Some id else None ]
-        |> List.choose id
+    for KeyValue(id, bee) in world.Bees |> AMap.getValue do
+        let moved = { bee with Pos = bee.Pos + bee.Dir * dt }
+        world.Bees |> CMap.addOrUpdate id moved
+        if moved.Pos.X > meadowWidth then leavers.Add id
 
-    // Score and despawn after the loop, one honey per leaver
+    // Score and despawn after the loop — the snapshot is a live view,
+    // so removals wait until the enumeration is done
     for id in leavers do
         world.Bees |> CMap.remove id
         world.Honey.UpdateTo((world.Honey |> AVal.getValue) + 1) |> ignore
@@ -65,7 +65,7 @@ let frame (world: World) () : Frame =
 let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
     AdaptiveInit.ofFrameBuilder(frame world)
 
-let world = { Bees = CMap.ofList [ 0, { Pos = Vector2.Zero; Dir = Vector2.One } ]
+let world = { Bees = CMap.ofSeq [ 0, { Pos = Vector2.Zero; Dir = Vector2.One } ]
               Honey = CVal.create 0 }
 
 let program =
@@ -133,11 +133,12 @@ The collection-by-collection mechanics (including `toSet`/`toMap` for F# interop
 
 ## Other backends and headless runs
 
-Only the last line changes between backends — the program is the same:
+The program is the same on every backend — each one hands it to its own host. MonoGame wraps it first (the wrapper is where device-level setup hooks go):
 
 ```fsharp
 // MonoGame:
-AdaptiveMonoGameGame<Frame>(program).Run()
+let mgProgram = AdaptiveMonoGameProgram.ofProgram program
+AdaptiveMonoGameGame<Frame>(mgProgram).Run()
 
 // No window at all — tests and servers:
 let runner = AdaptiveHeadless(program)

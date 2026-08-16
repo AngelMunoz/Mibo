@@ -42,6 +42,14 @@ let mouseSub (ctx: AdaptiveFrameContext) : AdaptiveSub =
     }
 ```
 
+The input service is opt-in: the host registers `IInput` only when your program applies `AdaptiveProgram.withInput`. Without it, `getService<IInput>` above fails at startup:
+
+```fsharp
+let program =
+    AdaptiveProgram.mkProgram (init world) (update world)
+    |> AdaptiveProgram.withInput
+```
+
 The split in that example is the guideline for input specifically:
 
 * **Where things are** (cursor position, hover) — write a `cval` directly. It's cheap and derived values follow automatically.
@@ -55,42 +63,43 @@ The shape of `AdaptiveSub` makes the safe thing the only thing: the callback rec
 
 ## Registering subscriptions
 
-`AdaptiveInit.withSubscriptions` takes a function that returns the subscription set as an `amap<SubId, AdaptiveSub>` — a map, keyed by the subscription ids. Build a named function and register it in `init`:
+`AdaptiveInit.withSubscriptions` takes a function that returns the subscription set as an `amap<SubId, AdaptiveSub>` — a map, keyed by the subscription ids. Build the map once, in `init`, and return the same instance from the projection:
 
 ```fsharp
-let subscriptions (ctx: AdaptiveFrameContext) : amap<SubId, AdaptiveSub> =
-    [ SubId.ofString "mouse", mouseSub ctx
-      SubId.ofString "keys", keyboardSub ctx ]
-    |> AMap.ofList
-
 let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
+    let subMap =
+        [ SubId.ofString "mouse", mouseSub ctx
+          SubId.ofString "keys", keyboardSub ctx ]
+        |> AMap.ofList
+
     AdaptiveInit.ofFrameBuilder (frame world)
-    |> AdaptiveInit.withSubscriptions subscriptions
+    |> AdaptiveInit.withSubscriptions (fun _ -> subMap)
 ```
 
 The map has to be a **stable adaptive map** — the runner calls your function every step but only re-reads the map when its version moved, and it identifies subscriptions by key: a key that survives a change keeps its attachment, a key that vanishes gets detached (at the next step's boundary — a detachment lags one frame behind the change).
 
-Two consequences:
-
-* With `AMap.ofList` you get a fixed set — build it once and return it every step; clean steps do no diffing at all. Don't rebuild a fresh `ofList` per call and expect changes to be seen — return the same map.
-* When the set should follow game state (menus vs. gameplay, connected players), derive it: project your state into the entries and lift with `AMap.ofAVal`.
+The hard rule: **never build the map inside the projection.** A fresh `AMap.ofList` (or any other constructor) per call creates a new graph every step — the version gate can never hold, so every step pays a full diff, and the dead graphs are garbage for the GC. Build once; return the same instance.
 
 ## Dynamic subscription sets
 
-Deriving the map from a `cval` makes the runner follow the state. When `mode` changes, the map's version moves, the diff runs, and the right subscriptions attach or detach:
+When the set should follow game state (menus vs. gameplay, connected players), derive the map from your state — still built once, in `init`. The projection the runner calls every step just returns that instance:
 
 ```fsharp
-let subscriptions (world: World) : amap<SubId, AdaptiveSub> =
-    world.Mode                                  // cval<GameMode>
-    |> AVal.map(function
-        | Menu ->
-            [ SubId.ofString "menu-keys", menuKeySub ] |> Map.ofList |> Map.toSeq
-        | Playing ->
-            [ SubId.ofString "mouse", mouseSub
-              SubId.ofString "keys", keyboardSub ]
-            |> Map.ofList |> Map.toSeq)
-    |> AMap.ofAVal
+let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
+    let subMap =
+        world.Mode                               // cval<GameMode>
+        |> AVal.map (function
+            | Menu -> [ SubId.ofString "menu-keys", menuKeySub ctx ]
+            | Playing ->
+                [ SubId.ofString "mouse", mouseSub ctx
+                  SubId.ofString "keys", keyboardSub ctx ])
+        |> AMap.ofAVal
+
+    AdaptiveInit.ofFrameBuilder (frame world)
+    |> AdaptiveInit.withSubscriptions (fun _ -> subMap)
 ```
+
+When `mode` changes, the map's version moves, the diff runs, and the right subscriptions attach or detach. Clean steps skip the read entirely.
 
 For full control there is `AMap.custom`: its compute function receives the current entries and appends the operations describing what changed — useful when your subscription source is an event queue rather than state. The map contract is the same either way: keys are identity, version gates the diff.
 
@@ -129,17 +138,35 @@ let opponentMoves (client: IGameClient) : AdaptiveSub = {
 
 One practical note on the mouse wheel: raylib reports ±1 per notch and MonoGame reports ±120. If zoom matters to your game, fold a scale factor in where you handle the wheel, so the feel matches on both backends.
 
-For gameplay keys, the shared [input guide](../input.html) (`InputMap`, `ActionState`) applies here too — write the current action state into a `cval` from a subscription and read it once at the top of your update.
+For gameplay keys, the shared [input guide](../input.html) (`InputMap`, `ActionState`) applies here too — and the mapper has an adaptive subscription that writes the current action state into a `cval` for you:
+
+```fsharp
+type World = {
+    ...
+    Actions: cval<ActionState<GameAction>>
+}
+
+// in init, beside the other subscriptions (needs AdaptiveProgram.withInput):
+let inputSub =
+    InputMapper.subscribeAdaptive (fun () -> inputMap) world.Actions ctx.Context
+
+let subMap =
+    [ inputSub.Id, inputSub
+      SubId.ofString "mouse", mouseSub ctx ]
+    |> AMap.ofList
+```
+
+`subscribeAdaptive` takes a map factory; when your bindings never change, `InputMapper.subscribeStaticAdaptive` takes the `InputMap` directly. Read the `cval` once at the top of your update.
 
 ### Edges, not just held keys
 
-The mapper gives you an `ActionState` root with `Started` (pressed this frame), `Released`, and `Held` sets. Your update consumes the edges: one-shots read `Started`, continuous movement reads `Held`.
+The mapper maintains an `ActionState` root with `Started` (pressed since you last cleared), `Released`, and `Held` sets. Edges accumulate between consumptions — a mouse event between a key press and its release doesn't drop the key's edges. Your update consumes the edges: one-shots read `Started`, continuous movement reads `Held`.
 
 ```fsharp
 let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
     let actions = world.Actions |> AVal.getValue
 
-    // One-shots: started this frame
+    // One-shots: started since the last clear
     for a in actions.Started do
         match a with
         | GameAction.SelectTower slot -> selectTower slot
@@ -151,7 +178,7 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
     for a in actions.Held do
         pan <- pan + panStep a
 
-    Camera.setKeyboardPan pan
+    world.Pan.Set pan
 
     // Clear the consumed edges so next frame sees fresh ones
     world.Actions.Set(ActionState.nextFrame actions)
@@ -160,4 +187,4 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
 Two habits from that example:
 
 * **Continuous actions read `Held`, not edge arithmetic.** A direction is the sum of what's held right now — if a key-press edge is ever lost, an edge-based accumulation would leave the pan stuck; a rebuilt-from-held direction can't.
-* **Clear the edges after consuming them** (`ActionState.nextFrame`), or a one-shot fires on every frame it's held.
+* **Clear the edges after consuming them** (`ActionState.nextFrame`), or a one-shot fires on every frame it's held. Note that clearing hides the edges from anything derived off the root — if you need a projection over `Started`, derive it instead of clearing first.

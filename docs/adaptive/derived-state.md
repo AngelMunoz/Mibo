@@ -25,7 +25,7 @@ module Towers =
 
         m.EffectiveDef <-
             AMap.joinOn m.Statics m.Levels (fun tid _ -> tid) (fun _ s lvl ->
-                AVal.map2 withLevel s lvl)
+                AVal.map2 (fun st lvl -> withLevel st lvl |> ValueSome) s lvl)
 
         m
 ```

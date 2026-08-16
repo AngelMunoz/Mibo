@@ -44,12 +44,15 @@ let statuses =
 ```fsharp
 // Healths × Motions per enemy: same key, combined row
 let views =
-    healths
-    |> AMap.joinOn
+    AMap.joinOn
+        healths
         motions
         (fun eid _ -> eid)
-        (fun _ healthV motionV -> healthV |> AVal.map2 (fun h m -> combine h m) motionV)
+        (fun _ healthV motionV ->
+            AVal.map2 (fun h m -> combine h m |> ValueSome) healthV motionV)
 ```
+
+Note the shape: the two maps come first — the pipe form does not apply, a piped value would land in the mapping slot. And the mapping returns `aval<'U voption>`: a `ValueNone` result drops the entry from the join.
 
 Nested joins compose — a three-way view joins the two-way result with a third map the same way. If a join spans two features of your game, build it at the top level rather than inside one feature, so each feature stays understandable alone ([Adaptive Systems](../adaptive/systems.html) covers the split).
 

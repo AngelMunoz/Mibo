@@ -11,26 +11,23 @@ Some work is too heavy for `update`: pathfinding across a big map, generating a 
 
 ## Moving work off the game thread
 
-`ctx.Intents.postTask` runs your work on the thread pool; when it completes, the continuation runs on the game thread where state writes are legal:
+`ctx.Intents.postTask` runs your work on the thread pool; when it completes, your `ofSuccess` callback runs on the game thread where state writes are legal:
 
 ```fsharp
 let requestPath (world: World) (ctx: AdaptiveContext) (from: Vector2) (target: Vector2) =
     // Capture plain values — the task must not touch cval/cmap
     let obstacles = world.Bees |> AMap.force
 
-    ctx.Intents.postTask(fun () ->
-        task {
-            let! path = pathfinder.FindAsync(obstacles, from, target)
-
-            // Back on the game thread — safe to write state
-            do ctx.Intents.post(fun () -> world.Path.Set path)
-        })
+    ctx.Intents.postTask(
+        (fun () -> pathfinder.FindAsync(obstacles, from, target)),
+        (fun path -> world.Path.Set path),   // back on the game thread
+        (fun ex -> eprintfn $"pathfinding failed: {ex.Message}"))
 ```
 
 The contract that makes this safe:
 
 * **In**: plain values. Capture what the task needs before starting — forced copies (`force`) when the data would otherwise be borrowed.
-* **Out**: plain values. The task returns or posts its result; it never writes a container directly.
+* **Out**: plain values. The task returns its result; it never writes a container directly. The write happens in `ofSuccess`.
 * **Progress**: posts to a `cval`, same as the result:
 
 ```fsharp
