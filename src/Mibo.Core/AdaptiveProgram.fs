@@ -798,11 +798,11 @@ module AdaptiveInput =
   /// built <c>ActionState</c>; the returned disposable detaches.
   /// </param>
   /// <param name="actions">The root the merged states are written into.</param>
-  let inline subscribe
-    ([<InlineIfLambda>] attachDeltas: (ActionState<'Action> -> unit) -> IDisposable)
+  let subscribe
+    (attachDeltas: (ActionState<'Action> -> unit) -> IDisposable)
     (actions: cval<ActionState<'Action>>)
     : AdaptiveSub =
-    let inline attach(posting: SubPosting) =
+    let attach(posting: SubPosting) =
       // One clear per drain cycle: several events in one frame queue several
       // merged states, but only the first queues the clear (the flag resets
       // when the clear runs). A build without edges (a mouse move) queues
