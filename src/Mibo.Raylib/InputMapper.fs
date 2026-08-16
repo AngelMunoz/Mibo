@@ -4,6 +4,7 @@ open System
 open System.Numerics
 open Raylib_cs
 open Mibo.Elmish
+open Mibo.Adaptive
 
 // Trigger, InputMap<'Action>, ActionState<'Action>, IInputMapper<'Action>, and
 // the InputMapper service accessors (getService/tryGetService) all live in Core
@@ -85,6 +86,70 @@ module InputMapper =
      },
      comboStates)
 
+  /// Attaches the three delta subscriptions; every keyboard/mouse/gamepad
+  /// delta builds a fresh <see cref="T:Mibo.Input.ActionState`1"/> (event time,
+  /// owner thread — during the host's input poll) and hands it to
+  /// <paramref name="emit"/>. Shared by <see cref="M:Mibo.Input.InputMapper.subscribe"/>
+  /// (emits a message) and <see cref="M:Mibo.Input.InputMapper.subscribeAdaptive"/>
+  /// (emits a deferred root write) — the emit step is the only difference.
+  let private attachDeltas
+    (getMap: unit -> InputMap<'Action>)
+    (ctx: GameContext)
+    (emit: ActionState<'Action> -> unit)
+    : IDisposable =
+    let input = Input.getService ctx
+    let mutable prevComboStates = Map.empty<Set<KeyCode>, bool>
+
+    let doBuild (pressed: Trigger[]) (released: Trigger[]) =
+      let state, newComboStates =
+        buildActions
+          getMap
+          prevComboStates
+          pressed
+          released
+          (fun k -> Raylib.IsKeyDown(KeyCode.toRaylibKey k).AsBool())
+          (fun b ->
+            Raylib.IsMouseButtonDown(MouseButtonCode.toRaylibButton b).AsBool())
+          (fun p b ->
+            Raylib
+              .IsGamepadButtonDown(p, GamepadButtonCode.toRaylibButton b)
+              .AsBool())
+
+      prevComboStates <- newComboStates
+      state
+
+    let subKey: IDisposable =
+      input.KeyboardDelta.Subscribe(fun (d: KeyboardDelta) ->
+        let pressed = d.Pressed |> Array.map Key
+        let released = d.Released |> Array.map Key
+        emit(doBuild pressed released))
+
+    let subMouse: IDisposable =
+      input.MouseDelta.Subscribe(fun (d: MouseDelta) ->
+        let pressed = d.Buttons.Pressed |> Array.map Trigger.MouseButton
+        let released = d.Buttons.Released |> Array.map Trigger.MouseButton
+
+        emit(doBuild pressed released))
+
+    let subGamepad: IDisposable =
+      input.GamepadDelta.Subscribe(fun (d: GamepadDelta) ->
+        let pressed =
+          d.Buttons.Pressed
+          |> Array.map(fun b -> Trigger.GamepadButton(d.PlayerIndex, b))
+
+        let released =
+          d.Buttons.Released
+          |> Array.map(fun b -> Trigger.GamepadButton(d.PlayerIndex, b))
+
+        emit(doBuild pressed released))
+
+    { new IDisposable with
+        member _.Dispose() =
+          subKey.Dispose()
+          subMouse.Dispose()
+          subGamepad.Dispose()
+    }
+
   /// <summary>
   /// Elmish subscription that builds an <see cref="T:Mibo.Input.ActionState`1"/> from
   /// the registered <see cref="T:Mibo.Input.IInput"/> observables and the supplied map.
@@ -98,60 +163,7 @@ module InputMapper =
     let subId = SubId.ofString "Mibo/Input/InputMapper/subscribe"
 
     let subscribeFn(dispatch: Dispatch<'Msg>) =
-      let input = Input.getService ctx
-      let mutable prevComboStates = Map.empty<Set<KeyCode>, bool>
-
-      let doBuild (pressed: Trigger[]) (released: Trigger[]) =
-        let state, newComboStates =
-          buildActions
-            getMap
-            prevComboStates
-            pressed
-            released
-            (fun k -> Raylib.IsKeyDown(KeyCode.toRaylibKey k).AsBool())
-            (fun b ->
-              Raylib
-                .IsMouseButtonDown(MouseButtonCode.toRaylibButton b)
-                .AsBool())
-            (fun p b ->
-              Raylib
-                .IsGamepadButtonDown(p, GamepadButtonCode.toRaylibButton b)
-                .AsBool())
-
-        prevComboStates <- newComboStates
-        state
-
-      let subKey: IDisposable =
-        input.KeyboardDelta.Subscribe(fun (d: KeyboardDelta) ->
-          let pressed = d.Pressed |> Array.map Key
-          let released = d.Released |> Array.map Key
-          doBuild pressed released |> toMsg |> dispatch)
-
-      let subMouse: IDisposable =
-        input.MouseDelta.Subscribe(fun (d: MouseDelta) ->
-          let pressed = d.Buttons.Pressed |> Array.map Trigger.MouseButton
-          let released = d.Buttons.Released |> Array.map Trigger.MouseButton
-
-          doBuild pressed released |> toMsg |> dispatch)
-
-      let subGamepad: IDisposable =
-        input.GamepadDelta.Subscribe(fun (d: GamepadDelta) ->
-          let pressed =
-            d.Buttons.Pressed
-            |> Array.map(fun b -> Trigger.GamepadButton(d.PlayerIndex, b))
-
-          let released =
-            d.Buttons.Released
-            |> Array.map(fun b -> Trigger.GamepadButton(d.PlayerIndex, b))
-
-          doBuild pressed released |> toMsg |> dispatch)
-
-      { new IDisposable with
-          member _.Dispose() =
-            subKey.Dispose()
-            subMouse.Dispose()
-            subGamepad.Dispose()
-      }
+      attachDeltas getMap ctx (fun state -> dispatch(toMsg state))
 
     Sub.Active(subId, subscribeFn)
 
@@ -164,6 +176,41 @@ module InputMapper =
     (ctx: GameContext)
     : Sub<'Msg> =
     subscribe (fun () -> map) toMsg ctx
+
+  /// <summary>
+  /// Adaptive subscription that builds an <see cref="T:Mibo.Input.ActionState`1"/> from
+  /// the registered <see cref="T:Mibo.Input.IInput"/> observables and the supplied map,
+  /// writing it into the <paramref name="actions"/> root through the pre-step lane —
+  /// the adaptive counterpart of <see cref="M:Mibo.Input.InputMapper.subscribe"/> with
+  /// the root as the sink (no <c>'Msg</c>, no dispatch). The state is built at event
+  /// time (owner thread, during the host's input poll — a pure computation); only the
+  /// root write is deferred, applied at the step boundary before <c>Update</c>, so the
+  /// update phase and the frame force read the settled state. Consumption is ordinary
+  /// derivation (<c>actions |&gt; AVal.map (fun s -> s.Started.Contains …)</c>); several
+  /// deltas in one frame are several cheap writes, collapsed into one recompute at the
+  /// force.
+  /// </summary>
+  let subscribeAdaptive
+    (getMap: unit -> InputMap<'Action>)
+    (actions: cval<ActionState<'Action>>)
+    (ctx: GameContext)
+    : AdaptiveSub =
+    let subId = SubId.ofString "Mibo/Input/InputMapper/subscribeAdaptive"
+
+    let attach(post: (unit -> unit) -> unit) =
+      attachDeltas getMap ctx (fun state -> post(fun () -> actions.Set state))
+
+    { Id = subId; Attach = attach }
+
+  /// <summary>
+  /// Adaptive subscription variant for a fixed (non-changing) InputMap.
+  /// </summary>
+  let subscribeStaticAdaptive
+    (map: InputMap<'Action>)
+    (actions: cval<ActionState<'Action>>)
+    (ctx: GameContext)
+    : AdaptiveSub =
+    subscribeAdaptive (fun () -> map) actions ctx
 
   /// <summary>
   /// Creates the backend-specific <see cref="T:Mibo.Input.IInputMapper`1"/> service.
