@@ -8,14 +8,14 @@ index: 3
 
 # 3D Lighting
 
-The built-in forward pipelines support four light types with Cook-Torrance PBR shading. Lights are added per-frame via fluent members inside your view function. (On raylib the pipeline is `ForwardPbrPipeline`; on MonoGame it is `ForwardPipeline`.)
+The built-in forward pipelines support four light types with Cook-Torrance <abbr title="physically based rendering">PBR</abbr> shading (surface shading that models how light reflects off real materials). Lights are added per-frame via fluent members inside your view function. (On raylib the pipeline is `ForwardPbrPipeline`; on MonoGame it is `ForwardPipeline`.)
 
 ## What and Why
 
-- **Ambient light** — Base illumination for the entire scene. One per frame.
-- **Directional light** — Parallel rays (sun, moon). Supports shadow casting.
-- **Point light** — Radial light with position, radius, and falloff. Supports shadow casting.
-- **Spot light** — Cone-shaped light with inner/outer cutoff angles.
+- **Ambient light**: Base illumination for the entire scene. One per frame.
+- **Directional light**: Parallel rays (sun, moon). Supports shadow casting.
+- **Point light**: Radial light with position, radius, and falloff. Supports shadow casting.
+- **Spot light**: Cone-shaped light with inner/outer cutoff angles.
 
 All lights are struct types with builder functions. The pipeline uploads them as shader uniforms each frame.
 
@@ -57,7 +57,7 @@ Uniform base illumination applied to all surfaces.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `Color` | `Color` | — | Base color |
+| `Color` | `Color` | (required) | Base color |
 | `Intensity` | `float32` | `1.0` | Brightness multiplier |
 
 ```fsharp
@@ -71,7 +71,7 @@ Parallel light rays. Use for sun or moon.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `Direction` | `Vector3` | — | Direction rays travel (should be normalized) |
+| `Direction` | `Vector3` | (required) | Direction rays travel (should be normalized) |
 | `Color` | `Color` | `White` | Light color |
 | `Intensity` | `float32` | `1.0` | Brightness multiplier |
 | `CastsShadows` | `bool` | `true` | Whether to cast shadows |
@@ -89,10 +89,10 @@ Radial light that emits in all directions from a position.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `Position` | `Vector3` | — | World-space position |
+| `Position` | `Vector3` | (required) | World-space position |
 | `Color` | `Color` | `White` | Light color |
 | `Intensity` | `float32` | `1.0` | Brightness multiplier |
-| `Radius` | `float32` | — | Maximum distance of influence |
+| `Radius` | `float32` | (required) | Maximum distance of influence |
 | `Falloff` | `float32` | `2.0` | Decay exponent (1 = linear, 2 = quadratic) |
 | `CastsShadows` | `bool` | `false` | Whether to cast shadows |
 | `ShadowBias` | `float32 voption` | `ValueNone` | Per-light bias override (uses pipeline default when `ValueNone`) |
@@ -106,7 +106,7 @@ PointLight3D.create (Vector3(10f, 5f, 0f), 15f)
 |> PointLight3D.withShadowBias 0.005f
 ```
 
-> _**TIP**_: Set `CastsShadows = true` sparingly. Each shadow-casting point light renders a cubemap shadow pass. Two or three is a good target for performance.
+> _**TIP**_: Set `CastsShadows = true` sparingly. Each shadow-casting point light renders a cubemap shadow pass (a 6-sided shadow capture around the light). Two or three is a good target for performance.
 
 ### SpotLight3D
 
@@ -114,11 +114,11 @@ Cone-shaped light with inner and outer cutoff angles.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `Position` | `Vector3` | — | World-space position |
-| `Direction` | `Vector3` | — | Direction the cone points (should be normalized) |
+| `Position` | `Vector3` | (required) | World-space position |
+| `Direction` | `Vector3` | (required) | Direction the cone points (should be normalized) |
 | `Color` | `Color` | `White` | Light color |
 | `Intensity` | `float32` | `1.0` | Brightness multiplier |
-| `Radius` | `float32` | — | Maximum distance of influence |
+| `Radius` | `float32` | (required) | Maximum distance of influence |
 | `InnerCutoff` | `float32` | `0.5` | Cosine of inner cone half-angle (full brightness) |
 | `OuterCutoff` | `float32` | `0.7` | Cosine of outer cone half-angle (fade to zero) |
 | `CastsShadows` | `bool` | `false` | Whether to cast shadows |
@@ -144,7 +144,7 @@ Both built-in pipelines default to the same light budgets:
 
 How you change them differs by backend:
 
-**raylib** — the budgets are runtime-configurable via the `ForwardPbrPipeline` constructor:
+**raylib**: the budgets are runtime-configurable via the `ForwardPbrPipeline` constructor:
 
 ```fsharp
 let pipeline = ForwardPbrPipeline(
@@ -153,8 +153,9 @@ let pipeline = ForwardPbrPipeline(
 )
 ```
 
-**MonoGame** — the budgets are **baked into the compiled PBR shader** (`MAX_POINT_LIGHTS` /
-`MAX_SPOT_LIGHTS` constants in `ForwardPbr.fx`). The `ForwardPipeline` constructor takes no
+**MonoGame**: the budgets are **baked into the compiled PBR shader** (`MAX_POINT_LIGHTS` /
+`MAX_SPOT_LIGHTS` constants in `ForwardPbr.fx`; note the file is named after the raylib
+pipeline, but this is the MonoGame shader). The `ForwardPipeline` constructor takes no
 light-count argument; to change them you recompile the `.fx` with different `#define`s.
 
 Budgets apply **per camera block**: in buffers with more than one camera block, each block
@@ -164,7 +165,7 @@ apply to the whole frame.
 
 Exceeding the limit silently drops extra lights on both backends. For directional lights
 specifically, only the **first** directional light in the active set is shaded, and only it
-can cast shadows — later directional lights in the same set are ignored entirely.
+can cast shadows; later directional lights in the same set are ignored entirely.
 
 ## Lights across camera blocks
 
@@ -181,13 +182,15 @@ Shadows follow the same scoping. Each camera block with shadow-casting lights re
 shadow map, so a multi-block buffer costs one shadow pass per block. `.setShadowOrigin(...)`
 applies only to the block it appears in; the `.enableShadows()`/`.disableShadows()` toggle
 carries into later blocks' initial state. Single-camera buffers behave exactly as single-pass
-frames — one shadow map for the whole frame, no per-block cost.
+frames: one shadow map for the whole frame, no per-block cost.
 
 ## Shadow configuration
 
 ### Global bias
 
-Shadow bias values control the tradeoff between shadow acne (too low) and peter-panning (too high). Set via `ShadowBiasConfig`:
+Shadow bias values control the tradeoff between two shadow artifacts: too low a bias and
+surfaces speckle with self-shadowing noise (<abbr title="shadow acne: speckled self-shadowing from depth precision errors">acne</abbr>); too high and shadows detach from their
+objects (<abbr title="peter-panning: shadows floating detached from the object casting them">peter-panning</abbr>). Set via `ShadowBiasConfig`:
 
 ```fsharp
 // raylib:
@@ -213,7 +216,7 @@ let pipeline = ForwardPipeline(
 
 > _**NOTE**_: On MonoGame, `SlopeScaleBias` maps to the native
 > `RasterizerState.SlopeScaleDepthBias` (hardware polygon offset) and the per-type biases map
-> to `RasterizerState.DepthBias` — MonoGame can't use the GLSL `dFdx`/`dFdy` slope math the
+> to `RasterizerState.DepthBias`; MonoGame can't use the GLSL `dFdx`/`dFdy` slope math the
 > raylib shader relies on. On raylib the slope-scale bias is applied in the GLSL depth shader.
 > The observable effect (tuning acne vs peter-panning) is the same.
 
@@ -231,12 +234,12 @@ PointLight3D.create (pos, radius)
 
 The shadow atlas controls resolution and caster capacity. The single directional light is
 the dominant shadow in most scenes, so by default it gets a dedicated region of the atlas
-(`DirectionalAtlasRatio`, default `0.5`) rather than sharing one tile of the caster grid —
+(`DirectionalAtlasRatio`, default `0.5`) rather than sharing one tile of the caster grid;
 this keeps directional shadows high-resolution without tuning `MaxCasters` to your light
 count. Point/spot casters subdivide the remaining atlas area into a square grid. Set
 `DirectionalAtlasRatio` to `1.0` for directional-only scenes (the directional light gets
 the whole atlas) or `0.0` to restore the uniform grid (every caster shares a
-`1/MaxCasters` tile). `MaxCasters` must be a perfect square (4, 9, 16, 25, 36) — a
+`1/MaxCasters` tile). `MaxCasters` must be a perfect square (4, 9, 16, 25, 36); a
 constraint of the uniform grid, but enforced at atlas construction either way.
 
 ```fsharp
@@ -264,10 +267,10 @@ let pipeline = ForwardPipeline(
 > doubling the resolution roughly doubles the shadow-pass fragment work. 4096 is a good
 > high-quality default; 8192 is expensive.
 
-> _**NOTE — directional far-plane coverage.**_ The directional shadow camera's far plane
+> _**NOTE**: directional far-plane coverage._ The directional shadow camera's far plane
 > is the light distance plus the full ortho size (`DirectionalLightSize`) plus a one-unit
 > margin. Geometry
-> farther than that from the light — measured along the light direction — is clipped and
+> farther than that from the light (measured along the light direction) is clipped and
 > stops casting shadows; receivers there render fully lit. Deep scenes that slope away
 > from the light (terrain, tall structures at the frustum edge) may need a larger
 > `DirectionalLightSize` (at the cost of texel density) or a `DirectionalOriginY` /
@@ -281,17 +284,17 @@ let pipeline = ForwardPipeline(
 | `OriginStrategy` | `CameraTarget` | ✓ | ✓ | Where directional shadows are centered (`CameraTarget`/`SceneCenter`/`Custom`) |
 | `DirectionalLightDistance` | auto | ✓ | ✓ | Distance to place the directional light camera behind the origin |
 | `DirectionalLightSize` | auto | ✓ | ✓ | Full height of the directional shadow ortho window, in world units |
-| `DirectionalOriginY` | 0.0 | — | ✓ | Lock the shadow frustum's vertical origin (prevents vertical sliding) |
+| `DirectionalOriginY` | 0.0 | (none) | ✓ | Lock the shadow frustum's vertical origin (prevents vertical sliding) |
 | `GridSnapSize` | 2.0 | ✓ | ✓ | Snap shadow origin to a grid to reduce shimmer |
 
-> _**NOTE — shadow technique differs.**_ MonoGame cannot create a sampleable depth-only
+> _**NOTE**: shadow technique differs._ MonoGame cannot create a sampleable depth-only
 > render target, so it writes shadow depth into an R32F color attachment (`DepthShadow.fx`)
-> and samples it with a manual 3×3 PCF over point-sampled depth — the same kernel the
+> and samples it with a manual 3×3 <abbr title="percentage-closer filtering: sampling the shadow map several times around the pixel to soften shadow edges">PCF</abbr> over point-sampled depth; the same kernel the
 > raylib backend runs against its real depth texture. The user-facing config and behavior
 > (shadow quality, bias tuning) are equivalent; only the internal path differs.
 
 ## See also
 
-- [Overview](overview.html) — Architecture and pipeline setup
-- [Buffer & Commands](buffer-and-commands.html) — The buffer pipeline pattern
-- [Materials](materials.html) — PBR material system
+- [Overview](overview.html): Architecture and pipeline setup
+- [Buffer & Commands](buffer-and-commands.html): The buffer pipeline pattern
+- [Materials](materials.html): PBR material system
