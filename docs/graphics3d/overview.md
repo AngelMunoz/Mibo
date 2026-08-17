@@ -14,7 +14,7 @@ The 3D rendering pipeline is a **deferred command system** with a pluggable `IRe
 The 3D renderer provides:
 
 - **Deferred commands** — Describe what to draw without worrying about GPU state. The pipeline handles shader binding, pass order, and lighting.
-- **Pluggable pipelines** — Swap the rendering pipeline without changing view code. Each backend ships a built-in forward pipeline with Cook-Torrance **PBR** materials, a shadow **atlas**, and post-processing:
+- **Pluggable pipelines** — Swap the rendering pipeline without changing view code. Each backend ships a built-in forward pipeline with Cook-Torrance <abbr title="physically based rendering">PBR</abbr> materials, a shadow **atlas**, and post-processing:
   - **raylib:** `ForwardPbrPipeline` (GLSL shaders)
   - **MonoGame:** `ForwardPipeline` (HLSL `.fx` → `.mgfx`, compiled for DirectX 11 and OpenGL)
 - **3D lighting** — Ambient, directional, point, and spot lights with shadow mapping.
