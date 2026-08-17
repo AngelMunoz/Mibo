@@ -17,14 +17,13 @@ for i = 0 to 999 do
     buffer.fillCircle(positions[i], 5f, Color.Red, layer = 10<RenderLayer>).drop()
 
 // Bad: one batch flush per call
+let drawRaw () =
+    // raw backend draw (e.g. raylib Raylib.DrawCircleV, or MonoGame device draw)
+    ()
+
 for i = 0 to 999 do
     buffer
-      .drawImmediate(
-        (fun () ->
-          // raw backend draw (e.g. raylib Raylib.DrawCircleV, or MonoGame device draw)
-          ()),
-        layer = 10<RenderLayer>
-      )
+      .drawImmediate(drawRaw, layer = 10<RenderLayer>)
       .drop()
 ```
 
@@ -49,7 +48,7 @@ Bind a partially-applied call once rather than passing every argument repeatedly
 
 ```fsharp
 // Good: bind texture once, reuse across the batch
-let tile = fun dest -> buffer.sprite(SpriteState.create(atlas, dest, src))
+let tile (dest: Rectangle) = buffer.sprite(SpriteState.create(atlas, dest, src))
 for t in visibleTiles do
     tile t.Dest |> ignore
 
@@ -60,7 +59,7 @@ for t in visibleTiles do
 
 ## 4. Struct commands are already zero-allocation
 
-`Command2D` is a `[<Struct>]` discriminated union — every command is stack-allocated with no heap pressure. The fluent chain itself also erases at compile time: optional parameters are struct optionals, so a chain like `.fillRect(...).sprite(...).endCamera()` leaves no trace at runtime beyond the commands it writes.
+`Command2D` is a `[<Struct>]` discriminated union, so every command lives on the stack instead of the heap. The fluent chain itself also disappears at compile time: optional parameters are struct optionals. The practical upshot: the fluent path costs you nothing per command, so write the readable version and don't worry about it.
 
 ## 5. Minimize state-switching commands
 
@@ -80,11 +79,11 @@ buffer
 
 The backend's internal batching is most efficient when consecutive draw calls use the same texture. Sort your commands by texture where practical (though the renderer sorts by layer, so consider arranging layers to keep same-texture draws together).
 
-## Tile-atlas bleeding
+## 7. Tile-atlas bleeding
 
-Tiles sampled from a gutterless spritesheet (no padding between tiles) bleed at the edges under linear filtering, producing dark seams between abutting tiles.
+Tiles sampled from a gutterless spritesheet (no padding between tiles) bleed at the edges under <abbr title="filtering that blends between nearby texels, smoothing scaled textures">linear filtering</abbr>, producing dark seams between abutting tiles.
 
-**MonoGame:** use `.setSamplerState(SamplerState.PointClamp)` for the tile draws — point filtering reads exact texels, so there's no bleed. Note it flushes the batch, so group tile draws together. Alternatively, inset each tile's source rectangle by 1px.
+**MonoGame:** use `.setSamplerState(SamplerState.PointClamp)` for the tile draws; point filtering reads exact texels, so there's no bleed. Note it flushes the batch, so group tile draws together. Alternatively, inset each tile's source rectangle by 1px.
 
 ```fsharp
 // Point filtering stops adjacent tiles from bleeding into each other.
@@ -94,13 +93,13 @@ for tile in visibleTiles do
     buffer.sprite(SpriteState.create(atlas, tile.Dest, tile.Src)).drop()
 ```
 
-**raylib:** there is no per-draw sampler — a texture's filter is set on the texture itself. Use the `Texture.filter` helper once at load time (e.g. `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point`), or inset source rectangles by 1px.
+**raylib:** there is no per-draw sampler: a texture's filter is set on the texture itself. Use the `Texture.filter` helper once at load time (e.g. `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point`), or inset source rectangles by 1px.
 
-## 7. The buffer is allocation-free after warmup
+## 8. The buffer is allocation-free after warmup
 
 `RenderBuffer2D` uses `ArrayPool<Command2D>` internally. It grows as needed but never allocates per-frame once it reaches capacity. Default initial capacity is 1024 commands.
 
-## 8. Culling
+## 9. Culling
 
 For worlds with many off-screen objects, use `Camera2D.viewportBounds` + `Culling.isVisible2D` to skip out-of-view draws:
 
@@ -114,7 +113,7 @@ for entity in entities do
 
 See [Culling](../culling.html).
 
-## 9. Profiling
+## 10. Profiling
 
 If you suspect a rendering bottleneck:
 

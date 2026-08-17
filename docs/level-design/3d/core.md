@@ -222,9 +222,9 @@ let treasureChest (section: GridSection3D<Cell>) =
 /// A configurable room with floor, walls, and ceiling
 let room width height depth floor wall ceiling (section: GridSection3D<Cell>) =
     section
-    |> Layout3D.fill 0 0 0 width depth 1 floor          // Floor
-    |> Layout3D.fill 0 height 0 width depth 1 ceiling   // Ceiling
-    |> Layout3D.shell 0 0 0 width height depth wall    // Walls
+    |> Layout3D.fill 0 0 0 width 1 depth floor          // Floor
+    |> Layout3D.fill 0 height 0 width 1 depth ceiling   // Ceiling
+    |> Layout3D.shell 0 0 0 width height depth wall     // Walls
 ```
 
 ### Composing Stamps
@@ -272,7 +272,7 @@ level
 
 ### The Stamp Pattern
 
-Think of stamps Lego blocks, using a few blocks on top of each other you can build a bigger thing.
+Think of stamps as Lego blocks: a few blocks on top of each other build a bigger thing.
 
 The key insight: **stamps are just functions**. You can store them, pass them around, compose them, and build complex structures from simple pieces.
 
@@ -311,7 +311,7 @@ let level =
         |> Layout3D.set 22 2 12 ChestCell)
 ```
 
-Each `layer` call lazily creates (or reuses) the `CellGrid3D` for that index and runs your stamp against it. Layers are independent — edit one without touching the others.
+Each `layer` call lazily creates (or reuses) the `CellGrid3D` for that index and runs your stamp against it. Layers are independent; edit one without touching the others.
 
 ## Rendering Integration
 

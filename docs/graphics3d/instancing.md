@@ -7,7 +7,7 @@ index: 5
 
 # GPU Instancing
 
-GPU instancing draws many copies of the same mesh in a single draw call. Use it when you have thousands of identical objects — blocks, trees, grass, rocks.
+GPU instancing draws many copies of the same mesh in a single draw call. Use it when you have thousands of identical objects: blocks, trees, grass, rocks.
 
 ## What and Why
 
@@ -21,7 +21,7 @@ This is the key to rendering voxel worlds, forests, or any scene with high objec
 |-----------|----------|
 | < 50 identical objects | `.mesh(...)` per object (simpler) |
 | 50–1,000+ identical objects | `.instanced(...)` (one draw call) |
-| dozens of *animated* characters | `.animatedModelInstanced(...)` — see [Skinned + Instanced Draws](../animation3d.html#skinned--instanced-draws) |
+| dozens of *animated* characters | `.animatedModelInstanced(...)`: see [Skinned + Instanced Draws](../animation3d.html#Skinned-Instanced-Draws) |
 | Cell grid (voxels, tiles) | `buffer.renderCellGridInstanced(...)` (automatic grouping) |
 
 ## Instanced draws
@@ -39,7 +39,7 @@ buffer
   .drop()
 ```
 
-One draw call renders all 100 cubes. (On MonoGame, pass `prims.Cube` and `Matrix[]` transforms — the member takes your backend's mesh and matrix types.)
+One draw call renders all 100 cubes. (On MonoGame, pass `prims.Cube` and `Matrix[]` transforms; the member takes your backend's mesh and matrix types.)
 
 ## Per-instance color (MonoGame only)
 
@@ -54,28 +54,30 @@ buffer
   .drop()
 ```
 
-The array may be shorter than `count` — instances beyond `colors.Length` render white. A custom effect that opts into instancing can receive the per-instance color by declaring `float4 InstanceColor : TEXCOORD5` in its vertex input; effects that don't declare it still work (the built-in fallback shades colored draws). See [Shader Uniform Reference](../shader-uniforms.html#instancing-opt-in).
+The array may be shorter than `count`: instances beyond `colors.Length` render white. A custom effect that opts into instancing can receive the per-instance color by declaring `float4 InstanceColor : TEXCOORD5` in its vertex input; effects that don't declare it still work (the built-in fallback shades colored draws). See [Shader Uniform Reference](../shader-uniforms.html#Instancing-opt-in).
 
-> _**NOTE**_: Per-instance color is **MonoGame only**. Passing `colors` on raylib raises `NotSupportedException` — its instanced draw has a fixed instance attribute layout.
+> _**NOTE**_: Per-instance color is **MonoGame only**. Passing `colors` on raylib raises `NotSupportedException`; its instanced draw has a fixed instance attribute layout.
 
-> _**NOTE**_: On MonoGame, use `.instancedSlice(...)` when the mesh wraps one part of a shared content-pipeline buffer — pass the part's `vertexOffset`/`startIndex` (`0`/`0` for self-contained meshes), and give the mesh record the part's `PrimitiveCount` and `Bounds`. `ModelParts.ofModel` builds those wraps and offsets for you — see [Instancing content-pipeline models (MonoGame)](#instancing-content-pipeline-models-monogame) below, and [3D Buffer & Commands](buffer-and-commands.html#slices-of-shared-buffers-monogame) for the buffer rules.
+> _**NOTE**_: On MonoGame, use `.instancedSlice(...)` when the mesh wraps one part of a shared content-pipeline buffer: pass the part's `vertexOffset`/`startIndex` (`0`/`0` for self-contained meshes), and give the mesh record the part's `PrimitiveCount` and `Bounds`. `ModelParts.ofModel` builds those wraps and offsets for you; see [Instancing content-pipeline models (MonoGame)](#Instancing-content-pipeline-models-MonoGame) below, and [3D Buffer & Commands](buffer-and-commands.html#Slices-of-shared-buffers-MonoGame) for the buffer rules.
 
 ## Instancing content-pipeline models (MonoGame)
 
-A content-pipeline `Model` packs all of its parts into shared vertex/index buffers and stores vertices bone-local, so its parts cannot go straight into `.instanced(...)` — they need slice offsets and a bone fold. `ModelParts.ofModel` resolves a model into per-part records that carry everything an instanced draw needs:
+A content-pipeline `Model` packs all of its parts into shared vertex/index buffers and stores vertices bone-local, so its parts cannot go straight into `.instanced(...)`; they need slice offsets and a bone fold. `ModelParts.ofModel` resolves a model into per-part records that carry everything an instanced draw needs:
 
-> _**IMPORTANT**_: `ModelParts` is for **static** models. The instanced draw path carries no bone palette — a skinned model (parts baked with `SkinnedEffect`) renders in its **bind pose**, with no error. Use [`.animatedModelInstanced(...)`](../animation3d.html#skinned--instanced-draws) for skinned models.
+> _**IMPORTANT**_: `ModelParts` is for **static** models. The instanced draw path carries no bone palette, so a skinned model (parts baked with `SkinnedEffect`) renders in its <abbr title="the neutral pose a model's skeleton starts in; skinning deforms vertices away from it">bind pose</abbr>, with no error. Use [`.animatedModelInstanced(...)`](../animation3d.html#Skinned-Instanced-Draws) for skinned models.
 
-> _**IMPORTANT**_: Treat the `ModelPart[]` from `ofModel` as **read-only** — it is the cached result shared by every caller, and mutating an element (for example swapping `Material`) corrupts it for the model's lifetime. Copy the array (`Array.map`) when you need adjusted parts.
+> _**IMPORTANT**_: Treat the `ModelPart[]` from `ofModel` as **read-only**: it is the cached result shared by every caller, and mutating an element (for example swapping `Material`) corrupts it for the model's lifetime. Copy the array (`Array.map`) when you need adjusted parts.
 
 ```fsharp
 let parts = ModelParts.ofModel(model)   // cached per model instance
 
+let foldBone (t: Matrix) = part.Bone * t
+
 for part in parts do
-    // Fold the part's absolute bone in front of each instance transform —
+    // Fold the part's absolute bone in front of each instance transform:
     // content vertices are bone-local. (Skip the copy when part.Bone
     // is Matrix.Identity.)
-    let folded = Array.map(fun t -> part.Bone * t) transforms
+    let folded = Array.map foldBone transforms
 
     buffer
       .instancedSlice(part.Mesh, folded, part.Material, count,
@@ -84,14 +86,18 @@ for part in parts do
       .drop()
 ```
 
-For cell grids, `InstancedRenderContext` has a parts constructor that does the folding and the offsets for you — return `ModelPart[]` instead of `(mesh, material)` pairs, and pass the **raw** cell matrix as the transform (do not fold bones into `getTransform`; the context folds each part's own bone and passes the part's real offsets):
+For cell grids, `InstancedRenderContext` has a parts constructor that does the folding and the offsets for you: return `ModelPart[]` instead of `(mesh, material)` pairs, and pass the **raw** cell matrix as the transform (do not fold bones into `getTransform`; the context folds each part's own bone and passes the part's real offsets):
 
 ```fsharp
+let modelKey (cell: BlockType) = cell.ModelName
+let partsFor (cell: BlockType) = ModelParts.ofModel(loadedModels[cell.ModelName])
+let translateCell (pos: Vector3) (_cell: BlockType) = Matrix.CreateTranslation(pos)
+
 let instancedCtx =
-    InstancedRenderContext<CellBake, string>(
-        getKey = (fun cell -> cell.ModelName),
-        getParts = (fun cell -> ModelParts.ofModel(loadedModels[cell.ModelName])),
-        getTransform = fun pos cell -> Matrix.CreateTranslation(pos))
+    InstancedRenderContext<BlockType, string>(
+        getKey = modelKey,
+        getParts = partsFor,
+        getTransform = translateCell)
 ```
 
 ## InstancedRenderContext for cell grids
@@ -103,24 +109,30 @@ For grid-based worlds (voxels, tile maps), `InstancedRenderContext<'T, 'K>` hand
 ```fsharp
 open Mibo.Layout3D
 
+let blockKey (block: BlockType) = block.ModelPath
+
+let blockMeshes (block: BlockType) =
+    // Return array of (mesh, material) pairs for this block type
+    let m = loadModel block.ModelPath
+    [| for i in 0 .. m.MeshCount - 1 ->
+        let mesh = NativePtr.get m.Meshes i
+        let matIdx = NativePtr.get m.MeshMaterial i
+        let mat = Material3D.fromRaylibMaterial (NativePtr.get m.Materials matIdx)
+        struct (mesh, mat)
+    |]
+
+let blockTransform (worldPos: Vector3) (_block: BlockType) =
+    Raymath.MatrixTranslate(worldPos.X, worldPos.Y, worldPos.Z)
+
 let instancedCtx =
     InstancedRenderContext<BlockType, string>(
-        getKey = fun block -> block.ModelPath,
-        getMeshesAndMaterial = fun block ->
-            // Return array of (mesh, material) pairs for this block type
-            let m = loadModel block.ModelPath
-            [| for i in 0 .. m.MeshCount - 1 ->
-                let mesh = NativePtr.get m.Meshes i
-                let matIdx = NativePtr.get m.MeshMaterial i
-                let mat = Material3D.fromRaylibMaterial (NativePtr.get m.Materials matIdx)
-                struct (mesh, mat)
-            |],
-        getTransform = fun worldPos block ->
-            Raymath.MatrixTranslate(worldPos.X, worldPos.Y, worldPos.Z)
+        getKey = blockKey,
+        getMeshesAndMaterial = blockMeshes,
+        getTransform = blockTransform
     )
 ```
 
-Three lambda parameters:
+Three function parameters:
 
 | Parameter | Purpose |
 |-----------|---------|
@@ -181,7 +193,7 @@ The pipeline renders all instances of a mesh type in a single GPU draw call usin
 ## Shading instances with a custom effect
 
 Instanced draws normally use the built-in PBR instanced shader. To shade them
-with your own effect — for a toon, water, fog, or other stylized look — wrap
+with your own effect (for a toon, water, fog, or other stylized look), wrap
 the instanced draw in a `.beginEffect(...)` / `.endEffect()` scope and have your
 shader opt into instancing.
 
@@ -195,15 +207,16 @@ each engine feeds per-instance data differently:
   reads the per-instance world matrix as four `float4` rows on `TEXCOORD1..4`
   (matching `ForwardPbr.fx`'s instanced input, or the minimal `Instanced.fx`).
 
-A shader that doesn't declare the opt-in is unaffected — its instanced draws
+A shader that doesn't declare the opt-in is unaffected; its instanced draws
 fall back to the PBR instanced path. Skinned + instanced draws are supported
 on all backends: raylib uses a palette texture indexed by `gl_InstanceID`;
 MonoGame DX11/Vulkan use vertex texture fetch (VTF); MonoGame DX12 uses a
 grouped-uniform constant array (the DX12 mgfx reflection parser drops the
 params from the main effect, so an isolated `ForwardPbrGrouped.fx` is loaded);
-MonoGame OpenGL falls back to per-instance skinned draws (no VTF in `vs_3_0`).
+MonoGame OpenGL falls back to per-instance skinned draws, because the OpenGL
+shader profile has no vertex texture fetch.
 
-See [Shader Uniform Reference](../shader-uniforms.html#instancing-opt-in) for
+See [Shader Uniform Reference](../shader-uniforms.html#Instancing-opt-in) for
 the full per-backend input contract and minimal example shaders.
 
 ## Shading a whole grid with effects
@@ -214,69 +227,93 @@ without one keep the default PBR look. The effect must still declare the
 instancing opt-in described above, or those draws fall back to the PBR
 instanced path.
 
-**Per sub-mesh** — build the context with a `(mesh, material, shader)` triple
+**Per sub-mesh**: build the context with a `(mesh, material, shader)` triple
 for each cell type. Each sub-mesh carrying an effect is shaded by it:
 
 ```fsharp
-// raylib: Shader voption ; MonoGame: Effect voption
+let tileKey (c: Cell) = c.TileType
+
+let tileMeshes (c: Cell) =
+    [| struct (baseMesh, baseMat, ValueSome toonShader)
+       struct (decoMesh,  decoMat,  ValueNone) |]   // deco keeps PBR
+
+let tileTransform (pos: Vector3) (_c: Cell) =
+    Raymath.MatrixTranslate(pos.X, pos.Y, pos.Z)
+
+// raylib: Shader voption; MonoGame: Effect voption
 let ctx =
     InstancedRenderContext(
-        getKey = (fun c -> c.TileType),
-        getMeshesMaterialAndShader = fun c ->
-            [| struct (baseMesh, baseMat, ValueSome toonShader)
-               struct (decoMesh,  decoMat,  ValueNone) |],   // deco keeps PBR
-        getTransform = fun pos c -> Raymath.MatrixTranslate(pos.X, pos.Y, pos.Z))
+        getKey = tileKey,
+        getMeshesMaterialAndShader = tileMeshes,
+        getTransform = tileTransform)
 
 buffer.renderCellGridInstanced(ctx, grid).drop()
 ```
 
-**Per cell type** — pass a resolver that returns an effect per grid key:
+**Per cell type**: pass a resolver that returns an effect per grid key:
 
 ```fsharp
+let tileKey (c: Cell) = c.TileType
+
+let tileMeshes (c: Cell) = ...
+
+let tileTransform (pos: Vector3) (_c: Cell) = ...
+
+let effectFor (tileType: TileType) =
+    match tileType with
+    | Water -> ValueSome waterShader
+    | Lava  -> ValueSome lavaShader
+    | _     -> ValueNone
+
 let ctx =
     InstancedRenderContext(
-        getKey = (fun c -> c.TileType),
-        getMeshesAndMaterial = (fun c -> ...),
-        getTransform = fun pos c -> ...)
+        getKey = tileKey,
+        getMeshesAndMaterial = tileMeshes,
+        getTransform = tileTransform)
 
 buffer
-    .renderCellGridInstanced(ctx, grid, function
-        | Water -> ValueSome waterShader
-        | Lava  -> ValueSome lavaShader
-        | _     -> ValueNone)
+    .renderCellGridInstanced(ctx, grid, effectFor)
     .drop()
 ```
 
-**Whole grid** — a special case of per-cell-type: pass `fun _ -> ValueSome effect`
-to shade every cell with one effect.
+**Whole grid**: a special case of per-cell-type: pass `effectFor` with a body
+that always returns `ValueSome effect` to shade every cell with one effect.
 
 ## Performance tips
 
-- **Key function** — Keep `getKey` cheap. It's called per cell per frame.
-- **Transform function** — Avoid allocations. `Raymath.MatrixTranslate` returns a struct.
-- **ResetFrameBuffers** — Always call it. Skipping it leaks pooled arrays.
-- **Volume culling** — Use `renderCellGridVolumeInstanced` for large worlds to skip distant cells.
-- **Material sharing** — Cells with the same key share materials. Don't create new materials per cell.
+- **Key function**: Keep `getKey` cheap. It's called per cell per frame.
+- **Transform function**: Avoid allocations. `Raymath.MatrixTranslate` returns a struct.
+- **ResetFrameBuffers**: Always call it. Skipping it leaks pooled arrays.
+- **Volume culling**: Use `renderCellGridVolumeInstanced` for large worlds to skip distant cells.
+- **Material sharing**: Cells with the same key share materials. Don't create new materials per cell.
 
 ## Example: voxel world
 
 ```fsharp
 type BlockType = Air | Stone | Dirt | Grass
 
+let blockKey (block: BlockType) =
+    match block with
+    | Stone -> "stone"
+    | Dirt -> "dirt"
+    | Grass -> "grass"
+    | Air -> "air"
+
+let blockMeshes (block: BlockType) =
+    match block with
+    | Stone -> [| struct (cubeMesh, stoneMat) |]
+    | Dirt -> [| struct (cubeMesh, dirtMat) |]
+    | Grass -> [| struct (cubeMesh, grassMat) |]
+    | Air -> Array.empty
+
+let blockTransform (pos: Vector3) (_block: BlockType) =
+    Raymath.MatrixTranslate(pos.X, pos.Y, pos.Z)
+
 let instancedCtx =
     InstancedRenderContext<BlockType, string>(
-        getKey = function
-            | Stone -> "stone"
-            | Dirt -> "dirt"
-            | Grass -> "grass"
-            | Air -> "air",
-        getMeshesAndMaterial = function
-            | Stone -> [| struct (cubeMesh, stoneMat) |]
-            | Dirt -> [| struct (cubeMesh, dirtMat) |]
-            | Grass -> [| struct (cubeMesh, grassMat) |]
-            | Air -> Array.empty,
-        getTransform = fun pos _ ->
-            Raymath.MatrixTranslate(pos.X, pos.Y, pos.Z)
+        getKey = blockKey,
+        getMeshesAndMaterial = blockMeshes,
+        getTransform = blockTransform
     )
 ```
 
@@ -284,7 +321,7 @@ Air cells produce no draw calls. Stone, dirt, and grass each batch into one inst
 
 ## See also
 
-- [Overview](overview.html) — Architecture and pipeline setup
-- [Draw DSL](../draw-dsl.html) — The fluent draw surface
-- [Materials](materials.html) — PBR material system
-- [Animation 3D — Skinned + Instanced Draws](../animation3d.html#skinned--instanced-draws) — instancing animated characters (`animatedModelInstanced`)
+- [Overview](overview.html): Architecture and pipeline setup
+- [Draw DSL](../draw-dsl.html): The fluent draw surface
+- [Materials](materials.html): PBR material system
+- [Animation 3D: Skinned + Instanced Draws](../animation3d.html#Skinned-Instanced-Draws): instancing animated characters (`animatedModelInstanced`)

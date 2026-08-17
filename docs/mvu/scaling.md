@@ -8,9 +8,9 @@ index: 6
 # Scaling Mibo (Simple → Complex)
 
 Mibo is designed to stay fun for small games while still giving you an upgrade path for "serious" games.
-This document is a practical ladder you can climb as complexity increases—without rewriting your engine.
+This document is a practical ladder you can climb as complexity increases, without rewriting your engine.
 
-> **NOTE:** this ladder climbs within the **MVU** runtime. Past Level 3 — when derived state recomputed by hand and the model re-read per frame stop being free — the next rung is a change of runtime, not a level: the [Adaptive architecture](../adaptive/overview.html), where a derived state graph replaces the recomputation.
+> **NOTE:** this ladder climbs within the **MVU** runtime. When your game outgrows hand-computed derived state (the recomputations Level 2 keeps by hand, re-read per frame), the next rung is a change of runtime, not a level: the [Adaptive architecture](../adaptive/overview.html), where a derived state graph replaces the recomputation.
 
 The recurring theme is:
 
@@ -18,7 +18,7 @@ The recurring theme is:
 - keep expensive logic **data-oriented** (snapshots + mutable hot paths when needed)
 - introduce **explicit boundaries** (per-tick phases, and optionally frame-bounded dispatch)
 
-## Level 0 — Pure MVU
+## Level 0: Pure MVU
 
 **Best for:** card games, menus, puzzle games.
 
@@ -47,13 +47,14 @@ let update msg model =
     | Teleport pos -> { model with Position = pos }, Cmd.none
 
 let view ctx model (buffer: RenderBuffer2D) =
-    // Deferred sprite draw via the fluent DSL (same shape on every backend)
+    // Deferred sprite draw via the fluent DSL (same shape on every backend);
+    // texture is loaded in init
     buffer
       .sprite(SpriteState.create(texture, Rectangle(model.Position.X, model.Position.Y, 32f, 32f), Rectangle(0f, 0f, 32f, 32f)))
       .drop()
 ```
 
-## Level 1 — Add semantic input
+## Level 1: Add semantic input
 
 **Best for:** Action-heavy games (platformers, arcade) where rebindable keys and state queries (is "Jump" held?) are essential.
 
@@ -70,7 +71,7 @@ let view ctx model (buffer: RenderBuffer2D) =
 
 That usually looks like:
 
-- `InputMapped actions` updates a field (`model.Actions <- actions`)
+- `InputMapped actions` updates a field (`{ model with Actions = actions }`)
 - `Tick gt` consumes `model.Actions` to advance simulation
 
 ```fsharp
@@ -102,7 +103,7 @@ let update msg model =
         { model with Position = model.Position + System.Numerics.Vector2(dx, 0.0f) }, Cmd.none
 ```
 
-## Level 2 — Establish a simulation "transaction"
+## Level 2: Establish a simulation "transaction"
 
 **Best for:** Growing projects where you need to prevent "spaghetti logic." By forcing all gameplay changes into `Tick`, you avoid race conditions caused by random events mutating state unpredictably.
 
@@ -126,8 +127,8 @@ This gives you an explicit boundary:
 
 ```fsharp
 type Msg =
-    | InputMapped of ActionState<Action> // Just updates the input buffer
-    | NetworkPacket of byte[]            // Just updates the network buffer
+    | InputMapped of ActionState<Action> // Updates the input buffer only
+    | NetworkPacket of byte[]            // Updates the network buffer only
     | Tick of Mibo.Elmish.GameTime                  // The ONLY place physics/gameplay runs
 
 let update msg model =
@@ -148,7 +149,7 @@ let update msg model =
         { model with Position = newPos }, Cmd.none
 ```
 
-## Level 2.5 — Performance optimization
+## Level 2.5: Performance optimization
 
 **Best for:** Games with frequent message dispatch or large Models where measurable GC pressure appears.
 
@@ -173,13 +174,13 @@ type Message =
     | ChildMsg of Child.Msg          // Works fine with struct
 ```
 
-Struct messages work seamlessly with `Cmd.map` and `Sub.map`—they just wrap the dispatch function with the mapping function.
+Struct messages work with `Cmd.map` and `Sub.map`: they only wrap the dispatch function with the mapping function.
 
 ### Mutable Model for large state
 
 When your Model grows large (10+ properties or contains substantial nested state), immutable updates allocate new objects each update cycle. While you might be tempted to make the Model a struct to avoid GC, this doesn't help: the runtime passes the Model by value, so a large struct would be copied every update.
 
-Instead, use a reference type (class) with mutable members. This pattern avoids GC pressure while maintaining the Elmish contract—you still return `Model * Cmd<'Msg>` from your update function. The runtime simply re-assigns the state variable.
+Instead, use a reference type (class) with mutable members. This pattern avoids GC pressure while maintaining the Elmish contract: you still return `Model * Cmd<'Msg>` from your update function. The runtime re-assigns the state variable.
 
 ```fsharp
 type Model() =
@@ -222,7 +223,7 @@ You don't need to go all-in on mutability. Many games work well with a hybrid ap
 - **Small models** (child subsystems, simple components): Keep as immutable structs
 - **Large models** (root state, complex subsystems): Use mutable reference types
 
-This lets you apply the right tool at the right level. A `Player` component with 3-4 fields works great as an immutable struct, while the root `Model` with 10+ fields benefits from mutability.
+This lets you keep each piece as simple as it needs to be. A `Player` component with 3-4 fields works great as an immutable struct, while the root `Model` with 10+ fields benefits from mutability.
 
 The key is that mutability stays **encapsulated** and **predictable**:
 
@@ -235,11 +236,9 @@ type Player = {
     Health: int
 }
 
-// Large, mutable parent model (class)
-type GameModel() =
-    member val Time = Mibo.Elmish.GameTime.Zero with get, set
-    member val Player: Player = { Position = System.Numerics.Vector2.Zero; Velocity = System.Numerics.Vector2.Zero; Health = 100 } with get, set
-    // ... 10+ more large fields
+// The root Model is the mutable class from the section above;
+// the Player field is one of its large fields:
+//   member val Player: Player = ... with get, set
 
 // Update still returns the same Model instance
 let update msg model =
@@ -251,13 +250,13 @@ let update msg model =
         model, Cmd.none
 ```
 
-The Elmish contract is preserved: your `update` function still returns `Model * Cmd<'Msg>`. The mutability is an internal implementation detail that doesn't leak into your architecture. You get zero GC pressure where it matters most, without sacrificing the benefits of the functional model elsewhere.
+The Elmish contract is preserved: your `update` function still returns `Model * Cmd<'Msg>`. The mutability stays inside your `update`; everything else sees the same Elmish shape. You get zero GC pressure where it matters most, without sacrificing the benefits of the functional model elsewhere.
 
 ### When to apply these patterns
 
-Profile first, optimize second. Start with idiomatic code and apply these patterns only when measurements show a need. Struct messages and mutable Models complement each other—both reduce allocation but at different points in the update cycle.
+Profile first, optimize second. Start with simple code and apply these patterns only when measurements show a need. Struct messages and mutable Models complement each other: both reduce allocation, but at different points in the update cycle.
 
-## Level 3 — Phase pipelines + snapshot barriers
+## Level 3: Phase pipelines + snapshot barriers
 
 **Best for:** Complex simulations (ARPG, RTS) where update order matters. E.g., Physics must run before Collision, which must run before AI.
 
@@ -281,7 +280,7 @@ See: [System pipeline (phases + snapshot)](system.html)
 4. AI decisions, queries, overlap detection (readonly)
 5. Emit commands/messages
 
-This is an "ECS-ish" approach that works well even if your storage is still dictionaries/arrays.
+This is an <abbr title="entity-component-system: a data-oriented pattern that separates data, behavior, and identity">ECS</abbr>-style approach that works well even if your storage is still dictionaries/arrays.
 
 ```fsharp
 // Example: splitting mutable physics from readonly logic
@@ -289,6 +288,8 @@ This is an "ECS-ish" approach that works well even if your storage is still dict
 match msg with
 | Tick gt ->
     let dt = float32 gt.ElapsedGameTime.TotalSeconds
+
+    let onFired id pos = PlayerFired (id, pos)
 
     System.start model
     // Phase 1: Mutable systems (can mutate positions, particles)
@@ -298,12 +299,12 @@ match msg with
     |> System.snapshot Model.toSnapshot
     // Phase 2: Readonly systems (work with immutable snapshot)
     |> System.pipe (HueColor.update dt 5.0f)
-    |> System.pipe (Player.processActions (fun id pos -> PlayerFired(id, pos)))
+    |> System.pipe (Player.processActions onFired)
     // Finish: convert back to Model
     |> System.finish Model.fromSnapshot
 ```
 
-## Level 4 — Fixed timestep and determinism
+## Level 4: Fixed timestep and determinism
 
 **Best for:** Networked games or physics-heavy simulations that require deterministic behavior independent of the user's framerate.
 
@@ -340,6 +341,8 @@ type Msg =
     | FixedStep of dt: float32
     | Tick of Mibo.Elmish.GameTime // Still used for interpolation/rendering
 
+let stepSeconds = 1.0f / 60.0f
+
 let update msg model =
     match msg with
     | FixedStep dt ->
@@ -349,18 +352,18 @@ let update msg model =
 
     | Tick gt ->
         // Only update visual/interpolation state
-        let alpha = float32 gt.ElapsedGameTime.TotalSeconds / 0.01666667f
+        let alpha = float32 gt.ElapsedGameTime.TotalSeconds / stepSeconds
         let visualPos = System.Numerics.Vector2.Lerp(model.PrevPos, model.Pos, alpha)
         { model with VisualPos = visualPos }, Cmd.none
 ```
 
-## Level 5 — Frame-stable message processing
+## Level 5: Frame-stable message processing
 
-**Best for:** Strict lockstep architectures or rollback networking where you need a guarantee that no "stray" messages can slip into the current frame after processing starts.
+**Best for:** <abbr title="multiplayer where every peer applies the same inputs in the same order, so every run stays in sync">lockstep</abbr> architectures or rollback networking where you need a guarantee that no "stray" messages can slip into the current frame after processing starts.
 
 By default, Mibo processes messages **immediately**: a message dispatched while the runtime is draining the queue can be processed in the same update call.
 
-For some advanced architectures (strict frame boundaries, rollback/lockstep friendliness, avoiding re-entrant cascades), you may want:
+For some advanced architectures (strict frame boundaries, rollback/lockstep friendliness, avoiding cascades of messages triggered from inside other messages), you may want:
 
 > messages dispatched while processing frame N are not eligible until frame N+1.
 
@@ -395,7 +398,7 @@ let update msg model =
         let cleanup = Cmd.ofMsg (RemoveEntity id)
         // Ensure spawn happens cleanly next frame
         let spawnLoot = Cmd.ofMsg (SpawnLoot id) |> Cmd.deferNextFrame
-         model, Cmd.batch [ cleanup; spawnLoot ]
+        model, Cmd.batch [ cleanup; spawnLoot ]
 ```
 
 ## Choosing the right rung

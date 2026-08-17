@@ -40,7 +40,7 @@ You run mutation-heavy phases first, then take a snapshot (often a smaller reado
 
 ### What a "system" looks like
 
-A system is just a function that returns an updated state and a `Cmd`:
+A system is a function that returns an updated state and a `Cmd`:
 
 ```fsharp
 let physics (m: Model) : struct (Model * Cmd<Msg>) =
@@ -50,38 +50,42 @@ let physics (m: Model) : struct (Model * Cmd<Msg>) =
 
 ## Emitting commands
 
-Sometimes a system doesn't need to change state at all—it just needs to trigger a sound, log an event, or dispatch a message. The `dispatch` variants allow you to run logic that only returns `Cmd<'Msg>`.
+Sometimes a system doesn't need to change state at all; it needs to trigger a sound, log an event, or dispatch a message. The `dispatch` variants let you run logic that only returns `Cmd<'Msg>`.
 
-Because they don't return a new state, the pipeline passes the snapshot through as-is, making them perfect for "fire-and-forget" side-effects and autonomous subsystems.
+Because they don't return a new state, the pipeline passes the snapshot through as-is, which fits "fire-and-forget" side-effects and autonomous subsystems.
 
 ### Simple dispatch
 
 Use `dispatch` for quick checks against the snapshot that only produce messages.
 
 ```fsharp
+let checkPlayerHealth (snap: Snapshot) =
+    if snap.Health <= 0f then Cmd.ofMsg PlayerDied else Cmd.none
+
+// in the pipeline:
 |> System.snapshot Model.toSnapshot
-|> System.dispatch (fun snap ->
-    if snap.Health <= 0f then Cmd.ofMsg PlayerDied else Cmd.none)
+|> System.dispatch checkPlayerHealth
 ```
 
 ### Selective dispatch
 
-Use `dispatchWith` for autonomous subsystems that track their own internal state (e.g. via closures or external services).
-
-The **selector** bridges the parent snapshot to the subsystem's input, keeping the internal logic decoupled from your main model structure.
+Use `dispatchWith` for autonomous subsystems that track their own internal state (a mutable counter here, or an external service), fed through a selector that extracts what they need from the snapshot:
 
 ```fsharp
 // Autonomous subsystem with its own state
-let healthTracker =
+let healthTracker (input: float32 voption) (snap: Snapshot) =
     let mutable hp = 100f
-    fun input snap ->
-        input |> ValueOption.iter (fun amt -> hp <- hp - amt)
-        if hp <= 0f then Cmd.ofMsg PlayerDied else Cmd.none
+    let applyDamage (amt: float32) = hp <- hp - amt
+    input |> ValueOption.iter applyDamage
+    if hp <= 0f then Cmd.ofMsg PlayerDied else Cmd.none
 
-// Usage in pipeline
-|> System.dispatchWith
-    (fun snap -> if snap.PlayerWasHit then ValueSome 10f else ValueNone)
-    healthTracker
+// The selector bridges the parent snapshot to the subsystem's input,
+// keeping the internal logic decoupled from your main model structure
+let hitAmount (snap: Snapshot) =
+    if snap.PlayerWasHit then ValueSome 10f else ValueNone
+
+// in the pipeline:
+|> System.dispatchWith hitAmount healthTracker
 ```
 
 ## Why the snapshot boundary matters
@@ -99,7 +103,7 @@ Use it when:
 
 - you have many continuous subsystems (physics, movement, particles, animation)
 - you want predictable per-tick ordering
-- you're heading toward ARPG/RTS complexity
+- you're heading toward <abbr title="action role-playing game">ARPG</abbr>/<abbr title="real-time strategy">RTS</abbr>-scale complexity
 
 Skip it when:
 

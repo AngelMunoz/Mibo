@@ -35,7 +35,7 @@ let sprite = AnimatedSprite.create sheet "idle"
 // 3. Update each frame (in your animation system)
 let updatedSprite = AnimatedSprite.update deltaTime sprite
 
-// 4. Draw (in your view) — lit path: pass the AnimatedSprite directly
+// 4. Draw (in your view); lit path: pass the AnimatedSprite directly
 buffer
   .litAnimatedSprite(lighting, Rectangle(position.X, position.Y, 32f, 32f), sprite, layer = 10<RenderLayer>)
   .drop()
@@ -43,7 +43,7 @@ buffer
 
 ## SpriteSheet Factory Functions
 
-### `SpriteSheet.fromGrid` – Uniform Grid Layouts
+### `SpriteSheet.fromGrid`: Uniform Grid Layouts
 
 ```fsharp
 let sheet = SpriteSheet.fromGrid texture 48 48 4 [|
@@ -67,7 +67,7 @@ type GridAnimationDef = {
 }
 ```
 
-### `SpriteSheet.single` – Explicit Frame Rectangles
+### `SpriteSheet.single`: Explicit Frame Rectangles
 
 ```fsharp
 let frames = [|
@@ -75,10 +75,11 @@ let frames = [|
   Rectangle(64, 0, 64, 64)
   Rectangle(128, 0, 64, 64)
 |]
+// 10.0f = frames per second, true = loop
 let sheet = SpriteSheet.single texture frames 10.0f true
 ```
 
-### `SpriteSheet.fromFrames` – Full Control
+### `SpriteSheet.fromFrames`: Full Control
 
 ```fsharp
 let idleAnim: Animation = {
@@ -99,7 +100,7 @@ let sheet = SpriteSheet.fromFrames texture (Vector2(24.0f, 24.0f)) [|
 |]
 ```
 
-### `SpriteSheet.static'` – Single Static Frame
+### `SpriteSheet.static'`: Single Static Frame
 
 ```fsharp
 let sheet = SpriteSheet.static' texture (Rectangle(0, 0, 32, 32))
@@ -114,6 +115,7 @@ let walkIdx =
   | ValueSome idx -> idx
   | ValueNone -> 0
 
+// oldSprite: the sprite you are switching animations on
 let sprite = oldSprite |> AnimatedSprite.playByIndex walkIdx
 ```
 
@@ -123,10 +125,11 @@ let sprite = oldSprite |> AnimatedSprite.playByIndex walkIdx
 
 ```fsharp
 let sprite = AnimatedSprite.create sheet "idle"
+// createWith: sheet, animation name, tint color, scale
 let colored = AnimatedSprite.createWith sheet "idle" Color.Red 1.5f
 let walkingSprite = sprite |> AnimatedSprite.play "walk"
-let sprite = sprite |> AnimatedSprite.playIfNot "walk"
-let sprite = sprite |> AnimatedSprite.restart
+let resumedSprite = sprite |> AnimatedSprite.playIfNot "walk"
+let restartedSprite = sprite |> AnimatedSprite.restart
 let isWalking = sprite |> AnimatedSprite.isPlaying "walk"
 ```
 
@@ -149,7 +152,7 @@ sprite
 
 ### Drawing
 
-**Lit path** — `.litAnimatedSprite(...)` consumes the `AnimatedSprite` directly: it extracts the current frame's source rect, applies `FlipX`/`FlipY`, and picks up the sheet's texture and normal map:
+**Lit path**: `.litAnimatedSprite(...)` consumes the `AnimatedSprite` directly: it extracts the current frame's source rect, applies `FlipX`/`FlipY`, and picks up the sheet's texture and normal map:
 
 ```fsharp
 buffer
@@ -157,7 +160,7 @@ buffer
   .drop()
 ```
 
-**Unlit path** — use `AnimatedSprite.currentSource` to get the current frame's source rectangle, then draw a sprite record:
+**Unlit path**: use `AnimatedSprite.currentSource` to get the current frame's source rectangle, then draw a sprite record:
 
 ```fsharp
 let src = AnimatedSprite.currentSource sprite
@@ -199,14 +202,14 @@ let finished = AnimatedSprite.isFinished sprite
 let walkIndex = sheet.AnimationIndices["walk"]
 
 // In update (zero allocations)
-let sprite = oldSprite |> AnimatedSprite.playByIndex walkIndex
+let updatedSprite = oldSprite |> AnimatedSprite.playByIndex walkIndex
 ```
 
 ## Texture Atlases & Sprite Management
 
-Mibo is format-agnostic: a `SpriteSheet` is simply a **Texture** plus a set of **Source Rectangles**.
+Mibo is format-agnostic: a `SpriteSheet` is a **Texture** plus a set of **Source Rectangles**.
 
-The concrete types are backend-native: `Texture2D`/`Rectangle` from `Raylib_cs` (raylib) or `Microsoft.Xna.Framework` (MonoGame). Obtain them via the service registry — `GameContext.getService<IAssets> ctx` — then call its loaders:
+The concrete types are backend-native: `Texture2D`/`Rectangle` from `Raylib_cs` (raylib) or `Microsoft.Xna.Framework` (MonoGame). Obtain them via the service registry (`GameContext.getService<IAssets> ctx`), then call its loaders:
 
 ```fsharp
 // Example: pseudo-code for a custom loader

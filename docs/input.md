@@ -27,7 +27,7 @@ type Action =
 
 ### Build an `InputMap`
 
-Use the backend-neutral **code DUs** (`KeyCode`, `MouseButtonCode`, `GamepadButtonCode`, `GestureKind`) from `Mibo.Input` — no need to reference `Raylib_cs`:
+Use the backend-neutral **code DUs** (`KeyCode`, `MouseButtonCode`, `GamepadButtonCode`, `GestureKind`) from `Mibo.Input`. These are discriminated unions (one type with a fixed set of cases, one per key or button), so there's no need to reference `Raylib_cs`:
 
 ```fsharp
 open Mibo.Input
@@ -39,7 +39,7 @@ let map =
     |> InputMap.key Jump KeyCode.Space
 ```
 
-> _**NOTE**_: These code DUs are `[<RequireQualifiedAccess>]` — always write `KeyCode.W`, not
+> _**NOTE**_: These code DUs are `[<RequireQualifiedAccess>]`, which forces you to always write `KeyCode.W`, not
 > bare `W`. raylib users migrating from the old API: `KeyboardKey.X` → `KeyCode.X` (number keys
 > renamed: `KeyboardKey.Zero/One/…` → `KeyCode.D0/D1/…`).
 
@@ -79,7 +79,7 @@ let update msg model =
         struct ({ model with Actions = actions }, Cmd.none)
 ```
 
-For a zero-subscription alternative, register an `IInputMapper<'Action>` service via the per-backend builder (`Program.withInputMapper` is backend-specific because it instantiates the backend's mapper):
+For a zero-subscription alternative, register an `IInputMapper<'Action>` service via the per-backend builder (`RaylibProgram.withInputMapper` / `MonoGameProgram.withInputMapper`; the builder is backend-specific because it instantiates the backend's mapper):
 
 ```fsharp
 // raylib backend:
@@ -102,4 +102,4 @@ This registers `IInput` automatically; you can then query the `IInputMapper<'Act
 ## See Also
 
 - [Subscriptions](mvu/subscriptions.html) - Continuous input handling
-- [Scaling](../mvu/scaling.html) - Input handling patterns
+- [Scaling](mvu/scaling.html) - Input handling patterns

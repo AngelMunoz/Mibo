@@ -11,10 +11,10 @@ Cameras control what part of the world you see and how it maps to the screen. Mi
 
 ## What and Why
 
-- **Scroll and zoom** — A 2D camera lets your game world be larger than the screen. Pan, zoom, and follow a player.
-- **Perspective** — A 3D camera defines where you look from and where you look at.
-- **Coordinate conversion** — Convert between screen pixels and world positions for mouse picking, UI placement, and debug tools.
-- **Multi-camera** — Split-screen multiplayer, picture-in-picture minimaps, and HUD overlays on top of the game world.
+- **Scroll and zoom**: A 2D camera lets your game world be larger than the screen. Pan, zoom, and follow a player.
+- **Perspective**: A 3D camera defines where you look from and where you look at.
+- **Coordinate conversion**: Convert between screen pixels and world positions for mouse picking, UI placement, and debug tools.
+- **Multi-camera**: Split-screen multiplayer, picture-in-picture minimaps, and HUD overlays on top of the game world.
 
 ## When to use
 
@@ -39,15 +39,15 @@ Cameras control what part of the world you see and how it maps to the screen. Mi
 let camera = Camera2D.create (Vector2(400f, 300f)) 1.0f viewportSize
 ```
 
-- `position` — world position to center on
-- `zoom` — zoom factor (`1.0f` = no zoom)
-- `viewportSize` — screen size in pixels (used to compute the offset)
+- `position`: world position to center on
+- `zoom`: zoom factor (`1.0f` = no zoom)
+- `viewportSize`: screen size in pixels (used to compute the offset)
 
-> _**NOTE — vector types.**_ Each backend's `Camera2D.create`/`Camera3D` takes that backend's native vector type — raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework` — so make sure the matching namespace is `open`. (The `Vector3(...)` used by `Camera3D` follows the same rule.) Note that the Core layout APIs (`CellGrid2D`, `LayeredGrid2D`) always take `System.Numerics.Vector2` and must be explicitly qualified in MonoGame projects; see the note on the [2D Layout Engine](level-design/2d/core.html) page.
+> _**NOTE**: vector types._ Each backend's `Camera2D.create`/`Camera3D` takes that backend's native vector type: raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework`, so make sure the matching namespace is `open`. (The `Vector3(...)` used by `Camera3D` follows the same rule.) Note that the Core layout APIs (`CellGrid2D`, `LayeredGrid2D`) always take `System.Numerics.Vector2` and must be explicitly qualified in MonoGame projects; see the note on the [2D Layout Engine](level-design/2d/core.html) page.
 
 ### Using in a view
 
-Wrap your world-space draw commands between `.beginCamera(...)` and `.endCamera(...)`. The `layer` parameter controls draw order — camera and content must share the same layer range.
+Wrap your world-space draw commands between `.beginCamera(...)` and `.endCamera(...)`. The `layer` parameter controls draw order; camera and content must share the same layer range.
 
 ```fsharp
 buffer
@@ -66,14 +66,14 @@ buffer
 Use `smoothFollow` to lerp the camera toward a target, and `clampTarget` to keep it within world bounds. The call shape differs per backend: the raylib camera is a native mutable struct (mutated by reference), while the MonoGame camera has immutable fields (the helpers return a new camera).
 
 ```fsharp
-// raylib — mutates the camera in place (note the &)
+// raylib: mutates the camera in place (note the &)
 let mutable cam = Camera2D.create startPos 1.0f viewportSize
 
 // In your update function, each frame:
 Camera2D.smoothFollow &cam playerPos 0.1f
 Camera2D.clampTarget &cam 0f 0f worldWidth worldHeight
 
-// MonoGame — returns a new camera (no &)
+// MonoGame: returns a new camera (no &)
 let cam = Camera2D.create startPos 1.0f viewportSize
 let cam = Camera2D.smoothFollow cam playerPos 0.1f
 let cam = Camera2D.clampTarget cam 0f 0f worldWidth worldHeight
@@ -81,7 +81,7 @@ let cam = Camera2D.clampTarget cam 0f 0f worldWidth worldHeight
 
 ### Coordinate conversion
 
-Convert between screen pixels and world positions. `screenToWorld` / `worldToScreen` / `viewportBounds` are available on both backends — on raylib you pass the camera by reference (`&`) to avoid copying the native struct, on MonoGame the camera is an immutable value (no `&`):
+Convert between screen pixels and world positions. `screenToWorld` / `worldToScreen` / `viewportBounds` are available on both backends; on raylib you pass the camera by reference (`&`) to avoid copying the native struct, on MonoGame the camera is an immutable value (no `&`):
 
 ```fsharp
 // raylib
@@ -94,7 +94,7 @@ let worldPos = Camera2D.screenToWorld camera mousePos
 let visible = Camera2D.viewportBounds camera screenWidth screenHeight
 ```
 
-Use `viewportBounds` to get the visible world rectangle — useful for culling off-screen objects (it pairs with `Culling.isVisible2D`).
+Use `viewportBounds` to get the visible world rectangle; useful for culling off-screen objects (it pairs with `Culling.isVisible2D`).
 
 ---
 
@@ -153,7 +153,7 @@ Available split-screen helpers:
 
 For a picture-in-picture view (e.g. a minimap), compose one yourself with
 `Camera2D.render` + `withViewport` + `withClear`, and emit that camera after the
-main one so it draws on top — there is no built-in `overlay` helper, and
+main one so it draws on top; there is no built-in `overlay` helper, and
 layering is purely draw order.
 
 ---
@@ -162,7 +162,7 @@ layering is purely draw order.
 
 ### Creating a camera
 
-For 3D rendering, use `Camera3D.create`. It takes just three parameters — position, target, and field of view — with sensible defaults for everything else (up = `Vector3.Up`; MonoGame also defaults near = `0.1f`, far = `1000f` and computes aspect from the viewport at render time):
+For 3D rendering, use `Camera3D.create`. It takes three parameters (position, target, and field of view) with sensible defaults for everything else (up = `Vector3.Up`; MonoGame also defaults near = `0.1f`, far = `1000f` and computes aspect from the viewport at render time):
 
 ```fsharp
 // raylib (FOV in degrees)
@@ -193,11 +193,11 @@ let camera = Camera3D.create pos target fov |> Camera3D.withUp customUp
 // Orthographic projection (both backends; FovY is reinterpreted as view height)
 let camera = Camera3D.create pos target 10f |> Camera3D.asOrthographic
 
-// Custom near/far planes (MonoGame only — raylib manages these internally)
+// Custom near/far planes (MonoGame only; raylib manages these internally)
 let camera = Camera3D.create pos target fov |> Camera3D.withNearFar 0.01f 5000f
 ```
 
-> _**NOTE — backend difference.**_ Both backends share the same constructor
+> _**NOTE**: backend difference._ Both backends share the same constructor
 > surface (`create` / `orbit`) and modifiers (`withUp` / `asOrthographic`).
 > MonoGame adds `withNearFar` (raylib manages near/far internally via
 > `BeginMode3D`). The FOV unit differs: raylib uses **degrees**, MonoGame
@@ -255,20 +255,20 @@ Each split-screen half is its own camera block, so lights and shadows can differ
 view: a block that sets no lights inherits the scene's running set, while a block that
 sets its own lights (an indoor and an outdoor world, day and night sides) starts from
 the frame defaults and renders its own shadow map. See
-[Buffers & Commands → Light scoping](graphics3d/buffer-and-commands.html#light-scoping-across-camera-blocks)
-and [3D Lighting → Lights across camera blocks](graphics3d/lighting.html#lights-across-camera-blocks).
+[Buffers & Commands → Light scoping](graphics3d/buffer-and-commands.html#Light-scoping-across-camera-blocks)
+and [3D Lighting → Lights across camera blocks](graphics3d/lighting.html#Lights-across-camera-blocks).
 
 ### Mouse picking
 
 Cast a ray from a screen position into the 3D scene with `Camera3D.screenPointToRay` (both backends):
 
 ```fsharp
-// raylib — returns the native Raylib_cs.Ray (note the & on the camera)
+// raylib: returns the native Raylib_cs.Ray (note the & on the camera)
 let ray = Camera3D.screenPointToRay &camera mousePos
-// ray.Position  — origin point
-// ray.Direction — normalized direction into the scene
+// ray.Position: origin point
+// ray.Direction: normalized direction into the scene
 
-// MonoGame — takes the Camera3D and viewport size, returns Mibo's Ray
+// MonoGame: takes the Camera3D and viewport size, returns Mibo's Ray
 let ray = Camera3D.screenPointToRay camera mousePos viewportWidth viewportHeight
 ```
 

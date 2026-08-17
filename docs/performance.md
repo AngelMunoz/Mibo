@@ -9,11 +9,11 @@ index: 2
 
 F# is a high-level functional language, but games operate under strict latency constraints. The Garbage Collector (GC) is your main adversary here: creating too much short-lived "trash" per frame forces the GC to pause your game to clean it up, causing stutter.
 
-This guide outlines an incremental path to optimization. It serves as the performance implementation guide for the [Scaling Mibo](../mvu/scaling.html) architectural levels. While the scaling guide helps you manage **complexity**, this guide helps you manage **throughput and CPU/GC pressure**.
+This guide outlines an incremental path to optimization. It serves as the performance implementation guide for the [Scaling Mibo](mvu/scaling.html) architectural levels. While the scaling guide helps you manage **complexity**, this guide helps you manage **throughput and CPU/GC pressure**.
 
 **Don't premature optimize.** Write idiomatic code first, then apply these patterns to your "hot paths" (code that runs thousands of times per frame).
 
-## Level 0 — Default to Idiomatic F#
+## Level 0: Default to Idiomatic F#
 
 For your game state, high-level logic, UI, and configuration, you should just write normal F#.
 
@@ -34,9 +34,9 @@ let updateEnemies dt enemies =
     enemies |> List.map (fun e -> { e with Pos = e.Pos + Vector2(1f, 0f) * dt })
 ```
 
-## Level 1 — Structs for Small Data
+## Level 1: Structs for Small Data
 
-Classes (normal F# types) live on the heap. Every time you create one, it adds pressure to the GC. Structs, however, are value types—they live on the stack or are embedded directly inside arrays.
+Classes (normal F# types) live on the heap. Every time you create one, it adds pressure to the GC. Structs, however, are value types: they live on the stack or are embedded directly inside arrays.
 
 If you have a small type that is created frequently (like a custom 2D vector, a grid coordinate, or a game message), marking it as `[<Struct>]` makes it free to allocate.
 
@@ -53,7 +53,7 @@ type Msg =
     | Heal of amount: int
 ```
 
-## Level 2 — Value Tuples and Returns
+## Level 2: Value Tuples and Returns
 
 Standard F# tuples `(a, b)` are actually generic objects allocated on the heap. In a tight loop (like iterating over 10,000 particles), returning a standard tuple from a function will allocate 10,000 objects every single frame.
 
@@ -76,7 +76,7 @@ let calculateVelocityStruct pos target =
     struct (dir, dir.Length())
 ```
 
-## Level 3 — Mutable Collections
+## Level 3: Mutable Collections
 
 F# `List` is a linked list. It is great for pattern matching, but terrible for CPU cache locality (pointer chasing). Transforming it (`List.map`) allocates a fresh list every time.
 
@@ -104,9 +104,9 @@ let updateParticles dt (particles: ResizeArray<Particle>) =
     particles
 ```
 
-## Level 4 — Buffer Pooling
+## Level 4: Buffer Pooling
 
-Sometimes you need a temporary array for a single frame—for example, to gather potential collision pairs or process a batch of AI requests. Allocating `Array.zeroCreate` every frame creates a massive amount of garbage.
+Sometimes you need a temporary array for a single frame, for example to gather potential collision pairs or process a batch of AI requests. Allocating `Array.zeroCreate` every frame creates a massive amount of garbage.
 
 Instead, use `System.Buffers.ArrayPool`. This lets you "rent" an array and return it when you are done.
 
@@ -115,6 +115,9 @@ Only use this for large, frequent temporary buffers. Always use a `try...finally
 
 ```fsharp
 open System.Buffers
+
+// Entity: your game's entity record (position, velocity, ...)
+type Entity = { Pos: System.Numerics.Vector2; Radius: float32 }
 
 let findCollisions (entities: ResizeArray<Entity>) =
     // Rent a buffer to store potential collision pairs
@@ -137,13 +140,13 @@ let findCollisions (entities: ResizeArray<Entity>) =
         ArrayPool<int>.Shared.Return(buffer)
 ```
 
-## Level 5 — ByRef, InRef, Span, and Memory
+## Level 5: ByRef, InRef, Span, and Memory
 
 For physics engines, collisions, and matrix math, copying large structs (like a 64-byte `Matrix4x4` or a 24-byte `BoundingBox`) can become a bottleneck. F# provides low-level tools to avoid these copies.
 
 ### The Low-Level Pointers
 
-- `inref<'T>`: A read-only pointer (conceptually like C++ `const T&`).
+- `inref<'T>`: A read-only pointer: you can read through it but not write.
 - `byref<'T>`: A mutable pointer.
 
 ### The Views

@@ -190,7 +190,7 @@ let hillTerrain =
     |> Layout3D.section 0 0 0 (fun inner ->
         let hillHeight x z =
             // Distance from hill center at (12, 12)
-            let dist = float (sqrt ((x-12)*(x-12) + (z-12)*(z-12)))
+            let dist = sqrt ((float x-12) ** 2.0 + (float z-12) ** 2.0)
             int (6.0 * exp (-dist/30.0))  // 6 cells tall
         inner |> Terrain.heightmap hillHeight GrassCell
     )
@@ -228,7 +228,7 @@ let layeredTerrain =
     section
     |> Layout3D.section 0 0 0 (fun inner ->
         let mountainHeight x z =
-            let dist = float (sqrt ((x-15)*(x-15) + (z-15)*(z-15)))
+            let dist = sqrt ((float x-15) ** 2.0 + (float z-15) ** 2.0)
             int (10.0 * exp (-dist/20.0))  // 10 cells tall
         inner |> Terrain.layeredHeightmap mountainHeight GrassCell DirtCell 3 StoneCell
     )
@@ -262,7 +262,7 @@ module MyTerrain =
     /// A crater with raised rim
     let crater radius rimHeight =
         let craterHeight x z =
-            let dist = float (sqrt ((x-radius)*(x-radius) + (z-radius)*(z-radius)))
+            let dist = sqrt ((float x-radius) ** 2.0 + (float z-radius) ** 2.0)
             if dist < float radius then
                 int (-float rimHeight * (1.0 - dist/float radius))  // Depression
             elif dist < float radius + 2.0 then
@@ -294,7 +294,7 @@ module MyTerrain =
     /// A mountain peak with snow on top
     let mountain width depth maxHeight =
         let mountainHeight x z =
-            let dist = float (sqrt ((x-float width/2.0)*(x-float width/2.0) + (z-float depth/2.0)*(z-float depth/2.0)))
+            let dist = sqrt ((float x-float width/2.0) ** 2.0 + (float z-float depth/2.0) ** 2.0)
             let maxDist = float (min width depth) / 2.0
             int (float maxHeight * (1.0 - dist/maxDist))
         fun section ->
@@ -348,7 +348,7 @@ let outdoorArea =
             // Hill with village
             |> Layout3D.section 0 4 0 (fun inner ->
                 let hillHeight x z =
-                    let dist = float (sqrt ((x-8)*(x-8) + (z-8)*(z-8)))
+                    let dist = sqrt ((float x-8) ** 2.0 + (float z-8) ** 2.0)
                     int (8.0 * exp (-dist/20.0))
                 inner
                 |> Terrain.layeredHeightmap hillHeight GrassCell DirtCell 3 StoneCell
@@ -428,7 +428,7 @@ let island =
     // Island landmass
     |> Layout3D.section 10 0 10 (fun inner ->
         let islandHeight x z =
-            let dist = float (sqrt ((x-10)*(x-10) + (z-10)*(z-10)))
+            let dist = sqrt ((float x-10) ** 2.0 + (float z-10) ** 2.0)
             if dist < 15.0 then
                 int (4.0 * (1.0 - dist/15.0))  // Slopes up to center
             else
@@ -463,4 +463,4 @@ let island =
 - **Complex functions:** Expensive math in height functions can slow generation.
 - **Culling:** Use `iterVolume` when rendering to only process visible cells.
 
-> **See also:** [3D Layout Engine](core.html) for complete Terrain module documentation
+> **See also:** [3D Layout Engine](core.html) for the layout primitives this module builds on.

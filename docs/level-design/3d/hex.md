@@ -7,7 +7,7 @@ index: 9
 
 # Hex Grid Layout (3D)
 
-3D hex grids extend hexagonal positioning with a vertical axis, creating hex columns instead of flat hexagons. This is the grid for **strategy games with elevation** — Civilization-style maps, wargames with height advantage, or any game where hex adjacency meets terrain height.
+3D hex grids extend hexagonal positioning with a vertical axis, creating hex columns instead of flat hexagons. This is the grid for **strategy games with elevation**: Civilization-style maps, wargames with height advantage, or any game where hex adjacency meets terrain height.
 
 ## When to Use 3D Hex vs Rect
 
@@ -26,9 +26,9 @@ index: 9
 
 The system is built on three primitives:
 
-- `HexGrid3D<'T>` — Storage for hex column data (hex grid + vertical layers)
-- `HexGrid3DSection<'T>` — A cursor/view into the grid for relative positioning
-- Stamps — Functions that transform sections (`HexGrid3DSection<'T> -> HexGrid3DSection<'T>`)
+- `HexGrid3D<'T>`: Storage for hex column data (hex grid + vertical layers)
+- `HexGrid3DSection<'T>`: A cursor/view into the grid for relative positioning
+- Stamps: Functions that transform sections (`HexGrid3DSection<'T> -> HexGrid3DSection<'T>`)
 
 ## Orientation and Axes
 
@@ -41,8 +41,8 @@ Like 2D hex grids, 3D hex supports both orientations via `HexOrientation`:
 
 **Axis Convention:**
 - X = width (left/right)
-- Z = depth (forward/back) — this is the hex grid plane
-- Y = height / layers (up/down) — this is the vertical stacking axis
+- Z = depth (forward/back): this is the hex grid plane
+- Y = height / layers (up/down): this is the vertical stacking axis
 
 ```fsharp
 open Mibo.Layout3D
@@ -57,13 +57,13 @@ let board = HexGrid3D.create 12 5 10 48f 1.5f Vector3.Zero FlatTop
 ```
 
 **Parameters:**
-- `width` — Number of columns (X axis)
-- `height` — Number of vertical layers (Y axis)
-- `depth` — Number of rows (Z axis)
-- `hexSize` — Radius of hex (center to corner)
-- `layerHeight` — World-space height of each vertical layer
-- `origin` — World-space origin point
-- `orientation` — PointyTop or FlatTop
+- `width`: Number of columns (X axis)
+- `height`: Number of vertical layers (Y axis)
+- `depth`: Number of rows (Z axis)
+- `hexSize`: Radius of hex (center to corner)
+- `layerHeight`: World-space height of each vertical layer
+- `origin`: World-space origin point
+- `orientation`: PointyTop or FlatTop
 
 ## Basic Operations
 
@@ -76,7 +76,7 @@ let grid = HexGrid3D.create 20 10 15 32f 2f Vector3.Zero PointyTop
 // Place content at column 5, row 3, layer 2
 HexGrid3D.set 5 3 2 myCell grid
 
-// Read content (returns voption — no heap allocation)
+// Read content (returns voption: no heap allocation)
 match HexGrid3D.get 5 3 2 grid with
 | ValueSome cell -> // handle cell
 | ValueNone -> // empty
@@ -199,10 +199,10 @@ HexLayout3D.clear col row layer w h d section
 // Horizontal floor (XZ plane)
 HexLayout3D.floorHex col row layer width depth content section
 
-// Vertical wall (XY plane) — faces forward/back
+// Vertical wall (XY plane): faces forward/back
 HexLayout3D.wallXY col row layer width height content section
 
-// Vertical wall (YZ plane) — faces left/right
+// Vertical wall (YZ plane): faces left/right
 HexLayout3D.wallYZ col row layer height depth content section
 ```
 
@@ -244,7 +244,7 @@ HexLayout3D.corners col row layer w h d content section
 HexLayout3D.line x1 y1 z1 x2 y2 z2 content section
 ```
 
-**When to use:** Roads, tunnels, rivers, laser beams, flight paths — anything that connects two points in 3D space.
+**When to use:** Roads, tunnels, rivers, laser beams, flight paths: anything that connects two points in 3D space.
 
 ## Patterns: Decorative and Procedural
 
@@ -327,7 +327,7 @@ HexLayout3D.replaceScatter oldContent newContent 0.3f seed section
 // Read existing content
 HexLayout3D.iter col row layer w h d (fun c r l cell ->
     match cell with
-    | ValueSome c -> printfn "Found %A at (%d,%d,%d)" c c r l
+    | ValueSome content -> printfn "Found %A at (%d,%d,%d)" content c r l
     | ValueNone -> ()
 ) section
 
@@ -499,20 +499,20 @@ let level =
         // Layer 0: Terrain (ground, water, mountains)
         section
         |> HexLayout3D.floorHex 0 0 0 30 20 GrassCell
-        |> HexLayout3D.section 10 0 5 (terrain.mountain 6 8)
-        |> HexLayout3D.section 0 0 15 (terrain.river 3)
+        |> HexLayout3D.section 10 0 5 (Terrain.mountain 6 8)
+        |> HexLayout3D.section 0 0 15 (Terrain.river 3)
     )
     |> LayeredHexLayout3D.layer 1 (fun section ->
         // Layer 1: Structures
         section
-        |> HexLayout3D.section 5 0 3 (structures.castle 8)
-        |> HexLayout3D.section 20 0 10 (structures.barracks)
+        |> HexLayout3D.section 5 0 3 (Structures.castle 8)
+        |> HexLayout3D.section 20 0 10 (Structures.barracks)
     )
     |> LayeredHexLayout3D.layer 2 (fun section ->
         // Layer 2: Units
         section
-        |> HexLayout3D.section 7 0 5 (units.army Infantry 10)
-        |> HexLayout3D.section 22 0 12 (units.army Cavalry 5)
+        |> HexLayout3D.section 7 0 5 (Units.army Infantry 10)
+        |> HexLayout3D.section 22 0 12 (Units.army Cavalry 5)
     )
 ```
 
@@ -593,73 +593,76 @@ type Terrain =
 type Structure =
     | City | Fort | Farm | Mine | Road
 
+// Named stamps: each region is a reusable function
+let mountainRange (s: HexGrid3DSection<Terrain, Structure>) =
+    s |> HexLayout3D.fill 0 0 0 8 5 3 MountainCell
+      |> HexLayout3D.floorHex 0 0 4 8 3 SnowCell
+
+let forestPatch seed (s: HexGrid3DSection<Terrain, Structure>) =
+    s |> HexLayout3D.scatterHexLayer 0 30 seed ForestCell
+
+let desertRegion (s: HexGrid3DSection<Terrain, Structure>) =
+    s |> HexLayout3D.floorHex 0 0 0 8 6 DesertCell
+      |> HexLayout3D.scatterHexLayer 0 5 301 OasisCell
+
+let road a b c d e f = HexLayout3D.line a b c d e f RoadCell
+
+let city x z size =
+    HexLayout3D.section x 0 z (
+        HexLayout3D.fill 0 0 0 size 2 size CityCell
+        >> HexLayout3D.border 0 0 0 (size + 1) 3 (size + 1) WallCell  // defensive wall
+    )
+
 let civMap =
     HexGrid3D.create 40 8 30 32f 2f Vector3.Zero FlatTop
     |> HexLayout3D.run (fun section ->
         section
         // Base terrain
         |> HexLayout3D.floorHex 0 0 0 40 30 GrassCell
-        
+
         // Mountain range (barrier)
-        |> HexLayout3D.section 15 0 10 (fun s ->
-            s |> HexLayout3D.fill 0 0 0 8 5 3 MountainCell
-              |> HexLayout3D.floorHex 0 0 4 8 3 SnowCell
-        )
-        
+        |> HexLayout3D.section 15 0 10 mountainRange
+
         // River (winding)
         |> HexLayout3D.line 0 0 5 39 0 25 WaterCell
-        
+
         // Forests
-        |> HexLayout3D.section 2 0 2 (fun s ->
-            s |> HexLayout3D.scatterHexLayer 0 30 101 ForestCell
-        )
-        |> HexLayout3D.section 28 0 18 (fun s ->
-            s |> HexLayout3D.scatterHexLayer 0 25 202 ForestCell
-        )
-        
+        |> HexLayout3D.section 2 0 2 (forestPatch 101)
+        |> HexLayout3D.section 28 0 18 (forestPatch 202)
+
         // Desert region
-        |> HexLayout3D.section 30 0 2 (fun s ->
-            s |> HexLayout3D.floorHex 0 0 0 8 6 DesertCell
-              |> HexLayout3D.scatterHexLayer 0 5 301 OasisCell
-        )
-        
+        |> HexLayout3D.section 30 0 2 desertRegion
+
         // Tundra (north)
         |> HexLayout3D.floorHex 0 0 0 40 3 TundraCell
-        
+
         // Roads connecting cities
-        |> HexLayout3D.line 5 0 5 20 0 15 RoadCell
-        |> HexLayout3D.line 20 0 15 35 0 25 RoadCell
-        
-        // Cities
-        |> HexLayout3D.section 5 0 5 (fun s ->
-            s |> HexLayout3D.fill 0 0 0 2 2 2 CityCell
-              |> HexLayout3D.border 0 0 0 3 3 3 WallCell  // Defensive wall
-        )
-        |> HexLayout3D.section 20 0 15 (fun s ->
-            s |> HexLayout3D.fill 0 0 0 3 2 3 CityCell
-        )
-        |> HexLayout3D.section 35 0 25 (fun s ->
-            s |> HexLayout3D.fill 0 0 0 2 2 2 CityCell
-        )
-        
+        |> road 5 0 5 20 0 15
+        |> road 20 0 15 35 0 25
+
+        // Cities (small, medium, small)
+        |> city 5 5 2
+        |> city 20 15 3
+        |> city 35 25 2
+
         // Farms near cities
         |> HexLayout3D.scatterHexLayer 0 10 401 FarmCell
-        
+
         // Resources
-        |> HexLayout3D.scatter3D 15 501 IronCell  // Scattered iron deposits
+        |> HexLayout3D.scatter3D 15 501 IronCell  // scattered iron deposits
     )
 ```
 
 ## Performance Considerations
 
-- **Flat array storage** — O(1) cell access, cache-friendly iteration
-- **Struct voption** — No heap allocation per cell
-- **Zero-copy sections** — Sections don't duplicate the grid
-- **Inline lambdas** — DSL functions compile away closures
-- **Use `iterVolume`** — Always cull for gameplay rendering
-- **Use `generate`** — For procedural content, faster than individual `set` calls
-- **Use instancing** — For rendering many identical meshes
+- **Flat array storage**: O(1) cell access, cache-friendly iteration
+- **Struct voption**: No heap allocation per cell
+- **Zero-copy sections**: Sections don't duplicate the grid
+- **Inline lambdas**: DSL functions compile away closures
+- **Use `iterVolume`**: Always cull for gameplay rendering
+- **Use `generate`**: For procedural content, faster than individual `set` calls
+- **Use instancing**: For rendering many identical meshes
 
 ## API Reference
 
-For complete function signatures, see the [3D Layout Engine](core.html).
+For the `HexLayout3D`/`HexGrid3D` signatures, see the [3D Layout Engine](core.html) (layout primitives) and the API reference.

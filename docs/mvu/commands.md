@@ -23,7 +23,7 @@ let update msg model =
   match msg with
   | SaveGame ->
     // Return unchanged model + command to save
-    model, Cmd.ofAsync (saveToDisk model) SaveGameComplete SaveFailed
+    model, Cmd.ofAsync (saveToDisk model) SaveComplete SaveFailed
 
   | SaveComplete ->
     printfn "Game saved!"
@@ -57,7 +57,7 @@ Cmd.ofMsg SpawnProjectile
 
 ### Async Workflows
 
-Run F# async and map results:
+`async { ... }` is F#'s syntax for asynchronous work: `let!` awaits a result without blocking a thread. Run F# async and map results:
 
 ```fsharp
 let loadData url = async {
@@ -83,16 +83,18 @@ model, Cmd.ofTask task LoadComplete LoadFailed
 
 ### Custom Effects
 
-For full control over dispatch:
+`Effect<'Msg>` wraps a function that receives `dispatch`; use it for full control:
 
 ```fsharp
-let delayedMsg (ms: int) (msg: Msg) : Cmd<Msg> =
-  Cmd.ofEffect (Effect<Msg>(fun dispatch ->
+let runDelayed (ms: int) (msg: Msg) (dispatch: Msg -> unit) =
     async {
-      do! Async.Sleep ms
-      dispatch msg
-    } |> Async.StartImmediate
-  ))
+        do! Async.Sleep ms
+        dispatch msg
+    }
+    |> Async.StartImmediate
+
+let delayedMsg (ms: int) (msg: Msg) : Cmd<Msg> =
+    Cmd.ofEffect (Effect<Msg>(runDelayed ms msg))
 
 // Usage
 model, delayedMsg 1000 (DelayedAction "1 second passed")
@@ -103,16 +105,17 @@ model, delayedMsg 1000 (DelayedAction "1 second passed")
 Return multiple commands from one update:
 
 ```fsharp
+let startLevelCmd (level: Level) =
+    Cmd.batch [
+        Cmd.ofMsg (PlayMusic level.Music)
+        Cmd.ofAsync loadLevelData level.id LevelDataLoaded LoadFailed
+        Cmd.ofMsg SpawnPlayer
+    ]
+
 let update msg model =
   match msg with
   | StartLevel level ->
-    let newModel = { model with Level = level }
-    let cmd = Cmd.batch [
-      Cmd.ofMsg (PlayMusic level.Music)
-      Cmd.ofAsync loadLevelData level.id LevelDataLoaded LoadFailed
-      Cmd.ofMsg SpawnPlayer
-    ]
-    newModel, cmd
+    { model with Level = level }, startLevelCmd level
 ```
 
 | Function | Use Case |
@@ -165,35 +168,38 @@ let update msg model =
 For effects where you don't care about the result:
 
 ```fsharp
-let log msg =
-  Cmd.ofEffect (Effect<_>(fun _ ->
+let logEffect (msg: string) (_dispatch: Msg -> unit) =
     printfn "[LOG] %s" msg
-  ))
+
+let logMessage (msg: string) =
+    Cmd.ofEffect (Effect<Msg>(logEffect msg))
 
 // Usage
-model, log "Player jumped"
+model, logMessage "Player jumped"
 ```
 
 ### Sequential Commands
 
-Chain dependent operations:
+The batch functions run their commands in the same frame; the order between them is not a wait. For true sequencing (B runs after A completes), use async:
 
 ```fsharp
 let saveThenLoad path =
-  Cmd.batch2 (
-    Cmd.ofAsync saveData path (fun _ -> DataSaved) SaveFailed,
-    Cmd.ofMsg LoadNextLevel  // Runs immediately, not waiting for save
-  )
+  Cmd.ofAsync (async {
+    do! saveDataAsync()
+    let! result = loadDataAsync()
+    return result
+  }) Loaded Failed
 ```
 
-For true sequencing (B runs after A completes), use async:
+To run two independent effects together in one frame, batch them:
 
 ```fsharp
-let sequential = Cmd.ofAsync (async {
-  do! saveDataAsync()
-  let! result = loadDataAsync()
-  return result
-}) Loaded Failed
+let saveAndStartNext (path: string) =
+  let saved _ = DataSaved
+  Cmd.batch2 (
+    Cmd.ofAsync saveData path saved SaveFailed,
+    Cmd.ofMsg LoadNextLevel  // starts immediately, not after the save
+  )
 ```
 
 ### Conditional Commands
@@ -211,13 +217,13 @@ model, maybeSave model
 
 ## Performance Notes
 
-- Commands are structs - minimal allocation
-- `Cmd.none` is a singleton - zero allocation
+- Commands are structs: minimal allocation
+- `Cmd.none` is a singleton: zero allocation
 - `batch2`/`batch3`/`batch4` avoid array allocations
 - Async commands don't block the game loop
 
 ## See Also
 
-- [Elmish runtime](elmish.html) - The update loop
-- [Subscriptions](subscriptions.html) - External event sources
-- [Service composition](services.html) - Dependency injection patterns
+- [Elmish runtime](elmish.html): The update loop
+- [Subscriptions](subscriptions.html): External event sources
+- [Service composition](services.html): Dependency injection patterns

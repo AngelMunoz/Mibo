@@ -7,7 +7,7 @@ index: 4
 
 # 3D Materials
 
-`Material3D` is a struct that defines surface appearance for PBR rendering. It carries color, texture maps, and scalar properties — but never a shader handle. The pipeline binds the appropriate shader.
+`Material3D` is a struct that defines surface appearance for <abbr title="physically based rendering">PBR</abbr> rendering. It carries color, texture maps, and scalar properties, but never a shader handle. The pipeline binds the appropriate shader.
 
 ## What and Why
 
@@ -15,12 +15,12 @@ Materials describe *what a surface looks like*. The pipeline's shader reads mate
 
 Key properties:
 
-- **Albedo** — Base color and optional texture (diffuse look)
-- **Roughness** — How rough vs mirror-smooth (0 = mirror, 1 = fully diffuse)
-- **Metallic** — Dielectric vs metallic surface (0 = plastic/wood, 1 = metal)
-- **Normal map** — Surface detail without extra geometry
-- **Emission** — Self-illumination (glowing surfaces)
-- **Opacity** — Transparency
+- **Albedo**: Base color and optional texture (diffuse look)
+- **Roughness**: How rough vs mirror-smooth (0 = mirror, 1 = fully diffuse)
+- **Metallic**: Dielectric vs metallic surface (0 = plastic/wood, 1 = metal)
+- **Normal map**: Surface detail without extra geometry (<abbr title="a texture that stores per-pixel surface direction, used to fake detail in lighting">normal map</abbr>)
+- **Emission**: Self-illumination (glowing surfaces)
+- **Opacity**: Transparency
 
 ## Quick start
 
@@ -41,7 +41,8 @@ let woodMat =
     { Material3D.defaults with Roughness = 0.8f }
     |> Material3D.withAlbedoMap woodTexture
 
-// In your view (MonoGame shown; raylib passes its own Mesh):
+// In your view (MonoGame shown; raylib passes its own Mesh;
+// prims comes from Primitive3D.create gd, see Primitive meshes below):
 buffer
   .mesh(prims.Cube, transform, metalMat)
   .drop()
@@ -65,24 +66,9 @@ buffer
 
 ## Builder pattern
 
-All materials start from `Material3D.defaults` or a convenience constructor. Use record update syntax for scalar properties and `with*` functions for texture maps:
+All materials start from `Material3D.defaults` or a convenience constructor. Use record update syntax for scalar properties and `with*` functions for texture maps (as in the Quick start above). Shorthand constructors cover the common cases:
 
 ```fsharp
-// Scalar properties via record update
-let mat = {
-    Material3D.defaults with
-        AlbedoColor = Color.Blue
-        Roughness = 0.3f
-        Metallic = 0.8f
-}
-
-// Texture maps via builder functions
-let texturedMat =
-    Material3D.defaults
-    |> Material3D.withAlbedoMap albedoTex
-    |> Material3D.withNormalMap normalTex
-
-// Shorthand constructors
 let red = Material3D.colored Color.Red          // albedo = red, rest default
 let glow = Material3D.unlit Color.Yellow        // emissive, no lighting
 ```
@@ -111,11 +97,12 @@ let mat =
 ## Loading from model files
 
 When you load a `.obj`, `.gltf`, or `.fbx` via the asset system, the backend's native material is
-extracted into a `Material3D` automatically. The conversion helper differs by backend because the
-native material type differs:
+extracted into a `Material3D` automatically. If you don't need per-mesh control, `.model(...)`
+does this for you; the loops below show what it does internally (the conversion helper differs
+by backend because the native material type differs):
 
 ```fsharp
-// raylib — read a raylib Material:
+// raylib: read a raylib Material
 let m = assets.Model("assets/mymodel.obj")
 for i = 0 to m.MeshCount - 1 do
     let mesh = NativePtr.get m.Meshes i
@@ -123,7 +110,7 @@ for i = 0 to m.MeshCount - 1 do
     let raylibMat = NativePtr.get m.Materials matIdx
     let mat = Material3D.fromRaylibMaterial raylibMat
 
-// MonoGame — read a ModelMeshPart's native Effect (BasicEffect/SkinnedEffect):
+// MonoGame: read a ModelMeshPart's native Effect (BasicEffect/SkinnedEffect)
 let model = assets.Model("assets/mymodel")
 for mesh in model.Meshes do
     for part in mesh.MeshParts do
@@ -131,7 +118,7 @@ for mesh in model.Meshes do
 ```
 
 In both cases the `.model(...)` member does this conversion automatically for all
-sub-meshes — use it when you don't need per-mesh control. On MonoGame only the albedo color,
+sub-meshes; use it when you don't need per-mesh control. On MonoGame only the albedo color,
 albedo map, and opacity are extracted from native effects (normal/roughness/metallic maps are
 not carried by MonoGame's standard effects); assign the remaining PBR maps explicitly if needed.
 
@@ -149,12 +136,12 @@ Use for UI elements, debug markers, or anything that should appear at full brigh
 
 `Opacity` controls how the surface mixes with what is behind it:
 
-- `Opacity >= 1.0` — opaque. Renders in the forward pass, writes depth, casts shadows.
-- `0 < Opacity < 1.0` — transparent. Renders after all opaque geometry, sorted far-to-near
+- `Opacity >= 1.0`: opaque. Renders in the forward pass, writes depth, casts shadows.
+- `0 < Opacity < 1.0`: transparent. Renders after all opaque geometry, sorted far-to-near
   by camera distance, and alpha-blends with the scene. Depth testing stays on but depth
   writes are off for the sorted pass, so a transparent surface never occludes the geometry
   behind it in the depth buffer.
-- `Opacity <= 0.0` — not rendered at all (no draw, no shadow).
+- `Opacity <= 0.0`: not rendered at all (no draw, no shadow).
 
 ```fsharp
 let glassMat = {
@@ -170,13 +157,13 @@ buffer.mesh(prims.Cube, transform, glassMat).drop()
 Rules:
 
 - **Transparent geometry does not cast shadows and does not write depth.** The shadow and
-  scene-depth passes are binary — they cannot represent partial occlusion — so transparent
+  scene-depth passes are binary, so they cannot represent partial occlusion; transparent
   surfaces are excluded from both, and the sorted pass writes with depth off. Consequence:
   `PostProcessWithDepth` effects (fog, depth-of-field) sample opaque-only depth on both
   backends. `EnableShadows`/`DisableShadows` scopes do not change this.
 - **Ordering is per-camera, far-to-near.** Transparent draws sort by distance to the camera
   that captured them and render at camera boundaries and end of frame. Intersecting
-  transparent surfaces can still sort incorrectly — there is no per-pixel ordering.
+  transparent surfaces can still sort incorrectly; there is no per-pixel ordering.
 - **Where opacity comes from.** On raylib, `Opacity` maps from the albedo texture/color
   alpha channel (`Color.A`); on MonoGame, from the effect's alpha (`BasicEffect.Alpha` /
   `SkinnedEffect.Alpha`). On both backends the sorted transparent pass uses alpha blending
@@ -186,7 +173,7 @@ Rules:
   transparent surface still blends (with depth writes on, since it skips the sorted flush);
   on MonoGame it renders effectively opaque, because the frame's `BlendState.Opaque` is not
   switched for these immediate draws. Either way a transparent instanced or effect-scoped
-  surface may look wrong against sorted transparents — prefer fully opaque materials for them.
+  surface may look wrong against sorted transparents; prefer fully opaque materials for them.
 
 ## Primitive meshes
 
@@ -207,7 +194,7 @@ backend (raylib `Mesh` / MonoGame `PrimitiveMesh`), and `.mesh(...)` takes which
 let transform = Matrix4x4.CreateScale(2f, 1f, 3f) * Matrix4x4.CreateTranslation(pos)
 buffer.mesh(Primitive3D.cube, transform, mat).drop()
 
-// MonoGame — build the primitive set once (needs the GraphicsDevice), then draw:
+// MonoGame: build the primitive set once (needs the GraphicsDevice), then draw
 let prims = Primitive3D.create gd
 let transform = Matrix.CreateScale(2f, 1f, 3f) * Matrix.CreateTranslation(pos)
 buffer.mesh(prims.Cube, transform, mat).drop()
@@ -220,31 +207,33 @@ buffer.mesh(prims.Cube, transform, mat).drop()
 ## Overriding a model's material
 
 `.model(...)` always renders with the material baked into the file (auto-extracted per
-sub-mesh, as described above). When you want a different material — the authored values look
-wrong, you want to reuse one mesh for several looks (gold/silver/bronze variants of the same
-model), or you need a flat/debug material — use the override members instead of iterating the
+sub-mesh, as described above). When you want a different material (the authored values look
+wrong, you want to reuse one mesh for several looks, gold/silver/bronze variants of the same
+model, or you need a flat/debug material), use the override members instead of iterating the
 model's meshes by hand:
 
 ```fsharp
-// Whole-model override — every sub-mesh uses the supplied material
+// Whole-model override: every sub-mesh uses the supplied material
 buffer.modelWith(model, transform, Material3D.colored Color.Gold).drop()
 
-// Per-sub-mesh override — a resolver returns the material for each sub-mesh
+// Per-sub-mesh override: a resolver returns the material for each sub-mesh
+let goldResolver (i: int) =
+    if i = 0 then Material3D.colored Color.Gold else Material3D.defaults
+
 buffer
-  .modelWithPerMesh(model, transform, fun i ->
-    if i = 0 then Material3D.colored Color.Gold else Material3D.defaults)
+  .modelWithPerMesh(model, transform, goldResolver)
   .drop()
 ```
 
-The override goes through the normal PBR and shadow path, so it is lit and shadowed just like
-an authored material. The default `.model(...)` path is unchanged — overriding is opt-in
+The override goes through the normal PBR and shadow path, so it is lit and shadowed like
+an authored material. The default `.model(...)` path is unchanged; overriding is opt-in
 and costs nothing when you don't use it.
 
 **Resolver index.** The `int -> Material3D` resolver is indexed by the pipeline's sub-mesh
 iteration order, which differs by backend because the native model types differ:
 
-- **raylib** — mesh index `0..model.MeshCount-1`.
-- **MonoGame** — a flat counter over `model.Meshes × MeshParts`.
+- **raylib**: mesh index `0..model.MeshCount-1`.
+- **MonoGame**: a flat counter over `model.Meshes × MeshParts`.
 
 Write the resolver against your specific model's structure; it is not portable across backends.
 
@@ -257,11 +246,11 @@ buffer.animatedModelWithPerMesh(animatedModel, transform, resolver).drop()
 ```
 
 On raylib, explicit-palette skinned draws go through `.skinnedMesh(...)`, which already takes a
-`Material3D` directly — supply the material you want there; no separate override helper is
+`Material3D` directly; supply the material you want there; no separate override helper is
 needed.
 
 ## See also
 
-- [Overview](overview.html) — Architecture and pipeline setup
-- [Draw DSL](../draw-dsl.html) — The fluent draw surface
-- [Lighting](lighting.html) — Light types and shadow configuration
+- [Overview](overview.html): Architecture and pipeline setup
+- [Draw DSL](../draw-dsl.html): The fluent draw surface
+- [Lighting](lighting.html): Light types and shadow configuration

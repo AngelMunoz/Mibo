@@ -40,7 +40,7 @@ let singleRoom =
         |> Layout3D.run (fun section ->
             section
             |> Interior.room 12 4 12 FloorCell WallCell CeilingCell
-            |> Layout3D.section 6 2 (Layout3D.set 0 0 0 ChestCell)
+            |> Layout3D.section 6 2 1 (Layout3D.set 0 0 0 ChestCell)
         )
 ```
 
@@ -113,7 +113,7 @@ let roomWithWindows =
     
     // North wall windows
     |> Interior.window North 4 3 2  // Width=4, Height=3, Sill=2
-    |> Interior.window North 4 3 2  // Second window (same pattern)
+    |> Interior.window North 8 3 2  // second window, further along the wall
     
     // East wall window
     |> Interior.window East 3 3 2
@@ -141,8 +141,8 @@ let pillaredRoom =
 ```
 
 **Pillar usage:**
-- 2-4 tiles high for visual pillars
-- 4-6 tiles high for climbable columns
+- 2-4 cells high for visual pillars
+- 4-6 cells high for climbable columns
 - Base/middle/top tiles for visual variety
 
 ### Vertical Shafts
@@ -152,7 +152,7 @@ Shafts provide vertical transport (elevators, ladders):
 ```fsharp
 let elevatorShaft =
     section
-    |> Interior.shaft 2 2 12 WallCell  // 2x2 shaft, 12 tiles tall
+    |> Interior.shaft 2 2 12 WallCell  // 2x2 shaft, 12 cells tall
 ```
 
 Use shafts between floors with doors opening into them:
@@ -416,4 +416,4 @@ let multiFloor =
 - **Line of sight:** Check that corners provide actual cover.
 - **Door usability:** Do doors block movement awkwardly? Are they wide enough?
 
-> **See also:** [3D Layout Engine](core.html) for complete Interior module documentation
+> **See also:** [3D Layout Engine](core.html) for the layout primitives this module builds on.

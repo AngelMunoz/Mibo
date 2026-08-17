@@ -11,12 +11,13 @@ Every frame, your view function receives a `RenderBuffer2D` and populates it wit
 
 ## The buffer lifecycle
 
-```
-// Your view function signature:
+```fsharp
+// Your view function signature: three inputs (context, model, buffer),
+// and it does its work by adding commands to the buffer
 val view : GameContext -> 'Model -> RenderBuffer2D -> unit
 ```
 
-The buffer is **pre-cleared** by the renderer each frame. Do not call `Clear()` yourself. Just add commands:
+The buffer is **pre-cleared** by the renderer each frame. Do not call `Clear()` yourself; add commands:
 
 ```fsharp
 let myView (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
@@ -32,7 +33,7 @@ The `.drop()` at the end silences the unused-value warning. It does nothing.
 
 ## Layers, not call order
 
-Commands execute in **layer order**, not insertion order. Every 2D member takes an optional `layer` (default `0<RenderLayer>`); within one layer, insertion order is preserved. This means you can write your view in whatever order reads best — backgrounds low, world in the middle, UI high:
+Commands execute in **layer order**, not insertion order. Every 2D member takes an optional `layer` (default `0<RenderLayer>`; `RenderLayer` is F#'s unit-of-measure syntax, a compile-time tag that keeps layer values distinct from plain numbers); within one layer, insertion order is preserved. This means you can write your view in whatever order reads best: backgrounds low, world in the middle, UI high:
 
 ```fsharp
 buffer
@@ -42,23 +43,24 @@ buffer
   .drop()
 ```
 
-Even though the text was added first, the sky gradient draws first, then the circle, then the UI.
+Even though the text was added first, the sky gradient draws first, then the circle, then the UI. (`w`, `h`, `skyTop`, `skyBot` are your values: screen size and gradient colors.)
 
 ## Neutral inputs, backend records
 
-The fluent DSL takes `Mibo.Color`, `System.Numerics` vectors, and float rectangle coordinates on **both backends** — the buffer converts for you. Backend state records (`SpriteState`, `TextState`, light records, particle arrays) pass through as the backend's own types: **raylib** `Rectangle` (four `float32` fields) vs **MonoGame** `Microsoft.Xna.Framework.Rectangle` (**int** fields). See [MonoGame type quirks](../monogame-types.html).
+The fluent DSL takes `Mibo.Color`, `System.Numerics` vectors, and float rectangle coordinates on **both backends**; the buffer converts for you. Backend state records (`SpriteState`, `TextState`, light records, particle arrays) pass through as the backend's own types: **raylib** `Rectangle` (four `float32` fields) vs **MonoGame** `Microsoft.Xna.Framework.Rectangle` (**int** fields). See [MonoGame type quirks](../monogame-types.html).
 
 Sprites and text have builder-equipped state records when you want to carry them around:
 
 ```fsharp
 let sprite = SpriteState.create(tex, Rectangle(100f, 100f, 32f, 32f), Rectangle(0f, 0f, 32f, 32f))
 let redSprite = { sprite with Color = Color.Red; Layer = 10<RenderLayer> }
-let spinning = { sprite with Rotation = 0.785f } // ~45 degrees
+// Rotation is in radians; 0.785f is about 45 degrees
+let spinning = { sprite with Rotation = 0.785f }
 
 buffer.sprite(sprite).drop()
 ```
 
-For text, the parts form is usually shortest — `size` maps to each backend's sizing model (raylib: font size in pixels; MonoGame: uniform scale):
+For text, the parts form is usually shortest: `size` maps to each backend's sizing model (raylib: font size in pixels; MonoGame: uniform scale):
 
 ```fsharp
 buffer
@@ -93,7 +95,7 @@ buffer
 
 The sampler defaults to `SamplerState.LinearClamp` and is reset each frame, alongside blend mode, scissor, line width, and viewport.
 
-> **raylib** has no equivalent command — a texture's filter is a property of the texture, not the batch. Override the load-time default with the `Texture.filter` helper: `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point` (apply once at load/init, not per frame). See [Assets](../assets.html).
+> **raylib** has no equivalent command: a texture's filter is a property of the texture, not the batch. Override the load-time default with the `Texture.filter` helper: `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point` (apply once at load/init, not per frame). See [Assets](../assets.html).
 
 ## Cameras
 
@@ -115,6 +117,6 @@ See [Camera](../camera.html) for details.
 
 ## Next steps
 
-- [Draw DSL](../draw-dsl.html) — the full fluent surface with defaults
-- [Custom Commands](custom-commands.html) — the `.drawImmediate(...)` escape hatch
-- [Performance](performance.html) — writing efficient rendering code
+- [Draw DSL](../draw-dsl.html): the full fluent surface with defaults
+- [Custom Commands](custom-commands.html): the `.drawImmediate(...)` escape hatch
+- [Performance](performance.html): writing efficient rendering code

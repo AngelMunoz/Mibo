@@ -7,18 +7,20 @@ index: 4
 
 # Subscriptions (external events)
 
-Your update function runs once per frame, but games also react to things that arrive on their own schedule: the mouse moves, a key goes down, a network message lands, a timer fires. Subscriptions are how those events get into the loop.
+Your update function runs once per step, but games also react to things that arrive on their own schedule: the mouse moves, a key goes down, a network message lands, a timer fires. Subscriptions are how those events get into the loop.
 
 ## What a subscription is
 
-A subscription is two things: a stable id, and a function that attaches to an event source and returns a detacher. The attach function receives `post`, which schedules work to run inside the game loop — it does not run anything itself.
+A subscription is two things: a stable id, and a function that attaches to an event source and returns a detacher. The attach function receives a `SubPosting`, a posting surface whose `Post` member schedules work to run inside the game loop; it does not run anything itself.
 
 ```fsharp
 type AdaptiveSub = {
     Id: SubId
-    Attach: ((unit -> unit) -> unit) -> IDisposable
+    Attach: SubPosting -> IDisposable
 }
 ```
+
+Read `Attach` inside out: it receives the posting surface, and `Post` receives the work to run later. The `IDisposable` that attaching returns is the detacher; when the runner detaches the subscription, the source stops feeding the loop.
 
 Here's one for the mouse, using the framework's input service:
 
@@ -26,19 +28,28 @@ Here's one for the mouse, using the framework's input service:
 let mouseSub (ctx: AdaptiveFrameContext) : AdaptiveSub =
     let input = ctx.Context |> GameContext.getService<IInput>
 
+    // ready-to-post work: collect this cell when the loop runs it
+    let collectAtCell (cell: Cell) () = collectAt cell
+
+    let postCellClick (posting: SubPosting) (cell: Cell) =
+        posting.Post(collectAtCell cell)
+
+    let onMouseMove (posting: SubPosting) (delta: InputDelta) =
+        // Hover: remember where the cursor is. A cval write is enough;
+        // anything derived from it updates automatically.
+        hoverCell |> CVal.set (pickCell delta.Position)
+
+        // Click: this changes game state, so run it in the loop
+        if delta.Buttons.Pressed |> Array.contains MouseButtonCode.Left then
+            pickCell delta.Position
+            |> ValueOption.iter (postCellClick posting)
+
+    let attachMouse (posting: SubPosting) : IDisposable =
+        input.MouseDelta.Subscribe(onMouseMove posting)
+
     {
       Id = SubId.ofString "mouse"
-      Attach =
-        fun post -> input.MouseDelta.Subscribe(fun delta ->
-            // Hover: just remember where the cursor is. A cval write is
-            // enough — anything derived from it updates automatically.
-            hoverCell |> CVal.set(pickCell delta.Position)
-
-            // Click: this changes game state, so run it in the loop
-            if delta.Buttons.Pressed |> Array.contains MouseButtonCode.Left then
-                pickCell delta.Position
-                |> ValueOption.iter(fun cell ->
-                    post(fun () -> collectAt cell)))
+      Attach = attachMouse
     }
 ```
 
@@ -52,18 +63,18 @@ let program =
 
 The split in that example is the guideline for input specifically:
 
-* **Where things are** (cursor position, hover) — write a `cval` directly. It's cheap and derived values follow automatically.
-* **What the player did** (clicks, key presses) — `post` it, so it runs after your update, in order, on the game thread.
+* **Where things are** (cursor position, hover): write a `cval` directly. It's cheap and derived values follow automatically.
+* **What the player did** (clicks, key presses): `Post` it, so it runs after your update, in order, on the game thread.
 
-## Why attach only gets `post`
+## Why attach only gets a posting surface
 
-Event sources don't run on your thread. A network callback arrives on a socket thread; a task completes on the thread pool. Your state containers belong to the game thread — touching them from anywhere else is not allowed.
+Event sources don't run on your thread. A network callback arrives on a socket thread; a task completes on the thread pool. Your state containers belong to the game thread; touching them from anywhere else is not allowed.
 
-The shape of `AdaptiveSub` makes the safe thing the only thing: the callback receives `post` and nothing else that runs game code. Whatever thread the event fires on, the reaction runs on the game thread at a framework-chosen moment.
+The shape of `AdaptiveSub` makes the safe thing the only thing: the callback receives the posting surface and nothing else that runs game code. Whatever thread the event fires on, the reaction runs on the game thread at a framework-chosen moment.
 
 ## Registering subscriptions
 
-`AdaptiveInit.withSubscriptions` takes a function that returns the subscription set as an `amap<SubId, AdaptiveSub>` — a map, keyed by the subscription ids. Build the map once, in `init`, and return the same instance from the projection:
+`AdaptiveInit.withSubscriptions` takes a function that returns the subscription set as an `amap<SubId, AdaptiveSub>`, a map keyed by the subscription ids. Build the map once, in `init`, and return the same instance from the projection:
 
 ```fsharp
 let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
@@ -72,71 +83,55 @@ let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
           SubId.ofString "keys", keyboardSub ctx ]
         |> AMap.ofList
 
+    let subscriptions _ = subMap
+
     AdaptiveInit.ofFrameBuilder (frame world)
-    |> AdaptiveInit.withSubscriptions (fun _ -> subMap)
+    |> AdaptiveInit.withSubscriptions subscriptions
 ```
 
-The map has to be a **stable adaptive map** — the runner calls your function every step but only re-reads the map when its version moved, and it identifies subscriptions by key: a key that survives a change keeps its attachment, a key that vanishes gets detached (at the next step's boundary — a detachment lags one frame behind the change).
+The map has to be a **stable adaptive map**. Every adaptive value carries a version counter that moves when it is written; comparing versions is how the runner tells "changed" from "unchanged". The runner calls your function every step but only re-reads the map when its version moved, and it identifies subscriptions by key: a key that survives a change keeps its attachment, a key that vanishes gets detached (at the next step's boundary, so a detachment lags one frame behind the change).
 
-The hard rule: **never build the map inside the projection.** A fresh `AMap.ofList` (or any other constructor) per call creates a new graph every step — the version gate can never hold, so every step pays a full diff, and the dead graphs are garbage for the GC. Build once; return the same instance.
+The hard rule: **never build the map inside the projection.** A fresh `AMap.ofList` (or any other constructor) per call creates a new graph every step; the version gate can never hold, so every step pays a full diff, and the dead graphs are garbage for the GC. Build once; return the same instance.
 
 ## Dynamic subscription sets
 
-When the set should follow game state (menus vs. gameplay, connected players), derive the map from your state — still built once, in `init`. The projection the runner calls every step just returns that instance:
+When the set should follow game state (menus vs. gameplay, connected players), derive the map from your state, still built once, in `init`. The projection the runner calls every step returns that instance:
 
 ```fsharp
+let subsForMode (ctx: AdaptiveFrameContext) (mode: GameMode) =
+    match mode with
+    | Menu -> [ SubId.ofString "menu-keys", menuKeySub ctx ]
+    | Playing ->
+        [ SubId.ofString "mouse", mouseSub ctx
+          SubId.ofString "keys", keyboardSub ctx ]
+
 let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
     let subMap =
         world.Mode                               // cval<GameMode>
-        |> AVal.map (function
-            | Menu -> [ SubId.ofString "menu-keys", menuKeySub ctx ]
-            | Playing ->
-                [ SubId.ofString "mouse", mouseSub ctx
-                  SubId.ofString "keys", keyboardSub ctx ])
+        |> AVal.map (subsForMode ctx)
         |> AMap.ofAVal
 
+    let subscriptions _ = subMap
+
     AdaptiveInit.ofFrameBuilder (frame world)
-    |> AdaptiveInit.withSubscriptions (fun _ -> subMap)
+    |> AdaptiveInit.withSubscriptions subscriptions
 ```
 
-When `mode` changes, the map's version moves, the diff runs, and the right subscriptions attach or detach. Clean steps skip the read entirely.
+When `world.Mode` changes, the map's version moves, the diff runs, and the right subscriptions attach or detach. Clean steps skip the read entirely.
 
-For full control there is `AMap.custom`: its compute function receives the current entries and appends the operations describing what changed — useful when your subscription source is an event queue rather than state. The map contract is the same either way: keys are identity, version gates the diff.
+For full control there is `AMap.custom`: its compute function receives the current entries and appends the operations describing what changed, useful when your subscription source is an event queue rather than state. The map contract is the same either way: keys are identity, version gates the diff.
 
 ```fsharp
-let subMap : amap<SubId, AdaptiveSub> =
-    AMap.custom(fun current delta ->
-        // consume your own event queue, appending adds/removes
-        ())
+let applyQueue (current: amap<SubId, AdaptiveSub>) (delta: MapDeltaBuilder<SubId, AdaptiveSub>) =
+    // consume your own event queue, appending adds/removes to delta
+    ...
+
+let subMap : amap<SubId, AdaptiveSub> = AMap.custom applyQueue
 ```
 
-## Beyond input
+## Gameplay keys with the mapper
 
-The same shape covers any event source. A timer that spawns a wave every thirty seconds:
-
-```fsharp
-let waveTimer (interval: float32) : AdaptiveSub =
-    AdaptiveSub.ofTimer
-        (SubId.ofString "wave-timer")
-        (TimeSpan.FromSeconds(float interval))
-        (fun posting -> posting.Post spawnWave)
-```
-
-A network client pushing opponent moves:
-
-```fsharp
-let opponentMoves (client: IGameClient) : AdaptiveSub =
-    AdaptiveSub.ofObservable
-        (SubId.ofString "opponent")
-        client.OnMove
-        (fun posting move -> posting.Post(fun () -> applyMove move))
-```
-
-`ofTimer` and `ofObservable` cover the common sources; the record with `Attach` is still there when you need full control. In every case the handler receives the posting surface and only queues work: `Post` runs it on the owner thread at the next step's boundary, before `Update`.
-
-One practical note on the mouse wheel: raylib reports ±1 per notch and MonoGame reports ±120. If zoom matters to your game, fold a scale factor in where you handle the wheel, so the feel matches on both backends.
-
-For gameplay keys, the shared [input guide](../input.html) (`InputMap`, `ActionState`) applies here too — and the mapper has an adaptive subscription that writes the current action state into a `cval` for you:
+For gameplay keys, the shared [input guide](../input.html) (`InputMap`, `ActionState`) applies here too; the mapper has an adaptive subscription that writes the current action state into a `cval` for you:
 
 ```fsharp
 type World = {
@@ -145,8 +140,34 @@ type World = {
 }
 
 // in init, beside the other subscriptions (needs AdaptiveProgram.withInput):
+let getInputMap () = inputMap
+
 let inputSub =
-    InputMapper.subscribeAdaptive (fun () -> inputMap) world.Actions ctx.Context
+    InputMapper.subscribeAdaptive getInputMap world.Actions ctx.Context
+
+let subMap =
+    [ inputSub.Id, inputSub
+      SubId.ofString "mouse", mouseSub ctx ]
+    |> AMap.ofList
+```
+
+`subscribeAdaptive` takes a map factory; when your bindings never change, `InputMapper.subscribeStaticAdaptive` takes the `InputMap` directly. Read the `cval` once at the top of your update.
+
+One practical note on the mouse wheel: raylib reports ±1 per notch and MonoGame reports ±120. If zoom matters to your game, fold a scale factor in where you handle the wheel, so the feel matches on both backends.
+
+For gameplay keys, the shared [input guide](../input.html) (`InputMap`, `ActionState`) applies here too; the mapper has an adaptive subscription that writes the current action state into a `cval` for you:
+
+```fsharp
+type World = {
+    ...
+    Actions: cval<ActionState<GameAction>>
+}
+
+// in init, beside the other subscriptions (needs AdaptiveProgram.withInput):
+let getInputMap () = inputMap
+
+let inputSub =
+    InputMapper.subscribeAdaptive getInputMap world.Actions ctx.Context
 
 let subMap =
     [ inputSub.Id, inputSub
@@ -158,7 +179,7 @@ let subMap =
 
 ### Edges, not just held keys
 
-The mapper maintains an `ActionState` root with `Started`, `Released`, and `Held` sets. Edges accumulate within a step — a mouse event between a key press and its release doesn't drop the key's edges. Your update consumes the edges: one-shots read `Started`, continuous movement reads `Held`. The subscription clears `Started` and `Released` after `Update`, before the frame is forced, so every step reads fresh edges.
+The mapper maintains an `ActionState` root with `Started`, `Released`, and `Held` sets. Edges accumulate within a step; a mouse event between a key press and its release doesn't drop the key's edges. Your update consumes the edges: one-shots read `Started`, continuous movement reads `Held`. The subscription clears `Started` and `Released` after `Update`, before the frame is forced, so every step reads fresh edges.
 
 ```fsharp
 let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
@@ -171,6 +192,7 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
         | _ -> ()
 
     // Continuous: recomputed each frame from what's held right now
+    // (panStep : GameAction -> Vector2, your per-action pan vector)
     let mutable pan = Vector2.Zero
 
     for a in actions.Held do
@@ -181,5 +203,35 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
 
 Two habits from that example:
 
-* **Continuous actions read `Held`, not edge arithmetic.** A direction is the sum of what's held right now — if a key-press edge is ever lost, an edge-based accumulation would leave the pan stuck; a rebuilt-from-held direction can't.
-* **Read `Started` in `Update` and nowhere else.** The clear runs before the frame force and before work you post from `Update`, so a projection over `Started` forced in the frame builder and an intent that reads `Started` both see the cleared state. Read the edges (or materialize the derived value) in `Update` instead. One exception: under fixed step, a frame that converts to no sub-step runs no `Update` and no drain, so the clear waits and the edges stay in the root for the next sub-step's `Update`.
+* **Continuous actions read `Held`, not edge arithmetic.** A direction is the sum of what's held right now; if a key-press edge is ever lost, an edge-based accumulation would leave the pan stuck, and a rebuilt-from-held direction can't.
+* **Read `Started` in `Update` and nowhere else.** The clear runs before the frame is forced and before work you post from `Update`, so a projection over `Started` forced in the frame projection and an intent that reads `Started` both see the cleared state. Read the edges (or materialize the derived value) in `Update` instead. One exception: under fixed step, a frame may run zero sub-steps (nothing to simulate yet); no `Update` runs, the clear waits, and the edges stay in the root for the next sub-step's `Update`.
+
+## Timers and network
+
+The same shape covers any event source. A timer that spawns a wave every thirty seconds:
+
+```fsharp
+let onWaveTick (posting: SubPosting) = posting.Post spawnWave
+
+let waveTimer (interval: float32) : AdaptiveSub =
+    AdaptiveSub.ofTimer
+        (SubId.ofString "wave-timer")
+        (TimeSpan.FromSeconds(float interval))
+        onWaveTick
+```
+
+A network client pushing opponent moves:
+
+```fsharp
+let postMove (posting: SubPosting) (move: Move) =
+    let run () = applyMove move
+    posting.Post run
+
+let opponentMoves (client: IGameClient) : AdaptiveSub =
+    AdaptiveSub.ofObservable
+        (SubId.ofString "opponent")
+        client.OnMove
+        postMove
+```
+
+`ofTimer` and `ofObservable` cover the common sources; the record with `Attach` is still there when you need full control. In every case the handler receives the posting surface and only queues work: `Post` runs it on the owner thread at the next step's boundary, before `Update`.

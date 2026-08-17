@@ -425,4 +425,4 @@ Test your spawns:
 - Can players reach all loot safely?
 - Are there unfair choke points?
 
-> **See also:** [2D Layout Engine](core.html) for complete TopDown module documentation
+> **See also:** [2D Layout Engine](core.html) for the layout primitives this module builds on.
