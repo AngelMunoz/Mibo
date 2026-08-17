@@ -32,6 +32,9 @@ type World = {
     Honey: cval<int>
 }
 
+let world = { Bees = CMap.ofSeq [ 0, { Pos = Vector2.Zero; Dir = Vector2.One } ]
+              Honey = CVal.create 0 }
+
 // the projection's output: everything the renderer needs, once per step
 type Frame = {
     Bees: System.Collections.Generic.IReadOnlyDictionary<int, Bee>
@@ -39,19 +42,19 @@ type Frame = {
     Status: string
 }
 
-// a derived value: a plain function over one fact
+// P: the projection. First the derived values, built once from the
+// state: statusText is a plain function over one fact, and status
+// recomputes only when the honey fact moves.
 let statusText h = $"Honey: {h}"
+let status = world.Honey |> AVal.map statusText
 
-// P: the projection. `frame world` builds the derived values once
-// (here: status over the honey fact) and returns the `unit -> Frame`
-// the runner forces once per step, after update.
-let frame (world: World) =
-    let status = world.Honey |> AVal.map statusText
-
-    fun () : Frame ->
-        { Bees = world.Bees |> AMap.getValue
-          Honey = world.Honey |> AVal.getValue
-          Status = status |> AVal.getValue }
+// Then the frame projection: the `unit -> Frame` the runner forces
+// once per step, after update. It packs state reads and derived
+// values alike.
+let frame () : Frame =
+    { Bees = world.Bees |> AMap.getValue
+      Honey = world.Honey |> AVal.getValue
+      Status = status |> AVal.getValue }
 
 let meadowWidth = 40f
 
@@ -85,10 +88,7 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
 /// init: called once at startup with the frame context;
 /// registers the projection with the program.
 let init (world: World) (ctx: AdaptiveFrameContext) : AdaptiveInit<Frame> =
-    AdaptiveInit.ofFrameBuilder(frame world)
-
-let world = { Bees = CMap.ofSeq [ 0, { Pos = Vector2.Zero; Dir = Vector2.One } ]
-              Honey = CVal.create 0 }
+    AdaptiveInit.ofFrameBuilder frame
 
 // your drawing code: turns a Frame into drawing commands
 // (see rendering.html)
@@ -106,7 +106,7 @@ AdaptiveRaylibGame<Frame>(program).Run()
 
 `update world` and `init world` are partially applied: the `world` argument is already fixed, and what is left is exactly the shape `mkProgram` asks for (`init world : AdaptiveFrameContext -> AdaptiveInit<Frame>` and `update world : AdaptiveContext -> GameTime -> unit`). The renderer's `draw` is your drawing function, reading the `Frame`; [rendering](../rendering.html) covers how to write one.
 
-Notice what the game does *not* have: no code that recomputes the status string when honey changes. `frame world` builds the `status` projection once, when the program starts; from then on it recomputes only when the honey fact moves, and the frame just reads it. That is the P doing its job. [Derived State](derived-state.html) covers where projections live as the game grows, and the full combinator catalog is in [Mibo.Adaptive](../mibo-adaptive/overview.html).
+Notice what the game does *not* have: no code that recomputes the status string when honey changes. `status` is built once, when the program starts; from then on it recomputes only when the honey fact moves, and the frame just reads it. That is the P doing its job. [Derived State](derived-state.html) covers where projections live as the game grows, and the full combinator catalog is in [Mibo.Adaptive](../mibo-adaptive/overview.html).
 
 > **NOTE:** when the game grows, the world record is still the thing you apply; `init world` and `update world` keep working as features get added to `World`. See [Systems](systems.html).
 
