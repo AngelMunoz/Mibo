@@ -45,7 +45,9 @@ type Stamp2D<'T> = GridSection2D<'T> -> GridSection2D<'T>
 type Stamp3D<'T> = GridSection3D<'T> -> GridSection3D<'T>
 ```
 
-Stamps compose with `>>` (function composition):
+(In the examples below, `room`, `center`, `section`, `fill` and friends are the sample's own named stamps and layout functions.)
+
+Stamps compose with `>>` (function composition: the output of the left stamp feeds into the right one):
 
 ```fsharp
 let myStructure =
@@ -138,11 +140,11 @@ let worldPos = CellGrid3D.getWorldPos x y z grid  // Vector3
 
 Both engines use zero-cost abstractions:
 
-- **Flat array storage** - O(1) access via index calculation
-- **Struct voption** - No heap allocation for empty cells
-- **Inline lambdas** - Zero closure allocation for DSL functions
-- **In-place mutation** - All operations mutate the backing array directly
-- **Zero-copy sections** - Sections are lightweight views into the backing grid
+- **Flat array storage**: O(1) access via index calculation
+- **Struct voption**: No heap allocation for empty cells
+- **Inline lambdas**: Zero closure allocation for DSL functions
+- **In-place mutation**: operations write into the shared backing array; sections are zero-copy views into it
+- **Zero-copy sections**: Sections are lightweight views into the backing grid
 
 ## Iteration
 
@@ -185,28 +187,28 @@ Mibo includes pre-built stamps for common game types:
 Both `CellGrid3D` and `HexGrid3D` have dedicated renderer modules with matching API surfaces,
 available on both backends (raylib and MonoGame):
 
-- `CellGridRenderer3D` / `HexGrid3DRenderer` — Full rendering helpers
-- `render` — Basic iteration with world position conversion
-- `renderVolume` — Frustum-culled rendering
-- `renderWithIndices` — Access to grid coordinates during rendering
-- `renderInstanced` — GPU instancing for many copies of the same mesh
-- `renderVolumeInstanced` — GPU instancing with frustum culling
+- `CellGridRenderer3D` / `HexGrid3DRenderer`: Full rendering helpers
+- `render`: Basic iteration with world position conversion
+- `renderVolume`: Frustum-culled rendering
+- `renderWithIndices`: Access to grid coordinates during rendering
+- `renderInstanced`: GPU instancing for many copies of the same mesh
+- `renderVolumeInstanced`: GPU instancing with frustum culling
 
-The instanced renders are also available as fluent buffer members —
+The instanced renders are also available as fluent buffer members;
 `buffer.renderCellGridInstanced(ctx, grid)` / `buffer.renderHexGridInstanced(ctx, grid)`
-and their volume-culled variants — which is the recommended style for new code
+their volume-culled variants are the recommended style for new code
 (see [Draw DSL](../draw-dsl.html)).
 
 > _**NOTE**_: The layout geometry (`CellGrid3D`, `HexGrid3D`, stamps) lives in `Mibo.Core` and
 > is available on every backend. The instanced-draw renderer bridge depends on the backend's
-> native mesh/command types, so it ships per backend — both the raylib and MonoGame backends
+> native mesh/command types, so it ships per backend (raylib and MonoGame)
 > provide a matching implementation with the same API surface.
 
 See the [3D Layout Engine](3d/core.html) and [3D Hex Grid](3d/hex.html) docs for usage.
 
 ### 2D Grids
 
-2D grids don't need dedicated renderer modules — use `iterVisible` directly:
+2D grids don't need dedicated renderer modules; use `iterVisible` directly:
 
 ```fsharp
 grid |> CellGrid2D.iterVisible left top right bottom (fun x y tile ->

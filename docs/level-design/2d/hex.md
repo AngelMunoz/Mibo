@@ -37,8 +37,8 @@ Hexes come in two rotations. The choice affects both visuals and coordinate math
 ```
 
 **When to pick which:**
-- **Pointy top** — Strategy maps, tactical RPGs. Rows align horizontally, natural for "marching" armies left-to-right.
-- **Flat top** — Isometric-style games, board game adaptations. Columns align vertically, natural for scrolling maps.
+- **Pointy top**: Strategy maps, tactical RPGs. Rows align horizontally, natural for "marching" armies left-to-right.
+- **Flat top**: Isometric-style games, board game adaptations. Columns align vertically, natural for scrolling maps.
 
 ```fsharp
 open Mibo.Layout
@@ -54,7 +54,7 @@ The `size` parameter is the radius of the hex (center to corner). A `size` of 32
 
 ## Coordinate System
 
-Hex grids use **offset coordinates** — a standard column/row pair, but with a visual offset to make hexes tessellate:
+Hex grids use **offset coordinates**, a standard column/row pair, but with a visual offset to make hexes tessellate:
 
 ```
 Pointy-top:      Flat-top:
@@ -65,7 +65,7 @@ Pointy-top:      Flat-top:
 3  . . . .       3 . . .
 ```
 
-Odd rows (pointy-top) or odd columns (flat-top) are shifted by half a hex width. This is handled automatically by `getWorldPos` — you don't need to think about it when placing content.
+Odd rows (pointy-top) or odd columns (flat-top) are shifted by half a hex width. This is handled automatically by `getWorldPos`; you don't need to think about it when placing content.
 
 **What this means for you:** Use `(col, row)` to address cells. The visual offset is a rendering concern, not a logical one.
 
@@ -80,7 +80,7 @@ let grid = HexGrid.create 20 15 32f Vector2.Zero PointyTop
 // Place content
 HexGrid.set 5 3 myTile grid
 
-// Read content (returns voption — no heap allocation)
+// Read content (returns voption: no heap allocation)
 match HexGrid.get 5 3 grid with
 | ValueSome tile -> // handle tile
 | ValueNone -> // empty cell
@@ -157,7 +157,7 @@ section
 )
 ```
 
-Sections are zero-copy — they don't allocate new grids. They're just windows into the same backing data.
+Sections are zero-copy: they don't allocate new grids. They're windows into the same backing data.
 
 ### Structural Helpers
 
@@ -250,9 +250,9 @@ HexLayout.polygon vertices false EdgeTile section  // Outline only
 ```
 
 **When to use geometry:**
-- **Lines** — Paths, roads, rivers, laser beams
-- **Circles** — Area-of-effect markers, tower ranges, blast radii
-- **Polygons** — Territory boundaries, influence zones, procedural regions
+- **Lines**: Paths, roads, rivers, laser beams
+- **Circles**: Area-of-effect markers, tower ranges, blast radii
+- **Polygons**: Territory boundaries, influence zones, procedural regions
 
 ## Patterns: Decorative and Procedural
 
@@ -343,11 +343,15 @@ let campfire (section: HexGridSection<Tile>) =
 
 ```fsharp
 /// A configurable watchtower
+let stackMidTiles height midTile (section: HexGridSection<Tile>) =
+    // layers 1..height-2 form the shaft
+    (section, [ 1 .. height - 2 ])
+    ||> List.fold (fun s i -> s |> HexLayout.set 1 i midTile)
+
 let watchtower height baseTile midTile topTile (section: HexGridSection<Tile>) =
     section
     |> HexLayout.set 1 0 baseTile
-    |> List.init (height - 2) (fun i -> i + 1)
-    |> List.fold (fun s i -> s |> HexLayout.set 1 i midTile) section
+    |> stackMidTiles height midTile
     |> HexLayout.set 1 (height - 1) topTile
 ```
 
@@ -359,7 +363,10 @@ Stamps compose with `>>` (function composition):
 let outpost =
     watchtower 6 StoneBase StoneMid TorchTop
     >> HexLayout.section 0 7 campfire
-    >> HexLayout.border -1 -1 4 8 FenceTile
+    >> HexLayout.border 0 0 4 8 FenceTile
+
+// note: negative coordinates are clipped, so a border starting at -1
+// would silently drop its top and left edges
 ```
 
 ### Domain Modules
@@ -470,7 +477,7 @@ let level =
 - Layer 1: Structures, resources, units
 - Layer 2: Overlays (fog, highlights, movement range)
 
-Layers are created on-demand — empty layers cost nothing.
+Layers are created on-demand; empty layers cost nothing.
 
 ## Rendering
 
@@ -504,59 +511,60 @@ grid |> HexGrid.iterVisible screenLeft screenTop screenRight screenBottom
 type TerrainType =
     | Grass | Forest | Mountain | Water | Sand | Road
 
+// Named stamps: each region is a reusable function
+let baseTerrain = HexLayout.fill 0 0 30 20 GrassTile
+
+let mountainRange (s: HexGridSection<TerrainType>) =
+    s |> HexLayout.fill 0 0 8 3 MountainTile
+      |> HexLayout.scatter 5 42 ForestTile
+
+let river = HexLayout.line 0 10 29 15 WaterTile
+
+let forestCluster seed (s: HexGridSection<TerrainType>) =
+    s |> HexLayout.scatter 15 seed ForestTile
+
+let road a b c d = HexLayout.line a b c d RoadTile
+
+let settlement x y w h tile =
+    HexLayout.section x y (HexLayout.fill 0 0 w h tile)
+
+let castle x y =
+    HexLayout.section x y (
+        HexLayout.fill 0 0 2 2 CastleTile
+        >> HexLayout.border 0 0 4 4 WallTile
+    )
+
+let desert (s: HexGridSection<TerrainType>) =
+    s |> HexLayout.fill 0 0 6 4 SandTile
+      |> HexLayout.scatter 3 301 CactusTile
+
 let strategyMap =
     HexGrid.create 30 20 32f Vector2.Zero FlatTop
     |> HexLayout.run (fun section ->
         section
-        // Base terrain
-        |> HexLayout.fill 0 0 30 20 GrassTile
-        
-        // Mountain range (natural barrier)
-        |> HexLayout.section 10 5 (fun s ->
-            s |> HexLayout.fill 0 0 8 3 MountainTile
-              |> HexLayout.scatter 5 42 ForestTile
-        )
-        
-        // River (winding path)
-        |> HexLayout.line 0 10 29 15 WaterTile
-        
-        // Forest clusters
-        |> HexLayout.section 2 2 (fun s -> s |> HexLayout.scatter 15 101 ForestTile)
-        |> HexLayout.section 20 12 (fun s -> s |> HexLayout.scatter 20 202 ForestTile)
-        
-        // Roads connecting settlements
-        |> HexLayout.line 5 3 15 10 RoadTile
-        |> HexLayout.line 15 10 25 17 RoadTile
-        
-        // Settlements
-        |> HexLayout.section 5 3 (fun s ->
-            s |> HexLayout.fill 0 0 2 2 CastleTile
-              |> HexLayout.border -1 -1 4 4 WallTile
-        )
-        |> HexLayout.section 15 10 (fun s ->
-            s |> HexLayout.fill 0 0 3 2 TownTile
-        )
-        |> HexLayout.section 25 17 (fun s ->
-            s |> HexLayout.fill 0 0 2 2 VillageTile
-        )
-        
-        // Desert region
-        |> HexLayout.section 22 2 (fun s ->
-            s |> HexLayout.fill 0 0 6 4 SandTile
-              |> HexLayout.scatter 3 301 CactusTile
-        )
+        |> baseTerrain
+        |> HexLayout.section 10 5 (mountainRange)
+        |> river
+        |> HexLayout.section 2 2 (forestCluster 101)
+        |> HexLayout.section 20 12 (forestCluster 202)
+        |> road 5 3 15 10
+        |> road 15 10 25 17
+        |> castle 5 3
+        |> settlement 15 10 3 2 TownTile
+        |> settlement 25 17 2 2 VillageTile
+        |> HexLayout.section 22 2 desert
     )
 ```
 
 ## Performance Considerations
 
-- **Flat array storage** — O(1) cell access, cache-friendly iteration
-- **Struct voption** — No heap allocation per cell
-- **Zero-copy sections** — Sections don't duplicate the grid
-- **Inline lambdas** — DSL functions compile away closures
-- **Use `iterVisible`** — Always cull for gameplay rendering
-- **Use `generate`** — For procedural content, it's faster than individual `set` calls
+- **Flat array storage**: O(1) cell access, cache-friendly iteration
+- **Struct voption**: No heap allocation per cell
+- **Zero-copy sections**: Sections don't duplicate the grid
+- **Inline lambdas**: DSL functions compile away closures
+- **Use `iterVisible`**: Always cull for gameplay rendering (note it takes float world bounds, unlike `CellGrid2D.iterVisible` which takes ints)
+- **Use `generate`**: For procedural content, it's faster than individual `set` calls
 
 ## API Reference
 
-For complete function signatures, see the [2D Layout Engine](core.html).
+For the `HexLayout`/`HexGrid` signatures, see the [2D Layout Engine](core.html) (layout primitives) and the API reference.

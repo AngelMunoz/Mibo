@@ -14,14 +14,16 @@ Mibo uses a **deferred, layer-sorted rendering pipeline**. Instead of calling ba
 1. Your view function builds `IRenderCommand2D` commands and adds them to a `RenderBuffer2D`
 2. The renderer sorts commands by `Layer` (ascending)
 3. The renderer executes commands in order
-4. the backend auto-batches GPU draw calls; optional post-processing passes run after
+4. The backend auto-batches GPU draw calls; optional post-processing passes run after
 
-## Why Deferred Rendering?
+## Why Layered Rendering?
 
 - **Separation of concerns**: Your view doesn't have to worry about draw order, batching, or GPU state.
 - **Lighting**: Commands can be interleaved with light commands for 2D lighting (see [Lighting](graphics2d/overview.html#Lighting)).
 - **Post-processing**: Screen-space shader passes run after the scene is rendered.
 - **Predictable ordering**: Every command declares its layer explicitly.
+
+> This command-layering model is not the same as "deferred shading" (a lighting technique). The deferred part here means your view describes what to draw and the renderer executes it later, in sorted order.
 
 ## 2D Rendering
 

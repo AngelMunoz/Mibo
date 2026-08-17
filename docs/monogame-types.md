@@ -10,7 +10,7 @@ index: 1
 Most snippets in this documentation use the **raylib** backend's types by default
 (`System.Numerics` vectors, `Raylib_cs.Color`/`Rectangle`). On the **MonoGame**
 backend the native types are different (`Microsoft.Xna.Framework.*`), and a few of
-those differences are silent — code that compiles against one backend will not
+those differences are silent: code that compiles against one backend will not
 compile (or renders wrong) against the other.
 
 This page is the straight-to-the-point reference for those divergences. Read it
@@ -47,10 +47,10 @@ and the Core call fails (`FS0193` / a type mismatch):
 ```fsharp
 open Microsoft.Xna.Framework
 
-// Compiles on raylib; FAILS on MonoGame — bare Vector2 is XNA's:
+// Compiles on raylib; FAILS on MonoGame: bare Vector2 is XNA's:
 let grid = CellGrid2D.create 100 50 (Vector2(32f, 32f)) Vector2.Zero
 
-// Correct on MonoGame — qualify the Core-facing vector explicitly:
+// Correct on MonoGame: qualify the Core-facing vector explicitly:
 let grid =
     CellGrid2D.create 100 50
         (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
@@ -59,8 +59,8 @@ let grid =
 **Rule of thumb:** for any `Mibo.Core`/`Mibo.Layout`/`Mibo.Layout3D` call, spell
 out `System.Numerics.Vector2`/`Vector3`. The fluent draw DSL takes
 `System.Numerics` vectors and `Mibo.Color` on both backends (the buffer
-converts for you). Only backend-owned records — `SpriteState`, `TextState`,
-2D light records, camera structs — take the backend's native type, so a bare
+converts for you). Only backend-owned records: `SpriteState`, `TextState`,
+2D light records, camera structs: take the backend's native type, so a bare
 `Vector2(...)` is correct *there* as long as the matching namespace is open.
 
 `Mibo.Color` (byte RGBA) is the fluent DSL's color vocabulary. Where you still
@@ -73,20 +73,20 @@ need a backend color (building backend records), convert with `op_Implicit` /
 Rectangle` stores four `int` fields. The same literal means different things:
 
 ```fsharp
-// raylib (float Rectangle) — what the 2D docs usually show:
+// raylib (float Rectangle): what the 2D docs usually show:
 let dest = Rectangle(100f, 100f, 32f, 32f)
 SpriteState.create(tex, dest, Rectangle(0f, 0f, 32f, 32f))
 
-// MonoGame (int Rectangle) — pixel coordinates:
+// MonoGame (int Rectangle): pixel coordinates:
 let dest = Rectangle(100, 100, 32, 32)
 SpriteState.create(tex, dest, Rectangle(0, 0, 32, 32))
 ```
 
-The fluent DSL sidesteps this for **shape** draws — rect members take plain
+The fluent DSL sidesteps this for **shape** draws: rect members take plain
 `x, y, w, h` floats on both backends (rounded to pixels on MonoGame). It only
 surfaces in backend-owned records: `SpriteState`/`TextState` destinations and
 lit-sprite `dest` rectangles use the backend `Rectangle`. If a snippet uses
-`100f`/`32f` literals inside a `Rectangle(...)`, it is raylib-only — drop the
+`100f`/`32f` literals inside a `Rectangle(...)`, it is raylib-only: drop the
 `f` suffixes on MonoGame.
 
 ## `Color` literals
@@ -94,8 +94,8 @@ lit-sprite `dest` rectangles use the backend `Rectangle`. If a snippet uses
 Named colors (`Color.Red`, `Color.SkyBlue`, …) work on both backends. Constructing
 a color from components differs:
 
-- **raylib** `Raylib_cs.Color` — byte components (`Color(255uy, 0uy, 0uy)`).
-- **MonoGame** `Microsoft.Xna.Framework.Color` — int `0–255` (`Color(255, 0, 0)`)
+- **raylib** `Raylib_cs.Color`: byte components (`Color(255uy, 0uy, 0uy)`).
+- **MonoGame** `Microsoft.Xna.Framework.Color`: int `0–255` (`Color(255, 0, 0)`)
   or float `0.0–1.0` (`Color(1.0f, 0.0f, 0.0f)`).
 
 Prefer named colors when you can; verify the overload you need against the
@@ -119,7 +119,7 @@ What differs is what the loaders **return** and the **path convention**:
 | `Font` | `Raylib_cs.Font` (a `.ttf` file) | `SpriteFont` (compiled `.spritefont`) |
 | `Sound` | `Raylib_cs.Sound` | `SoundEffect` |
 | `Model` | `Raylib_cs.Model` | `Model` |
-| `Effect` | — | `Effect` (compiled `.mgfx`) |
+| `Effect` | (none) | `Effect` (compiled `.mgfx`) |
 | Path | **raw file on disk, with extension** (`"sprites/player.png"`) | **content-pipeline name, no extension** (`"sprites/player"`) |
 
 See [Assets](assets.html) for the full loader table and the animation
@@ -135,7 +135,7 @@ let w = ctx.WindowWidth
 let h = ctx.WindowHeight
 ```
 
-These update on resize. Do **not** reach for `ctx.GameConfig.Width/Height` — that
+These update on resize. Do **not** reach for `ctx.GameConfig.Width/Height`: that
 is the config-time struct record passed to `Program.withConfig`, not a live value,
 and `GameContext` does not expose it at runtime. (The old pre-v2 MonoGame path
 read `ctx.GraphicsDevice.Viewport`; that is no longer how you get the size.)
@@ -146,12 +146,12 @@ read `ctx.GraphicsDevice.Viewport`; that is no longer how you get the size.)
 |---------|--------|----------|
 | Host | `RaylibGame<_,_>` | `MiboGame<_,_>` (with a `MonoGameProgram` wrapper) |
 | Input mapper | `RaylibProgram.withInputMapper` | `MonoGameProgram.withInputMapper` |
-| Content pipeline | none — load raw files | `.mgcb` → `.xnb` content pipeline |
+| Content pipeline | none: load raw files | `.mgcb` → `.xnb` content pipeline |
 | Custom shaders | GLSL | HLSL (`.fx` compiled to `.mgfx`) |
 | Texture filtering | property of the texture: `Texture.filter TextureFilter.Point` | property of the draw: `.setSamplerState(SamplerState.PointClamp)` |
-| Default font | `Raylib.GetFontDefault()` | none — load `assets.Font "..."` |
+| Default font | `Raylib.GetFontDefault()` | none: load `assets.Font "..."` |
 | `Camera3D` FOV | **degrees**, no explicit near/far | **radians**, defaulted near/far planes (override via `withNearFar`) |
-| 3D animated model | load `.glb` once (animations included) | double-load: `assets.Model` (XNB mesh) + `assets.AnimatedMesh`/`ModelAnimations` (raw `.glb` via Assimp) |
+| 3D animated model | load `.glb` once (animations included) | double-load: `assets.Model` (XNB mesh) + `assets.AnimatedMesh`/`ModelAnimations` (raw `.glb` via Assimp, the model-file parser) |
 | Pipeline class | `ForwardPbrPipeline(shadowBiasConfig=, shadowAtlasConfig=)` | `ForwardPipeline(shadowBias=, shadowAtlas=)` (different field names) |
 
 ## Portability tip

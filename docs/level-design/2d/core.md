@@ -14,7 +14,7 @@ The Layout engine provides a tile-based level design system for 2D games. It liv
 > let grid =
 >     CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
 > ```
-> Backend-specific APIs (each backend's `Camera2D.create`/`Camera3D`, `SpriteState`, `TextState`) use that backend's native vector type — raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework` — so bare `Vector2(...)` is fine there as long as the matching namespace is open. See [MonoGame type quirks](../../monogame-types.html) for the full backend-type reference.
+> Backend-specific APIs (each backend's `Camera2D.create`/`Camera3D`, `SpriteState`, `TextState`) use that backend's native vector type: raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework`, so bare `Vector2(...)` is fine there as long as the matching namespace is open. See [MonoGame type quirks](../../monogame-types.html) for the full backend-type reference.
 
 ## Core Concepts
 
@@ -158,7 +158,7 @@ Layout.polygon points filled content           // Arbitrary polygon
 ### Patterns
 
 ```fsharp
-Layout.checker oddContent evenContent section  // 3D checkerboard
+Layout.checker oddContent evenContent section  // checkerboard pattern
 Layout.checkerBorder x y w h odd even section  // Only on perimeter
 Layout.scatter count seed content section      // Random placement
 Layout.scatterBorder x y w h count seed content section // On perimeter
@@ -168,7 +168,7 @@ Layout.generate x y w h (fun x y -> ...) section  // Procedural
 
 ### Iteration / Transformation
 
-Non-destructive operations for modifying existing content:
+In-place operations for modifying existing content:
 
 ```fsharp
 Layout.iter x y w h action section    // Read access to volume
@@ -203,16 +203,12 @@ When rendering a layered grid, you don't need to manually sort the layers. Inste
 ```fsharp
 // Render each layer into the buffer
 for KeyValue(layerIndex, layerGrid) in level.Layers do
-    layerGrid
-    |> CellGrid2D.iterVisible viewBounds (fun x y tile ->
+    let isVisible x y tile =
         let pos = CellGrid2D.getWorldPos x y layerGrid
+        true  // your visibility test against viewBounds
 
-        buffer.Sprite(sprite {
-            texture myTexture
-            at pos.X pos.Y
-            // Tag with the layer index using the RenderLayer measure
-            layer (layerIndex<RenderLayer>)
-        })
+    layerGrid
+    |> CellGrid2D.iterVisible 0 0 100 100 isVisible
     )
 ```
 
@@ -222,7 +218,7 @@ Layers are created on-demand, so only layers you've painted into will consume me
 
 ## Creating Your Own Stamps
 
-A **stamp** is simply a function `GridSection2D<'T> -> GridSection2D<'T>`. You can create reusable stamps just like HTML custom elements:
+A **stamp** is a function `GridSection2D<'T> -> GridSection2D<'T>`: it takes a section and returns a modified one. You can create reusable stamps, the way UI frameworks let you define reusable components:
 
 ### Simple Stamp
 
@@ -252,7 +248,7 @@ Stamps compose with `>>` (function composition):
 let guardPost =
     room 8 6 FloorTile WallTile
     >> Layout.center 2 1 (treasureChest)
-    >> Layout.section 6 2 (torchStand)
+    >> Layout.section 6 2 torchStand   // torchStand: your stamp placing a torch prop
 ```
 
 ### Building a Component Library
@@ -291,7 +287,7 @@ level
 
 Think about stamps like Lego pieces, you can use a few blocks to build a bigger thing.
 
-The key insight: **stamps are just functions**. You can store them, pass them around, compose them, and build complex structures from simple pieces.
+The key insight: **stamps are functions**. You can store them, pass them around, compose them, and build complex structures from simple pieces.
 
 ## Domain Modules
 

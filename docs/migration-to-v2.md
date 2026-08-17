@@ -8,7 +8,7 @@ index: 1
 # Migrating to Mibo v2
 
 This document collects **every breaking change** you will face when moving from
-the `1.3.0` (raylib-only) release to Mibo v2 — a backend-agnostic core with
+the `1.3.0` (raylib-only) release to Mibo v2: a backend-agnostic core with
 pluggable raylib and MonoGame backends. Work through the sections that match
 your code; each entry lists what changed, why, and exactly how to update your
 code.
@@ -58,7 +58,7 @@ that leaks a backend enum/handle stay in the backend.**
 
 Each entry below lists what changed, why, and exactly how to update your code.
 
-### Phase 1a — `Mibo.Core` extraction
+### Phase 1a: `Mibo.Core` extraction
 
 **No breaking changes.** Six files moved verbatim from `Mibo.Raylib` into a new
 `Mibo.Core` project:
@@ -74,11 +74,11 @@ All of these stay in the `Mibo.Elmish` namespace, so `open Mibo.Elmish` continue
 to resolve them exactly as before. No code changes are required for existing games.
 
 **Project-level note:** if you reference `Mibo.Raylib` source directly via
-`<Compile Include>` (atypical — you normally take the NuGet package), be aware
+`<Compile Include>` (atypical: you normally take the NuGet package), be aware
 that these six files no longer live in the `Mibo.Raylib` project. Consumers of
 the package are unaffected.
 
-### Phase 1b — Backend-neutral input types
+### Phase 1b: Backend-neutral input types
 
 **Breaking.** The input surface has been generalized so the contracts work on
 any backend. raylib's native types no longer leak into the public input API.
@@ -100,11 +100,11 @@ native↔neutral translation functions documented below.
 Four new struct DUs replace direct use of `Raylib_cs.KeyboardKey`,
 `MouseButton`, `GamepadButton`, and `Gesture`:
 
-- `Mibo.Input.KeyCode` — keyboard keys. Includes an `Unknown` case.
-- `Mibo.Input.MouseButtonCode` — `Left`, `Right`, `Middle`, `Extra1`–`Extra4`, `Unknown`.
-- `Mibo.Input.GamepadButtonCode` — face buttons, shoulders, triggers, sticks, D-pad, `Unknown`.
-- `Mibo.Input.GestureKind` — `Tap`, `DoubleTap`, `Hold`, `Drag`, `Swipe*`, `Pinch`, `Unknown`.
-  (Note: there is no `None` case — "no gesture" is expressed with `voption`.)
+- `Mibo.Input.KeyCode`: keyboard keys. Includes an `Unknown` case.
+- `Mibo.Input.MouseButtonCode`: `Left`, `Right`, `Middle`, `Extra1`–`Extra4`, `Unknown`.
+- `Mibo.Input.GamepadButtonCode`: face buttons, shoulders, triggers, sticks, D-pad, `Unknown`.
+- `Mibo.Input.GestureKind`: `Tap`, `DoubleTap`, `Hold`, `Drag`, `Swipe*`, `Pinch`, `Unknown`.
+  (Note: there is no `None` case; "no gesture" is expressed with `voption`.)
 
 These are `[<RequireQualifiedAccess>]`. Always write `KeyCode.W`, not bare `W`.
 
@@ -257,7 +257,7 @@ It still registers `IInput` automatically and now registers `IInputMapper` via a
 own `withInputMapper` (MonoGame: `MonoGameProgram.withInputMapper`, etc.).
 
 If you used the subscription path (`InputMapper.subscribe` / `subscribeStatic`),
-nothing changes — that API is backend-neutral and already lives in Core.
+nothing changes: that API is backend-neutral and already lives in Core.
 
 #### Behavioral fix: renderer draw order
 
@@ -268,7 +268,7 @@ The `Program.Renderers` list is built by prepending each new renderer.
 Previously, the runtime iterated the list without reversing it,
 which meant the last renderer added was the first to draw. If you added a 3D
 renderer first and a 2D UI renderer second, the 2D UI drew first and the 3D
-scene drew on top — the opposite of the expected layering.
+scene drew on top: the opposite of the expected layering.
 
 This is now fixed: the runtime reverses `program.Renderers` before iterating,
 matching the existing pattern for `Config` and `ServiceRegistrations`.
@@ -298,7 +298,7 @@ message-processing behavior (Init/Update/Subscribe/Tick/FixedStep/DispatchMode).
 They are pure F# with zero backend dependencies, so this is a pure relocation.
 
 All existing user code (`HeadlessProgram.mkHeadless`, `HeadlessRunner`, etc.)
-keeps working unchanged — the types stay in the `Mibo.Elmish` namespace.
+keeps working unchanged: the types stay in the `Mibo.Elmish` namespace.
 The `PingPong` server sample, which relies on `HeadlessRunner`, continues to work.
 
 ### Phase 3 - `Layout` and `Layout3D` move to Core
@@ -306,7 +306,7 @@ The `PingPong` server sample, which relies on `HeadlessRunner`, continues to wor
 **No breaking changes.** The layout geometry modules have moved from the raylib
 backend into `Mibo.Core`. Both namespaces (`Mibo.Layout`, `Mibo.Layout3D`) are
 preserved, so `open Mibo.Layout` / `open Mibo.Layout3D` continue to resolve
-exactly as before — all existing game code compiles unchanged.
+exactly as before: all existing game code compiles unchanged.
 
 What moved (17 files, all pure F# over `System.Numerics`):
 - `Mibo.Layout` (9 files): `Grid2D`, `HexGrid`, `Spatial2D`, `HexLayout`,
@@ -315,7 +315,7 @@ What moved (17 files, all pure F# over `System.Numerics`):
   `HexLayout3D`, `LayeredHex3D`, `Interior`, `Terrain`.
 
 What stays in the raylib backend:
-- `Layout3D/Renderer3D.fs` — the instanced-draw bridge (`InstancedRenderContext`,
+- `Layout3D/Renderer3D.fs`: the instanced-draw bridge (`InstancedRenderContext`,
   `CellGridRenderer3D`, `HexGrid3DRenderer`). It depends on
   `Mibo.Elmish.Graphics3D` (`Command3D`/`RenderBuffer3D`/`Material3D`) and the
   native `Raylib_cs.Mesh`, so it is a renderer and stays backend-side (in
@@ -326,7 +326,7 @@ The benefit: a fresh backend (e.g. MonoGame) now gets the full layout/hex/spatia
 geometry surface from `Mibo.Core` without re-implementing it, and only has to
 provide its own renderer bridge if it wants instanced grid drawing.
 
-### Phase 3b — Zero-alloc `Cmd.ofMsg` (`Msg` case)
+### Phase 3b: Zero-alloc `Cmd.ofMsg` (`Msg` case)
 
 **Breaking.** The `Cmd<'Msg>` discriminated union has a new `Msg of 'Msg` case
 between `Empty` and `Single`. This eliminates the delegate allocation that
@@ -357,7 +357,7 @@ The runtime dispatches `Msg` directly without invoking a delegate:
 
 ```fsharp
 // Before: map on Single(Effect(...)) allocates a new Effect
-// After: map on Msg msg returns Msg(f msg) — no allocation
+// After: map on Msg msg returns Msg(f msg): no allocation
 | Msg msg -> Msg(f msg)
 ```
 
@@ -412,13 +412,13 @@ match cmd with
 
 #### Why this matters
 
-`Cmd.ofMsg` is one of the most frequently called functions in Mibo games —
+`Cmd.ofMsg` is one of the most frequently called functions in Mibo games:
 every `update` branch that returns a follow-up message uses it. The previous
 implementation allocated an `Effect<'Msg>` delegate and a closure on every call.
 The new `Msg` case eliminates both allocations, reducing GC pressure in the
 hot path.
 
-### Phase 4 — Shared types to Core (`Mibo.Color`, `Light3D`, `Animation3DState`, `MouseCapture`)
+### Phase 4: Shared types to Core (`Mibo.Color`, `Light3D`, `Animation3DState`, `MouseCapture`)
 
 **Breaking.** The last major batch of backend-duplicated types has been promoted
 into `Mibo.Core` so there is a single implementation. The guiding rule: **if the
@@ -427,11 +427,11 @@ conversion at the boundary), it belongs in Core.**
 
 The changes fall into four groups.
 
-#### 4a — `Mibo.Color` (backend-neutral color)
+#### 4a: `Mibo.Color` (backend-neutral color)
 
 A new `[<Struct>]` byte RGBA color lives in `Mibo.Core`. It replaces the
 backend-specific `Color` (`Raylib_cs.Color` / `Microsoft.Xna.Framework.Color`)
-wherever it is used as a *contract* — currently in the shared light definitions
+wherever it is used as a *contract*; currently in the shared light definitions
 (Phase 4b). Rendering code still uses native colors for anything that touches a
 backend draw call directly.
 
@@ -457,7 +457,7 @@ Each backend ships a conversion module and an implicit conversion:
 > named module function (`Mibo.MonoGameColor.toMonoGameColor c`) when you need an
 > explicit conversion.
 
-#### 4b — Light definitions move to Core
+#### 4b: Light definitions move to Core
 
 `AmbientLight3D`, `DirectionalLight3D`, `PointLight3D`, `SpotLight3D`, and their
 builder modules previously existed as **byte-for-byte identical copies** in both
@@ -478,7 +478,7 @@ open Raylib_cs
 let light = DirectionalLight3D.create (Vector3(0.3f, -0.7f, -0.5f))
             |> DirectionalLight3D.withColor Color.White
 
-// After (any backend — the light definition is in Core)
+// After (any backend: the light definition is in Core)
 open Mibo   // Mibo.Color lives here
 let light = DirectionalLight3D.create (Vector3(0.3f, -0.7f, -0.5f))
             |> DirectionalLight3D.withColor Mibo.Color.White
@@ -488,18 +488,18 @@ let light = DirectionalLight3D.create (Vector3(0.3f, -0.7f, -0.5f))
 > via `op_Implicit` / `ToNumerics()`, so passing an `XNA.Vector3` where a
 > `System.Numerics.Vector3` is expected just works at the call site.
 
-#### 4c — `Animation3DState` playback clock in Core
+#### 4c: `Animation3DState` playback clock in Core
 
 The pure state machine that drives 3D skeletal animation playback
 (`create`, `play`, `blendTo`, `update`, etc.) was line-for-line identical across
-both backends — only the underlying clip data type differed. It now lives in
+both backends: only the underlying clip data type differed. It now lives in
 `Mibo.Core/Animation3D.fs`.
 
-- **New:** `Animation3DClipsInfo` (clip names + keyframe counts) — built at load
+- **New:** `Animation3DClipsInfo` (clip names + keyframe counts): built at load
   time from each backend's native clip data. Each backend's `Animation3DClips`
   gains a `ClipsInfo: Animation3DClipsInfo` field.
 - **Delegation:** both backends' `Animation3DState` delegate playback to the Core
-  state machine via inlineable struct-mapping helpers — **zero hot-path cost**
+  state machine via inlineable struct-mapping helpers, **zero hot-path cost**
   (all inline struct copies).
 - **Bug fix:** `update` blend target wrapping now respects `Loop = false`
   consistently on both backends (previously raylib always wrapped the blend
@@ -507,10 +507,10 @@ both backends — only the underlying clip data type differed. It now lives in
 
 **Migration:** the public API (`Animation3DState.create`/`play`/`blendTo`/`update`,
 etc.) is unchanged at call sites. Construct `Animation3DClips` via the backend
-module functions — do not construct the struct literal directly (the
+module functions: do not construct the struct literal directly (the
 `ClipsInfo` field is internal and populated by the loader).
 
-#### 4d — `MouseCapture` + `IInput.SetMouseCapture`
+#### 4d: `MouseCapture` + `IInput.SetMouseCapture`
 
 A new `MouseCapture` DU (`Free` / `Captured`) and `IInput.SetMouseCapture` method
 let games request pointer-locked, unlimited-rotation mouse input via a
@@ -533,7 +533,7 @@ input.SetMouseCapture(MouseCapture.Captured)
   WinForms message-pump jitter). The external `GameComponent` hacks
   (`CursorClampComponent` / `MouseCenterComponent`) are no longer needed.
 
-#### 4e — raylib camera changes
+#### 4e: raylib camera changes
 
 **Breaking (raylib only).** The raylib camera surface has two breaking changes
 in v2.
@@ -542,7 +542,7 @@ in v2.
 The raylib backend used to carry a `Mibo.Camera` struct (view + projection
 `Matrix4x4`) and a `Mibo.Ray` struct, with `Camera3D.lookAt` / `orbit` /
 `screenPointToRay` / `fromRaylib` built on top of them. Raylib never used these
-for rendering — it renders through the native `Raylib_cs.Camera3D` — so the
+for rendering: it renders through the native `Raylib_cs.Camera3D`: so the
 structs and the `fromRaylib` converter are removed. The constructor helpers
 stay, but now return **native raylib types** so they compose directly with
 raylib's own APIs. The old multi-parameter constructors (`lookAt` /
@@ -589,12 +589,12 @@ let bounds = Camera2D.viewportBounds &camera w h
 > same camera operations.
 
 **3. `overlay` camera helpers removed.** The 1.x picture-in-picture helper
-(`Camera2D.overlay`) is gone — it only set a viewport and a black clear (no
+(`Camera2D.overlay`) is gone: it only set a viewport and a black clear (no
 compositing), and on-top layering was draw order anyway. Build the same with
 `Camera2D.render camera |> Camera2D.withViewport rect |> Camera2D.withClear Color.Black`,
 emitting that camera after the main one. The v2-only `Camera3D.overlay`,
 `Camera3DConfig.PostProcessPasses`, and `Camera3D.withPostProcess`/
-`withoutPostProcess` are removed too — v2 post-processing is command-driven via
+`withoutPostProcess` are removed too: v2 post-processing is command-driven via
 the `postProcess` draw command (`buffer.postProcess(...)`).
 
 **Migration (raylib):** if you held a `Mibo.Camera` or `Mibo.Ray` value, switch
@@ -606,7 +606,7 @@ unaffected.
 
 ### Culling helper renamed
 
-`Culling.isGenericVisible` is renamed `isVisibleBox` — it tests a bounding box
+`Culling.isGenericVisible` is renamed `isVisibleBox`: it tests a bounding box
 against the frustum, and the new name says so. Same arguments; just rename the
 call site. (`isVisible` for spheres and `isVisible2D` for rectangles are
 unchanged.)
@@ -619,7 +619,7 @@ unchanged.)
 
 **Breaking (2D and 3D).** In 1.x, post-processing was configured once at
 renderer/pipeline construction and ran **every frame for the life of the
-renderer** — whether or not the effect was needed that frame:
+renderer**, whether or not the effect was needed that frame:
 
 - **2D:** `Renderer2DConfig.PostProcess: PostProcessPass[] voption`, where
   `PostProcessPass = { Shader; OnSetup }`.
@@ -628,12 +628,12 @@ renderer** — whether or not the effect was needed that frame:
 
 These config types have been removed. Post-processing is now **on-demand and
 model-aware**: the view emits a post-process command into the render buffer, and
-the action runs only when (and only on the frames) it is emitted — so a
+the action runs only when (and only on the frames) it is emitted: so a
 hit-flash, a pause vignette, or a cutscene grade costs nothing on the frames it
 isn't drawn.
 
 ```fsharp
-// 2D — v1, declared once, ran every frame whether needed or not
+// 2D: v1, declared once, ran every frame whether needed or not
 let renderer =
   Renderer2D.createWithConfig
     { PostProcess =
@@ -647,20 +647,20 @@ let renderer =
       ClearColor = ValueNone }
     view
 
-// 2D — v2, emitted from the view, only on frames that need it
+// 2D: v2, emitted from the view, only on frames that need it
 let view ctx model (buffer: RenderBuffer2D) =
   buffer
     .postProcess(fun ppCtx ->
-      // ppCtx.Source — the scene texture (or previous pass's output)
-      // ppCtx.Width, ppCtx.Height, ppCtx.Time — dimensions + frame time
+      // ppCtx.Source: the scene texture (or previous pass's output)
+      // ppCtx.Width, ppCtx.Height, ppCtx.Time: dimensions + frame time
       drawFullscreenQuad ppCtx.Source vignetteShader)
     .drop()
 ```
 
 ```fsharp
-// 3D — v1, declared once, ran every frame whether needed or not
+// 3D: v1, declared once, ran every frame whether needed or not
 let pipeline =
-  ClusteredForwardPipeline(
+  ForwardPbrPipeline(
     postProcess = {
       Passes =
         ValueSome
@@ -673,13 +673,13 @@ let pipeline =
     }
   )
 
-// 3D — v2, emitted from the view, only on frames that need it
+// 3D: v2, emitted from the view, only on frames that need it
 let view ctx model (buffer: RenderBuffer3D) =
   buffer
     .postProcess(fun ppCtx ->
-      // ppCtx.Source — the scene texture (or previous pass's output)
-      // ppCtx.Width, ppCtx.Height, ppCtx.Time — dimensions + frame time
-      // ppCtx.Context — GameContext (resolve a shader via IAssets)
+      // ppCtx.Source: the scene texture (or previous pass's output)
+      // ppCtx.Width, ppCtx.Height, ppCtx.Time: dimensions + frame time
+      // ppCtx.Context: GameContext (resolve a shader via IAssets)
       drawFullscreenQuad ppCtx.Source vignetteShader)
     .drop()
 ```
@@ -687,55 +687,56 @@ let view ctx model (buffer: RenderBuffer3D) =
 Multiple passes chain in buffer order, ping-ponging through pooled render
 targets with the last pass drawing to the back-buffer. Resolve the shader inside
 the action (e.g. via `IAssets`) rather than capturing a renderer/pipeline-wide
-one — the action owns the draw.
+one: the action owns the draw.
 
 ### Depth-aware post-processing (3D)
 
 A second command, `postProcessWithDepth`, gives the action a
 `PostProcessContext3D` whose `Depth` field is a camera-POV depth texture (NDC z
 in `[0,1]`) for distance effects like fog, depth-of-field, and SSAO. Use plain
-`postProcess` when you don't sample depth — the pipeline skips the
+`postProcess` when you don't sample depth: the pipeline skips the
 depth-production cost entirely:
 
 ```fsharp
-buffer
-  .postProcessWithDepth(fun ppCtx ->
+let distanceFog (ppCtx: PostProcessContext3D) =
     match ppCtx.Depth with
-    | ValueSome depthTex -> // bind depthTex, apply the distance effect
-    | ValueNone ->          // no depth produced this frame — pass through
-    ())
+    | ValueSome depthTex -> applyDistanceEffect depthTex
+    | ValueNone -> ()      // no depth produced this frame: pass through
+
+buffer
+  .postProcessWithDepth(distanceFog)
   .drop()
 ```
 
 The depth texture is produced differently per backend (raylib samples the
 forward pass's depth attachment directly; MonoGame re-renders opaque geometry
-into a dedicated R32F target), but the contract — single-channel NDC z, `0` =
-near, `1` = far, skybox/uncovered = `1.0` — is identical on both. See the
+into a dedicated R32F target), but the contract: single-channel NDC z, `0` =
+near, `1` = far, skybox/uncovered = `1.0`: is identical on both. See the
 [3D Rendering Overview](graphics3d/overview.html) for the linearization formula.
 
 ### 2D post-process context enrichment
 
 The 2D `PostProcessContext2D` now exposes two fields a post-process shader can
 read: the active `LightContext2D` (point lights, directional lights, ambient,
-occluders) and the last active `Camera2D`. No new command variants — the
+occluders) and the last active `Camera2D`. No new command variants: the
 existing `Draw.postProcess` action closure just receives a richer context:
 
 ```fsharp
-Draw.postProcess (fun ctx ->
-  // ctx.Lights — the active LightContext2D (ValueNone when no lit sprites were drawn).
-  //   Read ctx.Lights.Value.PointLights, .DirLights, .Ambient, .Occluders
-  //   to drive bloom thresholds, light-tinted grading, etc.
+let gradeWithLights (ctx: PostProcessContext2D) =
+    // ctx.Lights: the active LightContext2D (ValueNone when no lit sprites were drawn).
+    //   Read ctx.Lights.Value.PointLights, .DirLights, .Ambient, .Occluders
+    //   to drive bloom thresholds, light-tinted grading, etc.
+    // ctx.Camera: the last active Camera2D (ValueNone when no BeginCamera block was used).
+    //   Use it to convert between screen UVs and world coordinates for world-anchored effects.
+    // ctx.Source, ctx.Width, ctx.Height, ctx.Time: unchanged
+    applyGrading ctx
 
-  // ctx.Camera — the last active Camera2D (ValueNone when no BeginCamera block was used).
-  //   Use it to convert between screen UVs and world coordinates for world-anchored effects.
-
-  // ctx.Source, ctx.Width, ctx.Height, ctx.Time — unchanged
-  ()) buffer
+Draw.postProcess gradeWithLights buffer
 ```
 
 **Multi-camera caveat:** `Camera` is the **last** `Camera2D` active during the
 scene render. When multiple camera blocks exist in the same frame (e.g. main
-view + minimap), the scene render target contains all of them composited — a
+view + minimap), the scene render target contains all of them composited: a
 single camera reference can't reconstruct per-camera regions. Use
 `DrawImmediate` for per-camera post-processing.
 
@@ -752,10 +753,10 @@ Point-light shadows previously rendered a single face looking straight down
 the shadow map toward your geometry:
 
 ```fsharp
-// Ceiling light — default, looks down (no change needed)
+// Ceiling light: default, looks down (no change needed)
 let ceiling = PointLight3D.create(pos, 10.0f) |> PointLight3D.withCastsShadows true
 
-// Wall sconce — aim the shadow map along +X
+// Wall sconce: aim the shadow map along +X
 let sconce =
   PointLight3D.create(pos, 8.0f)
   |> PointLight3D.withCastsShadows true

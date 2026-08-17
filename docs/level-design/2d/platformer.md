@@ -205,7 +205,7 @@ module MyPlatformer =
 ```fsharp
 let customLevel =
     section
-    |> Layout.section 5 10 MyPlatformer.checkpoint 4
+    |> Layout.section 5 10 (MyPlatformer.checkpoint 4)
     |> Layout.section 15 12 (MyPlatformer.hazardPit 6 8 4)
     |> Layout.section 25 10 (MyPlatformer.floatingPlatform 6)
     |> Layout.section 35 8 (MyPlatformer.treasureRoom 10 8)
@@ -391,4 +391,4 @@ Always playtest your sections:
 - Are hazard pits fair or frustrating?
 - Is the level flow obvious to players?
 
-> **See also:** [2D Layout Engine](core.html) for complete Platformer module documentation
+> **See also:** [2D Layout Engine](core.html) for the layout primitives this module builds on.

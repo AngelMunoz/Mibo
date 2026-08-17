@@ -9,7 +9,7 @@ index: 2
 
 This page collects the **breaking changes** between the last v3 release (`3.3.0`)
 and v4 (`4.0.0`), with the exact steps to update your code. Work through the
-sections that match your code — most games are affected by none of them.
+sections that match your code: most games are affected by none of them.
 
 > _**The short answer for most games:** upgrade the package, recompile, done.
 > Every source-level break is in 3D skeletal-animation internals,
@@ -18,8 +18,8 @@ sections that match your code — most games are affected by none of them.
 > `buffer.animatedModel(...)`, uses a single camera, and does not call
 > `getOrAddLayer`, v4 is a drop-in recompile._
 
-The headline features of v4 — bone pose queries and attachment draws, skinned +
-instanced draws, and one shared `BonePose` evaluation per frame — are additive
+The headline features of v4: bone pose queries and attachment draws, skinned +
+instanced draws, and one shared `BonePose` evaluation per frame: are additive
 and need no migration. See [Animation 3D](animation3d.html).
 
 ## 1. Recompile against the new assemblies (binary break)
@@ -28,7 +28,7 @@ and need no migration. See [Animation 3D](animation3d.html).
 
 `buffer.animatedModel` / `animatedModelWith` / `animatedModelWithPerMesh` gained
 an optional `pose` parameter, which changes their compiled (IL) signature.
-Existing **source** compiles unchanged — but assemblies built against v3 must be
+Existing **source** compiles unchanged: but assemblies built against v3 must be
 recompiled. A plain `dotnet build` of your game is enough; there is nothing to
 change in code.
 
@@ -37,11 +37,11 @@ change in code.
 **Who is affected:** code that constructs `AnimatedMesh` literally, or relies on
 reference identity of the animation types.
 
-`Animation3DChannel`, `Animation3DClip`, `Animation3DClips`, and `AnimatedMesh`
-(MonoGame), and `AnimatedMesh` (raylib) changed from reference records to
+`Animation3DChannel`, `Animation3DClip`, `Animation3DClips` (both backends), and
+`AnimatedMesh` (raylib and MonoGame) changed from reference records to
 `[<Struct>]` records. Consequences:
 
-- Equality and copying are now **value semantics** — two copies compare equal
+- Equality and copying are now **value semantics**: two copies compare equal
   when their contents match, and assigning one copies it. Code that relied on
   reference identity needs review.
 - **raylib only (source break):** `AnimatedMesh` gains a
@@ -49,14 +49,14 @@ reference identity of the animation types.
   for bones a clip doesn't animate). Record literals must add the field:
 
 ```fsharp
-// v3 — no longer compiles
+// v3: no longer compiles
 let mesh = { Mesh = m; InverseBindPose = ibp; BoneNames = names; ... }
 
-// v4 — add BindPose, or (better) let the loader build the record
+// v4: add BindPose, or (better) let the loader build the record
 let mesh = { Mesh = m; InverseBindPose = ibp; BoneNames = names
              BindPose = bindPose; ... }
 
-// recommended — populated for you, no literal construction
+// recommended: populated for you, no literal construction
 match AnimatedMesh.fromModel model with
 | ValueSome mesh -> ...
 | ValueNone -> ...
@@ -83,7 +83,7 @@ unchanged and render the same as before.
 **Who is affected:** frames with **more than one camera block** (split-screen,
 minimaps, rear-view mirrors). Single-camera frames are unchanged.
 
-**Symptom after upgrading:** lights "leak" differently between views — a view
+**Symptom after upgrading:** lights "leak" differently between views: a view
 that set its own lights no longer also gets the lights emitted before or after
 it, and each view renders its own shadow map.
 
@@ -93,7 +93,7 @@ The new rules, on both backends:
 - A block that sets its own lights starts from the **frame defaults** (lights
   emitted before the first camera block or between blocks) and applies them in
   order; a block that sets none inherits the running set.
-- Each camera block renders **its own shadow map** — a multi-block frame costs
+- Each camera block renders **its own shadow map**; a multi-block frame costs
   one shadow pass per block.
 
 **What to do:** emit the lights every view shares **before the first camera
@@ -119,13 +119,13 @@ emitted.
 
 ## 6. Deprecation warnings on the piped draw modules (not breaking)
 
-After upgrading, code using the piped draw modules — `Draw`, `Draw3D`,
-`LightDraw`, `ParticleDraw` — builds with warning **FS0044** pointing at the
+After upgrading, code using the piped draw modules: `Draw`, `Draw3D`,
+`LightDraw`, `ParticleDraw`: builds with warning **FS0044** pointing at the
 fluent draw DSL. The modules still work and will not be removed before a future
-major release, so you can migrate at your own pace, file by file:
+release, so you can migrate at your own pace, file by file:
 
 ```fsharp
-// piped (deprecated — still works)
+// piped (deprecated: still works)
 buffer |> Draw3D.drawModel model transform |> Draw3D.drop
 
 // fluent (recommended)
@@ -135,7 +135,7 @@ buffer.model(model, transform).drop()
 The full mapping, including lighting, particles, and grid rendering, is in
 [Draw DSL → Migrating from the piped DSL](draw-dsl.html#Migrating-from-the-piped-DSL).
 To silence the warnings until you migrate, add FS0044 to your project's
-`NoWarn` — but prefer migrating, since the modules will be removed in a future
+`NoWarn`. But prefer migrating: the modules will be removed in a future
 release.
 
 ## 7. Layered grids: `getOrAddLayer` returns a struct tuple
@@ -143,27 +143,27 @@ release.
 **Who is affected:** code that calls `getOrAddLayer` on `LayeredGrid2D`,
 `LayeredHexGrid`, `LayeredGrid3D`, or `LayeredHexGrid3D`.
 
-**Symptom after upgrading:** the call no longer compiles — the returned tuple
+**Symptom after upgrading:** the call no longer compiles: the returned tuple
 can no longer be destructured with the plain `let a, b = ...` form.
 
 `getOrAddLayer` now returns a **struct tuple** (allocation-free). Destructure
 with `let struct` instead:
 
 ```fsharp
-// v3 — no longer compiles
+// v3: no longer compiles
 let terrainGrid, _ = LayeredGrid2D.getOrAddLayer Layer.Terrain chunk.Grids
 
 // v4
 let struct (terrainGrid, _) = LayeredGrid2D.getOrAddLayer Layer.Terrain chunk.Grids
 ```
 
-There is no runtime behavior change — the layer is created on demand and
+There is no runtime behavior change: the layer is created on demand and
 returned exactly as before.
 
 ## See also
 
-- [Draw DSL](draw-dsl.html) — the fluent draw surface for 2D and 3D
-- [Animation 3D](animation3d.html) — bone poses, queries, attachments, skinned instancing
-- [The Adaptive Architecture](adaptive/overview.html) — the other program runtime, if your game is simulation-shaped
-- [Migrating to Mibo v2](migration-to-v2.html) — if you are coming from 1.x
-- [Changelog](https://github.com/AngelMunoz/Mibo/blob/main/CHANGELOG.md) — full release notes
+- [Draw DSL](draw-dsl.html): the fluent draw surface for 2D and 3D
+- [Animation 3D](animation3d.html): bone poses, queries, attachments, skinned instancing
+- [The Adaptive Architecture](adaptive/overview.html): the other program runtime, if your game is simulation-shaped
+- [Migrating to Mibo v2](migration-to-v2.html): if you are coming from 1.x
+- [Changelog](https://github.com/AngelMunoz/Mibo/blob/main/CHANGELOG.md): full release notes

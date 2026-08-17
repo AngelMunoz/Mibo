@@ -22,11 +22,11 @@ How custom shading gets into the pipeline, per backend:
 
 | Escape hatch | raylib | MonoGame | Uniforms you receive |
 |---|---|---|---|
-| `.beginEffect(...)` / `.endEffect()` | ✓ (`Shader`) | ✓ (`Effect`) | Scene data **by name** — declare only what you use; absent ones are skipped. Instanced draws are shaded by your shader when it opts in (see [Instancing](#Instancing-opt-in)). |
-| Per-mesh-part effect draw | — | ✓ | `World`/`View`/`Projection` only (via `IEffectMatrices`); you own lighting/material |
-| `.drawImmediate(...)` | ✓ | ✓ | None — the pipeline shader is bypassed; you get a `SceneContext` with raw device + gathered scene fields |
+| `.beginEffect(...)` / `.endEffect()` | ✓ (`Shader`) | ✓ (`Effect`) | Scene data **by name**: declare only what you use; absent ones are skipped. Instanced draws are shaded by your shader when it opts in (see [Instancing](#Instancing-opt-in)). |
+| Per-mesh-part effect draw | (none) | ✓ | `World`/`View`/`Projection` only (via `IEffectMatrices`); you own lighting/material |
+| `.drawImmediate(...)` | ✓ | ✓ | None: the pipeline shader is bypassed; you get a `SceneContext` with raw device + gathered scene fields |
 
-## `.beginEffect(...)` / `.endEffect()` — the inherited uniform contract
+## `.beginEffect(...)` / `.endEffect()`: the inherited uniform contract
 
 Both backends resolve the **same uniform names** (mirrored `SceneUpload`
 modules). Declare a subset in your shader; the pipeline uploads only what's
@@ -43,7 +43,7 @@ on MonoGame).
 | `cameraPos` | `vec3` / `float3` | Active camera world position |
 
 > The built-in PBR shaders (and `drawMeshEffect`) use a precomposed `mvp`.
-> `beginEffect` does **not** set `mvp` — declare `matModel` + `viewProj` and
+> `beginEffect` does **not** set `mvp`: declare `matModel` + `viewProj` and
 > compose the clip-space transform yourself.
 
 ### Animation clock
@@ -63,7 +63,7 @@ on MonoGame).
 | `opacity` | `float` | Alpha multiplier |
 | `tiling` | `vec2` / `float2` | UV tiling |
 | `useNormalMap` | `int` | `1` if a normal map is bound, else `0` |
-| `useEmissionMap` | `int` | `1` if an emission map is bound, else `0` — the emission texture is only sampled when `1` |
+| `useEmissionMap` | `int` | `1` if an emission map is bound, else `0`: the emission texture is only sampled when `1` |
 | `texture0` | `sampler2D` | Albedo map |
 | `texture1` | `sampler2D` | Roughness map (raylib) / Roughness map (MonoGame `s1`) |
 | `texture2` | `sampler2D` | Normal map |
@@ -103,7 +103,7 @@ Only the first directional light is shaded, and only it can cast shadows.
 
 ### Shadows (opt-in by declaration)
 
-Only uploaded when the active camera block produced a shadow atlas — in buffers with
+Only uploaded when the active camera block produced a shadow atlas: in buffers with
 more than one camera block these are re-uploaded at each block's start and always
 describe the block being drawn. A shader that declares
 none of these renders unshadowed at no cost.
@@ -117,13 +117,13 @@ none of these renders unshadowed at no cost.
 | `shadowBiases[i]` | `float[]` | Per-caster receiver-side bias (prevents self-shadow acne; raylib adds an in-shader slope-scale term, MonoGame applies it directly) |
 | `pointLightShadowIdx[i]` | `int` | Per-point-light caster slot, `-1` = none |
 | `spotLightShadowIdx[i]` | `int` | Per-spot-light caster slot, `-1` = none |
-| `shadowAtlas` | `sampler2D` | The depth atlas (MonoGame DX11/Vulkan: `Texture2D shadowAtlas : register(t5); SamplerState shadowAtlasSampler : register(s5);` — MonoGame OpenGL: `sampler2D shadowAtlas : register(s5)`) |
+| `shadowAtlas` | `sampler2D` | The depth atlas (MonoGame DX11/Vulkan: `Texture2D shadowAtlas : register(t5); SamplerState shadowAtlasSampler : register(s5);`: MonoGame OpenGL: `sampler2D shadowAtlas : register(s5)`) |
 
 > **Shadow sampler slot differs by backend.** raylib binds the atlas to
 > **slot 15** (and sets the `shadowAtlas` sampler uniform to 15). MonoGame binds
 > it to **slot 5** (PointClamp) and exposes it through the effect's `shadowAtlas`
 > parameter (mgfxc names the parameter after its HLSL declaration, not the
-> register slot — so on DX11/Vulkan declare
+> register slot: so on DX11/Vulkan declare
 > `Texture2D shadowAtlas : register(t5); SamplerState shadowAtlasSampler : register(s5);`
 > and sample with `shadowAtlas.Sample(shadowAtlasSampler, uv)`; on OpenGL declare
 > `sampler2D shadowAtlas : register(s5)`. The built-in `ForwardPbr.fx` switches
@@ -141,7 +141,7 @@ none of these renders unshadowed at no cost.
 An `.instanced(...)` draw inside a `.beginEffect(...)` scope is shaded by your
 shader when it declares the instancing input; otherwise it falls back to the
 built-in PBR instanced path. The opt-in convention differs by backend because
-each engine feeds per-instance data differently — raylib uses a single vertex
+each engine feeds per-instance data differently: raylib uses a single vertex
 attribute and sets the divisor itself, while MonoGame requires two explicit
 vertex streams. The data is the same in both cases: a per-instance 4×4 world
 matrix.
@@ -179,7 +179,7 @@ struct VS_INPUT_INSTANCED {
   float3 Position : POSITION0;
   float3 Normal   : NORMAL0;
   float2 TexCoord : TEXCOORD0;
-  // Stream 1 (per-instance) — 4 rows composing a 4x4 world matrix
+  // Stream 1 (per-instance): 4 rows composing a 4x4 world matrix
   float4 Row0 : TEXCOORD1;
   float4 Row1 : TEXCOORD2;
   float4 Row2 : TEXCOORD3;
@@ -215,15 +215,15 @@ struct VS_INPUT_INSTANCED {
 };
 ```
 
-The declaration is optional — an effect that omits it still works; the built-in
+The declaration is optional: an effect that omits it still works; the built-in
 fallback shades colored draws instead. Instances beyond the `colors` array
 length receive white.
 
 **Skinned + instanced.** An `animatedModelInstanced` draw inside a
 `.beginEffect(...)` scope is shaded by your shader when it opts in; otherwise it
 falls back to the built-in PBR skinned-instanced path. Per-instance bone
-palettes ride a **palette texture** — RGBA32F, width = `boneCount * 4` texels,
-height = instance count, four consecutive texels per bone matrix — instead of
+palettes ride a **palette texture** (RGBA32F, width = `boneCount * 4` texels,
+height = instance count, four consecutive texels per bone matrix) instead of
 the `boneMatrices` uniform array.
 
 **raylib (GLSL `#version 330`):** declare the instancing attribute, the bone
@@ -255,7 +255,7 @@ instance rows (`TEXCOORD1..4`), and a per-instance palette row index
 (`PaletteOffset : TEXCOORD6`), sampling the palette texture at LOD 0. Texel
 `boneIndex*4+r` is row `r` of the bone's matrix; the texel-center UV is
 `((boneIndex*4+r + 0.5) / paletteTexSize.x, (instance + 0.5) / paletteTexSize.y)`.
-The technique ships only where vertex texture fetch exists (DX11/Vulkan — the
+The technique ships only where vertex texture fetch exists (DX11/Vulkan: the
 OpenGL profile compiles it out, see the note below), so declare the texture
 the SM 4+ way: `Texture2D` + `SamplerState` + `.SampleLevel`. (The built-in
 `ForwardPbr.fx` hides this split behind `DECLARE_TEX`/`SAMPLE_TEX_LOD` macros;
@@ -288,7 +288,7 @@ float4 paletteBoneRow(int boneIndex, int row, float instance) {
 ```
 
 > The OpenGL shader profile has no vertex texture fetch, so
-> `SkinnedInstanced` does not exist there — the `SkinnedInstanced` technique
+> `SkinnedInstanced` does not exist there: the `SkinnedInstanced` technique
 > probe is skipped on that backend and the framework draws per-instance
 > through the `Skinned` path (your `Skinned` technique, if declared, applies).
 
@@ -320,7 +320,7 @@ matrices via the effect's `IEffectMatrices` interface:
 
 > Your effect must implement `IEffectMatrices` (as `BasicEffect`,
 > `SkinnedEffect`, etc. do). A raw compiled `Effect` from a `.mgfx` that doesn't
-> expose the interface gets nothing set — own all parameters yourself and set
+> expose the interface gets nothing set: own all parameters yourself and set
 > them before issuing the draw.
 
 raylib has no `drawMeshEffect` equivalent; use `beginEffect` (inherits scene
@@ -328,7 +328,7 @@ data) or `drawImmediate` (raw rlgl/raylib calls).
 
 ## `drawImmediate` (both backends)
 
-The pipeline shader is **bypassed** — there is no uniform contract. The callback
+The pipeline shader is **bypassed**: there is no uniform contract. The callback
 receives a `SceneContext` record with the raw device plus the gathered scene
 fields (as F# values, not shader uniforms):
 
@@ -347,7 +347,7 @@ Set whatever uniforms your own shader needs directly from these values.
 ## 2D lit-sprite uniforms
 
 A custom lit-sprite shader must match the built-in uniform layout. **Names differ
-by backend** (raylib camelCase, MonoGame PascalCase) — unlike the 3D
+by backend** (raylib camelCase, MonoGame PascalCase): unlike the 3D
 `beginEffect` contract.
 
 | raylib (`LitShader.fs`) | MonoGame (`LitSprite.fx`) | Type | Source |
@@ -370,7 +370,7 @@ by backend** (raylib camelCase, MonoGame PascalCase) — unlike the 3D
 | `shadowSoftness` | `ShadowSoftness` | `float` | Penumbra softness |
 | `shadowMaxDistance` | `ShadowMaxDistance` | `float` | Max raymarch distance |
 | `normalMap` (normal-map variant) | `NormalMap` (normal-map variant) | `sampler2D` | Normal-map sampler |
-| — | `MatrixTransform` | `float4x4` | View-projection (MonoGame only) |
+| (none) | `MatrixTransform` | `float4x4` | View-projection (MonoGame only) |
 
 The `MAX_DIR_LIGHTS` (4), `MAX_POINT_LIGHTS` (16), and `MAX_OCCLUDERS` (128 on
 DX, 32 on OpenGL) constants must match between your shader and the
@@ -378,12 +378,12 @@ DX, 32 on OpenGL) constants must match between your shader and the
 
 ## Worked examples
 
-### MonoGame — minimal HLSL for `beginEffect`
+### MonoGame: minimal HLSL for `beginEffect`
 
 A toon shader that consumes camera + the directional light + material:
 
 ```hlsl
-// Toon.fx — declare only the uniforms you consume; the rest are skipped.
+// Toon.fx: declare only the uniforms you consume; the rest are skipped.
 float4x4 matModel;
 float4x4 viewProj;
 float4x4 normalMatrix;
@@ -444,11 +444,11 @@ buffer
   .drop()
 ```
 
-### raylib — minimal GLSL for `beginEffect`
+### raylib: minimal GLSL for `beginEffect`
 
 ```glsl
 #version 330
-// Same uniform names as the MonoGame contract — declare only what you use.
+// Same uniform names as the MonoGame contract: declare only what you use.
 
 in vec3 vertexPosition;
 in vec3 vertexNormal;
@@ -505,7 +505,7 @@ buffer
 - **MonoGame/OpenGL: index uniform arrays dynamically.** On the DesktopGL
   backend, a uniform array that is only ever indexed with compile-time constants
   (e.g. `shadowViewProjs[0]`) can be trimmed by the MojoShader/GLSL toolchain
-  down to the referenced elements — while the effect's parameter table still
+  down to the referenced elements: while the effect's parameter table still
   reports the declared element count. MonoGame's GL constant-buffer upload then
   writes past the end of the shader's constant buffer and crashes in
   `EffectPass.Apply` (an `ArgumentException` from `Buffer.BlockCopy`). DirectX
@@ -513,7 +513,7 @@ buffer
   To avoid it, index the array with a uniform value somewhere in the shader
   (the way `ForwardPbr.fx` indexes with `pointLightShadowIdx[i]` /
   `spotLightShadowIdx[j]`), or declare exactly the slots the shader reads.
-  Declaring fewer slots than the pipeline maximums is safe on the upload side —
+  Declaring fewer slots than the pipeline maximums is safe on the upload side:
   uploads are clamped to the effect's declared element count, and the light count
   uniforms (`pointLightCount`/`spotLightCount`) are clamped to the declared slots
   as well.
@@ -525,32 +525,32 @@ are opt-in: a shader that declares nothing new renders exactly as before.
 
 ### 4.x
 
-- **Breaking: 3.x -> 4.x — raylib skinned palettes.** Palettes handed to
-  `skinnedMesh` / `DrawSkinnedMesh` — and returned by
-  `AnimatedMesh.computeBoneMatrices` — are now plain System.Numerics
+- **Breaking: 3.x -> 4.x: raylib skinned palettes.** Palettes handed to
+  `skinnedMesh` / `DrawSkinnedMesh`: and returned by
+  `AnimatedMesh.computeBoneMatrices`: are now plain System.Numerics
   row-major matrices (`palette[i] = InverseBindPose[i] * pose[i]`); the
   pipeline transposes at upload. In 3.x the same APIs expected pre-transposed
   (raylib-native) matrices. If you build palettes yourself, drop your own
   transpose.
-- **Added: 4.x — skinned + instanced opt-in.** The palette texture (MonoGame
+- **Added: 4.x: skinned + instanced opt-in.** The palette texture (MonoGame
   `paletteTex` t6 / `paletteTexSampler` s6; raylib `bonePalette` unit 14), the
   `paletteTexSize` / `bonePaletteSize` size uniforms, the
   `PaletteOffset : TEXCOORD6` instance field, and the `SkinnedInstanced`
-  technique name — see [Instancing (opt-in)](#Instancing-opt-in). No existing
+  technique name: see [Instancing (opt-in)](#Instancing-opt-in). No existing
   uniform changed name, meaning, or slot.
 - **Limits: 4.x.** MonoGame DX12: the grouped path holds at most 448 bone
   matrices in the forward effect (`bonePaletteGroup[448]`) and 500 in the
   depth effect; models with more than 448 bones fall back to
   per-instance `Skinned` draws. raylib: the palette texture is `boneCount * 4`
-  texels wide — OpenGL only guarantees a 1024-texel texture (256 bones);
-  larger skeletons depend on the driver's limit (8192+ texels — 2048+ bones —
+  texels wide: OpenGL only guarantees a 1024-texel texture (256 bones);
+  larger skeletons depend on the driver's limit (8192+ texels: 2048+ bones:
   is typical on desktop).
 
 ## See also
 
-- [Shaders](shaders.html) — Loading custom shaders, setting parameters, the
+- [Shaders](shaders.html): Loading custom shaders, setting parameters, the
   `DisableRuntimeMarshalling` caveat
-- [3D Rendering Overview](graphics3d/overview.html#Escape-hatches) — When to use
+- [3D Rendering Overview](graphics3d/overview.html#Escape-hatches): When to use
   each escape hatch
-- [3D Lighting](graphics3d/lighting.html) — Light types, limits, shadow config
-- [2D Lighting & Shadows](graphics2d/lighting.html) — The 2D lit-sprite pipeline
+- [3D Lighting](graphics3d/lighting.html): Light types, limits, shadow config
+- [2D Lighting & Shadows](graphics2d/lighting.html): The 2D lit-sprite pipeline
