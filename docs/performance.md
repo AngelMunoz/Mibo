@@ -76,7 +76,38 @@ let calculateVelocityStruct pos target =
     struct (dir, dir.Length())
 ```
 
-## Level 3: Mutable Collections
+## Level 3: Inline Functions and `[<InlineIfLambda>]`
+
+Every normal F# function is compiled to a real method call. On hot paths, two costs hide behind that call: **generic functions** that aren't inline get compiled to generic methods that box their arguments through `Object`, and **higher-order functions** that take a lambda allocate a closure object every time you pass a fresh `fun ... -> ...`.
+
+`let inline` erases the call: the compiler copies the function body straight into each call site. That removes the call overhead and lets the compiler specialize generic code to the concrete types actually being used (avoiding boxing), and — when combined with `[<InlineIfLambda>]` — lets it inline lambda arguments too.
+
+`[<InlineIfLambda>]` on a function-typed parameter of an `inline` function tells the compiler: "if the call site passes a literal lambda, inline it here instead of building a closure." The heap allocation disappears and the whole expression compiles down to straight-line code.
+
+**Guideline:**
+Use `let inline` for tiny helpers and higher-order functions in your hot path. Add `[<InlineIfLambda>]` to their function-typed arguments when you control the call sites — it only has an effect on `inline` functions.
+
+```fsharp
+// 1. INLINE: erases the call and lets the compiler specialize to the
+//    concrete types below — no boxing, no dispatch through Object.
+let inline lerp a b t = a + (b - a) * t
+
+let s = lerp 0.0f 10.0f 0.5f   // float32 → 5.0f
+let d = lerp 0.0 10.0 0.5     // double  → 5.0
+
+// 2. HIGHER-ORDER: 'inline' erases the call, [<InlineIfLambda>] erases
+//    the closure. The lambda below never becomes a heap object.
+let inline sumOver ([<InlineIfLambda>] f: int -> float32) (n: int) =
+    let mutable acc = 0.0f
+    for i = 0 to n - 1 do
+        acc <- acc + f i
+    acc
+
+// Call sites compile to a flat loop; zero closure allocations per frame.
+let total = sumOver (fun i -> float32 i * 0.5f) 1024
+```
+
+## Level 4: Mutable Collections
 
 F# `List` is a linked list. It is great for pattern matching, but terrible for CPU cache locality (pointer chasing). Transforming it (`List.map`) allocates a fresh list every time.
 
@@ -104,7 +135,7 @@ let updateParticles dt (particles: ResizeArray<Particle>) =
     particles
 ```
 
-## Level 4: Buffer Pooling
+## Level 5: Buffer Pooling
 
 Sometimes you need a temporary array for a single frame, for example to gather potential collision pairs or process a batch of AI requests. Allocating `Array.zeroCreate` every frame creates a massive amount of garbage.
 
@@ -114,33 +145,50 @@ Instead, use `System.Buffers.ArrayPool`. This lets you "rent" an array and retur
 Only use this for large, frequent temporary buffers. Always use a `try...finally` block to ensure you return the array, or you will leak memory.
 
 ```fsharp
+open System
 open System.Buffers
+open System.Numerics
 
-// Entity: your game's entity record (position, velocity, ...)
-type Entity = { Pos: System.Numerics.Vector2; Radius: float32 }
+[<Struct>]
+type Entity = {
+    Id: int
+    Pos: Vector2
+    Radius: float32
+    mutable Hp: float32
+}
 
-let findCollisions (entities: ResizeArray<Entity>) =
-    // Rent a buffer to store potential collision pairs
-    // We assume max possible pairs is count * 2 for this broadphase
-    let buffer = ArrayPool<int>.Shared.Rent(entities.Count * 2)
-    let results = ResizeArray<int * int>()
+// HOT PATH: Called 60-120 times per second for every active AoE/spell/projectile
+let applyAoeDamage (entities: Entity[]) (center: Vector2) (radius: float32) (damage: float32) =
+    // Rent scratch space. Worst case = every entity is hit.
+    // In practice, spatial hashing means this is ~20-50 elements.
+    let hitIndices = ArrayPool<int>.Shared.Rent(entities.Length)
 
     try
-        let mutable pairCount = 0
-        // ... fill buffer with indices of colliding entities ...
+        let mutable hitCount = 0
 
-        // Process the results using the buffer (no new allocations for the buffer itself)
-        for i = 0 to pairCount - 1 do
-            let idx = buffer.[i]
-            results.Add((idx, idx + 1))
+        // Pass 1: Broadphase — write candidate indices into rented memory
+        for i = 0 to entities.Length - 1 do
+            let e = entities.[i]
+            let distSq = Vector2.DistanceSquared(center, e.Pos)
+            if distSq <= radius * radius then
+                hitIndices.[hitCount] <- i
+                hitCount <- hitCount + 1
 
-        results
+        // Pass 2: Resolve damage directly from the raw buffer
+        // No List<'T>. No tuples. No GC pressure.
+        for i = 0 to hitCount - 1 do
+            let idx = hitIndices.[i]
+            let mutable e = entities.[idx]
+            e.Hp <- e.Hp - damage
+            entities.[idx] <- e   // write back since Entity is struct
+
+        hitCount   // return number of entities damaged
     finally
-        // Important: Return the rented buffer to the pool!
-        ArrayPool<int>.Shared.Return(buffer)
+        // Critical: return the scratch pad so the next frame reuses it
+        ArrayPool<int>.Shared.Return(hitIndices)
 ```
 
-## Level 5: ByRef, InRef, Span, and Memory
+## Level 6: ByRef, InRef, Span, and Memory
 
 For physics engines, collisions, and matrix math, copying large structs (like a 64-byte `Matrix4x4` or a 24-byte `BoundingBox`) can become a bottleneck. F# provides low-level tools to avoid these copies.
 
@@ -161,7 +209,7 @@ open System.Numerics
 
 // 1. INREF: Read huge structs without copying them
 // Essential for collision detection between complex meshes
-let inline intersects (boxA: inref<BoundingBox>) (boxB: inref<BoundingBox>) =
+let intersects (boxA: inref<BoundingBox>) (boxB: inref<BoundingBox>) =
     // Access fields directly via the pointer.
     // 'inref' prevents accidental modification of boxA/boxB.
     if boxA.Max.X < boxB.Min.X || boxA.Min.X > boxB.Max.X then false
@@ -169,7 +217,7 @@ let inline intersects (boxA: inref<BoundingBox>) (boxB: inref<BoundingBox>) =
 
 // 2. BYREF: Modifying a struct in-place (Physics Step)
 // We pass the position by reference so we can modify the original value, not a copy.
-let inline integrate (pos: byref<Vector2>) (vel: Vector2) (dt: float32) =
+let integrate (pos: byref<Vector2>) (vel: Vector2) (dt: float32) =
     pos.X <- pos.X + vel.X * dt
     pos.Y <- pos.Y + vel.Y * dt
 
