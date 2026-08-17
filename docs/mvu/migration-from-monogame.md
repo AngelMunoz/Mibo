@@ -229,12 +229,14 @@ let game = ElmishGame(program)
 game.Run()
 
 // After
+let configureDevice (game: Game, gdm: GraphicsDeviceManager) =
+  game.Content.RootDirectory <- "Content"
+
 let mgProgram =
   program
   |> MonoGameProgram.ofProgram
   // optional device-level config (GraphicsProfile, vsync, Content.RootDirectory, etc.)
-  |> MonoGameProgram.withConfig (fun (game, gdm) ->
-    game.Content.RootDirectory <- "Content")
+  |> MonoGameProgram.withConfig configureDevice
 
 let game = MiboGame(mgProgram)
 game.Run()
