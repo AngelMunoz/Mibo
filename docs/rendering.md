@@ -29,21 +29,21 @@ Mibo uses a **deferred, layer-sorted rendering pipeline**. Instead of calling ba
 
 The 2D pipeline is built on `Renderer2D<'Model>` in the `Mibo.Elmish.Graphics2D` namespace. See:
 
-- [2D Rendering Overview](graphics2d/overview.html) — What, Why, When
-- [Buffer & Commands](graphics2d/buffer-and-commands.html) — Building and issuing draw commands
-- [Lighting & Shadows](graphics2d/lighting.html) — 2D lights and soft shadows
-- [Particles](graphics2d/particles.html) — Batched particle rendering
-- [Custom Commands](graphics2d/custom-commands.html) — `IRenderCommand2D` and escape hatches
-- [Performance](graphics2d/performance.html) — Writing performant 2D rendering code
-- [Camera](camera.html) — Cameras and coordinate systems
-- [Culling](culling.html) — Visibility testing
+- [2D Rendering Overview](graphics2d/overview.html): What, Why, When
+- [Buffer & Commands](graphics2d/buffer-and-commands.html): Building and issuing draw commands
+- [Lighting & Shadows](graphics2d/lighting.html): 2D lights and soft shadows
+- [Particles](graphics2d/particles.html): Batched particle rendering
+- [Custom Commands](graphics2d/custom-commands.html): `IRenderCommand2D` and escape hatches
+- [Performance](graphics2d/performance.html): Writing performant 2D rendering code
+- [Camera](camera.html): Cameras and coordinate systems
+- [Culling](culling.html): Visibility testing
 
 ## 3D Rendering
 
-The 3D pipeline is built on `Renderer3D<'Model>` in the `Mibo.Elmish.Graphics3D` namespace. It uses a pluggable `IRenderPipeline3D` that interprets `Command3D` values — draw meshes, billboards, lights, shadows, and post-processing passes.
+The 3D pipeline is built on `Renderer3D<'Model>` in the `Mibo.Elmish.Graphics3D` namespace. It uses a pluggable `IRenderPipeline3D` that interprets `Command3D` values: draw meshes, billboards, lights, shadows, and post-processing passes.
 
-- [3D Rendering Overview](graphics3d/overview.html) — What, Why, When
-- [Camera](camera.html) — `Camera3DConfig`, split-screen, picture-in-picture cameras
+- [3D Rendering Overview](graphics3d/overview.html): What, Why, When
+- [Camera](camera.html): `Camera3DConfig`, split-screen, picture-in-picture cameras
 
 ## Multi-Renderer Compositing
 

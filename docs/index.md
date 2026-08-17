@@ -92,7 +92,7 @@ You can then start building your game using any of the following:
 The samples developed for the initial Raylib version and the new MonoGame Samples are stored in their own repository.
 [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) is the place to visit.
 
-> **NOTE:** the [v1 (raylib-only) docs](v1/index.html) are archived — reachable from this link, not from the sidebar.
+> **NOTE:** the [v1 (raylib-only) docs](v1/index.html) are archived; reachable from this link, not from the sidebar.
 
 You'll find examples of
 
