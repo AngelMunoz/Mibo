@@ -37,7 +37,7 @@ The [benchmarks](https://github.com/AngelMunoz/Mibo/blob/main/src/Mibo.Adaptive/
 
 * `getValue` on a value or collection returns the current state: a snapshot for collections, valid until your next write. Read it, use it, move on.
 * `force` / `toSet` / `toMap` build immutable copies you can keep. They allocate, which is fine for setup and cold paths, wrong for a per-frame loop.
-* In a Mibo game, the per-frame pattern is simple: write during update, read once when packing the frame. Every dirty node recomputes exactly once, in dependency order, and the renderer gets plain values.
+* In a Mibo game, the per-step pattern is simple: write during update, read once in the projection. Every dirty node recomputes exactly once, in dependency order, and the renderer gets plain values.
 
 ## What the library does not do
 

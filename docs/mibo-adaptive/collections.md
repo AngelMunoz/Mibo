@@ -77,7 +77,7 @@ Nested joins compose: a three-way view joins the two-way result with a third map
 
 ### Which one, when
 
-`getValue` is the default, and the per-frame rule in a game is this: **if the value is consumed before the next write, read it with `getValue`.** The frame builder in a Mibo game runs right before drawing and nothing writes during it, so it packs with `getValue` and that's the end of it.
+`getValue` is the default, and the per-frame rule in a game is this: **if the value is consumed before the next write, read it with `getValue`.** The projection in a Mibo game runs right before drawing and nothing writes during it, so it packs with `getValue` and that's the end of it.
 
 Reach for `force` when the data has to survive past the next write, or leave the thread that owns the graph:
 

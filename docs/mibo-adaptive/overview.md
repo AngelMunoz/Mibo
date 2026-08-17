@@ -7,7 +7,7 @@ index: 1
 
 # Mibo.Adaptive
 
-`Mibo.Adaptive` is the incremental-computation library under the [Adaptive architecture](../adaptive/overview.html): a pull-based derived state graph that tracks dependencies automatically and recomputes only what changed. It ships as its own NuGet package, depends only on the .NET base class library, and can be used without the rest of Mibo.
+`Mibo.Adaptive` is the incremental-computation library under the [Adaptive architecture](../adaptive/overview.html): a pull-based derived state graph that tracks dependencies automatically and recomputes only what changed. In SPU terms it is the machinery behind the P: the state is `cval`/`cmap` inputs, and projections are `aval` graphs computed from them. It ships as its own NuGet package, depends only on the .NET base class library, and can be used without the rest of Mibo.
 
 The main target is the tight-loop profile: many values change between reads, and reads must be cheap and allocation-free. The intended shape is a derived state graph **forced once per step** of your main loop.
 

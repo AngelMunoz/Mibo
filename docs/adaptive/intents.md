@@ -60,3 +60,8 @@ The rule that keeps this safe: work posted with `post`/`postNextFrame`, and the 
 ## One caution
 
 Everything queued with plain `post` runs **before the frame is forced**. A heavy handler delays this frame's render. Keep posted handlers small; the slow parts belong in `postTask`.
+
+## See also
+
+- [Background Work](background-work.html): when to move work off the thread entirely, and when to slice it across frames instead.
+- [Systems](systems.html): features reporting events as data, with the update as the translator that posts the reactions.

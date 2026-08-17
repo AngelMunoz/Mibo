@@ -7,7 +7,7 @@ index: 7
 
 # Services in Adaptive Programs
 
-As your game grows, you will likely need services that are shared across your update and frame functions: things like Audio, Networking, or Save Data.
+As your game grows, you will likely need services that are shared across your update and projection: things like Audio, Networking, or Save Data.
 
 Instead of passing these individually or relying on global state, create a strongly typed environment record. The [Elmish version of this guide](../mvu/services.html) covers the same pattern for that runtime; this page is the adaptive one, end to end.
 
@@ -29,7 +29,25 @@ let createEnv () = {
 }
 ```
 
-## Full Program Example
+## Avoiding Circular References
+
+A common pitfall is a service that needs the `GameContext` (to load sounds, say), which only exists once the host is running, so it feels like the service can't be built first.
+
+On the adaptive side this has a clean answer: build the service in `createEnv` without the context, and give it an `Init(ctx)` method you call inside the program's setup, which runs before the first frame and already receives the context. No mutable "initialized later" fields, no `ref` cells.
+
+Framework services are already registered for you; pull them from the context instead of building your own:
+
+```fsharp
+let assets = ctx.Context |> GameContext.getService<IAssets>
+```
+
+## A note on async
+
+Background work follows the same rules as everywhere in an adaptive game: never touch state containers from another thread. Queue the work with `ctx.Intents.postTask` or `postAsync`; when it completes, your `ofSuccess` callback applies the result on the game thread. The full contract (when to go off-thread, when to slice instead) is in [Background Work](background-work.html).
+
+One last habit worth keeping: frame counters, cost timers, and debug stats are plain mutable fields on your world, written from `update`. Don't increment a global from inside a derived value's computation; derived values are supposed to be pure (no side effects), and a hidden write in one is invisible to everything else.
+
+## Full program example
 
 Here is the whole picture: an environment with two services, a small world, and the program from [Adaptive Programs](program.html). The environment is created first, at the top; `init`, `update` and the program are named and applied to it:
 
@@ -94,8 +112,8 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
 
         ctx.Intents.postTask(saveScore, ofSuccess = saved, ofError = saveFailed)
 
-/// The frame builder: `frame world` is the `unit -> Frame`
-/// the runner forces once per step.
+/// The projection: `frame world` packs the `Frame`;
+/// the runner forces it once per step.
 let frame (world: World) () : Frame =
     { Gems = world.Gems |> AMap.getValue
       Score = world.Score |> AVal.getValue }
@@ -122,28 +140,3 @@ let main _ =
     AdaptiveRaylibGame<Frame>(program).Run()
     0
 ```
-
-## Avoiding Circular References
-
-A common pitfall is a service that needs the `GameContext` (to load sounds, say), which only exists once the host is running, so it feels like the service can't be built first.
-
-On the adaptive side this has a clean answer: build the service in `createEnv` without the context, and give it an `Init(ctx)` method you call where the example does, inside the program's setup, which runs before the first frame and already receives the context. No mutable "initialized later" fields, no `ref` cells.
-
-Framework services are already registered for you; pull them from the context instead of building your own:
-
-```fsharp
-let assets = ctx.Context |> GameContext.getService<IAssets>
-```
-
-## A Note on Async & The Game Loop
-
-Background work follows the same rules as everywhere in an adaptive game: never touch state containers from another thread. Queue the work with `ctx.Intents.postTask` or `postAsync`; when it completes, your `ofSuccess` callback applies the result on the game thread:
-
-1. Your `update` returns immediately; the frame is not delayed.
-2. The work runs in the background.
-3. The game loop keeps running (updating, drawing).
-4. When it completes, the callback runs on the game thread and writes the result.
-
-This means you can safely perform heavy I/O (network requests, file saving) without frame stutters.
-
-One last habit worth keeping: frame counters, cost timers, and debug stats are plain mutable fields on your world, written from `update`. Don't increment a global from inside a derived value's computation; derived values are supposed to be pure (no side effects), and a hidden write in one is invisible to everything else.

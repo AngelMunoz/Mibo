@@ -7,7 +7,7 @@ index: 8
 
 # Headless Mode
 
-An adaptive program doesn't need a window. `AdaptiveHeadless` runs the exact same program (same update, same frame builder, same loop) with no backend attached. You use it for two things: testing your game, and running it as a server.
+An adaptive program doesn't need a window. `AdaptiveHeadless` runs the exact same program (same update, same projection, same loop) with no backend attached. You use it for two things: testing your game, and running it as a server.
 
 ## Stepping a game by hand
 

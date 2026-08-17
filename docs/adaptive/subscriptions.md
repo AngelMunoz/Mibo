@@ -129,35 +129,29 @@ let applyQueue (current: amap<SubId, AdaptiveSub>) (delta: MapDeltaBuilder<SubId
 let subMap : amap<SubId, AdaptiveSub> = AMap.custom applyQueue
 ```
 
-## Beyond input
+## Gameplay keys with the mapper
 
-The same shape covers any event source. A timer that spawns a wave every thirty seconds:
-
-```fsharp
-let onWaveTick (posting: SubPosting) = posting.Post spawnWave
-
-let waveTimer (interval: float32) : AdaptiveSub =
-    AdaptiveSub.ofTimer
-        (SubId.ofString "wave-timer")
-        (TimeSpan.FromSeconds(float interval))
-        onWaveTick
-```
-
-A network client pushing opponent moves:
+For gameplay keys, the shared [input guide](../input.html) (`InputMap`, `ActionState`) applies here too; the mapper has an adaptive subscription that writes the current action state into a `cval` for you:
 
 ```fsharp
-let postMove (posting: SubPosting) (move: Move) =
-    let run () = applyMove move
-    posting.Post run
+type World = {
+    ...
+    Actions: cval<ActionState<GameAction>>
+}
 
-let opponentMoves (client: IGameClient) : AdaptiveSub =
-    AdaptiveSub.ofObservable
-        (SubId.ofString "opponent")
-        client.OnMove
-        postMove
+// in init, beside the other subscriptions (needs AdaptiveProgram.withInput):
+let getInputMap () = inputMap
+
+let inputSub =
+    InputMapper.subscribeAdaptive getInputMap world.Actions ctx.Context
+
+let subMap =
+    [ inputSub.Id, inputSub
+      SubId.ofString "mouse", mouseSub ctx ]
+    |> AMap.ofList
 ```
 
-`ofTimer` and `ofObservable` cover the common sources; the record with `Attach` is still there when you need full control. In every case the handler receives the posting surface and only queues work: `Post` runs it on the owner thread at the next step's boundary, before `Update`.
+`subscribeAdaptive` takes a map factory; when your bindings never change, `InputMapper.subscribeStaticAdaptive` takes the `InputMap` directly. Read the `cval` once at the top of your update.
 
 One practical note on the mouse wheel: raylib reports ±1 per notch and MonoGame reports ±120. If zoom matters to your game, fold a scale factor in where you handle the wheel, so the feel matches on both backends.
 
@@ -210,4 +204,34 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
 Two habits from that example:
 
 * **Continuous actions read `Held`, not edge arithmetic.** A direction is the sum of what's held right now; if a key-press edge is ever lost, an edge-based accumulation would leave the pan stuck, and a rebuilt-from-held direction can't.
-* **Read `Started` in `Update` and nowhere else.** The clear runs before the frame is forced and before work you post from `Update`, so a projection over `Started` forced in the frame builder and an intent that reads `Started` both see the cleared state. Read the edges (or materialize the derived value) in `Update` instead. One exception: under fixed step, a frame may run zero sub-steps (nothing to simulate yet); no `Update` runs, the clear waits, and the edges stay in the root for the next sub-step's `Update`.
+* **Read `Started` in `Update` and nowhere else.** The clear runs before the frame is forced and before work you post from `Update`, so a projection over `Started` forced in the frame projection and an intent that reads `Started` both see the cleared state. Read the edges (or materialize the derived value) in `Update` instead. One exception: under fixed step, a frame may run zero sub-steps (nothing to simulate yet); no `Update` runs, the clear waits, and the edges stay in the root for the next sub-step's `Update`.
+
+## Timers and network
+
+The same shape covers any event source. A timer that spawns a wave every thirty seconds:
+
+```fsharp
+let onWaveTick (posting: SubPosting) = posting.Post spawnWave
+
+let waveTimer (interval: float32) : AdaptiveSub =
+    AdaptiveSub.ofTimer
+        (SubId.ofString "wave-timer")
+        (TimeSpan.FromSeconds(float interval))
+        onWaveTick
+```
+
+A network client pushing opponent moves:
+
+```fsharp
+let postMove (posting: SubPosting) (move: Move) =
+    let run () = applyMove move
+    posting.Post run
+
+let opponentMoves (client: IGameClient) : AdaptiveSub =
+    AdaptiveSub.ofObservable
+        (SubId.ofString "opponent")
+        client.OnMove
+        postMove
+```
+
+`ofTimer` and `ofObservable` cover the common sources; the record with `Attach` is still there when you need full control. In every case the handler receives the posting surface and only queues work: `Post` runs it on the owner thread at the next step's boundary, before `Update`.

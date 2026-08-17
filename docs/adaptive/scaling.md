@@ -13,7 +13,7 @@ Start simple, add structure when it hurts. This ladder is the path a growing ada
 
 **Best for:** small games, prototypes, learning the architecture.
 
-One state record, one update, one frame builder. If the game stays this size, great; nothing below is required.
+One state record, one update, one projection. If the game stays this size, great; nothing below is required.
 
 ## Level 1: Split update by feature
 
@@ -42,7 +42,7 @@ let scoreboard = honey |> AVal.map formatScore
 Habits that matter once things move fast:
 
 * In update, read another feature's data once and pass plain values to ticks, not containers, and don't build function values per step.
-* In the frame builder, read each value once and pack; the renderer reads the packed result only.
+* In the projection, read each value once and pack; the renderer reads the packed result only.
 * Diagnostics counters are plain fields on your world, written from update.
 
 None of this is required for correctness; it's what keeps a busy frame from allocating, and what keeps hot loops cheap for the compiler to optimize.
@@ -60,10 +60,10 @@ The graph is for state somebody derives from or renders. Plenty of state isn't: 
 Two costs dominate and both are predictable:
 
 * Derived values that combine two large collections re-scan the inner one whenever it changes. When that shows up, compute the same thing from a single collection instead, or move the pairing into your update as a plain loop. [Derived State](derived-state.html) explains the mechanics and [Mibo.Adaptive Performance](../mibo-adaptive/performance.html) has the cost model.
-* The frame builder reads every value the renderer needs; make sure it reads each once, and avoid `force`/`toMap` materialization there (a plain `getValue` view is cheaper).
+* The projection reads every value the renderer needs; make sure it reads each once, and avoid `force`/`toMap` materialization there (a plain `getValue` view is cheaper).
 
 If you need determinism (replays, <abbr title="multiplayer where every peer applies the same inputs in the same order, so every run stays in sync">lockstep</abbr> multiplayer), `AdaptiveProgram.withFixedStep` runs the update in fixed slices with the frame forced once at the end.
 
 ## Choosing the right level
 
-You can ship a real game at Level 2–3. The step from 0 to 2 is usually motivated by derived state; everything after that is maintenance of a growing codebase, and each level is local: split a feature, lift a computation, tidy a frame builder. The [Elmish scaling ladder](../mvu/scaling.html) covers the same journey for the other runtime, if you're comparing.
+You can ship a real game at Level 2–3. The step from 0 to 2 is usually motivated by derived state; everything after that is maintenance of a growing codebase, and each level is local: split a feature, lift a computation, tidy a projection. The [Elmish scaling ladder](../mvu/scaling.html) covers the same journey for the other runtime, if you're comparing.

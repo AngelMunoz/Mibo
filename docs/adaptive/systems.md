@@ -69,7 +69,7 @@ Two habits worth keeping:
 
 ## Derived values that span features
 
-Anything you want derived from two features ("flowers with a bee nearby", a scoreboard), build it from both containers at startup, not inside update:
+Some values read more than one feature: "flowers with a bee nearby", the scoreboard. Build those from both containers once, at startup, and read them wherever you need them; they recompute when their inputs change.
 
 ```fsharp
 // plain function: is any bee close to this flower?
@@ -82,10 +82,14 @@ let pollinated =
     |> AMap.filter (isPollinated (bees.Bees |> AMap.getValue))
 ```
 
-Build these once in your setup code and read them in update or in the frame. They recompute when their inputs change; you never refresh them.
-
-Keep values derived from a single feature next to that feature's code; values that mix features belong at the top level, next to your `update`. That's the whole placement rule, and it keeps each feature understandable alone.
+Where such a value lives (next to its feature, or at the top level when it mixes features) is the one placement rule, and [Derived State](derived-state.html) covers it with the full example.
 
 ## When a decision spans features
 
 Questions like "can the player afford this?" or "is this spot free?" read several features at once. Write them as small functions that take the relevant values and return an answer, and call them from your update. Keep the yes/no logic out of the update function itself; update stays a schedule and a translator.
+
+## See also
+
+- [Intents](intents.html): the queue that carries one feature's events to the translator.
+- [Derived State](derived-state.html): where derived values live, and the two-home placement rule.
+- [Composable Systems](../mvu/composable-systems.html): the same architecture on the Elmish runtime.

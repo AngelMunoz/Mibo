@@ -7,7 +7,7 @@ index: 10
 
 # Derived State: Organizing Projections
 
-A growing game accumulates values that aren't facts but functions of facts: the alive count, a tower's upgraded stats, "is a boss near this tower", the scoreboard string. These are projections, derived values computed from the facts, and the question that matters is not *how* to build one (that's the [Mibo.Adaptive](../mibo-adaptive/overview.html) section) but **where it lives and when it stays cheap.**
+The P in SPU scales past one projection: a growing game accumulates values that aren't facts but functions of facts, like the alive count, a tower's upgraded stats, "is a boss near this tower", or the scoreboard string. These are projections, derived values computed from the facts, and the question that matters is not *how* to build one (that's the [Mibo.Adaptive](../mibo-adaptive/overview.html) section) but **where it lives and when it stays cheap.**
 
 ## The two homes
 
