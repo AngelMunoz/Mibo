@@ -10,7 +10,7 @@ index: 2
 The **fluent Draw DSL** is the recommended way to write view code in Mibo. It is a single API for **2D and 3D** that works identically on **both backends** (raylib and MonoGame): you chain calls on the render buffer, and the chain compiles down to the same direct buffer commands you would write by hand — there is no runtime cost.
 
 > [!IMPORTANT]
-> The fluent DSL is the blessed path going forward. The function-based (piped) modules — `Draw`, `Draw3D`, `LightDraw`, `ParticleDraw` — still work in this release but **will be removed in a future version**. New code should use the fluent DSL; see [Migrating from the piped DSL](#migrating-from-the-piped-dsl).
+> The fluent DSL is the recommended path going forward. The function-based (piped) modules — `Draw`, `Draw3D`, `LightDraw`, `ParticleDraw` — still work in this release but **will be removed in a future version**. New code should use the fluent DSL; see [Migrating from the piped DSL](#Migrating-from-the-piped-DSL).
 
 ```fsharp
 open Mibo.Elmish.Graphics   // the Draw extensions
@@ -40,7 +40,7 @@ Parameters are ordered by how often you set them; anything with a sensible defau
 | `thickness` | `1.0f` | outlines and thick lines |
 | `roundness` / `segments` | `0.5f` / `8` | rounded rects (`16` for sectors/rings) |
 | `intensity` / `castsShadows` | `1.0f` / `false` | 2D lights from parts |
-| `spacing` | `1.0f` | text — used by raylib, ignored by MonoGame (see [Sprites and text](#sprites-and-text)) |
+| `spacing` | `1.0f` | text — used by raylib, ignored by MonoGame (see [Sprites and text](#Sprites-and-text)) |
 
 ```fsharp
 buffer
@@ -199,11 +199,11 @@ buffer
 ```
 
 - **Models and materials** — `model`, `modelWith` (whole-model override), `modelWithPerMesh` (resolver by flat mesh-part index). Materials are the backend `Material3D`.
-- **Meshes and instancing** — `mesh` (raylib `Mesh` / MonoGame `PrimitiveMesh`) and `instanced` for bulk draws. `instanced` takes an optional `colors` array for per-instance tinting (**MonoGame only**). On MonoGame, `meshSlice`/`instancedSlice` address a part of a shared content-pipeline buffer via `vertexOffset`/`startIndex` (offsets default to 0; `mesh`/`instanced` are deprecated there) — see [3D Buffer & Commands](graphics3d/buffer-and-commands.html#slices-of-shared-buffers-monogame).
+- **Meshes and instancing** — `mesh` (raylib `Mesh` / MonoGame `PrimitiveMesh`) and `instanced` for bulk draws. `instanced` takes an optional `colors` array for per-instance tinting (**MonoGame only**). On MonoGame, `meshSlice`/`instancedSlice` address a part of a shared content-pipeline buffer via `vertexOffset`/`startIndex` (offsets default to 0; `mesh`/`instanced` are deprecated there) — see [3D Buffer & Commands](graphics3d/buffer-and-commands.html#Slices-of-shared-buffers-MonoGame).
 - **Billboards** — `billboard`/`billboardBatch` take optional `rotation` (degrees around the view axis), `sourceRect` (pixel-space atlas frame; all-zero = full texture), and `blend` (MonoGame: the `BlendMode` DU; raylib: `Raylib_cs.BlendMode`). Blended billboards draw in buffer order with no depth sorting. A MonoGame batch draws every item with the first texture — use an atlas plus `sourceRects`; raylib honors per-item textures.
 - **Animated models** — `animatedModel` consumes the backend animation state record; the bone palette is derived for you (MonoGame computes it from the state; raylib applies it to the model — or, with the raylib `AnimatedModel` record, skins on the GPU without mutating the model). `animatedModelWith`/`animatedModelWithPerMesh` add material overrides. All three take an optional `pose` (a caller-evaluated `BonePose`) so one pose evaluation per frame can be shared with bone queries and attachments; on raylib the `AnimatedModel` witnesses honor it, the legacy `Animation3DState` witnesses ignore it. `skinnedMesh` is the explicit-palette form (raylib). `animatedModelInstanced` draws N instances of the same animated model — each with its own transform and pose — in one call; it takes parallel `transforms`/`poses` arrays plus optional `material` (a `MaterialOverride`) and `colors` (MonoGame only), and falls back to per-instance draws on the MonoGame OpenGL backend.
-- **Bone attachments** — `attachedMesh(animModel, bone, localTransform, mesh, material, transform, ?pose)` draws a static mesh parented to a bone of an animated model (`BoneRef.ByName "Hand_R"` or `BoneRef.ByIndex i`). The attachment's world transform is `localTransform * boneWorld * transform`; an unknown bone is a no-op (no command emitted). Pass the same `pose` given to `animatedModel` to avoid a second pose evaluation. See [Animation 3D](animation3d.html#bone-poses-queries-and-attachments).
-- **Effect scopes** — `beginEffect`/`endEffect` shade a group with your own shader, inheriting the scene's camera/lights/shadows; see `docs/shader-uniforms.md`.
+- **Bone attachments** — `attachedMesh(animModel, bone, localTransform, mesh, material, transform, ?pose)` draws a static mesh parented to a bone of an animated model (`BoneRef.ByName "Hand_R"` or `BoneRef.ByIndex i`). The attachment's world transform is `localTransform * boneWorld * transform`; an unknown bone is a no-op (no command emitted). Pass the same `pose` given to `animatedModel` to avoid a second pose evaluation. See [Animation 3D](animation3d.html#Bone-Poses-Queries-and-Attachments).
+- **Effect scopes** — `beginEffect`/`endEffect` shade a group with your own shader, inheriting the scene's camera/lights/shadows; see [Shader Uniform Reference](shader-uniforms.html).
 - **Lights** — `AmbientLight3D`, `DirectionalLight3D`, `PointLight3D`, `SpotLight3D` are backend-neutral Core types already shared by both backends.
 
 ## Backend-specific members

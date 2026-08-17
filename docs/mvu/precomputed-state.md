@@ -95,6 +95,6 @@ The same derived value can feed multiple consumers. Lighting affects rendering, 
 
 ## See also
 
-- [ThreeDSample/DayNight.fs](https://github.com/...) and [ThreeDSample/Lighting.fs](https://github.com/...) — day/night cycle as pre-computed state.
+- [Platformer3D day/night cycle](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Shared/DayNight.fs) and [lighting state](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Shared/Lighting.fs) — day/night cycle as pre-computed state.
 - [Composable Systems](composable-systems.html) — how pre-computed state fits into the system pipeline.
 - [Mibo.Adaptive](../mibo-adaptive/overview.html) — on the adaptive runtime this pattern is built in: derived values recompute on change instead of once per frame.

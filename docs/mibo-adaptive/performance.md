@@ -19,7 +19,7 @@ The library is built for tight-loop work, and its behavior there is something yo
 
 * **Steady state allocates nothing.** Once your graph has settled, reads, writes, and delta propagation don't allocate; buffers are reused. The exceptions are the deliberate materializations (`force`, `toSet`, `toMap`).
 * **A value recomputes at most once per change.** Ten writes between two reads cost one recompute. A read when nothing changed is a cheap version check.
-* **After a write, derived collections re-scan.** A `mapA` node re-checks every entry's version on the next read, which is flat, predictable work per entry. On very large derived collections this scan is the main cost, and [FSharp.Data.Adaptive](overview.html#When-to-use-FSharpDataAdaptive-instead) can win there.
+* **After a write, derived collections re-scan.** A `mapA` node re-checks every entry's version on the next read, which is flat, predictable work per entry. On very large derived collections this scan is the main cost, and [FSharp.Data.Adaptive](overview.html#When-to-use-FSharp-Data-Adaptive-instead) can win there.
 
 If allocation matters to you, measure it rather than trusting anyone's claims: wrap a settled read in `GC.GetAllocatedBytesForCurrentThread` before and after, and look at the difference.
 
@@ -44,4 +44,4 @@ The [benchmarks](https://github.com/AngelMunoz/Mibo/blob/main/src/Mibo.Adaptive/
 * No push: no callbacks fire on write, so a write never re-enters your code.
 * No history/undo, no Fable/JS backend, and persistence is limited to JSON round-trips of the changeable types.
 
-If you need those, that's the [FSharp.Data.Adaptive](overview.html#When-to-use-FSharpDataAdaptive-instead) signal.
+If you need those, that's the [FSharp.Data.Adaptive](overview.html#When-to-use-FSharp-Data-Adaptive-instead) signal.

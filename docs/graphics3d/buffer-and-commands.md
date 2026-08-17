@@ -58,7 +58,7 @@ One member set covers both backends — the buffer takes your backend's own mesh
 
 | Member | What it draws |
 |--------|---------------|
-| `.mesh(mesh, transform, material)` | Single primitive mesh (deprecated on MonoGame — see [Slices of shared buffers](#slices-of-shared-buffers-monogame)) |
+| `.mesh(mesh, transform, material)` | Single primitive mesh (deprecated on MonoGame — see [Slices of shared buffers](#Slices-of-shared-buffers-MonoGame)) |
 | `.meshSlice(mesh, transform, material, ?vertexOffset, ?startIndex)` | Mesh or mesh slice — **MonoGame**; offsets address a part of a shared buffer |
 | `.model(model, transform)` | A loaded model with authored materials |
 | `.modelWith(model, transform, material)` | Model with whole-model material override |
@@ -99,7 +99,7 @@ for part in parts do
                      vertexOffset = part.VertexOffset, startIndex = part.StartIndex)
 ```
 
-Content vertices are stored **bone-local** — fold `part.Bone` in front of every world/instance transform (stock `ModelMesh.Draw` does this internally). `part.Bone` is `Matrix.Identity` for models without bones. Treat the returned array as **read-only**: it is the cached result shared by every caller, and mutating an element corrupts it for the model's lifetime — copy it (`Array.map`) when you need adjusted parts. `ModelParts` is for **static** models only: the instanced path carries no bone palette, so skinned parts render in their bind pose — use `animatedModelInstanced` for skinned models. See [GPU Instancing](instancing.html#instancing-content-pipeline-models-monogame) for the instanced form and the grid-context shortcut.
+Content vertices are stored **bone-local** — fold `part.Bone` in front of every world/instance transform (stock `ModelMesh.Draw` does this internally). `part.Bone` is `Matrix.Identity` for models without bones. Treat the returned array as **read-only**: it is the cached result shared by every caller, and mutating an element corrupts it for the model's lifetime — copy it (`Array.map`) when you need adjusted parts. `ModelParts` is for **static** models only: the instanced path carries no bone palette, so skinned parts render in their bind pose — use `animatedModelInstanced` for skinned models. See [GPU Instancing](instancing.html#Instancing-content-pipeline-models-MonoGame) for the instanced form and the grid-context shortcut.
 
 ## Camera commands
 
@@ -128,7 +128,7 @@ Content vertices are stored **bone-local** — fold `part.Bone` in front of ever
 
 ## Escape hatches
 
-`.drawImmediate(...)` flushes the batch, runs raw backend calls (rlgl/raylib, or MonoGame device access via `SceneContext`), and restores state. On MonoGame, also see `.beginEffect(...)`/`.endEffect()` (custom shading scope that inherits scene data). See [Overview](overview.html#escape-hatches).
+`.drawImmediate(...)` flushes the batch, runs raw backend calls (rlgl/raylib, or MonoGame device access via `SceneContext`), and restores state. On MonoGame, also see `.beginEffect(...)`/`.endEffect()` (custom shading scope that inherits scene data). See [Overview](overview.html#Escape-hatches).
 
 ## Camera config
 

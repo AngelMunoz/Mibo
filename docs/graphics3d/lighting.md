@@ -159,7 +159,7 @@ light-count argument; to change them you recompile the `.fx` with different `#de
 
 Budgets apply **per camera block**: in buffers with more than one camera block, each block
 gets its own ambient slot and light arrays (see
-[Lights across camera blocks](#lights-across-camera-blocks)); in single-camera buffers they
+[Lights across camera blocks](#Lights-across-camera-blocks)); in single-camera buffers they
 apply to the whole frame.
 
 Exceeding the limit silently drops extra lights on both backends. For directional lights
@@ -174,7 +174,7 @@ from the frame defaults (lights emitted before the first camera block or between
 applies its own commands in order; a block that issues none inherits the previous block's set
 plus any lights emitted in between. A block can add lights but cannot remove inherited ones,
 and lights emitted after the last block affect nothing. See
-[Buffers & Commands → Light scoping](buffer-and-commands.html#light-scoping-across-camera-blocks)
+[Buffers & Commands → Light scoping](buffer-and-commands.html#Light-scoping-across-camera-blocks)
 for the full placement rules.
 
 Shadows follow the same scoping. Each camera block with shadow-casting lights renders its own

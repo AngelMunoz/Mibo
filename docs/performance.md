@@ -9,7 +9,7 @@ index: 2
 
 F# is a high-level functional language, but games operate under strict latency constraints. The Garbage Collector (GC) is your main adversary here: creating too much short-lived "trash" per frame forces the GC to pause your game to clean it up, causing stutter.
 
-This guide outlines an incremental path to optimization. It serves as the performance implementation guide for the [Scaling Mibo](../mvu/scaling.html) architectural levels. While the scaling guide helps you manage **complexity**, this guide helps you manage **throughput and CPU/GC pressure**.
+This guide outlines an incremental path to optimization. It serves as the performance implementation guide for the [Scaling Mibo](mvu/scaling.html) architectural levels. While the scaling guide helps you manage **complexity**, this guide helps you manage **throughput and CPU/GC pressure**.
 
 **Don't premature optimize.** Write idiomatic code first, then apply these patterns to your "hot paths" (code that runs thousands of times per frame).
 

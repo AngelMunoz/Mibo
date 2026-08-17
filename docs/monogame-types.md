@@ -98,8 +98,8 @@ a color from components differs:
 - **MonoGame** `Microsoft.Xna.Framework.Color` — int `0–255` (`Color(255, 0, 0)`)
   or float `0.0–1.0` (`Color(1.0f, 0.0f, 0.0f)`).
 
-Prefer named colors when you can; verify the overload you need in the
-[API reference](reference/index.html).
+Prefer named colors when you can; verify the overload you need against the
+backend's source (`Mibo.Raylib` / `Mibo.MonoGame`).
 
 ## `IAssets`: same namespace, different types and paths
 

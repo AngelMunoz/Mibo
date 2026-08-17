@@ -9,7 +9,7 @@ index: 2
 
 A `Program<'Model,'Msg>` is a **declarative configuration pipeline** for your Mibo game. It defines how the runtime should orchestrate your state, services, and rendering loop.
 
-The `Program` builder lives in `Mibo.Core`, so the same combinators work on every backend. Only the host type and a couple of backend-specific extensions differ (see [Backend wiring](#backend-wiring) below).
+The `Program` builder lives in `Mibo.Core`, so the same combinators work on every backend. Only the host type and a couple of backend-specific extensions differ (see [Backend wiring](#Backend-wiring) below).
 
 Instead of heavy inheritance or global state, you build your program by starting with a core and layering capabilities using high-level combinators.
 
@@ -74,7 +74,7 @@ Program.mkProgram init update
 |> Program.withSubscription subscribe
 ```
 
-See [The Subscription](elmish.html#the-subscription) in the Elmish guide for a detailed breakdown.
+See [The Subscription](elmish.html#The-Subscription) in the Elmish guide for a detailed breakdown.
 
 ---
 

@@ -21,7 +21,7 @@ This is the key to rendering voxel worlds, forests, or any scene with high objec
 |-----------|----------|
 | < 50 identical objects | `.mesh(...)` per object (simpler) |
 | 50–1,000+ identical objects | `.instanced(...)` (one draw call) |
-| dozens of *animated* characters | `.animatedModelInstanced(...)` — see [Skinned + Instanced Draws](../animation3d.html#skinned--instanced-draws) |
+| dozens of *animated* characters | `.animatedModelInstanced(...)` — see [Skinned + Instanced Draws](../animation3d.html#Skinned-Instanced-Draws) |
 | Cell grid (voxels, tiles) | `buffer.renderCellGridInstanced(...)` (automatic grouping) |
 
 ## Instanced draws
@@ -54,17 +54,17 @@ buffer
   .drop()
 ```
 
-The array may be shorter than `count` — instances beyond `colors.Length` render white. A custom effect that opts into instancing can receive the per-instance color by declaring `float4 InstanceColor : TEXCOORD5` in its vertex input; effects that don't declare it still work (the built-in fallback shades colored draws). See [Shader Uniform Reference](../shader-uniforms.html#instancing-opt-in).
+The array may be shorter than `count` — instances beyond `colors.Length` render white. A custom effect that opts into instancing can receive the per-instance color by declaring `float4 InstanceColor : TEXCOORD5` in its vertex input; effects that don't declare it still work (the built-in fallback shades colored draws). See [Shader Uniform Reference](../shader-uniforms.html#Instancing-opt-in).
 
 > _**NOTE**_: Per-instance color is **MonoGame only**. Passing `colors` on raylib raises `NotSupportedException` — its instanced draw has a fixed instance attribute layout.
 
-> _**NOTE**_: On MonoGame, use `.instancedSlice(...)` when the mesh wraps one part of a shared content-pipeline buffer — pass the part's `vertexOffset`/`startIndex` (`0`/`0` for self-contained meshes), and give the mesh record the part's `PrimitiveCount` and `Bounds`. `ModelParts.ofModel` builds those wraps and offsets for you — see [Instancing content-pipeline models (MonoGame)](#instancing-content-pipeline-models-monogame) below, and [3D Buffer & Commands](buffer-and-commands.html#slices-of-shared-buffers-monogame) for the buffer rules.
+> _**NOTE**_: On MonoGame, use `.instancedSlice(...)` when the mesh wraps one part of a shared content-pipeline buffer — pass the part's `vertexOffset`/`startIndex` (`0`/`0` for self-contained meshes), and give the mesh record the part's `PrimitiveCount` and `Bounds`. `ModelParts.ofModel` builds those wraps and offsets for you — see [Instancing content-pipeline models (MonoGame)](#Instancing-content-pipeline-models-MonoGame) below, and [3D Buffer & Commands](buffer-and-commands.html#Slices-of-shared-buffers-MonoGame) for the buffer rules.
 
 ## Instancing content-pipeline models (MonoGame)
 
 A content-pipeline `Model` packs all of its parts into shared vertex/index buffers and stores vertices bone-local, so its parts cannot go straight into `.instanced(...)` — they need slice offsets and a bone fold. `ModelParts.ofModel` resolves a model into per-part records that carry everything an instanced draw needs:
 
-> _**IMPORTANT**_: `ModelParts` is for **static** models. The instanced draw path carries no bone palette — a skinned model (parts baked with `SkinnedEffect`) renders in its **bind pose**, with no error. Use [`.animatedModelInstanced(...)`](../animation3d.html#skinned--instanced-draws) for skinned models.
+> _**IMPORTANT**_: `ModelParts` is for **static** models. The instanced draw path carries no bone palette — a skinned model (parts baked with `SkinnedEffect`) renders in its **bind pose**, with no error. Use [`.animatedModelInstanced(...)`](../animation3d.html#Skinned-Instanced-Draws) for skinned models.
 
 > _**IMPORTANT**_: Treat the `ModelPart[]` from `ofModel` as **read-only** — it is the cached result shared by every caller, and mutating an element (for example swapping `Material`) corrupts it for the model's lifetime. Copy the array (`Array.map`) when you need adjusted parts.
 
@@ -203,7 +203,7 @@ grouped-uniform constant array (the DX12 mgfx reflection parser drops the
 params from the main effect, so an isolated `ForwardPbrGrouped.fx` is loaded);
 MonoGame OpenGL falls back to per-instance skinned draws (no VTF in `vs_3_0`).
 
-See [Shader Uniform Reference](../shader-uniforms.html#instancing-opt-in) for
+See [Shader Uniform Reference](../shader-uniforms.html#Instancing-opt-in) for
 the full per-backend input contract and minimal example shaders.
 
 ## Shading a whole grid with effects
@@ -287,4 +287,4 @@ Air cells produce no draw calls. Stone, dirt, and grass each batch into one inst
 - [Overview](overview.html) — Architecture and pipeline setup
 - [Draw DSL](../draw-dsl.html) — The fluent draw surface
 - [Materials](materials.html) — PBR material system
-- [Animation 3D — Skinned + Instanced Draws](../animation3d.html#skinned--instanced-draws) — instancing animated characters (`animatedModelInstanced`)
+- [Animation 3D — Skinned + Instanced Draws](../animation3d.html#Skinned-Instanced-Draws) — instancing animated characters (`animatedModelInstanced`)

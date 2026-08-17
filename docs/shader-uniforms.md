@@ -22,7 +22,7 @@ How custom shading gets into the pipeline, per backend:
 
 | Escape hatch | raylib | MonoGame | Uniforms you receive |
 |---|---|---|---|
-| `.beginEffect(...)` / `.endEffect()` | ✓ (`Shader`) | ✓ (`Effect`) | Scene data **by name** — declare only what you use; absent ones are skipped. Instanced draws are shaded by your shader when it opts in (see [Instancing](#instancing-opt-in)). |
+| `.beginEffect(...)` / `.endEffect()` | ✓ (`Shader`) | ✓ (`Effect`) | Scene data **by name** — declare only what you use; absent ones are skipped. Instanced draws are shaded by your shader when it opts in (see [Instancing](#Instancing-opt-in)). |
 | Per-mesh-part effect draw | — | ✓ | `World`/`View`/`Projection` only (via `IEffectMatrices`); you own lighting/material |
 | `.drawImmediate(...)` | ✓ | ✓ | None — the pipeline shader is bypassed; you get a `SceneContext` with raw device + gathered scene fields |
 
@@ -500,7 +500,7 @@ buffer
   [Shaders](shaders.html) for the full caveat; `SetShaderValueMatrix` is exempt.
 - **Light/shadow budgets.** Point-light/spot-light array sizes come from the
   pipeline constructor (raylib) or baked `#define`s (MonoGame). See
-  [3D Lighting](graphics3d/lighting.html#light-limits) for the limits and how to
+  [3D Lighting](graphics3d/lighting.html#Light-limits) for the limits and how to
   change them.
 - **MonoGame/OpenGL: index uniform arrays dynamically.** On the DesktopGL
   backend, a uniform array that is only ever indexed with compile-time constants
@@ -536,7 +536,7 @@ are opt-in: a shader that declares nothing new renders exactly as before.
   `paletteTex` t6 / `paletteTexSampler` s6; raylib `bonePalette` unit 14), the
   `paletteTexSize` / `bonePaletteSize` size uniforms, the
   `PaletteOffset : TEXCOORD6` instance field, and the `SkinnedInstanced`
-  technique name — see [Instancing (opt-in)](#instancing-opt-in). No existing
+  technique name — see [Instancing (opt-in)](#Instancing-opt-in). No existing
   uniform changed name, meaning, or slot.
 - **Limits: 4.x.** MonoGame DX12: the grouped path holds at most 448 bone
   matrices in the forward effect (`bonePaletteGroup[448]`) and 500 in the
@@ -550,7 +550,7 @@ are opt-in: a shader that declares nothing new renders exactly as before.
 
 - [Shaders](shaders.html) — Loading custom shaders, setting parameters, the
   `DisableRuntimeMarshalling` caveat
-- [3D Rendering Overview](graphics3d/overview.html#escape-hatches) — When to use
+- [3D Rendering Overview](graphics3d/overview.html#Escape-hatches) — When to use
   each escape hatch
 - [3D Lighting](graphics3d/lighting.html) — Light types, limits, shadow config
 - [2D Lighting & Shadows](graphics2d/lighting.html) — The 2D lit-sprite pipeline

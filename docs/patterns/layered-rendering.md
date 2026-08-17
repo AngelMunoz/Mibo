@@ -78,5 +78,5 @@ You can add more than two renderers. Each one composites on top of the previous.
 
 ## See also
 
-- [ThreeDSample/Program.fs](https://github.com/...) — renderer setup with 3D scene and 2D overlay.
+- [Platformer3D renderer setup](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Raylib/Program.fs) — renderer setup with 3D scene and 2D overlay.
 - [Rendering Overview](../rendering.html) — renderers and render buffers.

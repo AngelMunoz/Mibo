@@ -219,7 +219,7 @@ depth-of-field) never see transparent surfaces.
 
 For the contract your shader must satisfy (sampler names, texture binding, the
 `SetShaderValueTexture` caveat on raylib), see
-[Shaders → Post-process shaders](../shaders.html#post-process-shaders).
+[Shaders → Post-process shaders](../shaders.html#Post-process-shaders).
 
 ## Multi-camera rendering
 
@@ -252,7 +252,7 @@ buffer
 > lights (like the minimap above) inherits the running set, so same-world multi-view
 > works with no extra setup. A view that sets its own lights starts from the frame
 > defaults instead — useful when the views show different worlds. See
-> [Buffers & Commands → Light scoping](buffer-and-commands.html#light-scoping-across-camera-blocks).
+> [Buffers & Commands → Light scoping](buffer-and-commands.html#Light-scoping-across-camera-blocks).
 
 See [Camera](../camera.html) for the full `Camera3DConfig` API.
 

@@ -32,8 +32,8 @@ Mibo.Raylib is the authoritative source: the Core types are the raylib types
 generalized, and the MonoGame backend is written from scratch against Core.
 
 > **Coming from the original Mibo (MonoGame)?** See
-> [migration-from-monogame.md](migration-from-monogame.md) for a comprehensive
-> guide covering every breaking change, API mapping, and a full before/after
+> [migration-from-monogame](mvu/migration-from-monogame.html) for a guide
+> covering every breaking change, API mapping, and a full before/after
 > example.
 
 The guiding rule for what lives where: **if it is an interface or contract that

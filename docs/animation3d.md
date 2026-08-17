@@ -16,7 +16,7 @@ Mibo provides a three-tier 3D skeletal animation system in `Mibo.Animation`. It 
 >   or `.skinnedMesh(...)` (shared mesh + bone matrices). Wrapping the state in an
 >   `AnimatedModel` record and rendering with `.animatedModel(...)` selects the opt-in
 >   GPU path instead — no model mutation, several poses per model per frame (see
->   [Tier 3](#tier-3--per-model-cpu-skinning-animation3dstate)).
+>   [Tier 3](#Tier-3-Per-Model-CPU-Skinning)).
 > - **MonoGame**: clips load from the raw model file via Assimp (`assets.ModelAnimations` →
 > `Animation3DClips`); render with `.animatedModel(animModel, transform)` (the bone
 > palette is derived internally from an `AnimatedModel` state value — the caller never handles
@@ -115,7 +115,7 @@ buffer
 > drawing emits one skinned-mesh command per sub-mesh carrying a per-instance bone
 > palette — no model mutation, so the same model can be drawn with several
 > different poses in one frame, and the `pose` parameter is honored (see
-> [Bone Poses, Queries, and Attachments](#bone-poses-queries-and-attachments)).
+> [Bone Poses, Queries, and Attachments](#Bone-Poses-Queries-and-Attachments)).
 >
 > ```fsharp
 > match AnimatedMesh.fromModel model with
@@ -506,7 +506,7 @@ Animations are loaded from the model file via `assets.ModelAnimations`. The anim
 3. **Tier 2 for many entities**: Share a single mesh and avoid per-entity model copies — use `AnimatedMesh` + `computeBoneMatrices` + `.skinnedMesh(...)` (raylib), or the shared-mesh path with `.animatedModel(...)` (MonoGame)
 4. **Blend duration**: Keep blend durations short (0.1–0.3s) to minimize double-animation overhead
 5. **One pose evaluation per frame**: When drawing attachments or querying bones, compute the `BonePose` once and pass it as `pose` to `animatedModel`/`attachedMesh` instead of letting each witness re-evaluate it
-6. **`computePoseInto` for crowds**: For 500+ instanced characters, use `computePoseInto` with pre-allocated `BonePose` buffers (see [Reusing pose buffers](#reusing-pose-buffers-high-instance-counts)) — it eliminates per-frame array allocation
+6. **`computePoseInto` for crowds**: For 500+ instanced characters, use `computePoseInto` with pre-allocated `BonePose` buffers (see [Reusing pose buffers](#Reusing-pose-buffers-high-instance-counts)) — it eliminates per-frame array allocation
 
 ## See Also
 

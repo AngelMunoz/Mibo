@@ -102,4 +102,4 @@ This registers `IInput` automatically; you can then query the `IInputMapper<'Act
 ## See Also
 
 - [Subscriptions](mvu/subscriptions.html) - Continuous input handling
-- [Scaling](../mvu/scaling.html) - Input handling patterns
+- [Scaling](mvu/scaling.html) - Input handling patterns

@@ -92,6 +92,6 @@ The Elmish `Cmd` system is the threading mechanism. You don't create threads, ma
 
 ## See also
 
-- [ThreeDSample/ChunkSystem.fs](https://github.com/...) — chunk generation and eviction in a real game.
+- [Platformer3D world generation](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Shared/WorldGen.fs) — background chunk generation in a real game.
 - [Composable Systems](composable-systems.html) — how background work fits into the system pipeline.
 - [Intents](../adaptive/intents.html) — the adaptive runtime's version of this pattern (`postTask`/`postAsync`).

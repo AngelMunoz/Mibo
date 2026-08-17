@@ -133,7 +133,7 @@ buffer.model(model, transform).drop()
 ```
 
 The full mapping, including lighting, particles, and grid rendering, is in
-[Draw DSL → Migrating from the piped DSL](draw-dsl.html#migrating-from-the-piped-dsl).
+[Draw DSL → Migrating from the piped DSL](draw-dsl.html#Migrating-from-the-piped-DSL).
 To silence the warnings until you migrate, add FS0044 to your project's
 `NoWarn` — but prefer migrating, since the modules will be removed in a future
 release.

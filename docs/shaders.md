@@ -149,7 +149,7 @@ How you opt in with your own shading depends on the backend:
 
 **Raw access** — `.drawImmediate(...)` runs raw backend calls (rlgl/raylib, or MonoGame device access via `SceneContext`); the pipeline's shader is bypassed for those draws. For a full custom pipeline, implement `IRenderPipeline3D`.
 
-See [3D Rendering Overview](graphics3d/overview.html#escape-hatches) for examples.
+See [3D Rendering Overview](graphics3d/overview.html#Escape-hatches) for examples.
 
 For the **full list of uniform names** the `beginEffect` scope uploads (so you
 know exactly what to declare in your shader to inherit the scene), see
@@ -230,7 +230,7 @@ let setShaderVec4 (shader: Shader) (loc: int) (value: Vector4) =
 Post-process passes (`.postProcess(...)` / `.postProcessWithDepth(...)`) run after
 the scene renders to an offscreen target. Your action receives a
 `PostProcessContext3D` and must draw a fullscreen quad of `ctx.Source`. See
-[3D Rendering → Post-processing](graphics3d/overview.html#post-processing) for the
+[3D Rendering → Post-processing](graphics3d/overview.html#Post-processing) for the
 pipeline behavior and the depth-texture contract.
 
 ### Scene color texture
@@ -285,7 +285,7 @@ ctx.Quad.Draw(effect)
 
 ### DisableRuntimeMarshalling caveat (raylib)
 
-The [`fixed + NativePtr.toVoidPtr`](#disableruntimemarshalling-and-setshadervalue-raylib-only)
+The [`fixed + NativePtr.toVoidPtr`](#DisableRuntimeMarshalling-and-raylib-only)
 requirement applies to all scalar/vector uniforms in your post-process shader
 (`fogColor`, `fogNear`, etc.). One subtle trap: `Rlgl.GetCullDistanceNear` /
 `GetCullDistanceFar` return `double` (8 bytes), but `SetShaderValue` with

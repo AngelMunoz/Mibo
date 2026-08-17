@@ -19,7 +19,7 @@ Mibo uses a **deferred, layer-sorted rendering pipeline**. Instead of calling ba
 ## Why Deferred Rendering?
 
 - **Separation of concerns**: Your view doesn't have to worry about draw order, batching, or GPU state.
-- **Lighting**: Commands can be interleaved with light commands for 2D lighting (see [Lighting](graphics2d/overview.html#lighting)).
+- **Lighting**: Commands can be interleaved with light commands for 2D lighting (see [Lighting](graphics2d/overview.html#Lighting)).
 - **Post-processing**: Screen-space shader passes run after the scene is rendered.
 - **Predictable ordering**: Every command declares its layer explicitly.
 
