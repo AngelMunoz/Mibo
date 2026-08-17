@@ -37,8 +37,10 @@ This is especially useful for:
 ## How it works
 
 ```fsharp
+let createRenderer () = Renderer2D.create myView
+
 Program.mkProgram init update
-|> Program.withRenderer (fun () -> Renderer2D.create myView)
+|> Program.withRenderer createRenderer
 ```
 
 Each frame, the runtime calls `myView ctx model buffer`. Your view adds commands, the renderer sorts and executes:

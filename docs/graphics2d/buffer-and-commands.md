@@ -47,7 +47,7 @@ Even though the text was added first, the sky gradient draws first, then the cir
 
 ## Neutral inputs, backend records
 
-The fluent DSL takes `Mibo.Color`, `System.Numerics` vectors, and float rectangle coordinates on **both backends** — the buffer converts for you. Backend state records (`SpriteState`, `TextState`, light records, particle arrays) pass through as the backend's own types: **raylib** `Rectangle` (four `float32` fields) vs **MonoGame** `Microsoft.Xna.Framework.Rectangle` (**int** fields). See [MonoGame type quirks](../monogame-types.html).
+The fluent DSL takes `Mibo.Color`, `System.Numerics` vectors, and float rectangle coordinates on **both backends**; the buffer converts for you. Backend state records (`SpriteState`, `TextState`, light records, particle arrays) pass through as the backend's own types: **raylib** `Rectangle` (four `float32` fields) vs **MonoGame** `Microsoft.Xna.Framework.Rectangle` (**int** fields). See [MonoGame type quirks](../monogame-types.html).
 
 Sprites and text have builder-equipped state records when you want to carry them around:
 
@@ -60,7 +60,7 @@ let spinning = { sprite with Rotation = 0.785f }
 buffer.sprite(sprite).drop()
 ```
 
-For text, the parts form is usually shortest — `size` maps to each backend's sizing model (raylib: font size in pixels; MonoGame: uniform scale):
+For text, the parts form is usually shortest: `size` maps to each backend's sizing model (raylib: font size in pixels; MonoGame: uniform scale):
 
 ```fsharp
 buffer
@@ -95,7 +95,7 @@ buffer
 
 The sampler defaults to `SamplerState.LinearClamp` and is reset each frame, alongside blend mode, scissor, line width, and viewport.
 
-> **raylib** has no equivalent command — a texture's filter is a property of the texture, not the batch. Override the load-time default with the `Texture.filter` helper: `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point` (apply once at load/init, not per frame). See [Assets](../assets.html).
+> **raylib** has no equivalent command: a texture's filter is a property of the texture, not the batch. Override the load-time default with the `Texture.filter` helper: `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point` (apply once at load/init, not per frame). See [Assets](../assets.html).
 
 ## Cameras
 

@@ -93,7 +93,7 @@ for tile in visibleTiles do
     buffer.sprite(SpriteState.create(atlas, tile.Dest, tile.Src)).drop()
 ```
 
-**raylib:** there is no per-draw sampler — a texture's filter is set on the texture itself. Use the `Texture.filter` helper once at load time (e.g. `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point`), or inset source rectangles by 1px.
+**raylib:** there is no per-draw sampler: a texture's filter is set on the texture itself. Use the `Texture.filter` helper once at load time (e.g. `assets.Texture "tiles.png" |> Texture.filter TextureFilter.Point`), or inset source rectangles by 1px.
 
 ## 8. The buffer is allocation-free after warmup
 
