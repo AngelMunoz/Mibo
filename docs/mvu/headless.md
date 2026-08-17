@@ -24,7 +24,7 @@ use runner = new HeadlessRunner<Model, Msg>(program)
 
 ## Building a Program
 
-`HeadlessProgram` supports the same builder DSL as `Program` (one naming difference: subscriptions attach with `withSubscribe` here, `withSubscription` on `Program`):
+`HeadlessProgram` has its own, smaller builder set. A headless program has no window, renderer, assets, or input, so `Program`'s `withConfig`/`withRenderer`/`withAssets`/`withInput` have no counterparts here. One naming difference: subscriptions attach with `withSubscribe` here, `withSubscription` on `Program`:
 
 | Function                 | Description                                     |
 | ------------------------ | ----------------------------------------------- |
@@ -188,7 +188,7 @@ use runner = new HeadlessRunner<_,_>(program)
 runner.Step(TimeSpan.FromMilliseconds(16))
 ```
 
-`HeadlessProgram.observe` wraps one callback into an `IObservable` for you, hiding the .NET `OnError`/`OnCompleted` boilerplate. Observers implementing `IDisposable` are disposed when the runner is disposed.
+`HeadlessProgram.observe` wraps one callback into an `IObserver<'T>` for you, hiding the .NET `OnError`/`OnCompleted` boilerplate. Observers implementing `IDisposable` are disposed when the runner is disposed.
 
 Multiple observers can be registered; they fire in registration order each
 frame.

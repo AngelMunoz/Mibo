@@ -17,7 +17,7 @@ The built-in input modules cover the common case. Your `subscribe` function rece
 open Mibo.Elmish
 open Mibo.Input
 
-let keyPressed (k: KeyboardKey) = KeyPressed k
+let keyPressed (k: KeyCode) = KeyPressed k
 let mouseClicked (pos: Vector2) = MouseClicked pos
 
 let subscribe (ctx: GameContext) (model: Model) : Sub<Msg> =
@@ -45,20 +45,30 @@ This gives you precise control over subscription lifetimes based on your model s
 
 ## Creating Subscriptions
 
-When no built-in module fits, a subscription is an id plus a function that starts listening and returns a stop handle (an `IDisposable`):
+When no built-in module fits, a subscription is an id plus a function that starts listening and returns a stop handle (an `IDisposable`). That pair is the `Active` case of the `Sub<'Msg>` struct union:
 
 ```fsharp
-let onKeyEvent (dispatch: Msg -> unit) _ (e: KeyboardEvent) =
-    dispatch (KeyPressed e.Key)
+// in Mibo.Elmish
+type Subscribe<'Msg> = Dispatch<'Msg> -> IDisposable  // Dispatch<'Msg> = 'Msg -> unit
 
-let startKeyboard (dispatch: Msg -> unit) : IDisposable =
-    let handler = EventHandler<KeyboardEvent>(onKeyEvent dispatch)
-    Keyboard.addListener handler
+type Sub<'Msg> =
+    | NoSub
+    | Active of SubId * Subscribe<'Msg>
+    | BatchSub of Sub<'Msg>[]
+```
 
-    { new IDisposable with
-        member _.Dispose() = Keyboard.removeListener handler }
+Wrap any event source you own: the start function hooks dispatch up to the source, and the disposable unhooks it. This example re-implements what `Keyboard.onPressed` does for you, reading the raw keyboard delta observable off the input service:
 
-let keyboardSub : Sub<Msg> = SubId.ofString "keyboard", startKeyboard
+```fsharp
+let onDelta (dispatch: Msg -> unit) (delta: KeyboardDelta) =
+    for k in delta.Pressed do
+        dispatch (KeyPressed k)
+
+let startKeyboard (ctx: GameContext) (dispatch: Msg -> unit) : IDisposable =
+    (Input.getService ctx).KeyboardDelta.Subscribe(onDelta dispatch)
+
+let keyboardSub (ctx: GameContext) : Sub<Msg> =
+    Sub.Active(SubId.ofString "keyboard", startKeyboard ctx)
 ```
 
 ### Timer Subscription
@@ -73,7 +83,7 @@ let startTimer (interval: TimeSpan) (dispatch: Msg -> unit) : IDisposable =
     timer   // Timer is IDisposable: it is its own stop handle
 
 let timerSub (interval: TimeSpan) : Sub<Msg> =
-    SubId.ofString "timer", startTimer interval
+    Sub.Active(SubId.ofString "timer", startTimer interval)
 ```
 
 ### Conditional Subscriptions
@@ -107,7 +117,7 @@ IDs must be unique per subscription. Use namespacing for parent-child compositio
 ```fsharp
 module Player =
     let inputSub : Sub<Player.Msg> =
-        SubId.ofString "input", startInput
+        Sub.Active(SubId.ofString "input", startInput)
 
 // Parent prefixes child IDs:
 let parentSub =
@@ -133,7 +143,7 @@ module Chat =
 
     let subscribe (model: Chat.Model) : Sub<Chat.Msg> =
         if model.IsOpen then
-            SubId.ofString "chat/socket", openChatSocket
+            Sub.Active(SubId.ofString "chat/socket", openChatSocket)
         else
             Sub.none
 
@@ -158,7 +168,7 @@ let startNetwork (client: NetworkClient) (dispatch: Msg -> unit) : IDisposable =
     client.OnPacket.Subscribe(onPacket dispatch)
 
 let networkSub (client: NetworkClient) : Sub<Msg> =
-    SubId.ofString "network", startNetwork client
+    Sub.Active(SubId.ofString "network", startNetwork client)
 ```
 
 ### Time-based
@@ -181,7 +191,7 @@ let startFpsPolling (dispatch: Msg -> unit) : IDisposable =
         member _.Dispose() = cts.Cancel() }
 
 // Every second, dispatch a tick
-let fpsSub : Sub<Msg> = SubId.ofString "fps", startFpsPolling
+let fpsSub : Sub<Msg> = Sub.Active(SubId.ofString "fps", startFpsPolling)
 ```
 
 ## Lifecycle Management

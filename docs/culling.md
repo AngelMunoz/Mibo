@@ -40,9 +40,12 @@ if Culling.isVisibleBox frustum nodeBounds then
     ()
 ```
 
-> _**Where does the View×Projection matrix come from?**_ On MonoGame, the camera
-> struct carries it directly: `BoundingFrustum(cam.View * cam.Projection)`. On
-> raylib, capture it inside `BeginMode3D`
+> _**Where does the View×Projection matrix come from?**_ Neither backend's
+> camera carries ready-made matrices. On MonoGame, build them from the
+> `Camera3D` fields: `Matrix.CreateLookAt(cam.Position, cam.Target, cam.Up)`
+> for the view, and `Matrix.CreatePerspectiveFieldOfView(cam.FovY, aspect,
+> cam.NearPlane, cam.FarPlane)` for the projection. On raylib, capture the
+> pair inside `BeginMode3D`
 > (`Rlgl.GetMatrixModelview() * Rlgl.GetMatrixProjection()`), or build it from
 > `Raylib.GetCameraMatrix3D(camera)` and a perspective matrix.
 

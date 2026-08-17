@@ -11,16 +11,16 @@ Your update function runs once per step, but games also react to things that arr
 
 ## What a subscription is
 
-A subscription is two things: a stable id, and a function that attaches to an event source and returns a detacher. The attach function receives `post`, which schedules work to run inside the game loop; it does not run anything itself.
+A subscription is two things: a stable id, and a function that attaches to an event source and returns a detacher. The attach function receives a `SubPosting`, a posting surface whose `Post` member schedules work to run inside the game loop; it does not run anything itself.
 
 ```fsharp
 type AdaptiveSub = {
     Id: SubId
-    Attach: ((unit -> unit) -> unit) -> IDisposable
+    Attach: SubPosting -> IDisposable
 }
 ```
 
-Read `Attach` inside out: it receives `post`, and `post` receives the work to run later. The `IDisposable` that attaching returns is the detacher; when the runner detaches the subscription, the source stops feeding the loop.
+Read `Attach` inside out: it receives the posting surface, and `Post` receives the work to run later. The `IDisposable` that attaching returns is the detacher; when the runner detaches the subscription, the source stops feeding the loop.
 
 Here's one for the mouse, using the framework's input service:
 
@@ -31,10 +31,10 @@ let mouseSub (ctx: AdaptiveFrameContext) : AdaptiveSub =
     // ready-to-post work: collect this cell when the loop runs it
     let collectAtCell (cell: Cell) () = collectAt cell
 
-    let postCellClick (post: unit -> unit) (cell: Cell) =
-        post (collectAtCell cell)
+    let postCellClick (posting: SubPosting) (cell: Cell) =
+        posting.Post(collectAtCell cell)
 
-    let onMouseMove (post: unit -> unit) (delta: InputDelta) =
+    let onMouseMove (posting: SubPosting) (delta: InputDelta) =
         // Hover: remember where the cursor is. A cval write is enough;
         // anything derived from it updates automatically.
         hoverCell |> CVal.set (pickCell delta.Position)
@@ -42,10 +42,10 @@ let mouseSub (ctx: AdaptiveFrameContext) : AdaptiveSub =
         // Click: this changes game state, so run it in the loop
         if delta.Buttons.Pressed |> Array.contains MouseButtonCode.Left then
             pickCell delta.Position
-            |> ValueOption.iter (postCellClick post)
+            |> ValueOption.iter (postCellClick posting)
 
-    let attachMouse (post: unit -> unit) : IDisposable =
-        input.MouseDelta.Subscribe(onMouseMove post)
+    let attachMouse (posting: SubPosting) : IDisposable =
+        input.MouseDelta.Subscribe(onMouseMove posting)
 
     {
       Id = SubId.ofString "mouse"
@@ -64,13 +64,13 @@ let program =
 The split in that example is the guideline for input specifically:
 
 * **Where things are** (cursor position, hover): write a `cval` directly. It's cheap and derived values follow automatically.
-* **What the player did** (clicks, key presses): `post` it, so it runs after your update, in order, on the game thread.
+* **What the player did** (clicks, key presses): `Post` it, so it runs after your update, in order, on the game thread.
 
-## Why attach only gets `post`
+## Why attach only gets a posting surface
 
 Event sources don't run on your thread. A network callback arrives on a socket thread; a task completes on the thread pool. Your state containers belong to the game thread; touching them from anywhere else is not allowed.
 
-The shape of `AdaptiveSub` makes the safe thing the only thing: the callback receives `post` and nothing else that runs game code. Whatever thread the event fires on, the reaction runs on the game thread at a framework-chosen moment.
+The shape of `AdaptiveSub` makes the safe thing the only thing: the callback receives the posting surface and nothing else that runs game code. Whatever thread the event fires on, the reaction runs on the game thread at a framework-chosen moment.
 
 ## Registering subscriptions
 

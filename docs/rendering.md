@@ -11,7 +11,7 @@ Mibo uses a **deferred, layer-sorted rendering pipeline**. Instead of calling ba
 
 ## The Pipeline
 
-1. Your view function builds `IRenderCommand2D` commands and adds them to a `RenderBuffer2D`
+1. Your view function builds `Command2D` values (a closed discriminated union of draw commands) and adds them to a `RenderBuffer2D`
 2. The renderer sorts commands by `Layer` (ascending)
 3. The renderer executes commands in order
 4. The backend auto-batches GPU draw calls; optional post-processing passes run after
@@ -33,7 +33,7 @@ The 2D pipeline is built on `Renderer2D<'Model>` in the `Mibo.Elmish.Graphics2D`
 - [Buffer & Commands](graphics2d/buffer-and-commands.html): Building and issuing draw commands
 - [Lighting & Shadows](graphics2d/lighting.html): 2D lights and soft shadows
 - [Particles](graphics2d/particles.html): Batched particle rendering
-- [Custom Commands](graphics2d/custom-commands.html): `IRenderCommand2D` and escape hatches
+- [Custom Commands](graphics2d/custom-commands.html): the `Command2D` DU and escape hatches
 - [Performance](graphics2d/performance.html): Writing performant 2D rendering code
 - [Camera](camera.html): Cameras and coordinate systems
 - [Culling](culling.html): Visibility testing

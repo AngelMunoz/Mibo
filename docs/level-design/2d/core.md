@@ -68,6 +68,7 @@ grid
 grid
 |> CellGrid2D.iterVisible cameraX cameraY (cameraX + viewportWidth) (cameraY + viewportHeight) (fun x y tile ->
     // render tile at (x, y)
+    ()
 )
 ```
 
@@ -203,13 +204,15 @@ When rendering a layered grid, you don't need to manually sort the layers. Inste
 ```fsharp
 // Render each layer into the buffer
 for KeyValue(layerIndex, layerGrid) in level.Layers do
-    let isVisible x y tile =
+    let drawTile x y tile =
         let pos = CellGrid2D.getWorldPos x y layerGrid
-        true  // your visibility test against viewBounds
+        // submit the draw command for tile at pos, tagged with layerIndex
+        // as its RenderLayer
+        ()
 
+    // iterate only the cells inside the viewport (left/top/right/bottom, in pixels)
     layerGrid
-    |> CellGrid2D.iterVisible 0 0 100 100 isVisible
-    )
+    |> CellGrid2D.iterVisible viewLeft viewTop viewRight viewBottom drawTile
 ```
 
 This approach is efficient because Mibo's `RenderBuffer` performs a single, optimized CPU-side sort of all collected draw commands before sending them to the GPU. This ensures your layout layers are drawn in the correct back-to-front order and allows them to interact correctly with other game entities (like players or particles) that are also tagged with `RenderLayer` values.

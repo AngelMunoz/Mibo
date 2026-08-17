@@ -106,7 +106,7 @@ PointLight3D.create (Vector3(10f, 5f, 0f), 15f)
 |> PointLight3D.withShadowBias 0.005f
 ```
 
-> _**TIP**_: Set `CastsShadows = true` sparingly. Each shadow-casting point light renders a cubemap shadow pass (a 6-sided shadow capture around the light). Two or three is a good target for performance.
+> _**TIP**_: Set `CastsShadows = true` sparingly. Each shadow-casting point light renders its own shadow-map pass: a single-face capture aimed along the light's `ShadowDirection`, not a six-face cubemap. Two or three is a good target for performance.
 
 ### SpotLight3D
 

@@ -52,7 +52,7 @@ The shader language depends on your backend: this is the main place the two back
 Both backends ship the shaders their default pipelines need, so PBR, shadows, and 2D lighting work out of the box:
 
 - **raylib** (`src/Mibo.Raylib/`): GLSL sources embedded for the `ForwardPbrPipeline` (PBR + depth/shadow) and the 2D lit-sprite shaders.
-- **MonoGame** (`src/Mibo.MonoGame/Shaders/`): `ForwardPbr` (Cook-Torrance PBR), `DepthShadow` (shadow depth → R32F), `Instanced`, `LitSprite`, `LitSpriteNormalMap`: each as a `.fx` source plus `.dx.mgfx` and `.ogl.mgfx` compiled variants. Platform detection picks the right variant at load time.
+- **MonoGame** (`src/Mibo.MonoGame/Shaders/`): `ForwardPbr` (Cook-Torrance PBR), `DepthShadow` (shadow depth → R32F), `Instanced`, `LitSprite`, `LitSpriteNormalMap`: each as a `.fx` source plus four compiled variants: `.dx.mgfx` (DX11), `.dx12.mgfx` (DX12), `.ogl.mgfx` (OpenGL), and `.vk.mgfx` (Vulkan). Platform detection picks the right variant at load time. Two DX12-only effects, `ForwardPbrGrouped` and `DepthShadowGrouped` (`.dx12.mgfx` only), carry the constant-buffer bone-palette path the DX12 backend needs (it has no vertex texture fetch).
 
 ## Loading a custom shader
 

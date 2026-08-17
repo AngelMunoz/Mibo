@@ -42,9 +42,11 @@ on MonoGame).
 | `normalMatrix` | `mat4` / `float4x4` | `transpose(inverse(matModel))` |
 | `cameraPos` | `vec3` / `float3` | Active camera world position |
 
-> The built-in PBR shaders (and `drawMeshEffect`) use a precomposed `mvp`.
-> `beginEffect` does **not** set `mvp`: declare `matModel` + `viewProj` and
-> compose the clip-space transform yourself.
+> The built-in raylib PBR shaders use a precomposed `mvp`; the MonoGame
+> shaders have no `mvp` uniform (they compose `matModel` with a precomposed
+> `viewProj`). On both backends, `beginEffect` does **not** set `mvp`:
+> declare `matModel` + `viewProj` and compose the clip-space transform
+> yourself.
 
 ### Animation clock
 
@@ -65,9 +67,9 @@ on MonoGame).
 | `useNormalMap` | `int` | `1` if a normal map is bound, else `0` |
 | `useEmissionMap` | `int` | `1` if an emission map is bound, else `0`: the emission texture is only sampled when `1` |
 | `texture0` | `sampler2D` | Albedo map |
-| `texture1` | `sampler2D` | Roughness map (raylib) / Roughness map (MonoGame `s1`) |
+| `texture1` | `sampler2D` | Metalness map (raylib) / Roughness map (MonoGame `s1`) |
 | `texture2` | `sampler2D` | Normal map |
-| `texture3` | `sampler2D` | Metallic map (raylib) / Metallic map (MonoGame `s3`) |
+| `texture3` | `sampler2D` | Roughness map (raylib) / Metallic map (MonoGame `s3`) |
 | `texture4` | `sampler2D` | Emission map |
 
 ### Lights
@@ -117,18 +119,20 @@ none of these renders unshadowed at no cost.
 | `shadowBiases[i]` | `float[]` | Per-caster receiver-side bias (prevents self-shadow acne; raylib adds an in-shader slope-scale term, MonoGame applies it directly) |
 | `pointLightShadowIdx[i]` | `int` | Per-point-light caster slot, `-1` = none |
 | `spotLightShadowIdx[i]` | `int` | Per-spot-light caster slot, `-1` = none |
-| `shadowAtlas` | `sampler2D` | The depth atlas (MonoGame DX11/Vulkan: `Texture2D shadowAtlas : register(t5); SamplerState shadowAtlasSampler : register(s5);`: MonoGame OpenGL: `sampler2D shadowAtlas : register(s5)`) |
+| `shadowAtlas` | `sampler2D` | The depth atlas (MonoGame DX11: `Texture2D shadowAtlas : register(t5); SamplerState shadowAtlasSampler : register(s5);`: MonoGame DX12/Vulkan (SM6): the sampler is `shadowSampler`: MonoGame OpenGL: `sampler2D shadowAtlas : register(s5)`) |
 
 > **Shadow sampler slot differs by backend.** raylib binds the atlas to
 > **slot 15** (and sets the `shadowAtlas` sampler uniform to 15). MonoGame binds
 > it to **slot 5** (PointClamp) and exposes it through the effect's `shadowAtlas`
 > parameter (mgfxc names the parameter after its HLSL declaration, not the
-> register slot: so on DX11/Vulkan declare
+> register slot: so on DX11 declare
 > `Texture2D shadowAtlas : register(t5); SamplerState shadowAtlasSampler : register(s5);`
-> and sample with `shadowAtlas.Sample(shadowAtlasSampler, uv)`; on OpenGL declare
-> `sampler2D shadowAtlas : register(s5)`. The built-in `ForwardPbr.fx` switches
-> between the two forms with an `#if OPENGL` macro). Both backends use the same
-> uniform name: `shadowAtlas`.
+> and sample with `shadowAtlas.Sample(shadowAtlasSampler, uv)`; on DX12/Vulkan
+> (SM6) the sampler declaration is `SamplerState shadowSampler : register(s5);`
+> and the sample is `shadowAtlas.SampleLevel(shadowSampler, uv, 0.0)`; on OpenGL
+> declare `sampler2D shadowAtlas : register(s5)`. The built-in `ForwardPbr.fx`
+> switches between the three forms with `#if defined(SM6)` / `#elif OPENGL` /
+> `#else`). Both backends use the same uniform name: `shadowAtlas`.
 
 ### Skinning (only for skinned draws)
 

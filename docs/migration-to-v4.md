@@ -37,9 +37,11 @@ change in code.
 **Who is affected:** code that constructs `AnimatedMesh` literally, or relies on
 reference identity of the animation types.
 
-`Animation3DChannel`, `Animation3DClip`, `Animation3DClips` (both backends), and
-`AnimatedMesh` (raylib and MonoGame) changed from reference records to
-`[<Struct>]` records. Consequences:
+`Animation3DChannel`, `Animation3DClip`, `Animation3DClips`, and `AnimatedMesh`
+on MonoGame, and `AnimatedMesh` on raylib, changed from reference records to
+`[<Struct>]` records. raylib has no `Animation3DChannel`/`Animation3DClip`
+types (it wraps the native `ModelAnimation[]`), and its `Animation3DClips`
+stays a reference record. Consequences:
 
 - Equality and copying are now **value semantics**: two copies compare equal
   when their contents match, and assigning one copies it. Code that relied on

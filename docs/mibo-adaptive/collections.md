@@ -56,16 +56,18 @@ let statuses =
 // Healths × Motions per enemy: same key, combined row
 let sameEnemy (eid: int<EnemyId>) _ = eid
 
-let combineRow _ (healthV: aval<float32>) (motionV: aval<Vector2>) =
-    let merge (h: float32) (m: Vector2) =
-        combine h m |> ValueSome
+let combineRow _ (healthV: aval<float32>) (motionV: aval<Vector2 voption>) =
+    let merge (h: float32) (m: Vector2 voption) =
+        match m with
+        | ValueSome motion -> combine h motion |> ValueSome
+        | ValueNone -> ValueNone
 
     AVal.map2 merge healthV motionV
 
 let views = AMap.joinOn healths motions sameEnemy combineRow
 ```
 
-Note the shape: the two maps come first; the pipe form does not apply, a piped value would land in the mapping slot. And the mapping returns `aval<'U voption>`: a `ValueNone` result drops the entry from the join.
+Note the shape: the two maps come first; the pipe form does not apply, a piped value would land in the mapping slot. The right-hand value arrives as `aval<Vector2 voption>` (`ValueNone` when the key has no entry in the right map), and the mapping returns `aval<'U voption>`: a `ValueNone` result drops the entry from the join.
 
 Nested joins compose: a three-way view joins the two-way result with a third map the same way. If a join spans two features of your game, build it at the top level rather than inside one feature, so each feature stays understandable alone ([Adaptive Systems](../adaptive/systems.html) covers the split).
 

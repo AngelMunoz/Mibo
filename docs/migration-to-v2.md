@@ -217,13 +217,19 @@ type IAssets =
 
 All existing code keeps working unchanged: `assets.Get<'T>(...)`,
 `assets.GetOrCreate(...)`, etc. resolve to the inherited members. The benefit
-is that portable code (and the Headless runner, once it lands in Core) can
-retrieve an `IAssetCache` from a `GameContext` and cache custom assets
-without referencing a backend:
+is that portable code can work against the `IAssetCache` subset without
+knowing the backend's full asset surface. Note the service registry keys on
+the exact interface: the runtime registers the backend's `IAssets`, so
+`GameContext.getService<IAssetCache>` does **not** resolve. Fetch `IAssets`
+in backend-facing code and pass it down as `IAssetCache`:
 
 ```fsharp
-let cache = GameContext.getService<IAssetCache> ctx
-let config = cache.GetOrCreate("gameConfig", fun () -> loadConfig())
+// composition root (references a backend)
+let assets = GameContext.getService<IAssets> ctx
+
+// portable code takes the cache as a value
+let loadGameConfig (cache: IAssetCache) =
+    cache.GetOrCreate("gameConfig", fun () -> loadConfig())
 ```
 
 ### Phase 1d - Program builder in Core; `withInputMapper` decoupled
@@ -257,7 +263,9 @@ It still registers `IInput` automatically and now registers `IInputMapper` via a
 own `withInputMapper` (MonoGame: `MonoGameProgram.withInputMapper`, etc.).
 
 If you used the subscription path (`InputMapper.subscribe` / `subscribeStatic`),
-nothing changes: that API is backend-neutral and already lives in Core.
+nothing changes at the call site: those functions ship in each backend's
+`Mibo.Input.InputMapper` module (only the service accessors
+`InputMapper.getService`/`tryGetService` moved to Core).
 
 #### Behavioral fix: renderer draw order
 
@@ -277,7 +285,7 @@ Renderers now draw in the order you add them.
 ```fsharp
 // This now draws the 3D scene first, then the 2D UI on top (correct)
 program
-|> Program.withRenderer (fun () -> Renderer3D.create view3D)
+|> Program.withRenderer (fun () -> Renderer3D.create (ForwardPbrPipeline()) view3D)
 |> Program.withRenderer (fun () -> Renderer2D.create view2D)
 ```
 
@@ -635,7 +643,7 @@ isn't drawn.
 ```fsharp
 // 2D: v1, declared once, ran every frame whether needed or not
 let renderer =
-  Renderer2D.createWithConfig
+  Renderer2D.createWith
     { PostProcess =
         ValueSome
           [|

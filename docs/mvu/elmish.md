@@ -57,7 +57,7 @@ Your `update` function is pure and passive; it only runs when it receives a mess
 Instead of manually polling hardware or managing event listeners, you define a `subscribe` function. This function looks at your current `Model` and declares *what* you want to listen to right now:
 
 ```fsharp
-let keyPressed (key: KeyboardKey) = KeyPressed key
+let keyPressed (key: KeyCode) = KeyPressed key
 let clickedAt (point: Vector2) = ClickedAt point
 
 let subscribe (ctx: GameContext) (model: Model) =
