@@ -96,5 +96,5 @@ For thousands of particles, switch from per-particle `drawBillboard` to `drawBil
 
 ## See also
 
-- [Platformer3D particles](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Shared/Particles.fs) — full implementation with burst spawning and billboard rendering.
-- [Composable Systems](../mvu/composable-systems.html) — integrating particles into the system pipeline.
+- [Platformer3D particles](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Shared/Particles.fs): full implementation with burst spawning and billboard rendering.
+- [Composable Systems](../mvu/composable-systems.html): integrating particles into the system pipeline.

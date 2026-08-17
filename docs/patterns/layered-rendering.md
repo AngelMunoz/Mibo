@@ -19,7 +19,7 @@ The pattern: register multiple renderers in order. The first renderer clears and
 The classic setup. A 3D renderer draws the game world. A 2D renderer draws health bars, ammo counters, and text on top.
 
 ### 3D world + minimap
-Same as HUD, but the 2D renderer also draws a texture generated from world data — a top-down view of the map in a corner.
+Same as HUD, but the 2D renderer also draws a texture generated from world data, a top-down view of the map in a corner.
 
 ### Game world + debug overlay
 3D renderer draws the game. A second renderer draws wireframe collision boxes, pathfinding lines, and AI state text. Toggle the debug layer on/off by adding or removing the renderer.
@@ -82,5 +82,5 @@ You can add more than two renderers. Each one composites on top of the previous.
 
 ## See also
 
-- [Platformer3D renderer setup](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Raylib/Program.fs) — renderer setup with 3D scene and 2D overlay.
-- [Rendering Overview](../rendering.html) — renderers and render buffers.
+- [Platformer3D renderer setup](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Raylib/Program.fs): renderer setup with 3D scene and 2D overlay.
+- [Rendering Overview](../rendering.html): renderers and render buffers.
