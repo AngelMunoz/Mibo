@@ -13,7 +13,7 @@ An adaptive game is three things you write: **State, Projection, Update** (SPU),
 
 **The state.** A record holding the changeable containers (`cval`, `cmap`) plus whatever plain data your game wants. This is where the facts live: you write them, the framework tracks when they changed.
 
-**The projection.** A function that derives what a consumer needs from the state. The one every game has is the frame projection: it packs what the renderer needs into a single value (the `Frame`), and the runner forces it after update, once per step. You hand it to the program through `AdaptiveInit.ofFrameBuilder`. The `Frame` itself is an implementation detail of your renderer; what matters is the projection, because derived values that leave the state alone are what make the architecture tick.
+**The projection.** Everything the game derives from the state instead of maintaining it by hand: the scoreboard string that follows the honey count, the "bees near this flower" view, and the one every game has, the frame projection that packs what the renderer needs into a single value (the `Frame`). Projections are built once and recompute when their inputs change; the runner forces the frame projection after update, once per step, via `AdaptiveInit.ofFrameBuilder`. The `Frame` itself is an implementation detail of your renderer; the projections are what make the architecture tick.
 
 **The update.** A function that runs once per step and advances the game by writing to the state's containers.
 
@@ -36,13 +36,22 @@ type World = {
 type Frame = {
     Bees: System.Collections.Generic.IReadOnlyDictionary<int, Bee>
     Honey: int
+    Status: string
 }
 
-// P: the projection. `frame world` packs the Frame; the runner
-// forces it once per step, after update.
-let frame (world: World) () : Frame =
-    { Bees = world.Bees |> AMap.getValue
-      Honey = world.Honey |> AVal.getValue }
+// a derived value: a plain function over one fact
+let statusText h = $"Honey: {h}"
+
+// P: the projection. `frame world` builds the derived values once
+// (here: status over the honey fact) and returns the `unit -> Frame`
+// the runner forces once per step, after update.
+let frame (world: World) =
+    let status = world.Honey |> AVal.map statusText
+
+    fun () : Frame ->
+        { Bees = world.Bees |> AMap.getValue
+          Honey = world.Honey |> AVal.getValue
+          Status = status |> AVal.getValue }
 
 let meadowWidth = 40f
 
@@ -96,6 +105,8 @@ AdaptiveRaylibGame<Frame>(program).Run()
 ```
 
 `update world` and `init world` are partially applied: the `world` argument is already fixed, and what is left is exactly the shape `mkProgram` asks for (`init world : AdaptiveFrameContext -> AdaptiveInit<Frame>` and `update world : AdaptiveContext -> GameTime -> unit`). The renderer's `draw` is your drawing function, reading the `Frame`; [rendering](../rendering.html) covers how to write one.
+
+Notice what the game does *not* have: no code that recomputes the status string when honey changes. `frame world` builds the `status` projection once, when the program starts; from then on it recomputes only when the honey fact moves, and the frame just reads it. That is the P doing its job. [Derived State](derived-state.html) covers where projections live as the game grows, and the full combinator catalog is in [Mibo.Adaptive](../mibo-adaptive/overview.html).
 
 > **NOTE:** when the game grows, the world record is still the thing you apply; `init world` and `update world` keep working as features get added to `World`. See [Systems](systems.html).
 
