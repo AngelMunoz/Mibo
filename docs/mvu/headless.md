@@ -11,7 +11,7 @@ The headless runtime runs your Elmish update loop without graphics, input pollin
 
 ## Core Definition
 
-Start with `HeadlessProgram.mkHeadless init update` — same `Init` and `Update` signatures as `Program`, but without renderers or window configuration.
+Start with `HeadlessProgram.mkHeadless init update`: the same `init` and `update` signatures as `Program`, but without renderers or window configuration.
 
 ```fsharp
 let program =
@@ -24,7 +24,7 @@ use runner = new HeadlessRunner<Model, Msg>(program)
 
 ## Building a Program
 
-`HeadlessProgram` supports the same builder DSL as `Program`:
+`HeadlessProgram` supports the same builder DSL as `Program` (one naming difference: subscriptions attach with `withSubscribe` here, `withSubscription` on `Program`):
 
 | Function                 | Description                                     |
 | ------------------------ | ----------------------------------------------- |
@@ -49,8 +49,9 @@ runner.Step(TimeSpan.FromMilliseconds(16))
 runner.StepN(10, TimeSpan.FromMilliseconds(16))
 
 // Run until a condition is met
+let countReached (model: Model) = model.Count >= 100
 let met = runner.StepUntil(
-    (fun model -> model.Count >= 100),
+    countReached,
     TimeSpan.FromMilliseconds(16))
 ```
 
@@ -74,10 +75,10 @@ asyncEx {
 }
 ```
 
-> **Note:** `for .. in` over `IAsyncEnumerable` comes from the [IcedTasks](https://www.nuget.org/packages/IcedTasks) package — the built-in `async`/`task` builders don't accept it. `open IcedTasks` gives you `asyncEx`; alternatively, `open IcedTasks.Polyfill.Async.PolyfillBuilders` upgrades the plain `async` builder, and `open IcedTasks.Polyfill.Task.Tasks` does the same for `task`.
+> **Note:** `for .. in` over `IAsyncEnumerable` comes from the [IcedTasks](https://www.nuget.org/packages/IcedTasks) package; the built-in `async`/`task` builders don't accept it. `open IcedTasks` gives you `asyncEx`; alternatively, `open IcedTasks.Polyfill.Async.PolyfillBuilders` upgrades the plain `async` builder, and `open IcedTasks.Polyfill.Task.Tasks` does the same for `task`.
 
 > **Warning:** Do not mix `Run`/`RunAsync` with `Step`/`StepN`/`StepUntil` on
-> the same runner — they all advance the simulation and will corrupt state.
+> the same runner: they all advance the simulation and will corrupt state.
 
 ## Dispatching Messages
 
@@ -140,7 +141,7 @@ runner.Step(TimeSpan.FromMilliseconds(16))
 Control when dispatched messages are processed:
 
 - **`Immediate`** (default): Messages dispatched during `Update` are processed in the same frame. Good for responsive updates.
-- **`FrameBounded`**: Messages dispatched during `Update` are deferred to the next `Step` call. Prevents re-entrant updates.
+- **`FrameBounded`**: Messages dispatched during `Update` are deferred to the next `Step` call. Prevents updates triggered from inside another update.
 
 ```fsharp
 let program =
@@ -150,7 +151,7 @@ let program =
 
 ## Subscriptions
 
-Subscriptions work the same as in the graphical runtime — they start, stop, and restart based on model changes:
+Subscriptions work the same as in the graphical runtime: they start, stop, and restart based on model changes:
 
 ```fsharp
 let subscribe (ctx: GameContext) (model: Model) =
@@ -170,25 +171,26 @@ let program =
 
 Observers receive a `(GameContext * 'Model * GameTime)` snapshot every frame,
 after the update loop completes. Use them to react to model changes without
-modifying the update function — e.g. broadcasting state to clients, logging
+modifying the update function, e.g. broadcasting state to clients, logging
 telemetry, or recording replays.
 
 ```fsharp
+let observeFrame struct (ctx: GameContext, model: Model, time: GameTime) =
+    printfn "Frame at %.2fs: %A" time.TotalTime.TotalSeconds model
+
+let createObserver () = HeadlessProgram.observe observeFrame
+
 let program =
   HeadlessProgram.mkHeadless init update
-  |> HeadlessProgram.withObserver(fun () ->
-    HeadlessProgram.observe(fun struct (ctx, model, time) ->
-      printfn "Frame at %.2fs: %A" time.TotalTime.TotalSeconds model))
+  |> HeadlessProgram.withObserver createObserver
 
 use runner = new HeadlessRunner<_,_>(program)
 runner.Step(TimeSpan.FromMilliseconds(16))
 ```
 
-`HeadlessProgram.observe` creates an `IObservable` from a single `onNext`
-callback, hiding the `OnError`/`OnCompleted` boilerplate. Observers
-implementing `IDisposable` are disposed when the runner is disposed.
+`HeadlessProgram.observe` wraps one callback into an `IObservable` for you, hiding the .NET `OnError`/`OnCompleted` boilerplate. Observers implementing `IDisposable` are disposed when the runner is disposed.
 
-Multiple observers can be registered — they fire in registration order each
+Multiple observers can be registered; they fire in registration order each
 frame.
 
 ## Cleanup
@@ -231,11 +233,14 @@ let ``increment increases count`` () =
 
 ## Example: Server Simulation
 
-A headless runner is an authoritative simulation server: `RunAsync` paces the
-tick loop, observers broadcast state to clients, and `Dispatch` injects
-client inputs from the network layer.
+A headless runner is the authoritative simulation server: the server's state is the truth clients sync to. `RunAsync` paces the tick loop, observers broadcast state to clients, and `Dispatch` injects client inputs from the network layer.
 
 ```fsharp
+let broadcastModel struct (_ctx: GameContext, model: Model, _time: GameTime) =
+    serialize model |> server.Broadcast
+
+let createObserver () = HeadlessProgram.observe broadcastModel
+
 let program =
   HeadlessProgram.mkHeadless init update
   |> HeadlessProgram.withFixedStep {
@@ -245,17 +250,17 @@ let program =
     Map = GameTick
   }
   // Broadcast the model to all clients every frame
-  |> HeadlessProgram.withObserver(fun () ->
-    HeadlessProgram.observe(fun struct (_, model, _) ->
-      serialize model |> server.Broadcast))
+  |> HeadlessProgram.withObserver createObserver
 
 use runner = new HeadlessRunner<_,_>(program)
 
 // Feed client inputs as they arrive from the network
-server.MessageReceived.Add(fun (clientId, bytes) ->
-  runner.Dispatch(ClientInput(clientId, deserialize bytes)))
+let onClientMessage (clientId: string, bytes: byte[]) =
+    runner.Dispatch(ClientInput(clientId, deserialize bytes))
 
-// Run the server loop — RunAsync paces ticks, the observer broadcasts
+server.MessageReceived.Add(onClientMessage)
+
+// Run the server loop: RunAsync paces ticks, the observer broadcasts
 for (_, _) in runner.Run(TimeSpan.FromMilliseconds(50)) do
   () // The observer handles the broadcast
 ```

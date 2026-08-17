@@ -22,7 +22,7 @@ type Model = {
 
 ## The Message
 
-A **Message** is a simple type (usually a discriminated union) that describes something that happened in your game.
+A **Message** is a simple type (usually a discriminated union: one type with a fixed set of cases, each case carrying its data) that describes something that happened in your game.
 
 ```fsharp
 type Msg =
@@ -48,23 +48,26 @@ let update msg model =
 
 ## The Subscription
 
-Your `update` function is pure and passive—it only runs when it receives a message. But games need to be proactive; they need to react to time, raw input, network packets, and async results that happen *outside* that pure loop.
+Your `update` function is pure and passive; it only runs when it receives a message. But games need to be proactive; they need to react to time, raw input, network packets, and async results that happen *outside* that pure loop.
 
 **Subscriptions** bridge this gap. They are active listeners that sit alongside your model, waiting for external events and converting them into messages that your `update` function can handle.
 
 ### Defining a subscription
 
-Instead of manually polling hardware or managing event listeners, you simply define a `subscribe` function. This function looks at your current `Model` and declares *what* you want to listen to right now.
+Instead of manually polling hardware or managing event listeners, you define a `subscribe` function. This function looks at your current `Model` and declares *what* you want to listen to right now:
 
 ```fsharp
+let keyPressed (key: KeyboardKey) = KeyPressed key
+let clickedAt (point: Vector2) = ClickedAt point
+
 let subscribe (ctx: GameContext) (model: Model) =
     Sub.batch [
         // Always listen for keyboard input
-        Keyboard.onPressed (fun key -> KeyPressed key) ctx
+        Keyboard.onPressed keyPressed ctx
 
         // Only listen for mouse clicks if the game is not paused
         if not model.IsPaused then
-            Mouse.onLeftClick (fun point -> ClickedAt point) ctx
+            Mouse.onLeftClick clickedAt ctx
     ]
 ```
 
@@ -76,11 +79,11 @@ Mibo re-evaluates this function **every time your model changes**. It compares t
 - **Removed** subscriptions are stopped (and resources disposed).
 - **Unchanged** subscriptions are kept alive.
 
-This declarative approach makes managing complex event logic trivial. You don't need to manually register/unregister handlers when switching states (like from "Menu" to "Gameplay")—you just stop returning the subscription in your list, and Mibo handles the cleanup.
+This declarative approach keeps complex event wiring manageable: when the game switches from "Menu" to "Gameplay", you stop returning the menu subscriptions in your list, and Mibo handles the cleanup.
 
 ## The View
 
-In Mibo, the **View** doesn't return a visual tree like in web apps. Instead, it receives a `RenderBuffer` and submits drawing commands to it. (The buffer type is backend-specific — e.g. `RenderBuffer2D` — but the shape is the same across backends.)
+In Mibo, the **View** doesn't return a visual tree like in web apps. Instead, it receives a `RenderBuffer` and submits drawing commands to it. (The buffer type is backend-specific, e.g. `RenderBuffer2D`, but the shape is the same across backends.)
 
 ```fsharp
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
@@ -91,7 +94,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
 ## Why MVU for Games?
 
 1. **Time Travel Debugging**: Since state is centralized, you can record and replay sessions perfectly.
-2. **Easy Testing**: Logic is isolated in the pure `update` function, which is trivial to unit test.
+2. **Easy Testing**: Logic is isolated in the pure `update` function, which is straightforward to unit test.
 3. **Stability**: No more "spooky action at a distance" caused by unexpected mutations.
 
 ## `Tick` as a simulation boundary
@@ -160,3 +163,5 @@ Related:
 
 - [Programs & composition](program.html)
 - [System pipeline (phases + snapshot)](system.html)
+- [Commands](commands.html)
+- [Subscriptions](subscriptions.html)

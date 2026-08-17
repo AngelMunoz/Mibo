@@ -11,7 +11,7 @@ A `Program<'Model,'Msg>` is a **declarative configuration pipeline** for your Mi
 
 The `Program` builder lives in `Mibo.Core`, so the same combinators work on every backend. Only the host type and a couple of backend-specific extensions differ (see [Backend wiring](#Backend-wiring) below).
 
-Instead of heavy inheritance or global state, you build your program by starting with a core and layering capabilities using high-level combinators.
+Instead of heavy inheritance or global state, you build your program by starting with a core and adding features one builder at a time.
 
 ## Core Definition
 
@@ -25,19 +25,25 @@ Every program starts with `Program.mkProgram init update`.
 Most Mibo games follow this "standard" setup in `Program.fs`:
 
 ```fsharp
+let configureWindow (cfg: GameConfig) =
+    { cfg with Width = 1280; Height = 720; Title = "My Game" }
+
+let create3DRenderer () =
+    let pipeline = ForwardPbrPipeline(...)   // raylib: ForwardPbrPipeline
+    Renderer3D.create pipeline View.view     // MonoGame: ForwardPipeline
+
+let createUiRenderer () = Renderer2D.create viewUi
+
 let program =
   Program.mkProgram init update
   // 1. Configure window settings via GameConfig
-  |> Program.withConfig (fun cfg ->
-      { cfg with Width = 1280; Height = 720; Title = "My Game" })
+  |> Program.withConfig configureWindow
   // 2. Add services (Core builder; asset caching is automatic via IAssets/IAssetCache)
   |> Program.withAssets
   |> Program.withTick Tick // Enqueue a message every frame
   // 3. Define the view
-  |> Program.withRenderer (fun () ->
-      let pipeline = ForwardPbrPipeline(...)   // raylib: ForwardPbrPipeline
-      Renderer3D.create pipeline View.view)    // MonoGame: ForwardPipeline
-  |> Program.withRenderer (fun () -> Renderer2D.create viewUi)
+  |> Program.withRenderer create3DRenderer
+  |> Program.withRenderer createUiRenderer
 
 // Run the game with your backend's host:
 //   raylib:   new RaylibGame<Model, Msg>(program)
@@ -80,7 +86,7 @@ See [The Subscription](elmish.html#The-Subscription) in the Elmish guide for a d
 
 ## Runtime & Performance Knobs
 
-Mibo gives you fine-grained control over how the game loop behaves.
+Mibo gives you control over how the game loop behaves.
 
 ### `withTick`
 Standard per-frame update. Pass a constructor (e.g., `Tick`) and the runtime will dispatch it every frame with the current `GameTime`. Use this for UI animations, camera smoothing, or simple timers.
@@ -100,7 +106,7 @@ Ideal for physics or simulation stability. Unlike `withTick`, which runs exactly
 ### `withDispatchMode`
 Controls when messages are processed.
 - `DispatchMode.Immediate` (Default): Messages dispatched during `update` are processed immediately.
-- `DispatchMode.FrameBounded`: Deferred to the next frame. Use this if you want to strictly prevent "re-entrant" updates within a single frame.
+- `DispatchMode.FrameBounded`: Deferred to the next frame. Use this if you want to strictly prevent updates triggered from inside another update within a single frame.
 
 ---
 
@@ -110,7 +116,9 @@ Controls when messages are processed.
 Adds an `IRenderer` to the stack. Renderers run in the **order they are added**. It is common to add a 3D renderer first, followed by a 2D UI renderer.
 
 ```fsharp
-|> Program.withRenderer (fun () -> Renderer2D.create view)
+let createRenderer () = Renderer2D.create view
+
+|> Program.withRenderer createRenderer
 ```
 
 ### Backend wiring
@@ -124,23 +132,18 @@ The `Program` builder is in `Mibo.Core`, but a few pieces are backend-specific:
 | 3D pipeline | `ForwardPbrPipeline` | `ForwardPipeline` |
 | Shader language | GLSL | HLSL (`.fx` → `.mgfx`) |
 
-`withInputMapper` is the only builder that cannot live in Core, because it instantiates the backend's `IInputMapper` implementation. If you prefer to stay fully "Elmish" (no service access), use the backend-neutral `InputMapper.subscribe` instead and handle a single message.
+`withInputMapper` is the only builder that cannot live in Core, because it instantiates the backend's `IInputMapper` implementation. If you prefer to avoid the input-mapper service entirely, use the backend-neutral `InputMapper.subscribe` instead and handle a single message.
 
-> _**TIP**_: The `.drawImmediate(...)` escape hatch and custom render commands serve the same role as raw backend integration points when you need GPU work outside the deferred command buffer.
+> _**TIP**_: The `.drawImmediate(...)` escape hatch and custom render commands are the raw backend integration points when you need GPU work outside the deferred command buffer.
 
 ---
 
 ## Advanced Configuration
 
 ### `withConfig`
-Gives you direct access to the `GameConfig` record before the game initializes.
+Gives you direct access to the `GameConfig` record before the game initializes (the same `withConfig` used in the composition example above).
 
-```fsharp
-|> Program.withConfig (fun cfg ->
-    { cfg with Width = 1280; Height = 720; Title = "My Game" })
-```
-
-> _**NOTE**_: `Width`/`Height` here are **config-time** values. For the **live, resizable** window size at runtime (in `init`/`update`/`view`), read `ctx.WindowWidth`/`ctx.WindowHeight` — these update on resize. See the "Window size" section of [MonoGame type quirks](../monogame-types.html) for the full note.
+> _**NOTE**_: `Width`/`Height` here are **config-time** values. For the **live, resizable** window size at runtime (in `init`/`update`/`view`), read `ctx.WindowWidth`/`ctx.WindowHeight`; these update on resize. See the "Window size" section of [MonoGame type quirks](../monogame-types.html) for the full note.
 
 > _**TIP**_: **Cumulative Pipeline**: You can call `withConfig` multiple times; each callback is executed in the order it was added, allowing you to layer configuration.
 

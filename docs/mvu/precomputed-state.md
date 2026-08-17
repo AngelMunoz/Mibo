@@ -9,9 +9,9 @@ index: 11
 
 ## What and Why
 
-Many game values depend on other values that change every frame — sky color depends on time, visibility depends on positions, health bars depend on hit points. The naive approach computes these in the view function. This couples logic to rendering, duplicates computation across systems, and makes testing impossible.
+Many game values depend on other values that change every frame: sky color depends on time, visibility depends on positions, health bars depend on hit points. The naive approach computes these in the view function. This couples logic to rendering, duplicates computation across systems, and makes testing impossible.
 
-The pattern: compute derived values once per frame in a dedicated system. Store results in a lightweight model. Every other system — rendering, AI, UI — reads the pre-computed values without recalculating.
+The pattern: compute derived values once per frame in a dedicated system. Store the results in model fields. Every other system (rendering, AI, UI) reads the pre-computed values without recalculating.
 
 ## Use Cases
 
@@ -22,7 +22,7 @@ Time drives sky color, light direction, ambient intensity, and shadow parameters
 Time drives bone matrices, sprite frames, and blend weights. An animation system computes poses from time. The renderer applies them to meshes.
 
 ### AI perception
-Positions drive visibility, threat level, and awareness. A perception system computes which enemies can see the player, which are flanking, which are distracted. The behavior tree reads these results.
+Positions drive visibility, threat level, and awareness. A perception system computes which enemies can see the player, which are flanking, which are distracted. The <abbr title="a decision structure made of conditions and actions">behavior tree</abbr> reads these results.
 
 ### Physics queries
 Positions and velocities drive nearest enemy, line of sight, and predicted intercept points. A query system computes these. The AI and combat systems read them.
@@ -35,7 +35,7 @@ Time and position drive wind direction, precipitation intensity, and fog density
 
 ## The Technique
 
-Compute derived values in a dedicated system:
+Compute derived values in a dedicated system. The lighting model below is a class with mutable fields, so this system writes the values in place instead of rebuilding the model; that is the point of the pattern, keeping the per-frame hot path allocation-free:
 
 ```fsharp
 let lightingSystem (dt: float32) (model: GameModel) : struct (GameModel * Cmd<Msg>) =
@@ -46,7 +46,7 @@ let lightingSystem (dt: float32) (model: GameModel) : struct (GameModel * Cmd<Ms
   struct (model, Cmd.none)
 ```
 
-Store results in a lightweight model:
+Store results in a model with mutable fields (`member val ... with get, set` declares a read-write property; this is the F# class syntax for a mutable slot):
 
 ```fsharp
 type LightingModel() =
@@ -55,7 +55,7 @@ type LightingModel() =
   member val AmbientIntensity = 0.0f with get, set
 ```
 
-The view reads pre-computed values — zero computation:
+The view reads pre-computed values, with zero computation:
 
 ```fsharp
 let view (ctx: GameContext) (model: GameModel) (buffer: RenderBuffer3D) =
@@ -79,8 +79,8 @@ System.start model
 ## Key Insight
 
 Moving computation from the view to a system means:
-- The view stays simple — it just reads state.
-- Systems can be tested independently — no renderer needed.
+- The view stays simple: it only reads state.
+- Systems can be tested independently, with no renderer needed.
 - Derived values are available to all systems, not just rendering.
 - The render path does minimal work.
 
@@ -89,12 +89,12 @@ The same derived value can feed multiple consumers. Lighting affects rendering, 
 ## When to use
 
 - Any value that depends on multiple inputs and changes every frame.
-- Values needed by multiple systems — rendering, AI, UI, gameplay.
+- Values needed by multiple systems: rendering, AI, UI, gameplay.
 - Expensive computations that would slow down the render path.
 - You want to test logic without running the renderer.
 
 ## See also
 
-- [Platformer3D day/night cycle](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Shared/DayNight.fs) and [lighting state](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Shared/Lighting.fs) — day/night cycle as pre-computed state.
-- [Composable Systems](composable-systems.html) — how pre-computed state fits into the system pipeline.
-- [Mibo.Adaptive](../mibo-adaptive/overview.html) — on the adaptive runtime this pattern is built in: derived values recompute on change instead of once per frame.
+- [Platformer3D day/night cycle](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Shared/DayNight.fs) and [lighting state](https://github.com/AngelMunoz/Mibo.Samples/blob/master/Platformer3D/Shared/Lighting.fs): day/night cycle as pre-computed state.
+- [Composable Systems](composable-systems.html): how pre-computed state fits into the system pipeline.
+- [Mibo.Adaptive](../mibo-adaptive/overview.html): on the adaptive runtime this pattern is built in: derived values recompute on change instead of once per frame.

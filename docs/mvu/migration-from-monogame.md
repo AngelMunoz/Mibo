@@ -11,7 +11,7 @@ index: 12
 > MonoGame library at `github.com/AngelMunoz/Mibo`) who want to migrate to
 > **Mibo v2**'s split architecture (`Mibo.Core` + `Mibo.MonoGame`).
 >
-> This is a severely breaking migration. The original Mibo was a single assembly
+> This is a major breaking migration. The original Mibo was a single assembly
 > with the Elmish engine, input, assets, 2D/3D rendering, animation, camera helpers,
 > and MonoGame-specific types woven through the public API. The new architecture
 > separates backend-agnostic contracts (in `Mibo.Core`) from the MonoGame-specific
@@ -19,7 +19,7 @@ index: 12
 > animation stacks, and changes several core signatures.
 >
 > The good news: the rendering, animation, camera, lighting, shadow, and
-> post-processing features you used in the old package **still exist** — they were
+> post-processing features you used in the old package **still exist**: they were
 > re-implemented under the new architecture, often with cleaner names. This guide
 > maps every old API to its new equivalent.
 
@@ -57,7 +57,7 @@ reference only `Mibo.Core` and be shared across the MonoGame and Raylib backends
 | `Mibo` (single package) | `Mibo.Core`     | `Mibo.Elmish`, `Mibo.Input`, `Mibo.Layout`, `Mibo.Layout3D`                                                                                                                               |
 | `Mibo` (single package) | `Mibo.MonoGame` | `Mibo.Elmish`, `Mibo.Input`, `Mibo.Animation`, `Mibo.Elmish.Graphics2D`, `Mibo.Elmish.Graphics2D.Lighting`, `Mibo.Elmish.Graphics3D`, `Mibo.Elmish.Graphics3D.Pipelines`, `Mibo.Layout3D` |
 
-Most `open` declarations stay the same — the `Mibo.Elmish`, `Mibo.Input`, and
+Most `open` declarations stay the same: the `Mibo.Elmish`, `Mibo.Input`, and
 `Mibo.Animation` namespaces are preserved. What changed:
 
 - **2D rendering** moved from `Mibo.Elmish.Graphics2D` (old) to
@@ -66,29 +66,29 @@ Most `open` declarations stay the same — the `Mibo.Elmish`, `Mibo.Input`, and
 - **3D rendering** moved from `Mibo.Rendering.Graphics3D` (old modern pipeline)
   to `Mibo.Elmish.Graphics3D` + `Mibo.Elmish.Graphics3D.Pipelines` (new).
 - The old `Mibo.Elmish.Graphics3D` (legacy `Batch3DRenderer`/`Draw3D`, already
-  marked `[<Obsolete>]` in the old package) is gone — its successor is the new
+  marked `[<Obsolete>]` in the old package) is gone: its successor is the new
   `Mibo.Elmish.Graphics3D.Draw3D`.
 
 ## Migration checklist
 
 | Area                           | Breaking? | Effort                                                                                                                 |
 | ------------------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Package references             | Yes       | Low — replace `Mibo` with `Mibo.Core` + `Mibo.MonoGame`                                                                |
-| Program setup                  | Yes       | Medium — `withConfig` split into `GameConfig` + `MonoGameProgram` wrapper; `withRenderer` signature changed            |
-| GameContext access             | Yes       | Medium — direct fields → service registry                                                                              |
-| Input types                    | Yes       | Medium — MonoGame enums → backend-neutral codes                                                                        |
-| InputMapper setup              | Yes       | Low — `Program.withInputMapper` → `MonoGameProgram.withInputMapper` (on the `MonoGameProgram` wrapper)                 |
-| Assets                         | Yes       | Low — `Assets.texture path ctx` → `assets.Texture path`; `IAssets` now extends `IAssetCache`                           |
-| Cmd / Sub                      | Yes       | Low — new `Msg` and `Quit` cases in DU                                                                                 |
-| Content pipeline & asset paths | Maybe     | Low–Medium — only if you relied on XNB-baked animation data                                                            |
-| 2D rendering                   | Yes       | Medium — renderer/command/DSL module names changed (`Batch2DRenderer`→`Renderer2D`, etc.)                              |
-| 3D rendering                   | Yes       | Medium — `withPipeline` removed; use `Renderer3D.create (ForwardPipeline(...)) view`                                   |
-| 2D animation                   | No        | None — `SpriteSheet`/`AnimatedSprite` API unchanged                                                                    |
-| 3D animation                   | N/A (new) | Low — the old package had no 3D animation; new backend ships `AnimatedModel`                                           |
-| Camera                         | Yes       | Low — `Camera2D`/`Camera3D` modules exist; `Camera3D.create` takes just position/target/FOV with defaulted up/near/far |
-| Culling                        | Yes       | Low — `isGenericVisible` renamed `isVisibleBox` (box-vs-frustum test)                                                  |
-| Layout / Spatial               | No        | None — moved to Core, same API                                                                                         |
-| System pipeline                | No        | None — moved to Core, same API                                                                                         |
+| Package references             | Yes       | Low: replace `Mibo` with `Mibo.Core` + `Mibo.MonoGame`                                                                |
+| Program setup                  | Yes       | Medium: `withConfig` split into `GameConfig` + `MonoGameProgram` wrapper; `withRenderer` signature changed            |
+| GameContext access             | Yes       | Medium: direct fields → service registry                                                                              |
+| Input types                    | Yes       | Medium: MonoGame enums → backend-neutral codes                                                                        |
+| InputMapper setup              | Yes       | Low: `Program.withInputMapper` → `MonoGameProgram.withInputMapper` (on the `MonoGameProgram` wrapper)                 |
+| Assets                         | Yes       | Low: `Assets.texture path ctx` → `assets.Texture path`; `IAssets` now extends `IAssetCache`                           |
+| Cmd / Sub                      | Yes       | Low: new `Msg` and `Quit` cases in DU                                                                                 |
+| Content pipeline & asset paths | Maybe     | Low–Medium: only if you relied on XNB-baked animation data                                                            |
+| 2D rendering                   | Yes       | Medium: renderer/command/DSL module names changed (`Batch2DRenderer`→`Renderer2D`, etc.)                              |
+| 3D rendering                   | Yes       | Medium: `withPipeline` removed; use `Renderer3D.create (ForwardPipeline(...)) view`                                   |
+| 2D animation                   | No        | None: `SpriteSheet`/`AnimatedSprite` API unchanged                                                                    |
+| 3D animation                   | N/A (new) | Low: the old package had no 3D animation; new backend ships `AnimatedModel`                                           |
+| Camera                         | Yes       | Low: `Camera2D`/`Camera3D` modules exist; `Camera3D.create` takes position/target/FOV with defaulted up/near/far |
+| Culling                        | Yes       | Low: `isGenericVisible` renamed `isVisibleBox` (box-vs-frustum test)                                                  |
+| Layout / Spatial               | No        | None: moved to Core, same API                                                                                         |
+| System pipeline                | No        | None: moved to Core, same API                                                                                         |
 
 ---
 
@@ -135,15 +135,16 @@ Program.mkProgram init update
   gdm.PreferredBackBufferHeight <- 720
   gdm.SynchronizeWithVerticalRetrace <- true)
 
-// After — window-level config via Core GameConfig
-Program.mkProgram init update
-|> Program.withConfig (fun cfg ->
-  GameConfig.defaultConfig
+// After: window-level config via Core GameConfig
+let configureWindow (cfg: GameConfig) =
+  cfg
   |> GameConfig.withWidth 1280
   |> GameConfig.withHeight 720
   |> GameConfig.withTitle "My Game title"
   |> GameConfig.withTargetFPS 60
-)
+
+Program.mkProgram init update
+|> Program.withConfig configureWindow
 // ... then wrap with MonoGameProgram and add device-level config:
 |> MonoGameProgram.ofProgram
 |> MonoGameProgram.withConfig (fun (game, gdm) ->
@@ -170,7 +171,7 @@ Helper functions are available: `GameConfig.withWidth`, `withHeight`,
 
 `MonoGameProgram.withConfig` receives the `Game` and `GraphicsDeviceManager`
 and runs in the `MiboGame` constructor, **before** `Initialize` /
-`GraphicsDevice` creation — so `GraphicsProfile`, vsync
+`GraphicsDevice` creation: so `GraphicsProfile`, vsync
 (`SynchronizeWithVerticalRetrace`), `IsFullScreen`, `HardwareModeSwitch`,
 `Window.AllowUserResizing`, and `Content.RootDirectory` all take effect.
 
@@ -179,16 +180,16 @@ platform-specific configuration not covered by `GameConfig`), use
 `Program.withServiceRegistration` to run code after the host initializes:
 
 ```fsharp
-|> Program.withServiceRegistration (fun ctx ->
+let configureServices (ctx: GameContext) =
   let game = MonoGameGameContext.getGame ctx
   // access game.Window, game.GraphicsDeviceManager, etc.
-)
+
+|> Program.withServiceRegistration configureServices
 ```
 
 ### `withRenderer` signature changed
 
-The old API passed `Game` to the renderer factory. The new API takes `unit` —
-renderers receive `GameContext` at draw time.
+The old API passed `Game` to the renderer factory. The new API takes `unit`; renderers receive `GameContext` at draw time.
 
 ```fsharp
 // Before
@@ -196,18 +197,20 @@ renderers receive `GameContext` at draw time.
   Batch2DRenderer.createWithConfig game cfg view)
 
 // After
-|> Program.withRenderer (fun () ->
-  Renderer2D.createWith cfg view)
+let createRenderer () = Renderer2D.createWith cfg view
+
+|> Program.withRenderer createRenderer
 ```
 
 You can register multiple renderers (they draw in the order you add them). The
 new `MonoThreeD` sample registers a 3D renderer and a 2D overlay renderer:
 
 ```fsharp
-|> Program.withRenderer (fun () ->
-  Renderer3D.create (ForwardPipeline()) view)
-|> Program.withRenderer (fun () ->
-  Renderer2D.createWith Renderer2DConfig.noClear overlayView)
+let create3DRenderer () = Renderer3D.create (ForwardPipeline()) view
+let createOverlayRenderer () = Renderer2D.createWith Renderer2DConfig.noClear overlayView
+
+|> Program.withRenderer create3DRenderer
+|> Program.withRenderer createOverlayRenderer
 ```
 
 ### Removed builders
@@ -251,7 +254,7 @@ The old `GameContext` exposed MonoGame types as **direct fields** and only had
 three members:
 
 ```fsharp
-// Before — the old GameContext was a 3-field record
+// Before: the old GameContext was a 3-field record
 let gd = ctx.GraphicsDevice
 let content = ctx.Content
 let game = ctx.Game
@@ -279,7 +282,7 @@ let gd = GameContext.getService<GraphicsDevice> ctx
 ```
 
 `WindowWidth` and `WindowHeight` are now **direct members** on `GameContext`
-(they were not on the old context — you had to read `GraphicsDevice.Viewport`).
+(they were not on the old context: you had to read `GraphicsDevice.Viewport`).
 They update automatically on window resize.
 
 ---
@@ -315,7 +318,7 @@ Keyboard.onPressed (fun (key: KeyCode) -> ...) ctx
 ### Mouse
 
 ```fsharp
-// Before — mouse button was an int (0 = left, 1 = right, 2 = middle)
+// Before: mouse button was an int (0 = left, 1 = right, 2 = middle)
 |> InputMap.mouse Shoot 0
 
 Mouse.onButton (fun (btn: MouseButtons) -> ...) ctx
@@ -333,7 +336,7 @@ Mouse.onButton (fun (btn: MouseButtonCode, pos: Vector2) -> ...) ctx
 // Before
 |> InputMap.gamepadButton Jump PlayerIndex.One Buttons.A
 
-// After — player index is a plain int, button is a backend-neutral code
+// After: player index is a plain int, button is a backend-neutral code
 |> InputMap.gamepadButton Jump 0 GamepadButtonCode.FaceDown
 
 Gamepad.listenPlayer 0 (fun delta -> ...) ctx
@@ -362,7 +365,7 @@ The new `Trigger.KeyCombo` case lets you bind multi-key combinations:
 ### Gesture support
 
 The `IInput` interface exposes `GestureDelta`, but **MonoGame's gesture
-recognition is not mapped** — the `GestureDelta` stream is empty on the MonoGame
+recognition is not mapped**: the `GestureDelta` stream is empty on the MonoGame
 backend. Touch input is available via `Touch.listen`.
 
 ---
@@ -389,7 +392,7 @@ The subscription-based path (`InputMapper.subscribe` / `subscribeStatic`) works
 the same and lives in the `Mibo.Input` namespace (in the MonoGame backend):
 
 ```fsharp
-// Both old and new — unchanged if you use subscriptions
+// Both old and new: unchanged if you use subscriptions
 |> Program.withSubscription (InputMapper.subscribeStatic inputMap MapAction)
 ```
 
@@ -403,14 +406,14 @@ The old `Assets` module took the context piped last. The new style is to resolve
 the `IAssets` service once, then call its typed-loader methods.
 
 ```fsharp
-// Before — module piped against the context
+// Before: module piped against the context
 let tex = Assets.texture "player" ctx
 let font = Assets.font "ui" ctx
 let model = Assets.model "Models/player" ctx
 let sfx = Assets.sound "jump" ctx
 let effect = Assets.effect "Shaders/lighting" ctx
 
-// After — resolve the service, then call methods
+// After: resolve the service, then call methods
 let assets = GameContext.getService<IAssets> ctx
 let tex = assets.Texture "player"
 let font = assets.Font "ui"
@@ -422,7 +425,7 @@ let effect = assets.Effect "Shaders/lighting"
 ### `IAssets` now extends `IAssetCache`
 
 ```fsharp
-// Mibo.Core — backend-neutral cache (namespace Mibo.Elmish)
+// Mibo.Core: backend-neutral cache (namespace Mibo.Elmish)
 type IAssetCache =
   abstract Get<'T> : key: string -> 'T voption
   abstract Create<'T> : key: string * factory: (unit -> 'T) -> 'T
@@ -430,7 +433,7 @@ type IAssetCache =
   abstract Clear: unit -> unit
   abstract Dispose: unit -> unit
 
-// Mibo.MonoGame — typed loaders (namespace Mibo.Elmish)
+// Mibo.MonoGame: typed loaders (namespace Mibo.Elmish)
 type IAssets =
   inherit IAssetCache
   abstract Texture: path: string -> Texture2D
@@ -438,7 +441,7 @@ type IAssets =
   abstract Sound: path: string -> SoundEffect
   abstract Model: path: string -> Model
   abstract Effect: path: string -> Effect
-  // NEW — 3D skeletal animation (the old package had none of this)
+  // NEW: 3D skeletal animation (the old package had none of this)
   abstract ModelAnimations: path: string -> Animation3DClips
   abstract AnimatedMesh: path: string -> AnimatedMesh voption
 ```
@@ -460,7 +463,7 @@ If you write code that should work on any backend (not just MonoGame), depend on
 
 ```fsharp
 let cache = GameContext.getService<IAssetCache> ctx
-let config = cache.GetOrCreate("config", fun () -> loadConfig())
+let config = cache.GetOrCreate("config", loadConfig)
 ```
 
 See §11 for the new `ModelAnimations` / `AnimatedMesh` loaders and the content
@@ -476,7 +479,7 @@ pipeline caveats around animation data.
 to `Single(Effect(...))` for `Cmd.ofMsg`:
 
 ```fsharp
-// Cmd.ofMsg now returns Msg directly — no delegate allocation
+// Cmd.ofMsg now returns Msg directly: no delegate allocation
 let cmd = Cmd.ofMsg MyMessage  // produces Msg MyMessage
 
 // Cmd.map on Msg stays allocation-free
@@ -512,11 +515,11 @@ let update msg model =
 
 ## 8. Rendering
 
-> The old package shipped **two** 2D/3D stacks and **two** 3D stacks (the legacy
+> The old package shipped **two** 2D stacks and **two** 3D stacks (the legacy
 > `Batch3DRenderer`/`Draw3D`, already `[<Obsolete>]`, and the modern
 > `PipelineRenderer`/`Mibo.Rendering.Graphics3D`). The new `Mibo.MonoGame`
 > consolidates these into one 2D stack and one 3D stack. **All the features
-> (layer sorting, lighting, shadows, post-processing, PBR) are still there** —
+> (layer sorting, lighting, shadows, post-processing, PBR) are still there**;
 > the module/type names changed.
 
 ### 8.1 2D rendering
@@ -547,16 +550,18 @@ let update msg model =
   |> Batch2DConfig.withLitSprite(game.Content.Load "Shaders/lighting")
   |> fun cfg -> Batch2DRenderer.createWithConfig game cfg view)
 
-// After — the lit-sprite and shadow shaders are now bundled in the assembly;
+// After: the lit-sprite and shadow shaders are now bundled in the assembly;
 // you no longer load them from content. Lighting is configured on the renderer.
-|> Program.withRenderer (fun () ->
-  Renderer2D.createWith Renderer2DConfig.defaults view)
+let createRenderer () =
+  Renderer2D.createWith Renderer2DConfig.defaults view
+
+|> Program.withRenderer createRenderer
 ```
 
 #### View function and drawing
 
 ```fsharp
-// Before — CE + fluent buffer extensions
+// Before: CE + fluent buffer extensions
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
   buffer.Sprite(
     sprite {
@@ -568,7 +573,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer<RenderCmd2D>) =
     }
   ) |> ignore
 
-// After — record builders + the fluent Draw DSL
+// After: record builders + the fluent Draw DSL
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
   let dest = Rectangle(int model.Position.X, int model.Position.Y, 32, 32)
   buffer
@@ -606,7 +611,7 @@ shadows, normal maps, and per-instance lit-sprite quads are all supported.
 | `PostProcessConfig` (+ `withBloom`/`withToneMapping`)                                                                | `PostProcessConfig3D` + `PostProcessPass3D`                                                                                                       |
 | `PipelineBuffer<RenderCommand>`                                                                                      | `RenderBuffer3D` (= `RenderBuffer<unit, Command3D>`)                                                                                              |
 | `RenderCommand` DU (`SetCamera`, `AddLight`, `Draw`, `DrawSpriteBillboard`, …)                                       | `Command3D` DU (`BeginCamera`, `AddPointLight`, `DrawModel`, `DrawBillboard`, …)                                                                  |
-| `draw { }` / `quad { }` / `billboard { }` CEs + `PipelineBuffer` extensions (`.Camera(...).Draw(...).AddLight(...)`) | the fluent Draw DSL (`buffer.model(...)`, `buffer.addPointLight(...)`, `buffer.beginCamera(...)` — see [Draw DSL](../draw-dsl.html))                                           |
+| `draw { }` / `quad { }` / `billboard { }` CEs + `PipelineBuffer` extensions (`.Camera(...).Draw(...).AddLight(...)`) | the fluent Draw DSL (`buffer.model(...)`, `buffer.addPointLight(...)`, `buffer.beginCamera(...)`: see [Draw DSL](../draw-dsl.html))                                           |
 | `Light` DU (`Directional`/`Point`/`Spot`), `DirectionalLight`, `PointLight`, `SpotLight`, `ShadowSettings`           | `AmbientLight3D` + `DirectionalLight3D` + `PointLight3D` + `SpotLight3D` records (ambient is now its own record, not a field of a lighting state) |
 | `Material` / `PBRMaterial` / `MaterialFlags`                                                                         | `Material3D` record (+ `Material3D.defaults`, `Material3D.fromModelMeshPart`)                                                                     |
 | `Mesh` + `Mesh.fromModel`                                                                                            | `PrimitiveMesh` / `Primitive3D` (unit cube/sphere/cylinder/plane/torus/cone)                                                                      |
@@ -616,7 +621,7 @@ shadows, normal maps, and per-instance lit-sprite quads are all supported.
 #### Renderer creation
 
 ```fsharp
-// Before — withPipeline wired the modern 3D pipeline
+// Before: withPipeline wired the modern 3D pipeline
 |> Program.withPipeline
   (PipelineConfig.defaults
    |> PipelineConfig.withShadows(shadowCfg)
@@ -625,14 +630,16 @@ shadows, normal maps, and per-instance lit-sprite quads are all supported.
    |> PipelineConfig.withShader ShaderBase.PBRForward "Effects/PBR")
   view
 
-// After — a renderer wraps a pipeline + your view function
-|> Program.withRenderer (fun () ->
+// After: a renderer wraps a pipeline + your view function
+let createPipelineRenderer () =
   let pipeline =
     ForwardPipeline(
       shadowBias = ShadowBiasConfig.defaults,
       shadowAtlas = { ShadowAtlasConfig.defaults with Resolution = 4096 }
     )
-  Renderer3D.create pipeline view)
+  Renderer3D.create pipeline view
+
+|> Program.withRenderer createPipelineRenderer
 ```
 
 `ForwardPipeline` takes optional `?postProcess`, `?shadowAtlas`, `?shadowBias`.
@@ -643,7 +650,7 @@ For a non-PBR shading strategy, subclass `ForwardPipelineBase` and override
 #### View function and the fluent Draw DSL
 
 ```fsharp
-// After — fluent command recording
+// After: fluent command recording
 let view (ctx: GameContext) (model: GameModel) (buffer: RenderBuffer3D) =
   buffer
     .beginCameraWith(Camera3D.render camera |> Camera3D.withClear skyColor)
@@ -675,7 +682,7 @@ or command types.
 
 ## 9. Animation
 
-### 9.1 2D sprite animation — unchanged
+### 9.1 2D sprite animation: unchanged
 
 The `Mibo.Animation` module (`SpriteSheet`, `AnimatedSprite`, `Animation`) is
 **present and unchanged** in `Mibo.MonoGame`. The old API ports directly:
@@ -693,12 +700,12 @@ sprite <- AnimatedSprite.update dt sprite
 let source = AnimatedSprite.currentSource sprite
 ```
 
-The only change is **how you submit a draw** — go through the new 2D renderer
+The only change is **how you submit a draw**: go through the new 2D renderer
 (see §8.1) instead of the old `RenderCmd2D.DrawSprite`.
 
-### 9.2 3D skeletal animation — new (the old package had none)
+### 9.2 3D skeletal animation: new (the old package had none)
 
-The old package had **no 3D animation** — only bone-matrix pass-through via
+The old package had **no 3D animation**: only bone-matrix pass-through via
 `DrawSkinned`/the `withBones` CE op, where you supplied the `Matrix[]` yourself.
 The new `Mibo.MonoGame` ships a full 3D skeletal-animation stack:
 
@@ -715,7 +722,7 @@ let clips = assets.ModelAnimations rawPath      // Animation3DClips
 let mutable anim = AnimatedModel.create model mesh clips "idle" 60.0f
 anim <- anim |> AnimatedModel.blendTo "walk" 0.15f |> AnimatedModel.update dt
 
-// Draw — the bone palette is computed for you
+// Draw: the bone palette is computed for you
 buffer.animatedModel(anim, transform).drop()
 ```
 
@@ -745,12 +752,12 @@ type Camera3D = {
 
 ### Simplified construction
 
-`Camera3D.create` takes just position, target, and FOV — sensible defaults
+`Camera3D.create` takes position, target, and FOV: sensible defaults
 handle the rest (up = `Vector3.Up`, near = `0.1f`, far = `1000f`). Chain
 `withUp` / `withNearFar` / `asOrthographic` to override:
 
 ```fsharp
-// Before (old Mibo — 7 params, returned a Camera struct)
+// Before (old Mibo: 7 params, returned a Camera struct)
 let camera = Camera3D.lookAt cameraPos target Vector3.Up
                (MathHelper.ToRadians 45.0f) aspect 0.1f 1000.0f
 
@@ -770,13 +777,13 @@ buffer
 ```
 
 The `Camera3D` module provides `create`, `orbit`, `screenPointToRay`, and
-the `withUp` / `withNearFar` / `asOrthographic` modifiers — all returning
-`Camera3D`. `Camera2D` provides the full 2D surface — `create`, `toMatrix`,
+the `withUp` / `withNearFar` / `asOrthographic` modifiers, all returning
+`Camera3D`. `Camera2D` provides the full 2D surface: `create`, `toMatrix`,
 `viewportBounds`, `screenToWorld`/`worldToScreen`, and `smoothFollow`/
 `clampTarget` (which return a new camera, since the camera's fields are
 immutable). The rendering config builders (`render`, `withViewport`,
 `withClear`, `splitScreen*`) live in the `Camera2D` and `Camera3D` modules
-themselves — there is no separate config module to open.
+themselves; there is no separate config module to open.
 
 ---
 
@@ -842,7 +849,7 @@ to parse skeleton/clips at runtime).
 Custom HLSL effects (`.fx` compiled by the MGCB content pipeline via
 `EffectImporter`/`EffectProcessor` to `.xnb`) load via
 `assets.Effect path` as before. Note that the 2D lit-sprite and 3D PBR/shadow
-shaders are now **bundled inside the `Mibo.MonoGame` assembly** — you no longer
+shaders are now **bundled inside the `Mibo.MonoGame` assembly**: you no longer
 need to author/ship `Shaders/lighting`, `Shaders/shadowcaster`, `Effects/PBR`,
 etc. yourself. Drop those `Batch2DConfig.withLitSprite`/`withShader` lines.
 
@@ -857,7 +864,7 @@ These modules moved to `Mibo.Core` with **identical APIs**:
 | `System` pipeline                                                      | `Mibo.Elmish`   | `start`, `pipeMutable`, `snapshot`, `pipe`, `dispatch`, `dispatchWith`, `finish` |
 | `Cmd` / `Sub`                                                          | `Mibo.Elmish`   | Same + new `Msg` and `Quit` cases                                                |
 | `GameTime`, `DispatchMode`, `FixedStepConfig`                          | `Mibo.Elmish`   | Unchanged                                                                        |
-| `GameConfig`                                                           | `Mibo.Elmish`   | Unchanged                                                                        |
+| `GameConfig`                                                           | `Mibo.Elmish`   | Mostly unchanged; `withMinWidth`/`withMinHeight` are new                |
 | `HeadlessProgram` / `HeadlessRunner`                                   | `Mibo.Elmish`   | Unchanged                                                                        |
 | `CellGrid2D`, `HexGrid`, `Layout`, `HexLayout`                         | `Mibo.Layout`   | Unchanged                                                                        |
 | `CellGrid3D`, `HexGrid3D`, `Layout3D`, `HexLayout3D`                   | `Mibo.Layout3D` | Unchanged                                                                        |
@@ -891,7 +898,8 @@ runner.Step(TimeSpan.FromMilliseconds(16))
 runner.StepN(100, TimeSpan.FromMilliseconds(16))
 
 // Run until condition
-runner.StepUntil(fun m -> m.Health <= 0, TimeSpan.FromMilliseconds(16))
+let isDead (m: Model) = m.Health <= 0
+runner.StepUntil(isDead, TimeSpan.FromMilliseconds(16))
 
 // Enumerate frames
 for gameTime, model in runner.Run(TimeSpan.FromMilliseconds(16)) do
@@ -1023,11 +1031,18 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
     )
     .drop()
 
+let configureWindow (cfg: GameConfig) =
+  { cfg with Title = "Platformer"; Width = 1280; Height = 720 }
+
+let createRenderer () = Renderer2D.create view
+
+let configureDevice (game: Game, _gdm: GraphicsDeviceManager) =
+  game.Content.RootDirectory <- "Content"
+
 let program =
   Program.mkProgram init update
-  |> Program.withConfig (fun cfg ->
-    { cfg with Title = "Platformer"; Width = 1280; Height = 720 })
-  |> Program.withRenderer (fun () -> Renderer2D.create view)
+  |> Program.withConfig configureWindow
+  |> Program.withRenderer createRenderer
   |> Program.withInput
   |> Program.withAssets
   |> Program.withSubscription (InputMapper.subscribeStatic inputMap Action)
@@ -1037,8 +1052,7 @@ let mgProgram =
   program
   |> MonoGameProgram.ofProgram
   |> MonoGameProgram.withInputMapper inputMap
-  |> MonoGameProgram.withConfig (fun (game, _gdm) ->
-    game.Content.RootDirectory <- "Content")
+  |> MonoGameProgram.withConfig configureDevice
 
 [<EntryPoint>]
 let main _ =
@@ -1078,10 +1092,10 @@ are the divergences to plan for (surfaced by comparing the `MonoThreeD` and
 | `Camera3D`              | struct record, **radians** FOV, defaulted near/far                               | the raylib `Camera3D` struct, **degrees** FOV, no explicit near/far                 |
 | Vector / Color / Matrix | `Microsoft.Xna.Framework.*` (`Color(int)`, `Matrix.Create*`)                     | `System.Numerics` + `Raylib_cs` (`Color(byte)`, `Raymath.Matrix*`)                  |
 | 3D animated model       | `AnimatedModel` + `buffer.animatedModel(...)` (bundles model+mesh+state)         | `Animation3DState` + `Animation3DState.applyToModel` + `buffer.model(...)`           |
-| Animated mesh loader    | `assets.AnimatedMesh rawPath` (Assimp — XNB drops anim data)                     | not needed — raylib loads `.glb` once with animations                               |
+| Animated mesh loader    | `assets.AnimatedMesh rawPath` (Assimp: XNB drops anim data)                     | not needed: raylib loads `.glb` once with animations                               |
 | Assets                  | XNB content pipeline (names without extension)                                   | raw files (paths with extension)                                                    |
 | Procedural 1×1 texture  | `new Texture2D(gd,1,1) + SetData`                                                | `GenImageColor + LoadTextureFromImage`                                              |
-| Default font            | none — load `assets.Font "diagnostics"`                                          | `Raylib.GetFontDefault()`                                                           |
+| Default font            | none: load `assets.Font "diagnostics"`                                          | `Raylib.GetFontDefault()`                                                           |
 | Material factory        | `Material3D.fromModelMeshPart`                                                   | `Material3D.fromRaylibMaterial`                                                     |
 
 **Portability tip:** pin your model's math types to `System.Numerics` (not
@@ -1099,11 +1113,11 @@ view/draw edge.
 Yes. `IAssets.Texture`, `Font`, `Sound`, `Model`, and `Effect` all load via
 MonoGame's `ContentManager`, which uses the content pipeline. Your `.mgcb` files
 and content builds work as before. The only exception is **3D animation data**,
-which the pipeline discards — see §11.
+which the pipeline discards: see §11.
 
 ### Do I need to rewrite my rendering from scratch?
 
-No. The 2D and 3D rendering stacks still ship in `Mibo.MonoGame` — the renderer,
+No. The 2D and 3D rendering stacks still ship in `Mibo.MonoGame`: the renderer,
 command, and DSL module names changed (see §8 for the old→new mapping). The
 built-in PBR/shadow/lit-sprite shaders are now bundled in the assembly, so you
 can delete your hand-maintained `Shaders/lighting`, `Effects/PBR`, etc.

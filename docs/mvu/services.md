@@ -7,15 +7,15 @@ index: 7
 
 # Service Composition
 
-As your game grows, you will likely need services that are shared across your `init`, `update`, and `view` functions—things like Networking, Leaderboards, or Save Data.
+As your game grows, you will likely need services that are shared across your `init`, `update`, and `view` functions: things like Networking, Leaderboards, or Save Data.
 
-> **NOTE:** the Env pattern here is runtime-agnostic — it applies verbatim to adaptive programs, with one improvement: `boot ctx` receives the `GameContext` before init runs, so context-dependent services initialize without escape hatches. See [Adaptive Services](../adaptive/services.html).
+> **NOTE:** the Env pattern here is runtime-agnostic; it applies verbatim to adaptive programs, with one improvement: `boot ctx` receives the `GameContext` before init runs, so context-dependent services initialize without special cases. See [Adaptive Services](../adaptive/services.html).
 
-Instead of passing these individually or relying on global state, we recommend creating a strongly typed "Composition Root" or "Environment" record.
+Instead of passing these individually or relying on global state, create a strongly typed environment record.
 
-## The Environment Context
+## The environment record
 
-You should initialize your services **before** you construct the program. This ensures they are ready immediately and avoids the "circular dependency" trap.
+Initialize your services **before** you construct the program. This ensures they are ready immediately and avoids the "circular dependency" trap.
 
 This pattern is often referred to as the **Env** (Environment) pattern in F# application architecture.
 
@@ -33,14 +33,14 @@ let env = {
 }
 
 // 2. Pass to program functions
-//    (e.g., capture in a closure or pass as an argument)
+//    (either capture it, as here, or pass it as an argument)
 let init = State.init env
 let update = State.update env
 ```
 
 ## Further Reading
 
-For a deeper dive into this pattern, we recommend Bartosz Sypytkowski's article:
+For a deeper look at this pattern, we recommend Bartosz Sypytkowski's article:
 [Dealing with complex dependency injection in F#](https://www.bartoszsypytkowski.com/dealing-with-complex-dependency-injection-in-f/)
 
 ## Avoiding Circular References
@@ -50,9 +50,9 @@ A common pitfall is trying to initialize a service inside your `init` function b
 ### Guidance
 
 1.  **Prefer Independence**: Design services to be independent of the concrete window or renderer if possible (they should live against `Mibo.Core` contracts like `GameContext`/`IAssetCache`, not a backend host).
-2.  **Escape Hatches**: If you absolutely *must* have a circular reference, handle this carefully using:
+2.  **Last resort**: if you absolutely *must* have a circular reference, handle it carefully using:
     - F# `ref` cells or mutable fields initialized later.
-    - **Note**: These approaches are "know what you are doing" scenarios. Use them only when necessary.
+    - These are "you know what you are doing" scenarios; use them only when necessary.
 
 > _**NOTE**_: If you prefer to use a DI container, you can create it at the same time as you would with the environment and pass it to the program.
 
@@ -81,7 +81,7 @@ let createEnv () =
 
 // 3. Define Game Logic (Dependencies Injected)
 let init (env: Env) (ctx: GameContext) =
-    // Synchronous call (e.g. settings listeners)
+    // Synchronous call (e.g. setting up listeners)
     env.Network.Connect()
 
     // Async call (e.g. fetching data)
@@ -89,11 +89,13 @@ let init (env: Env) (ctx: GameContext) =
 
     struct ({ Score = 0; HighScores = [] }, cmd)
 
+let scoreSubmitted _ = ScoreSubmitted
+
 let update (env: Env) (msg: Msg) (model: Model) =
     match msg with
     | ScoreChanged newScore ->
         // Trigger async operation
-        let cmd = Cmd.ofAsync (async { return env.Leaderboard.SubmitScore(newScore) }) (fun _ -> ScoreSubmitted) ScoreError
+        let cmd = Cmd.ofAsync (async { return env.Leaderboard.SubmitScore(newScore) }) scoreSubmitted ScoreError
         struct ({ model with Score = newScore }, cmd)
 
     | LeaderboardLoaded scores ->
@@ -109,20 +111,24 @@ let main _args =
     // Create the environment FIRST
     let env = createEnv ()
 
-    // partial application/inject the environment
+    // partial application: fix the env argument of each function
     let init = init env
     let update = update env
     let view = view env
 
     // Compose the program with the Env captured
+    let configureGame (cfg: GameConfig) =
+        { cfg with Title = "My Game"; Width = 1280; Height = 720 }
+
+    let createRenderer () = Renderer2D.create view
+
     let program =
         Program.mkProgram init update
-        |> Program.withConfig (fun cfg ->
-            { cfg with Title = "My Game"; Width = 1280; Height = 720 })
+        |> Program.withConfig configureGame
         |> Program.withAssets
-        |> Program.withRenderer (fun () -> Renderer2D.create view)
+        |> Program.withRenderer createRenderer
 
-    // Run the game — use your backend's host:
+    // Run the game: use your backend's host
     //   raylib:   new RaylibGame<Model, Msg>(program)
     //   MonoGame: new MiboGame<Model, Msg>(program)
     let game = new RaylibGame<Model, Msg>(program)

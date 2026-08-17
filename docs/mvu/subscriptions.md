@@ -11,33 +11,27 @@ Subscriptions connect external event sources to your Elmish update loop. Unlike 
 
 ## Quick Start
 
+The built-in input modules cover the common case. Your `subscribe` function receives the game context and the current model, and returns the subscriptions that should be running right now:
+
 ```fsharp
 open Mibo.Elmish
+open Mibo.Input
 
-// Define subscription IDs
-type SubId = 
-  static member Keyboard = SubId.ofString "keyboard"
-  static member Network = SubId.ofString "network"
+let keyPressed (k: KeyboardKey) = KeyPressed k
+let mouseClicked (pos: Vector2) = MouseClicked pos
 
-// Create a subscription
-let keyboardSub : Sub<Msg> =
-  SubId.Keyboard,
-  fun dispatch ->
-    // Listen to events, dispatch messages
-    let handler = EventHandler<KeyboardEvent>(fun _ e ->
-      dispatch (KeyPressed e.Key)
-    )
-    Keyboard.addListener handler
-    
-    // Return disposable to clean up
-    { new IDisposable with
-      member _.Dispose() = Keyboard.removeListener handler
-    }
+let subscribe (ctx: GameContext) (model: Model) : Sub<Msg> =
+    Sub.batch [
+        Keyboard.onPressed keyPressed ctx
+        Mouse.onLeftClick mouseClicked ctx
+    ]
 
-// In your program
-Program.mkProgram init update
-|> Program.withSubscription (fun _model -> keyboardSub)
+let program =
+    Program.mkProgram init update
+    |> Program.withSubscription subscribe
 ```
+
+See [Input](../input.html) for `InputMapper.subscribe` and semantic action mapping.
 
 ## How Subscriptions Work
 
@@ -51,21 +45,35 @@ This gives you precise control over subscription lifetimes based on your model s
 
 ## Creating Subscriptions
 
-### Basic Subscription
+When no built-in module fits, a subscription is an id plus a function that starts listening and returns a stop handle (an `IDisposable`):
 
 ```fsharp
-let timerSub (interval: TimeSpan) : Sub<Msg> =
-  let id = SubId.ofString "timer"
-  
-  id,
-  fun dispatch ->
-    let timer = new Timer(interval)
-    timer.Elapsed.Add(fun _ -> dispatch Tick)
-    timer.Start()
-    
+let onKeyEvent (dispatch: Msg -> unit) _ (e: KeyboardEvent) =
+    dispatch (KeyPressed e.Key)
+
+let startKeyboard (dispatch: Msg -> unit) : IDisposable =
+    let handler = EventHandler<KeyboardEvent>(onKeyEvent dispatch)
+    Keyboard.addListener handler
+
     { new IDisposable with
-      member _.Dispose() = timer.Dispose()
-    }
+        member _.Dispose() = Keyboard.removeListener handler }
+
+let keyboardSub : Sub<Msg> = SubId.ofString "keyboard", startKeyboard
+```
+
+### Timer Subscription
+
+```fsharp
+let onElapsed (dispatch: Msg -> unit) _ = dispatch Tick
+
+let startTimer (interval: TimeSpan) (dispatch: Msg -> unit) : IDisposable =
+    let timer = new Timer(interval)
+    timer.Elapsed.Add(onElapsed dispatch)
+    timer.Start()
+    timer   // Timer is IDisposable: it is its own stop handle
+
+let timerSub (interval: TimeSpan) : Sub<Msg> =
+    SubId.ofString "timer", startTimer interval
 ```
 
 ### Conditional Subscriptions
@@ -73,14 +81,14 @@ let timerSub (interval: TimeSpan) : Sub<Msg> =
 Start/stop based on model state:
 
 ```fsharp
-let subscribe model =
-  if model.IsConnected then
-    Sub.batch2 (
-      heartbeatSub,
-      messageListenerSub
-    )
-  else
-    Sub.none
+let subscribe ctx model =
+    if model.IsConnected then
+        Sub.batch2 (
+            heartbeatSub,
+            messageListenerSub
+        )
+    else
+        Sub.none
 ```
 
 ### Multiple Subscriptions
@@ -98,13 +106,12 @@ IDs must be unique per subscription. Use namespacing for parent-child compositio
 
 ```fsharp
 module Player =
-  let inputSub : Sub<Player.Msg> =
-    SubId.ofString "input",
-    fun dispatch -> ...
+    let inputSub : Sub<Player.Msg> =
+        SubId.ofString "input", startInput
 
 // Parent prefixes child IDs:
 let parentSub =
-  Player.inputSub |> Sub.map "player" PlayerMsg
+    Player.inputSub |> Sub.map "player" PlayerMsg
 // Resulting ID: "player/input"
 ```
 
@@ -114,76 +121,67 @@ Child modules often need their own subscriptions:
 
 ```fsharp
 module Chat =
-  type Msg = NewMessage of string | ConnectionLost
-  
-  let subscribe (model: Chat.Model) : Sub<Chat.Msg> =
-    if model.IsOpen then
-      SubId.ofString "chat/socket",
-      fun dispatch ->
+    type Msg = NewMessage of string | ConnectionLost
+
+    let onChatMessage (dispatch: Chat.Msg -> unit) (e: MessageEvent) =
+        dispatch (NewMessage e.Data)
+
+    let openChatSocket (dispatch: Chat.Msg -> unit) : IDisposable =
         let ws = new WebSocket("ws://server/chat")
-        ws.OnMessage.Add(fun e -> dispatch (NewMessage e.Data))
-        ws
-    else
-      Sub.none
+        ws.OnMessage.Add(onChatMessage dispatch)
+        ws   // the socket is the stop handle: disposing closes it
+
+    let subscribe (model: Chat.Model) : Sub<Chat.Msg> =
+        if model.IsOpen then
+            SubId.ofString "chat/socket", openChatSocket
+        else
+            Sub.none
 
 // Parent wires it up:
 type Parent.Msg = ChatMsg of Chat.Msg
 
-let subscribe model =
-  model.Chat
-  |> Chat.subscribe
-  |> Sub.map "chat" ChatMsg  // Prefix: "chat/chat/socket"
+let subscribe ctx model =
+    model.Chat
+    |> Chat.subscribe
+    |> Sub.map "chat" ChatMsg  // Prefix: "chat/chat/socket"
 ```
 
 ## Common Patterns
 
-### Input Handling
-
-For subscription-based input, use the built-in modules:
-
-```fsharp
-open Mibo.Input
-
-let inputSub : Sub<Msg> =
-  Sub.batch [
-    Keyboard.onPressed (fun k -> KeyPressed k) ctx
-    Mouse.onLeftClick (fun pos -> MouseClicked pos) ctx
-    Gamepad.listen (fun g -> GamepadInput g) ctx
-  ]
-```
-
-See [Input](../input.html) for `InputMapper.subscribe` for semantic action mapping.
-
 ### Network Events
 
 ```fsharp
+let onPacket (dispatch: Msg -> unit) (packet: Packet) =
+    dispatch (PacketReceived packet)
+
+let startNetwork (client: NetworkClient) (dispatch: Msg -> unit) : IDisposable =
+    client.OnPacket.Subscribe(onPacket dispatch)
+
 let networkSub (client: NetworkClient) : Sub<Msg> =
-  SubId.ofString "network",
-  fun dispatch ->
-    let handler = client.OnPacket.Subscribe(fun packet ->
-      dispatch (PacketReceived packet)
-    )
-    handler
+    SubId.ofString "network", startNetwork client
 ```
 
 ### Time-based
 
+`async { ... }` is F#'s syntax for asynchronous work: `do!` waits without blocking a thread, and `return!` loops by starting the work again.
+
 ```fsharp
-// Every second, dispatch a tick
-let fpsSub : Sub<Msg> =
-  SubId.ofString "fps",
-  fun dispatch ->
-    let rec loop () = async {
-      do! Async.Sleep 1000
-      dispatch CalculateFps
-      return! loop()
-    }
+let startFpsPolling (dispatch: Msg -> unit) : IDisposable =
+    let rec poll () =
+        async {
+            do! Async.Sleep 1000
+            dispatch CalculateFps
+            return! poll ()
+        }
+
     let cts = new CancellationTokenSource()
-    Async.Start(loop(), cts.Token)
-    
+    Async.Start(poll (), cts.Token)
+
     { new IDisposable with
-      member _.Dispose() = cts.Cancel()
-    }
+        member _.Dispose() = cts.Cancel() }
+
+// Every second, dispatch a tick
+let fpsSub : Sub<Msg> = SubId.ofString "fps", startFpsPolling
 ```
 
 ## Lifecycle Management
@@ -192,8 +190,8 @@ The runtime automatically manages subscription lifecycles:
 
 ```fsharp
 // Frame 1: Model says we need network
-let subscribe model =
-  if model.Online then networkSub else Sub.none
+let subscribe ctx model =
+    if model.Online then networkSub client else Sub.none
 // Runtime: Starts networkSub
 
 // Frame 2: Model goes offline
@@ -206,24 +204,23 @@ let subscribe model =
 Clean up resources in your disposable:
 
 ```fsharp
-fun dispatch ->
-  let resource = acquireResource()
-  
-  { new IDisposable with
-    member _.Dispose() =
-      resource.Close()
-      resource.Dispose()
-  }
+let startResource (dispatch: Msg -> unit) : IDisposable =
+    let resource = acquireResource()
+
+    { new IDisposable with
+        member _.Dispose() =
+            resource.Close()
+            resource.Dispose() }
 ```
 
 ## Performance Notes
 
-- SubIds are strings - keep them stable (don't generate random IDs)
-- The diff is O(N) on subscription count - don't create hundreds
-- Disposables should be lightweight - move heavy cleanup to commands
+- SubIds are strings: keep them stable (don't generate random IDs)
+- The diff is O(N) on subscription count: don't create hundreds
+- Disposables should be lightweight: move heavy cleanup to commands
 
 ## See Also
 
-- [Input](../input.html) - Input handling
-- [Commands](commands.html) - One-time side effects
-- [Elmish runtime](elmish.html) - How the loop works
+- [Input](../input.html): Input handling
+- [Commands](commands.html): One-time side effects
+- [Elmish runtime](elmish.html): How the loop works
