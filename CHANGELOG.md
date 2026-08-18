@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-08-18
+
 ### Added
 
 - **Window management:** `GameConfig.Resizable` and `GameConfig.WindowMode` (`Windowed` / `BorderlessFullscreen` / `Fullscreen`) set the startup window, via the `GameConfig.withResizable` / `GameConfig.withWindowMode` builders. Setting `MinWidth`/`MinHeight` still enables resizing as before. Every runtime host applies the config: the raylib hosts set the window flags before `InitWindow`; the MonoGame hosts set `AllowUserResizing` / `IsFullScreen` / `HardwareModeSwitch` before the `DeviceConfig` callbacks, which can still override.
