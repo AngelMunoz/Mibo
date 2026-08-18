@@ -42,6 +42,7 @@ module Program =
   let mkProgram init update = {
     Init = init
     Update = update
+    UpdateCtx = ValueNone
     Subscribe = (fun _ctx _model -> Sub.none)
     Config = []
     Renderers = []
@@ -53,6 +54,62 @@ module Program =
     HasInputMapper = false
     ServiceRegistrations = []
   }
+
+  /// <summary>
+  /// Creates a new program whose update function also receives the GameContext.
+  /// </summary>
+  /// <remarks>
+  /// <c>init</c>, <c>Subscribe</c>, and the renderer callbacks already receive
+  /// the GameContext; this builder completes the set for <c>update</c>. The
+  /// runtime resolves services and window dimensions from it, so update code
+  /// no longer needs to capture the context from <c>init</c>.
+  /// </remarks>
+  /// <param name="init">Function that receives GameContext and returns initial (Model, Cmd)</param>
+  /// <param name="update">Function that receives the GameContext, a message, and model, returns (Model, Cmd)</param>
+  /// <example>
+  /// <code>
+  /// let init ctx = struct (initialModel, Cmd.none)
+  /// let update ctx msg model = struct (model, Cmd.none)
+  /// let program = Program.mkProgramCtx init update
+  /// </code>
+  /// </example>
+  let mkProgramCtx
+    (init: GameContext -> struct ('Model * Cmd<'Msg>))
+    (update: GameContext -> 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>))
+    : Program<'Model, 'Msg> =
+    {
+      Init = init
+      // Never called: the runtime prefers UpdateCtx. Raises instead of
+      // silently dropping messages if an internal path regresses.
+      Update =
+        (fun _ _ ->
+          invalidOp
+            "Program built with mkProgramCtx: the runtime invokes UpdateCtx.")
+      UpdateCtx = ValueSome update
+      Subscribe = (fun _ctx _model -> Sub.none)
+      Config = []
+      Renderers = []
+      Tick = ValueNone
+      FixedStep = ValueNone
+      DispatchMode = DispatchMode.Immediate
+      AssetsBasePath = ValueNone
+      HasInput = false
+      HasInputMapper = false
+      ServiceRegistrations = []
+    }
+
+  /// <summary>
+  /// Replaces the update function with a context-aware one. The runtime calls
+  /// it instead of the <c>Update</c> set by <see cref="M:Mibo.Elmish.Program.mkProgram"/>.
+  /// </summary>
+  let withUpdateCtx
+    (update: GameContext -> 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>))
+    (program: Program<'Model, 'Msg>)
+    =
+    {
+      program with
+          UpdateCtx = ValueSome update
+    }
 
   /// <summary>
   /// Configure game settings (resolution, title, framerate).

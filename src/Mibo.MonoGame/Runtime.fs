@@ -4,6 +4,7 @@ open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Input
+open Mibo.Windowing
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MiboGame: the MonoGame-backed Elmish host.
@@ -47,17 +48,22 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
   let mutable inputServiceOpt: IInput voption = ValueNone
   let mutable ctxOpt: GameContext voption = ValueNone
 
-  // ── Config: apply the cumulative GameConfig callbacks once, in the ctor,
-  // before Initialize runs (mirrors RaylibGame applying config before InitWindow).
-  do
-    let config =
-      List.fold
-        (fun c f -> f c)
-        GameConfig.defaultConfig
-        (List.rev program.Config)
+  // The cumulative GameConfig, resolved once (mirrors RaylibGame applying
+  // config before InitWindow).
+  let config =
+    List.fold
+      (fun c f -> f c)
+      GameConfig.defaultConfig
+      (List.rev program.Config)
 
+  // ── Config: apply it in the ctor, before Initialize runs.
+  do
     graphics.PreferredBackBufferWidth <- config.Width
     graphics.PreferredBackBufferHeight <- config.Height
+
+    // Resizable + presentation mode, before DeviceConfig callbacks so a game
+    // can still override.
+    MonoGameWindow.ApplyConfig(config, this, graphics)
 
     // Keep backbuffer contents across mid-frame render-target switches. The 3D
     // pipelines rebind the backbuffer after offscreen passes (shadow atlas, scene
@@ -82,6 +88,14 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
     // GraphicsProfile, vsync, fullscreen, and window policy take effect.
     for configure in List.rev mgProgram.DeviceConfig do
       configure(this, graphics)
+
+  // Constructed after the ctor's ApplyConfig, so it reads the resolved mode.
+  let windowService =
+    MonoGameWindow(
+      graphics,
+      config.MinWidth |> ValueOption.defaultValue 0,
+      config.MinHeight |> ValueOption.defaultValue 0
+    )
 
   // ── Initialize: build renderers (the MG GraphicsDevice exists by now).
   // LoadContent (below) finishes wiring and starts the loop.
@@ -110,6 +124,8 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
     // Register MonoGame handles so user init/update code can resolve them.
     MonoGameGameContext.register this ctx
 
+    GameContext.register<IWindow> windowService ctx
+
     // Register the MonoGame asset service (always, mirroring RaylibGame which
     // registers IAssets unconditionally). Built over the host's ContentManager.
     let assets = AssetsService.create this.Content
@@ -136,13 +152,8 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
 
     match ctxOpt with
     | ValueSome ctx ->
-      // Reflect window resize into the portable context dimensions.
-      let bounds = this.Window.ClientBounds
-
-      if
-        bounds.Width <> ctx.WindowWidth || bounds.Height <> ctx.WindowHeight
-      then
-        ctx.UpdateDimensions(bounds.Width, bounds.Height)
+      // Track the client area into the backbuffer and the context dims.
+      windowService.SyncBackBuffer(this, ctx)
 
       loop.TickFrame(
         gameTime.ElapsedGameTime,

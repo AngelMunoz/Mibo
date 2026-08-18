@@ -4,6 +4,7 @@ open System
 open Raylib_cs
 open Mibo.Input
 open Mibo.Elmish
+open Mibo.Windowing
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AdaptiveRaylibGame: the raylib-backed host for adaptive programs.
@@ -48,6 +49,9 @@ type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
         GameConfig.defaultConfig
         (List.rev program.Config)
 
+    // Window flags are pre-init only (raylib ignores SetConfigFlags once the
+    // window exists), so ApplyConfig runs before InitWindow.
+    RaylibWindow.ApplyConfig(config)
     Raylib.InitWindow(config.Width, config.Height, config.Title)
     Raylib.SetExitKey(KeyboardKey.Null)
     Raylib.InitAudioDevice()
@@ -59,9 +63,6 @@ type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
     | ValueSome w, ValueNone -> Raylib.SetWindowMinSize(w, config.Height)
     | ValueNone, ValueSome h -> Raylib.SetWindowMinSize(config.Width, h)
     | ValueNone, ValueNone -> ()
-
-    if config.MinWidth.IsSome || config.MinHeight.IsSome then
-      Raylib.SetWindowState(ConfigFlags.ResizableWindow)
 
     // Reverse to match add-order (the list is ::-prepended, like Config and
     // ServiceRegistrations). Without this, the last renderer added would draw
@@ -80,6 +81,7 @@ type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
       | ValueNone -> AssetsService.create()
 
     GameContext.register<IAssets> assets ctx
+    GameContext.register<IWindow> (RaylibWindow(config.WindowMode)) ctx
 
     let mutable inputServiceOpt: IInput voption = ValueNone
 

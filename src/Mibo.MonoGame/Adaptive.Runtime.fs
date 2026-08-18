@@ -5,6 +5,7 @@ open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Input
 open Mibo.Elmish
+open Mibo.Windowing
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AdaptiveMonoGameGame: the MonoGame-backed host for adaptive programs.
@@ -56,18 +57,21 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
   let mutable ctxOpt: GameContext voption = ValueNone
   let mutable runnerOpt: AdaptiveHeadless<'Frame> voption = ValueNone
 
-  // ── Config: apply the cumulative GameConfig callbacks once, in the ctor,
-  // before Initialize runs (mirrors MiboGame applying config before device
-  // creation, and RaylibGame applying config before InitWindow).
-  do
-    let config =
-      List.fold
-        (fun c f -> f c)
-        GameConfig.defaultConfig
-        (List.rev program.Config)
+  // The cumulative GameConfig, resolved once (mirrors MiboGame).
+  let config =
+    List.fold
+      (fun c f -> f c)
+      GameConfig.defaultConfig
+      (List.rev program.Config)
 
+  // ── Config: apply it in the ctor, before Initialize runs.
+  do
     graphics.PreferredBackBufferWidth <- config.Width
     graphics.PreferredBackBufferHeight <- config.Height
+
+    // Resizable + presentation mode, before DeviceConfig callbacks so a game
+    // can still override.
+    MonoGameWindow.ApplyConfig(config, this, graphics)
 
     // Keep backbuffer contents across mid-frame render-target switches (mirrors
     // MiboGame — the 3D pipelines rebind the backbuffer after offscreen passes;
@@ -90,6 +94,14 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
     // GraphicsProfile, vsync, fullscreen, and window policy take effect.
     for configure in List.rev mgProgram.DeviceConfig do
       configure(this, graphics)
+
+  // Constructed after the ctor's ApplyConfig, so it reads the resolved mode.
+  let windowService =
+    MonoGameWindow(
+      graphics,
+      config.MinWidth |> ValueOption.defaultValue 0,
+      config.MinHeight |> ValueOption.defaultValue 0
+    )
 
   // ── Initialize: build renderers (the MG GraphicsDevice exists by now).
   // LoadContent (below) finishes wiring and constructs the runner.
@@ -117,6 +129,8 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
 
     // Register MonoGame handles so user init/update code can resolve them.
     MonoGameGameContext.register this ctx
+
+    GameContext.register<IWindow> windowService ctx
 
     // Register the MonoGame asset service (always, mirroring MiboGame and
     // AdaptiveRaylibGame which register IAssets unconditionally).
@@ -150,13 +164,8 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
 
     match struct (ctxOpt, runnerOpt) with
     | ValueSome ctx, ValueSome runner ->
-      // Reflect window resize into the portable context dimensions.
-      let bounds = this.Window.ClientBounds
-
-      if
-        bounds.Width <> ctx.WindowWidth || bounds.Height <> ctx.WindowHeight
-      then
-        ctx.UpdateDimensions(bounds.Width, bounds.Height)
+      // Track the client area into the backbuffer and the context dims.
+      windowService.SyncBackBuffer(this, ctx)
 
       // The runner owns the clock: it builds the GameTime from the elapsed
       // delta and exposes runner.GameTime for the draw call.

@@ -4,6 +4,7 @@ open System
 open System.Collections.Generic
 open Raylib_cs
 open Mibo.Input
+open Mibo.Windowing
 
 /// <summary>
 /// The raylib-backed game host. Owns the window/audio lifecycle and delegates
@@ -21,6 +22,9 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
         GameConfig.defaultConfig
         (List.rev program.Config)
 
+    // Window flags are pre-init only (raylib ignores SetConfigFlags once the
+    // window exists), so ApplyConfig runs before InitWindow.
+    RaylibWindow.ApplyConfig(config)
     Raylib.InitWindow(config.Width, config.Height, config.Title)
     Raylib.SetExitKey(KeyboardKey.Null)
     Raylib.InitAudioDevice()
@@ -32,9 +36,6 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
     | ValueSome w, ValueNone -> Raylib.SetWindowMinSize(w, config.Height)
     | ValueNone, ValueSome h -> Raylib.SetWindowMinSize(config.Width, h)
     | ValueNone, ValueNone -> ()
-
-    if config.MinWidth.IsSome || config.MinHeight.IsSome then
-      Raylib.SetWindowState(ConfigFlags.ResizableWindow)
 
     // Reverse to match add-order (the list is ::-prepended, like Config).
     // Without this, the last renderer added would draw first, and earlier
@@ -50,6 +51,7 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
       | ValueNone -> AssetsService.create()
 
     GameContext.register<IAssets> assets ctx
+    GameContext.register<IWindow> (RaylibWindow(config.WindowMode)) ctx
 
     if program.HasInput then
       let inputService = Input.create []

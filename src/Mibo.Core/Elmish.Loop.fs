@@ -73,7 +73,9 @@ type internal DispatchQueue<'Msg>(mode: DispatchMode) =
 [<Struct>]
 type LoopCore<'Model, 'Msg> = {
   Init: GameContext -> struct ('Model * Cmd<'Msg>)
-  Update: 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
+  /// The update the pump invokes. Always context-taking: the program
+  /// projections adapt a context-free <c>Program.Update</c> to this shape.
+  Update: GameContext -> 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
   Subscribe: GameContext -> 'Model -> Sub<'Msg>
   Tick: (GameTime -> 'Msg) voption
   FixedStep: FixedStepConfig<'Msg> voption
@@ -229,15 +231,20 @@ type ElmishLoop<'Model, 'Msg> internal (core: LoopCore<'Model, 'Msg>) =
 
     let mutable stateChanged = false
     let mutable msg = Unchecked.defaultof<'Msg>
-    msgQueue.StartBatch()
 
-    while msgQueue.TryDequeue(&msg) do
-      let struct (newState, cmds) = core.Update msg state
-      state <- newState
-      execCmd cmds
-      stateChanged <- true
+    match ctxOpt with
+    | ValueSome ctx ->
+      msgQueue.StartBatch()
 
-    msgQueue.EndBatch()
+      while msgQueue.TryDequeue(&msg) do
+        let struct (newState, cmds) = core.Update ctx msg state
+        state <- newState
+        execCmd cmds
+        stateChanged <- true
+
+      msgQueue.EndBatch()
+    // TickFrame before Init: keep the messages queued until a context exists.
+    | ValueNone -> ()
 
     if stateChanged then
       ctxOpt |> ValueOption.iter(updateSubs)
@@ -262,7 +269,10 @@ module ElmishLoop =
   /// <summary>Projects a <see cref="T:Mibo.Elmish.Program`2"/> to a <see cref="T:Mibo.Elmish.LoopCore`2"/>.</summary>
   let coreOfProgram(program: Program<'Model, 'Msg>) : LoopCore<'Model, 'Msg> = {
     Init = program.Init
-    Update = program.Update
+    Update =
+      match program.UpdateCtx with
+      | ValueSome update -> update
+      | ValueNone -> fun _ctx msg model -> program.Update msg model
     Subscribe = program.Subscribe
     Tick = program.Tick
     FixedStep = program.FixedStep
