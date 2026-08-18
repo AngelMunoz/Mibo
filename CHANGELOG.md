@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Window management:** `GameConfig.Resizable` and `GameConfig.WindowMode` (`Windowed` / `BorderlessFullscreen` / `Fullscreen`) set the startup window, via the `GameConfig.withResizable` / `GameConfig.withWindowMode` builders. Setting `MinWidth`/`MinHeight` still enables resizing as before. Every runtime host applies the config: the raylib hosts set the window flags before `InitWindow`; the MonoGame hosts set `AllowUserResizing` / `IsFullScreen` / `HardwareModeSwitch` before the `DeviceConfig` callbacks, which can still override.
+- **Window management:** the `IWindow` service (`Mibo.Windowing`), registered by every host unconditionally (like `IAssets`) and retrieved with `Window.getService` / `Window.tryGetService`. It offers `Mode` / `IsFullscreen` queries, `SetMode`, `ToggleFullscreen` (a windowed startup toggles to borderless), and `SetSize` (windowed mode only). The context dimensions track the new size from the next frame.
+- **MVU:** `Program.mkProgramCtx`, `Program.withUpdateCtx`, and `HeadlessProgram.mkHeadlessCtx` build a program whose `Update` receives the `GameContext` — the same context `Init`, `Subscribe`, and the renderer callbacks already get. Programs built with `mkProgram` run unchanged.
+
+### Changed
+
+- **Potentially breaking:** `LoopCore.Update` now takes the `GameContext`. Only code that constructs `LoopCore` directly is affected; `Program` and `HeadlessProgram` users are not.
+
+### Fixed
+
+- **MonoGame:** the backbuffer now follows window resizes. Previously a resized window kept the startup backbuffer and showed it stretched, and `gd.Viewport` (which the 3D pipelines read for the camera aspect) disagreed with the context dimensions (which picking and HUD code read). The hosts sync the backbuffer to the client area once per frame in windowed mode; the context dimensions always track the backbuffer.
+
 ## [4.3.0] - 2026-08-16
 
 ### Added

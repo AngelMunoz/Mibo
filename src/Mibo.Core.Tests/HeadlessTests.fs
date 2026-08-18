@@ -1225,6 +1225,48 @@ let headlessRun =
         (fun () -> runner.Run(TimeSpan.Zero) |> Seq.iter ignore)
         "Should throw ArgumentException for zero interval"
 
+    testCase "mkHeadlessCtx update receives the GameContext"
+    <| fun _ ->
+      let updateCtx (ctx: GameContext) msg model =
+        match msg with
+        | Set _ -> struct ({ model with Count = ctx.WindowWidth }, Cmd.none)
+        | _ -> struct (model, Cmd.none)
+
+      use runner =
+        new HeadlessRunner<_, _>(
+          HeadlessProgram.mkHeadlessCtx init updateCtx,
+          width = 640
+        )
+
+      runner.Dispatch(Set 0)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal runner.Model.Count 640 "Update should see the runner's width"
+
+    testCase "coreOfProgram prefers UpdateCtx over Update"
+    <| fun _ ->
+      let updateCtx (ctx: GameContext) _msg model =
+        struct ({ model with Count = ctx.WindowWidth }, Cmd.none)
+
+      let core = ElmishLoop.coreOfProgram(Program.mkProgramCtx init updateCtx)
+
+      let ctx = GameContext.create(320, 200)
+
+      let struct (model, _) =
+        core.Update ctx Increment { Count = 0; LastTickTotal = None }
+
+      Expect.equal model.Count 320 "UpdateCtx should be invoked with the ctx"
+
+    testCase "coreOfProgram adapts a ctx-less Update"
+    <| fun _ ->
+      let core = ElmishLoop.coreOfProgram(Program.mkProgram init update)
+      let ctx = GameContext.create(320, 200)
+
+      let struct (model, _) =
+        core.Update ctx Increment { Count = 0; LastTickTotal = None }
+
+      Expect.equal model.Count 1 "Legacy Update should still run"
+
     testCase "RunAsync with zero interval throws ArgumentException"
     <| fun _ ->
       use runner =

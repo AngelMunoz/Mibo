@@ -19,6 +19,14 @@ type HeadlessProgram<'Model, 'Msg> = {
   Init: GameContext -> struct ('Model * Cmd<'Msg>)
   /// <summary>Handles messages and returns updated model and commands.</summary>
   Update: 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
+  /// <summary>
+  /// Optional context-aware update. When set, the runner calls this instead of
+  /// <see cref="F:Mibo.Elmish.HeadlessProgram`2.Update"/>, passing the
+  /// <see cref="T:Mibo.Elmish.GameContext"/> the runner owns.
+  /// </summary>
+  /// <remarks>Set via <see cref="M:Mibo.Elmish.HeadlessProgram.mkHeadlessCtx"/>.</remarks>
+  UpdateCtx:
+    (GameContext -> 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)) voption
   /// <summary>Returns subscriptions based on current model state.</summary>
   Subscribe: GameContext -> 'Model -> Sub<'Msg>
   /// <summary>Optional function to generate a message each frame.</summary>
@@ -51,7 +59,10 @@ module HeadlessProgram =
     : LoopCore<'Model, 'Msg> =
     {
       Init = program.Init
-      Update = program.Update
+      Update =
+        match program.UpdateCtx with
+        | ValueSome update -> update
+        | ValueNone -> fun _ctx msg model -> program.Update msg model
       Subscribe = program.Subscribe
       Tick = program.Tick
       FixedStep = program.FixedStep
@@ -68,6 +79,31 @@ module HeadlessProgram =
     {
       Init = init
       Update = update
+      UpdateCtx = ValueNone
+      Subscribe = (fun _ctx _model -> Sub.none)
+      Tick = ValueNone
+      FixedStep = ValueNone
+      DispatchMode = DispatchMode.Immediate
+      Observers = []
+    }
+
+  /// <summary>
+  /// Creates a new headless program whose update function also receives the
+  /// GameContext. Mirrors <see cref="M:Mibo.Elmish.Program.mkProgramCtx"/>.
+  /// </summary>
+  let mkHeadlessCtx
+    (init: GameContext -> struct ('Model * Cmd<'Msg>))
+    (update: GameContext -> 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>))
+    : HeadlessProgram<'Model, 'Msg> =
+    {
+      Init = init
+      // Never called: the runner prefers UpdateCtx. Raises instead of
+      // silently dropping messages if an internal path regresses.
+      Update =
+        (fun _ _ ->
+          invalidOp
+            "HeadlessProgram built with mkHeadlessCtx: the runner invokes UpdateCtx.")
+      UpdateCtx = ValueSome update
       Subscribe = (fun _ctx _model -> Sub.none)
       Tick = ValueNone
       FixedStep = ValueNone

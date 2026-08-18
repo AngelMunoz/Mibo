@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Include="GameContext.fs" />
     <Compile Include="Color.fs" />
+    <Compile Include="Window.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="InputMapper.fs" />
     <Compile Include="Animation3D.fs" />

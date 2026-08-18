@@ -1,6 +1,7 @@
 namespace Mibo.Elmish
 
 open System
+open Mibo.Windowing
 
 /// <summary>
 /// Configuration for game window and framerate settings.
@@ -25,6 +26,11 @@ type GameConfig = {
   MinWidth: int voption
   /// Minimum window height in pixels. When set, enables resizable window.
   MinHeight: int voption
+  /// Whether the user can resize the window. Default: false. Setting
+  /// <c>MinWidth</c> or <c>MinHeight</c> also enables it.
+  Resizable: bool
+  /// Window presentation mode at startup. Default: <c>Windowed</c>.
+  WindowMode: WindowMode
 }
 
 module GameConfig =
@@ -35,6 +41,8 @@ module GameConfig =
     TargetFPS = ValueNone
     MinWidth = ValueNone
     MinHeight = ValueNone
+    Resizable = false
+    WindowMode = Windowed
   }
 
   let withWidth width config = { config with Width = width }
@@ -60,6 +68,13 @@ module GameConfig =
         TargetFPS = ValueSome fps
   }
 
+  /// Allow the user to resize the window.
+  let withResizable config = { config with Resizable = true }
+
+  /// Set the window presentation mode at startup (windowed, borderless
+  /// fullscreen, or exclusive fullscreen).
+  let withWindowMode mode config = { config with WindowMode = mode }
+
 /// <summary>
 /// The Elmish program record that defines the complete game architecture.
 /// </summary>
@@ -72,6 +87,16 @@ type Program<'Model, 'Msg> = {
   Init: GameContext -> struct ('Model * Cmd<'Msg>)
   /// <summary>Handles messages and returns updated model and commands.</summary>
   Update: 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)
+  /// <summary>
+  /// Optional context-aware update. When set, the runtime calls this instead of
+  /// <see cref="F:Mibo.Elmish.Program`2.Update"/>, passing the same
+  /// <see cref="T:Mibo.Elmish.GameContext"/> that <c>Init</c>, <c>Subscribe</c>,
+  /// and the renderer callbacks already receive.
+  /// </summary>
+  /// <remarks>Set via <see cref="M:Mibo.Elmish.Program.mkProgramCtx"/> or
+  /// <see cref="M:Mibo.Elmish.Program.withUpdateCtx"/>.</remarks>
+  UpdateCtx:
+    (GameContext -> 'Msg -> 'Model -> struct ('Model * Cmd<'Msg>)) voption
   /// <summary>Returns subscriptions based on current model state.</summary>
   Subscribe: GameContext -> 'Model -> Sub<'Msg>
   /// <summary>
