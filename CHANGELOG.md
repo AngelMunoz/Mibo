@@ -15,6 +15,8 @@
 ### Fixed
 
 - **MonoGame:** the backbuffer now follows window resizes. Previously a resized window kept the startup backbuffer and showed it stretched, and `gd.Viewport` (which the 3D pipelines read for the camera aspect) disagreed with the context dimensions (which picking and HUD code read). The hosts sync the backbuffer to the client area once per frame in windowed mode; the context dimensions always track the backbuffer.
+- **MonoGame:** `MinWidth`/`MinHeight` are now enforced — MonoGame has no minimum-window-size API, so the hosts clamp the backbuffer to the minimum and the window sizes itself to match. Previously the minimum size was applied on raylib only.
+- **MonoGame:** borderless fullscreen no longer stretches the old backbuffer. Entering it pre-sizes the backbuffer to the desktop mode (the GDM does not adjust it for borderless), the per-frame sync keeps it matched to the client area, and leaving fullscreen restores the last windowed size.
 
 ## [4.3.0] - 2026-08-16
 

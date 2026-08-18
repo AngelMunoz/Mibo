@@ -16,13 +16,22 @@ open Mibo.Windowing
 // old backbuffer stretched, and gd.Viewport (which the 3D pipelines read for
 // the camera aspect) disagrees with the context dimensions (which picking and
 // HUD code read). SyncBackBuffer closes that gap once per frame.
+//
+// The fork has no minimum-window-size API, so the minimum is enforced through
+// the backbuffer: when the client area drops below it, SyncBackBuffer applies
+// the minimum as the backbuffer size, and the window's presentation-changed
+// handler sizes the client area to the backbuffer — the window snaps back.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
 /// The MonoGame <see cref="T:Mibo.Windowing.IWindow"/>: drives the host's
 /// GraphicsDeviceManager. Registered by the runtime hosts.
 /// </summary>
-type MonoGameWindow(graphics: GraphicsDeviceManager) =
+/// <param name="graphics">The host's GraphicsDeviceManager.</param>
+/// <param name="minWidth">Minimum client width in pixels; 0 means no minimum.</param>
+/// <param name="minHeight">Minimum client height in pixels; 0 means no minimum.</param>
+type MonoGameWindow
+  (graphics: GraphicsDeviceManager, minWidth: int, minHeight: int) =
   // Read back the mode ApplyConfig resolved (this is constructed after it ran).
   let mutable mode =
     if graphics.IsFullScreen then
@@ -32,6 +41,11 @@ type MonoGameWindow(graphics: GraphicsDeviceManager) =
         BorderlessFullscreen
     else
       Windowed
+
+  // The size the window returns to when leaving fullscreen. Updated by the
+  // windowed sync, so a resized window restores at its resized dimensions.
+  let mutable windowedSize =
+    graphics.PreferredBackBufferWidth, graphics.PreferredBackBufferHeight
 
   /// <summary>
   /// Translates the window-management fields of a
@@ -54,32 +68,50 @@ type MonoGameWindow(graphics: GraphicsDeviceManager) =
       graphics.IsFullScreen <- true
 
   /// <summary>
-  /// Per-frame window bookkeeping: in windowed mode, resizes the backbuffer to
-  /// the client area when it changes, then tracks the backbuffer size in the
-  /// context dimensions.
+  /// Per-frame window bookkeeping: outside exclusive fullscreen, resizes the
+  /// backbuffer when the client area changes (clamped to the minimum size),
+  /// then tracks the backbuffer size in the context dimensions.
   /// </summary>
   /// <remarks>
   /// The context tracks the BACKBUFFER, not the client area: in exclusive
   /// fullscreen the two differ, and the backbuffer is what the pipelines draw
-  /// to. In fullscreen the GraphicsDeviceManager owns the backbuffer size, so
-  /// the resize step is skipped. No-op while minimized (a zero client area is
-  /// not a valid backbuffer).
+  /// to. Exclusive fullscreen owns its backbuffer size, so the resize step is
+  /// skipped there. No-op while minimized (a zero client area is not a valid
+  /// backbuffer).
   /// </remarks>
-  static member SyncBackBuffer
-    (game: Game, graphics: GraphicsDeviceManager, ctx: GameContext)
-    =
+  member _.SyncBackBuffer(game: Game, ctx: GameContext) =
     let bounds = game.Window.ClientBounds
+    let isExclusive = graphics.IsFullScreen && graphics.HardwareModeSwitch
 
-    if not graphics.IsFullScreen && bounds.Width > 0 && bounds.Height > 0 then
+    if not isExclusive && bounds.Width > 0 && bounds.Height > 0 then
+      let targetW =
+        if graphics.IsFullScreen then
+          bounds.Width
+        else
+          max bounds.Width minWidth
+
+      let targetH =
+        if graphics.IsFullScreen then
+          bounds.Height
+        else
+          max bounds.Height minHeight
+
       let pp = game.GraphicsDevice.PresentationParameters
 
+      // The bounds check re-applies while the user holds a sub-minimum drag:
+      // the backbuffer is already clamped, but the window needs the snap-back.
       if
-        bounds.Width <> pp.BackBufferWidth
-        || bounds.Height <> pp.BackBufferHeight
+        bounds.Width <> targetW
+        || bounds.Height <> targetH
+        || pp.BackBufferWidth <> targetW
+        || pp.BackBufferHeight <> targetH
       then
-        graphics.PreferredBackBufferWidth <- bounds.Width
-        graphics.PreferredBackBufferHeight <- bounds.Height
+        graphics.PreferredBackBufferWidth <- targetW
+        graphics.PreferredBackBufferHeight <- targetH
         graphics.ApplyChanges()
+
+      if not graphics.IsFullScreen then
+        windowedSize <- targetW, targetH
 
     let pp = game.GraphicsDevice.PresentationParameters
 
@@ -96,8 +128,17 @@ type MonoGameWindow(graphics: GraphicsDeviceManager) =
     member _.SetMode target =
       if target <> mode then
         match target with
-        | Windowed -> graphics.IsFullScreen <- false
+        | Windowed ->
+          let w, h = windowedSize
+          graphics.PreferredBackBufferWidth <- w
+          graphics.PreferredBackBufferHeight <- h
+          graphics.IsFullScreen <- false
         | BorderlessFullscreen ->
+          // Pre-size the backbuffer to the desktop mode: the GDM does not
+          // adjust it for borderless, so it would stretch the old size.
+          let dm = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode
+          graphics.PreferredBackBufferWidth <- dm.Width
+          graphics.PreferredBackBufferHeight <- dm.Height
           graphics.HardwareModeSwitch <- false
           graphics.IsFullScreen <- true
         | Fullscreen ->
@@ -121,6 +162,9 @@ type MonoGameWindow(graphics: GraphicsDeviceManager) =
 
     member _.SetSize(width, height) =
       if not graphics.IsFullScreen then
-        graphics.PreferredBackBufferWidth <- width
-        graphics.PreferredBackBufferHeight <- height
+        let w = max width minWidth
+        let h = max height minHeight
+        graphics.PreferredBackBufferWidth <- w
+        graphics.PreferredBackBufferHeight <- h
         graphics.ApplyChanges()
+        windowedSize <- w, h

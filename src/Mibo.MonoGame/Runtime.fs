@@ -48,15 +48,16 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
   let mutable inputServiceOpt: IInput voption = ValueNone
   let mutable ctxOpt: GameContext voption = ValueNone
 
-  // ── Config: apply the cumulative GameConfig callbacks once, in the ctor,
-  // before Initialize runs (mirrors RaylibGame applying config before InitWindow).
-  do
-    let config =
-      List.fold
-        (fun c f -> f c)
-        GameConfig.defaultConfig
-        (List.rev program.Config)
+  // The cumulative GameConfig, resolved once (mirrors RaylibGame applying
+  // config before InitWindow).
+  let config =
+    List.fold
+      (fun c f -> f c)
+      GameConfig.defaultConfig
+      (List.rev program.Config)
 
+  // ── Config: apply it in the ctor, before Initialize runs.
+  do
     graphics.PreferredBackBufferWidth <- config.Width
     graphics.PreferredBackBufferHeight <- config.Height
 
@@ -89,7 +90,12 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
       configure(this, graphics)
 
   // Constructed after the ctor's ApplyConfig, so it reads the resolved mode.
-  let windowService = MonoGameWindow(graphics)
+  let windowService =
+    MonoGameWindow(
+      graphics,
+      config.MinWidth |> ValueOption.defaultValue 0,
+      config.MinHeight |> ValueOption.defaultValue 0
+    )
 
   // ── Initialize: build renderers (the MG GraphicsDevice exists by now).
   // LoadContent (below) finishes wiring and starts the loop.
@@ -147,7 +153,7 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
     match ctxOpt with
     | ValueSome ctx ->
       // Track the client area into the backbuffer and the context dims.
-      MonoGameWindow.SyncBackBuffer(this, graphics, ctx)
+      windowService.SyncBackBuffer(this, ctx)
 
       loop.TickFrame(
         gameTime.ElapsedGameTime,

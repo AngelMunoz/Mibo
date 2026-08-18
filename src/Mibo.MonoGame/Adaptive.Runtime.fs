@@ -57,16 +57,15 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
   let mutable ctxOpt: GameContext voption = ValueNone
   let mutable runnerOpt: AdaptiveHeadless<'Frame> voption = ValueNone
 
-  // ── Config: apply the cumulative GameConfig callbacks once, in the ctor,
-  // before Initialize runs (mirrors MiboGame applying config before device
-  // creation, and RaylibGame applying config before InitWindow).
-  do
-    let config =
-      List.fold
-        (fun c f -> f c)
-        GameConfig.defaultConfig
-        (List.rev program.Config)
+  // The cumulative GameConfig, resolved once (mirrors MiboGame).
+  let config =
+    List.fold
+      (fun c f -> f c)
+      GameConfig.defaultConfig
+      (List.rev program.Config)
 
+  // ── Config: apply it in the ctor, before Initialize runs.
+  do
     graphics.PreferredBackBufferWidth <- config.Width
     graphics.PreferredBackBufferHeight <- config.Height
 
@@ -97,7 +96,12 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
       configure(this, graphics)
 
   // Constructed after the ctor's ApplyConfig, so it reads the resolved mode.
-  let windowService = MonoGameWindow(graphics)
+  let windowService =
+    MonoGameWindow(
+      graphics,
+      config.MinWidth |> ValueOption.defaultValue 0,
+      config.MinHeight |> ValueOption.defaultValue 0
+    )
 
   // ── Initialize: build renderers (the MG GraphicsDevice exists by now).
   // LoadContent (below) finishes wiring and constructs the runner.
@@ -161,7 +165,7 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
     match struct (ctxOpt, runnerOpt) with
     | ValueSome ctx, ValueSome runner ->
       // Track the client area into the backbuffer and the context dims.
-      MonoGameWindow.SyncBackBuffer(this, graphics, ctx)
+      windowService.SyncBackBuffer(this, ctx)
 
       // The runner owns the clock: it builds the GameTime from the elapsed
       // delta and exposes runner.GameTime for the draw call.
