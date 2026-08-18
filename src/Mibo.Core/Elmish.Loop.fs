@@ -3,6 +3,7 @@ namespace Mibo.Elmish
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
+open Mibo.Diagnostics
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The shared Elmish message-processing loop.
@@ -107,6 +108,9 @@ type ElmishLoop<'Model, 'Msg> internal (core: LoopCore<'Model, 'Msg>) =
   let mutable fixedAccSeconds = 0.0f
   let mutable shouldQuit = false
 
+  // Resolved once in Init so the per frame path does no dictionary lookup.
+  let mutable profilerOpt: FrameProfiler voption = ValueNone
+
   let dispatch(msg: 'Msg) = msgQueue.Dispatch(msg)
 
   let execCmd(cmd: Cmd<'Msg>) =
@@ -178,6 +182,7 @@ type ElmishLoop<'Model, 'Msg> internal (core: LoopCore<'Model, 'Msg>) =
   /// <remarks>Call exactly once, after the host has registered backend services.</remarks>
   member _.Init(ctx: GameContext) =
     ctxOpt <- ValueSome ctx
+    profilerOpt <- GameContext.tryGetService<FrameProfiler> ctx
     let struct (initialState, initialCmds) = core.Init ctx
     state <- initialState
     execCmd initialCmds
@@ -210,11 +215,14 @@ type ElmishLoop<'Model, 'Msg> internal (core: LoopCore<'Model, 'Msg>) =
         deferredEffsRun[i].Invoke(dispatch)
 
     match core.FixedStep with
-    | ValueNone -> ()
+    | ValueNone ->
+      match profilerOpt with
+      | ValueSome profiler -> profiler.AddSimSteps(1, false)
+      | ValueNone -> ()
     | ValueSome cfg ->
       let maxFrame = cfg.MaxFrameSeconds |> ValueOption.defaultValue 0.25f
 
-      let struct (acc2, steps, _dropped) =
+      let struct (acc2, steps, dropped) =
         FixedStep.compute
           cfg.StepSeconds
           cfg.MaxStepsPerFrame
@@ -223,6 +231,10 @@ type ElmishLoop<'Model, 'Msg> internal (core: LoopCore<'Model, 'Msg>) =
           deltaSeconds
 
       fixedAccSeconds <- acc2
+
+      match profilerOpt with
+      | ValueSome profiler -> profiler.AddSimSteps(steps, dropped)
+      | ValueNone -> ()
 
       for _i = 1 to steps do
         dispatch(cfg.Map cfg.StepSeconds)

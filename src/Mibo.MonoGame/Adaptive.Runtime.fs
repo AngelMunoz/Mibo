@@ -5,6 +5,7 @@ open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
 open Mibo.Input
 open Mibo.Elmish
+open Mibo.Diagnostics
 open Mibo.Windowing
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,6 +57,10 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
   let mutable inputServiceOpt: IInput voption = ValueNone
   let mutable ctxOpt: GameContext voption = ValueNone
   let mutable runnerOpt: AdaptiveHeadless<'Frame> voption = ValueNone
+
+  // Only a profiler supplied with withProfiler is measured. LoadContent
+  // registers it; the runner resolves the same field on its first Step.
+  let profilerOpt = program.Profiler
 
   // The cumulative GameConfig, resolved once (mirrors MiboGame).
   let config =
@@ -137,6 +142,10 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
     let assets = AssetsService.create this.Content
     GameContext.register<IAssets> assets ctx
 
+    profilerOpt
+    |> ValueOption.iter(fun profiler ->
+      GameContext.register<FrameProfiler> profiler ctx)
+
     // Input is opt-in via AdaptiveProgram.withInput — mirrors MiboGame's
     // HasInput gate. The program reads the IInput service directly through
     // the context when it is enabled.
@@ -152,6 +161,7 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
       register ctx
 
     let runner = new AdaptiveHeadless<'Frame>(program, context = ctx)
+
     runnerOpt <- ValueSome runner
 
   // ── Update: poll hardware input, then advance the runner by one step.
@@ -171,6 +181,13 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
       // delta and exposes runner.GameTime for the draw call.
       runner.Step(gameTime.ElapsedGameTime) |> ignore
 
+      // The fixed step catch up flag: MonoGame raises it when the game runs
+      // behind its target step.
+      if gameTime.IsRunningSlowly then
+        (match profilerOpt with
+         | ValueSome profiler -> profiler.NoteSlowFrame()
+         | ValueNone -> ())
+
       if runner.ShouldQuit then
         this.Exit()
 
@@ -184,8 +201,39 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
 
     match struct (ctxOpt, runnerOpt) with
     | ValueSome ctx, ValueSome runner ->
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.BeginDraw()
+       | ValueNone -> ())
+
       for i = 0 to renderers.Count - 1 do
         renderers[i].Draw(ctx, runner.Frame, runner.GameTime)
+
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.EndDraw()
+       | ValueNone -> ())
+
+      // The graphics counters reset at Present, which the framework runs
+      // after Draw returns, so this read is the frame that just drew.
+      (match profilerOpt with
+       | ValueSome profiler when profiler.Enabled ->
+         let metrics = this.GraphicsDevice.Metrics
+
+         profiler.PublishGpuMetrics(
+           metrics.DrawCount,
+           metrics.PrimitiveCount,
+           metrics.TextureCount
+         )
+       | _ -> ())
+
+      // The back buffer still holds the frame here: Present runs after Draw
+      // returns.
+      (match profilerOpt with
+       | ValueSome profiler ->
+         match profiler.DrainScreenshot() with
+         | ValueSome path ->
+           MonoGameDiagnostics.captureScreenshot this.GraphicsDevice path
+         | ValueNone -> ()
+       | ValueNone -> ())
     | _ -> ()
 
   override _.Dispose(disposing) =

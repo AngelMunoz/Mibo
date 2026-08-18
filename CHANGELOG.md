@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Core:** the `Mibo.Diagnostics` namespace — `FrameStats`, `FrameProfiler`, and the `Diagnostics` module. Opt in by building a `FrameProfiler` and passing it with `Program.withProfiler` / `HeadlessProgram.withProfiler` / `AdaptiveProgram.withProfiler`; without one, nothing is registered and nothing runs. The host registers the supplied profiler in the `GameContext`, so `Diagnostics.getProfiler` / `tryGetProfiler` works from any code that holds the context, on every runtime including headless runners. `FrameProfiler.Snapshot` holds windowed frame rates, simulation step rate, update and draw cost, worst frame time, thread allocation, generation 0/1/2 collection counts, slow frame count, and, where the backend reports them, per frame GPU counters. `Diagnostics.format` turns a snapshot into two overlay lines. `FrameProfiler.Enabled` turns measurement on and off at runtime; a fresh window starts on re-enable. While off, every stamp and request does nothing. The per frame cost when on is a handful of stopwatch stamps with no allocation. Fixed step drops and the MonoGame fixed step catch up flag count as slow frames.
+- **Raylib:** screenshots. `FrameProfiler.RequestScreenshot(path)` queues a capture that the host writes as a PNG at the given path when the frame finishes drawing. Requires a profiler built with `canScreenshot = true`. The path is used as given (no working directory join).
+- **MonoGame:** screenshots on all four backends (DirectX 11, DirectX 12, OpenGL, Vulkan), queued the same way, saved as a PNG of the back buffer. Requires a profiler built with `canScreenshot = true`. `FrameStats` also carries the frame's draw call, primitive, and texture bind counts from `GraphicsDevice.Metrics`. On the OpenGL backend the capture is flipped to match the other backends.
+- **Adaptive:** `AdaptiveHeadless` accepts an optional `profiler` constructor argument that wins over the program's; when neither is set, no profiler is created.
+
 ## [4.4.0] - 2026-08-18
 
 ### Added
