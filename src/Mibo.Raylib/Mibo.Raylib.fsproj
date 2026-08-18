@@ -20,6 +20,7 @@
     <Compile Include="Assets.fs" />
     <Compile Include="Texture.fs" />
     <Compile Include="Elmish.Program.fs" />
+    <Compile Include="Diagnostics.fs" />
     <Compile Include="Elmish.Runtime.fs" />
     <Compile Include="Adaptive.Runtime.fs" />
     <Compile Include="DefaultShaders.fs" />

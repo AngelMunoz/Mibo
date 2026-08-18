@@ -5,6 +5,7 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Threading
 open System.Threading.Tasks
+open Mibo.Diagnostics
 
 /// <summary>
 /// A program configuration for running the Elmish update loop without graphics.
@@ -37,6 +38,9 @@ type HeadlessProgram<'Model, 'Msg> = {
   DispatchMode: DispatchMode
   /// <summary>Observer factories for receiving model snapshots each frame.</summary>
   Observers: (unit -> IObserver<struct (GameContext * 'Model * GameTime)>) list
+  /// <summary>Optional frame profiler. Set via <see cref="M:Mibo.Elmish.HeadlessProgram.withProfiler"/>.</summary>
+  /// <remarks>When unset, the runner measures nothing.</remarks>
+  Profiler: FrameProfiler voption
 }
 
 /// <summary>Extension functions for projecting a <see cref="T:Mibo.Elmish.HeadlessProgram`2"/> onto a <see cref="T:Mibo.Elmish.LoopCore`2"/>.</summary>
@@ -85,6 +89,7 @@ module HeadlessProgram =
       FixedStep = ValueNone
       DispatchMode = DispatchMode.Immediate
       Observers = []
+      Profiler = ValueNone
     }
 
   /// <summary>
@@ -109,6 +114,7 @@ module HeadlessProgram =
       FixedStep = ValueNone
       DispatchMode = DispatchMode.Immediate
       Observers = []
+      Profiler = ValueNone
     }
 
   /// <summary>Adds a subscription function to the program.</summary>
@@ -155,6 +161,15 @@ module HeadlessProgram =
           Observers = factory :: program.Observers
     }
 
+  /// <summary>
+  /// Supplies the frame profiler the runner registers and measures with.
+  /// </summary>
+  /// <remarks>Without it the runner measures nothing.</remarks>
+  let withProfiler profiler program : HeadlessProgram<'Model, 'Msg> = {
+    program with
+        Profiler = ValueSome profiler
+  }
+
 /// <summary>
 /// Controls execution of a headless Elmish program with explicit frame stepping.
 /// </summary>
@@ -167,6 +182,9 @@ type HeadlessRunner<'Model, 'Msg>
   (program: HeadlessProgram<'Model, 'Msg>, ?width: int, ?height: int) =
 
   let loop = ElmishLoop.create(HeadlessProgram.toLoopCore program)
+
+  // Set in the constructor do block. Resolved once so Step does no lookup.
+  let mutable profilerOpt: FrameProfiler voption = ValueNone
 
   let observers =
     ResizeArray<IObserver<struct (GameContext * 'Model * GameTime)>>()
@@ -181,6 +199,15 @@ type HeadlessRunner<'Model, 'Msg>
 
   do
     let ctx = GameContext.create(w, h)
+
+    // Registered before Init so user init code sees it. Only a profiler
+    // supplied through withProfiler runs; without one nothing is measured.
+    program.Profiler
+    |> ValueOption.iter(fun profiler ->
+      GameContext.register<FrameProfiler> profiler ctx)
+
+    profilerOpt <- program.Profiler
+
     loop.Init(ctx)
 
     // Observers are stored by prepending (see withObserver), so reverse to
@@ -225,7 +252,12 @@ type HeadlessRunner<'Model, 'Msg>
         ElapsedGameTime = elapsed
       }
 
-      loop.TickFrame(elapsed, gameTime) |> ignore
+      match profilerOpt with
+      | ValueSome profiler ->
+        profiler.BeginFrame()
+        loop.TickFrame(elapsed, gameTime) |> ignore
+        profiler.EndUpdate()
+      | ValueNone -> loop.TickFrame(elapsed, gameTime) |> ignore
 
       match loop.Context with
       | ValueSome ctx ->

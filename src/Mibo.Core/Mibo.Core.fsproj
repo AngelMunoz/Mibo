@@ -15,6 +15,7 @@
     <Compile Include="Elmish.System.fs" />
     <Compile Include="Elmish.Subscriptions.fs" />
     <Compile Include="Elmish.Rendering.fs" />
+    <Compile Include="Diagnostics.fs" />
     <Compile Include="Window.fs" />
     <Compile Include="Elmish.ProgramTypes.fs" />
     <Compile Include="Assets.fs" />

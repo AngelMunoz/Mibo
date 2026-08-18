@@ -3,6 +3,7 @@ namespace Mibo.Elmish
 open System
 open System.Collections.Generic
 open Raylib_cs
+open Mibo.Diagnostics
 open Mibo.Input
 open Mibo.Windowing
 
@@ -53,6 +54,13 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
     GameContext.register<IAssets> assets ctx
     GameContext.register<IWindow> (RaylibWindow(config.WindowMode)) ctx
 
+    // Only a profiler supplied with withProfiler is registered and measured.
+    let profilerOpt = program.Profiler
+
+    profilerOpt
+    |> ValueOption.iter(fun profiler ->
+      GameContext.register<FrameProfiler> profiler ctx)
+
     if program.HasInput then
       let inputService = Input.create []
       GameContext.register<IInput> inputService ctx
@@ -67,6 +75,10 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
     loop.Init(ctx)
 
     while not(loop.ShouldQuit || RaylibHelpers.windowShouldClose()) do
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.BeginFrame()
+       | ValueNone -> ())
+
       let dt = Raylib.GetFrameTime()
       let elapsed = TimeSpan.FromSeconds(float dt)
 
@@ -86,11 +98,32 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
       // + tick + message pump + subscription diffing).
       loop.TickFrame(elapsed, gameTime) |> ignore
 
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.EndUpdate()
+       | ValueNone -> ())
+
       Raylib.BeginDrawing()
       Raylib.ClearBackground(Color.Black)
 
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.BeginDraw()
+       | ValueNone -> ())
+
       for i = 0 to renderers.Count - 1 do
         renderers[i].Draw(ctx, loop.Model, gameTime)
+
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.EndDraw()
+       | ValueNone -> ())
+
+      // Capture after the last draw call and before the swap, so the frame is
+      // complete.
+      (match profilerOpt with
+       | ValueSome profiler ->
+         match profiler.DrainScreenshot() with
+         | ValueSome path -> RaylibDiagnostics.captureScreenshot path
+         | ValueNone -> ()
+       | ValueNone -> ())
 
       Raylib.EndDrawing()
 

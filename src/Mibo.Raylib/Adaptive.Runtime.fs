@@ -4,6 +4,7 @@ open System
 open Raylib_cs
 open Mibo.Input
 open Mibo.Elmish
+open Mibo.Diagnostics
 open Mibo.Windowing
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,6 +84,14 @@ type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
     GameContext.register<IAssets> assets ctx
     GameContext.register<IWindow> (RaylibWindow(config.WindowMode)) ctx
 
+    // Only a profiler supplied with withProfiler is registered and measured.
+    // The runner resolves the same field on its first Step.
+    let profilerOpt = program.Profiler
+
+    profilerOpt
+    |> ValueOption.iter(fun profiler ->
+      GameContext.register<FrameProfiler> profiler ctx)
+
     let mutable inputServiceOpt: IInput voption = ValueNone
 
     // Input is opt-in via AdaptiveProgram.withInput — mirrors RaylibGame's
@@ -112,13 +121,31 @@ type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
       if Raylib.IsWindowResized().AsBool() then
         ctx.UpdateDimensions(Raylib.GetScreenWidth(), Raylib.GetScreenHeight())
 
+      // Step stamps the update phase through the resolved profiler.
       runner.Step(elapsed) |> ignore
 
       Raylib.BeginDrawing()
       Raylib.ClearBackground(Color.Black)
 
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.BeginDraw()
+       | ValueNone -> ())
+
       for i = 0 to renderers.Count - 1 do
         renderers[i].Draw(ctx, runner.Frame, runner.GameTime)
+
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.EndDraw()
+       | ValueNone -> ())
+
+      // Capture after the last draw call and before the swap, so the frame is
+      // complete.
+      (match profilerOpt with
+       | ValueSome profiler ->
+         match profiler.DrainScreenshot() with
+         | ValueSome path -> RaylibDiagnostics.captureScreenshot path
+         | ValueNone -> ()
+       | ValueNone -> ())
 
       Raylib.EndDrawing()
 

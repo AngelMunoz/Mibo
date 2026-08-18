@@ -3,6 +3,7 @@ namespace Mibo.Elmish
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open Mibo.Diagnostics
 open Mibo.Input
 open Mibo.Windowing
 
@@ -47,6 +48,10 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
   let renderers = ResizeArray<IRenderer<'Model>>()
   let mutable inputServiceOpt: IInput voption = ValueNone
   let mutable ctxOpt: GameContext voption = ValueNone
+
+  // Only a profiler supplied with withProfiler is measured. LoadContent
+  // registers it.
+  let profilerOpt = program.Profiler
 
   // The cumulative GameConfig, resolved once (mirrors RaylibGame applying
   // config before InitWindow).
@@ -131,6 +136,10 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
     let assets = AssetsService.create this.Content
     GameContext.register<IAssets> assets ctx
 
+    profilerOpt
+    |> ValueOption.iter(fun profiler ->
+      GameContext.register<FrameProfiler> profiler ctx)
+
     if program.HasInput then
       let inputService = Input.create this
       GameContext.register<IInput> inputService ctx
@@ -148,6 +157,10 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
   override _.Update(gameTime: GameTime) =
     base.Update gameTime
 
+    (match profilerOpt with
+     | ValueSome profiler -> profiler.BeginFrame()
+     | ValueNone -> ())
+
     inputServiceOpt |> ValueOption.iter(fun svc -> svc.Poll())
 
     match ctxOpt with
@@ -163,6 +176,17 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
         }
       )
       |> ignore
+
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.EndUpdate()
+       | ValueNone -> ())
+
+      // The fixed step catch up flag: MonoGame raises it when the game runs
+      // behind its target step.
+      if gameTime.IsRunningSlowly then
+        (match profilerOpt with
+         | ValueSome profiler -> profiler.NoteSlowFrame()
+         | ValueNone -> ())
     | ValueNone -> ()
 
     if loop.ShouldQuit then
@@ -180,8 +204,39 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
         ElapsedGameTime = gameTime.ElapsedGameTime
       }
 
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.BeginDraw()
+       | ValueNone -> ())
+
       for i = 0 to renderers.Count - 1 do
         renderers[i].Draw(ctx, loop.Model, gameTime)
+
+      (match profilerOpt with
+       | ValueSome profiler -> profiler.EndDraw()
+       | ValueNone -> ())
+
+      // The graphics counters reset at Present, which the framework runs
+      // after Draw returns, so this read is the frame that just drew.
+      (match profilerOpt with
+       | ValueSome profiler when profiler.Enabled ->
+         let metrics = this.GraphicsDevice.Metrics
+
+         profiler.PublishGpuMetrics(
+           metrics.DrawCount,
+           metrics.PrimitiveCount,
+           metrics.TextureCount
+         )
+       | _ -> ())
+
+      // The back buffer still holds the frame here: Present runs after Draw
+      // returns.
+      (match profilerOpt with
+       | ValueSome profiler ->
+         match profiler.DrainScreenshot() with
+         | ValueSome path ->
+           MonoGameDiagnostics.captureScreenshot this.GraphicsDevice path
+         | ValueNone -> ()
+       | ValueNone -> ())
     | ValueNone -> ()
 
   override _.Dispose(disposing) =

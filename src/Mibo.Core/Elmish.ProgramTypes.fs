@@ -1,6 +1,7 @@
 namespace Mibo.Elmish
 
 open System
+open Mibo.Diagnostics
 open Mibo.Windowing
 
 /// <summary>
@@ -135,4 +136,7 @@ type Program<'Model, 'Msg> = {
   /// referencing a backend factory directly.
   /// </remarks>
   ServiceRegistrations: (GameContext -> unit) list
+  /// <summary>Optional frame profiler. Set via <see cref="M:Mibo.Elmish.Program.withProfiler"/>.</summary>
+  /// <remarks>When unset, the host measures nothing.</remarks>
+  Profiler: FrameProfiler voption
 }

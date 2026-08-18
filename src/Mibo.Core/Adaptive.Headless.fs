@@ -8,6 +8,7 @@ open System.Runtime.ExceptionServices
 open System.Threading
 open System.Threading.Tasks
 open Mibo.Elmish
+open Mibo.Diagnostics
 
 /// <summary>
 /// One step's worth of simulation produced by
@@ -62,7 +63,8 @@ type AdaptiveHeadless<'Frame>
     program: AdaptiveProgram<'Frame>,
     ?width: int,
     ?height: int,
-    ?context: GameContext
+    ?context: GameContext,
+    ?profiler: FrameProfiler
   ) =
 
   let w = defaultArg width 800
@@ -104,6 +106,9 @@ type AdaptiveHeadless<'Frame>
 
   let mutable fixedAccSeconds = 0.0f
 
+  // Set in ensureInitialized. Resolved once so StepCore does no lookup.
+  let mutable profilerOpt: FrameProfiler voption = ValueNone
+
   let mutable gameTime = {
     TotalTime = TimeSpan.Zero
     ElapsedGameTime = TimeSpan.Zero
@@ -122,6 +127,19 @@ type AdaptiveHeadless<'Frame>
   let ensureInitialized() =
     if not initialized then
       gameContext <- defaultArg context (GameContext.create(w, h))
+
+      // Registered before Init so user init code sees it. Only a supplied
+      // profiler is measured: the constructor argument wins over the program's.
+      let resolved =
+        match profiler with
+        | Some p -> ValueSome p
+        | None -> program.Profiler
+
+      resolved
+      |> ValueOption.iter(fun p ->
+        GameContext.register<FrameProfiler> p gameContext)
+
+      profilerOpt <- resolved
 
       let timeCell =
         CVal.create {
@@ -254,6 +272,8 @@ type AdaptiveHeadless<'Frame>
       // comparison boxes both operands (48 bytes/call on the frame path).
       let elapsed = if elapsed.Ticks < 0L then TimeSpan.Zero else elapsed
 
+      profilerOpt |> ValueOption.iter(fun profiler -> profiler.BeginFrame())
+
       // Frame boundary: apply cross-thread
       // posts (e.g. input-thread writes), then drain the next-frame lane —
       // explicit postNextFrame deferrals, once per Step, before the time
@@ -288,11 +308,14 @@ type AdaptiveHeadless<'Frame>
         // drain.
         intents.Drain()
 
+        profilerOpt
+        |> ValueOption.iter(fun profiler -> profiler.AddSimSteps(1, false))
+
       | ValueSome cfg ->
         let maxFrame = cfg.MaxFrameSeconds |> ValueOption.defaultValue 0.25f
         let deltaSeconds = float32 elapsed.TotalSeconds
 
-        let struct (acc2, steps, _dropped) =
+        let struct (acc2, steps, dropped) =
           FixedStep.compute
             cfg.StepSeconds
             cfg.MaxStepsPerFrame
@@ -301,6 +324,10 @@ type AdaptiveHeadless<'Frame>
             deltaSeconds
 
         fixedAccSeconds <- acc2
+
+        profilerOpt
+        |> ValueOption.iter(fun profiler ->
+          profiler.AddSimSteps(steps, dropped))
 
         let stepElapsed = TimeSpan.FromSeconds(float cfg.StepSeconds)
 
@@ -320,6 +347,8 @@ type AdaptiveHeadless<'Frame>
       // Force phase: recompute the frame's projections
       // exactly once (not at all if none of their dependencies moved) and pack
       // the struct.
+      profilerOpt |> ValueOption.iter(fun profiler -> profiler.EndUpdate())
+
       frame <- frameBuilder()
       frame
 

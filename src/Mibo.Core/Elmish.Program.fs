@@ -1,6 +1,7 @@
 namespace Mibo.Elmish
 
 open System
+open Mibo.Diagnostics
 open Mibo.Input
 
 /// <summary>
@@ -53,6 +54,7 @@ module Program =
     HasInput = false
     HasInputMapper = false
     ServiceRegistrations = []
+    Profiler = ValueNone
   }
 
   /// <summary>
@@ -96,6 +98,7 @@ module Program =
       HasInput = false
       HasInputMapper = false
       ServiceRegistrations = []
+      Profiler = ValueNone
     }
 
   /// <summary>
@@ -156,6 +159,19 @@ module Program =
       program with
           Renderers = factory :: program.Renderers
     }
+
+  /// <summary>
+  /// Supplies the frame profiler the host registers and measures with.
+  /// </summary>
+  /// <remarks>
+  /// Without it the host measures nothing. The profiler itself decides the
+  /// measurement window and whether screenshots are possible; its
+  /// <c>Enabled</c> property turns measurement on and off at runtime.
+  /// </remarks>
+  let withProfiler (profiler: FrameProfiler) (program: Program<'Model, 'Msg>) = {
+    program with
+        Profiler = ValueSome profiler
+  }
 
   /// <summary>
   /// Adds a per-frame tick message to the program.

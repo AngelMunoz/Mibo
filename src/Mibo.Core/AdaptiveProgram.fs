@@ -4,6 +4,7 @@ open System
 open System.Collections.Concurrent
 open System.Threading.Tasks
 open Mibo.Elmish
+open Mibo.Diagnostics
 
 /// <summary>
 /// The intent queue of an adaptive program: the single place to post
@@ -617,6 +618,10 @@ type AdaptiveProgram<'Frame> = {
   /// <see cref="M:Mibo.Adaptive.AdaptiveProgram.withInput"/>.
   /// </summary>
   HasInput: bool
+
+  /// <summary>Optional frame profiler. Set via <see cref="M:Mibo.Adaptive.AdaptiveProgram.withProfiler"/>.</summary>
+  /// <remarks>When unset, the host measures nothing.</remarks>
+  Profiler: FrameProfiler voption
 }
 
 /// <summary>Functions for creating and configuring adaptive programs.</summary>
@@ -663,6 +668,7 @@ module AdaptiveProgram =
       AssetsBasePath = ValueNone
       FixedStep = ValueNone
       HasInput = false
+      Profiler = ValueNone
     }
 
   /// <summary>Sets the per-frame phase of the program.</summary>
@@ -711,6 +717,23 @@ module AdaptiveProgram =
     {
       program with
           Renderers = factory :: program.Renderers
+    }
+
+  /// <summary>
+  /// Supplies the frame profiler the host registers and measures with.
+  /// </summary>
+  /// <remarks>
+  /// Without it the host measures nothing. The profiler itself decides the
+  /// measurement window and whether screenshots are possible; its
+  /// <c>Enabled</c> property turns measurement on and off at runtime.
+  /// </remarks>
+  let inline withProfiler
+    (profiler: FrameProfiler)
+    (program: AdaptiveProgram<'Frame>)
+    : AdaptiveProgram<'Frame> =
+    {
+      program with
+          Profiler = ValueSome profiler
     }
 
   /// <summary>
