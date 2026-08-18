@@ -101,7 +101,7 @@ Mibo is built on top of:
 - [MonoGame](https://github.com/MonoGame/MonoGame) — the cross-platform framework that powers the MonoGame backend (DesktopGL/OpenGL and WindowsDX/DirectX)
 - [AdaptiveSlop](https://github.com/TheAngryByrd/AdaptiveSlop) — the pull-based incremental computation library by [TheAngryByrd](https://github.com/TheAngryByrd) that Mibo.Adaptive was adopted from
 
-> **Mibo.Adaptive originated from [AdaptiveSlop](https://github.com/TheAngryByrd/AdaptiveSlop)** — adopted in its entirety, renamed, and maintained as part of Mibo. All design and implementation credit goes to [TheAngryByrd](https://github.com/TheAngryByrd).
+> **Mibo.Adaptive originated from [AdaptiveSlop](https://github.com/TheAngryByrd/AdaptiveSlop)** — adopted in its entirety, renamed, and maintained as part of Mibo.
 
 ## Feedback
 
