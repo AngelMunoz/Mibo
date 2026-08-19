@@ -24,8 +24,11 @@ open Mibo.Diagnostics
 /// owner thread. The post drain runs until empty — work posted during the
 /// drain runs in the same drain, in post order, mirroring MVU's
 /// <c>DispatchMode.Immediate</c> semantics; work that posts more work is the
-/// user's responsibility, exactly as message cycles are in MVU. The
-/// pre-step lane holds subscription events and drains once per <c>Step</c>
+/// user's responsibility, exactly as message cycles are in MVU. The first
+/// post drain is the startup drain: it runs right after <c>Init</c> returns,
+/// before the first frame is forced, so work <c>Init</c> posted through its
+/// context lands before the first frame. The pre-step lane holds
+/// subscription events and drains once per <c>Step</c>
 /// at the boundary, before <c>Update</c>; the next-frame lane also drains
 /// once per <c>Step</c> at the boundary, never per sub-step.
 /// Allocation: one queue node per posted work item — acceptable on the cold
@@ -40,7 +43,9 @@ type IntentQueue() =
   /// Defers <c>work</c> to the next post drain: it runs on the owner thread
   /// after the next <c>Update</c> (after each sub-step's <c>Update</c> under
   /// fixed-step), in post order, drained until empty, before the frame is
-  /// forced. Cross-system reactions, foreign-thread posts, and async
+  /// forced. From <c>Init</c>, the next post drain is the startup drain: it
+  /// runs right after <c>Init</c> returns, before the first frame is forced.
+  /// Cross-system reactions, foreign-thread posts, and async
   /// completions go here. Safe to call from any thread; the work itself must
   /// only run owner-thread legal writes (plain <c>Set</c> calls). The
   /// adaptive counterpart of <c>Cmd.ofMsg</c>.
@@ -166,13 +171,21 @@ type IntentQueue() =
 /// the <see cref="T:Mibo.Elmish.GameContext"/> holding the window dimensions
 /// and the registered services. The program reads these cells and derives
 /// its projections from them like any other root; only <c>ExitRequested</c>
-/// is written by the program. The context deliberately does NOT expose the
-/// intent queue: the frame builder and init/projection construction must not
-/// be able to defer work. Only the <c>Update</c> phase can reach the queue,
-/// via <see cref="T:Mibo.Adaptive.AdaptiveContext"/>.
+/// is written by the program. The intent queue is exposed for the
+/// <c>Init</c> function: work posted there runs at the startup drain, right
+/// after <c>Init</c> returns and before the first frame is forced, so the
+/// first frame includes its effects. The subscription projection also
+/// receives this context and must not post: it runs once per step, and work
+/// posted there would run at the next step's boundary, a step late.
 /// </remarks>
 type AdaptiveFrameContext
-  internal (ctx: GameContext, time: cval<GameTime>, exitRequested: cval<bool>) =
+  internal
+  (
+    ctx: GameContext,
+    time: cval<GameTime>,
+    exitRequested: cval<bool>,
+    intents: IntentQueue
+  ) =
   /// <summary>The framework-owned time root. The runner writes it at the start of every <see cref="M:Mibo.Adaptive.AdaptiveHeadless`1.Step"/> (once per fixed sub-step); projections may depend on it (animation, physics, timers).</summary>
   member _.Time = time
 
@@ -194,6 +207,21 @@ type AdaptiveFrameContext
   /// <summary>Current window height in pixels. Default: 600.</summary>
   member _.WindowHeight = ctx.WindowHeight
 
+  /// <summary>
+  /// The intent queue: the single place to post <c>unit -> unit</c> work.
+  /// From <c>Init</c>, the moments are:
+  /// <see cref="M:Mibo.Adaptive.IntentQueue.post"/> runs at the startup drain,
+  /// right after <c>Init</c> returns and before the first frame is forced, so
+  /// the first frame includes its effects;
+  /// <see cref="M:Mibo.Adaptive.IntentQueue.postNextFrame"/> runs at the first
+  /// step's boundary, before the first <c>Update</c>; and
+  /// <see cref="M:Mibo.Adaptive.IntentQueue.postTask"/> / <c>postAsync</c>
+  /// start their background work at the startup drain, with the completion
+  /// running at a later post drain. The adaptive counterpart of the <c>Cmd</c>
+  /// returned from the MVU <c>init</c> function.
+  /// </summary>
+  member _.Intents = intents
+
 /// <summary>
 /// The <c>Update</c>-phase context: everything on
 /// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> plus the framework-owned
@@ -203,11 +231,12 @@ type AdaptiveFrameContext
 /// or as background work whose completion returns via <c>post</c>).
 /// </summary>
 /// <remarks>
-/// The queue is reachable only here, where posting is legal: <c>Update</c>
-/// reacts to what it read and defers work; the frame builder and projection
-/// construction see only
-/// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/>, so the force phase
-/// cannot enqueue work — the design makes it impossible, no runtime checks.
+/// The queue is reachable from both phases that defer work: <c>Init</c>
+/// through <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> (work runs at
+/// the startup drain, before the first frame is forced), and <c>Update</c>
+/// through this context (work runs at the post drain, after this step's
+/// <c>Update</c>). The frame builder must not post: it runs after the post
+/// drain, so posted work would run a step late.
 /// </remarks>
 type AdaptiveContext
   internal (frameCtx: AdaptiveFrameContext, intents: IntentQueue) =
@@ -539,12 +568,15 @@ type AdaptiveFixedStepConfig = {
 /// post work.
 /// </para>
 /// <para>
-/// The two contexts are split by phase: <c>Init</c> — and the subscription
-/// projection it returns — receive the queue-less
-/// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> (roots and services
-/// only), while <c>Update</c> receives the full
-/// <see cref="T:Mibo.Adaptive.AdaptiveContext"/> with the intent queue — so
-/// the force phase cannot enqueue work.
+/// Both contexts expose the intent queue: <c>Init</c> receives
+/// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> and posts through its
+/// <c>Intents</c> member (work runs at the startup drain, before the first
+/// frame is forced), and <c>Update</c> receives
+/// <see cref="T:Mibo.Adaptive.AdaptiveContext"/> with the same surface. The
+/// subscription projection receives
+/// <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> as well and must not
+/// post: it runs once per step. The frame builder must not post either: it
+/// runs after the post drain.
 /// </para>
 /// <para>
 /// The <c>Init</c>/<c>Update</c>/<c>Observers</c> slots
@@ -571,9 +603,12 @@ type AdaptiveFixedStepConfig = {
 type AdaptiveProgram<'Frame> = {
   /// <summary>
   /// Builds the graph (roots and projections) and registers handlers.
-  /// Receives the queue-less <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/>:
-  /// graph building must not reach the intent queue. Returns the
-  /// <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/> — the frame builder plus the
+  /// Receives the <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/>, whose
+  /// <c>Intents</c> member defers work to the startup drain: posted work runs
+  /// right after <c>Init</c> returns, before the first frame is forced, and
+  /// <c>postNextFrame</c> / <c>postTask</c> / <c>postAsync</c> land at their
+  /// documented moments. Returns the
+  /// <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/>: the frame builder plus the
   /// disposables released when the runner is disposed.
   /// </summary>
   Init: AdaptiveFrameContext -> AdaptiveInit<'Frame>
@@ -652,7 +687,7 @@ module AdaptiveProgram =
   /// update function is the per-frame imperative phase that reads projections
   /// and writes roots.
   /// </remarks>
-  /// <param name="init">Builds the graph and returns the <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/>. Receives the queue-less <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/> — no deferred work.</param>
+  /// <param name="init">Builds the graph and returns the <see cref="T:Mibo.Adaptive.AdaptiveInit`1"/>. Receives the <see cref="T:Mibo.Adaptive.AdaptiveFrameContext"/>; work posted through its <c>Intents</c> member runs at the startup drain, before the first frame is forced.</param>
   /// <param name="update">Per-frame phase: reads projections, writes roots, posts intents. Receives the full <see cref="T:Mibo.Adaptive.AdaptiveContext"/>.</param>
   let inline mkProgram
     ([<InlineIfLambda>] init: AdaptiveFrameContext -> AdaptiveInit<'Frame>)
