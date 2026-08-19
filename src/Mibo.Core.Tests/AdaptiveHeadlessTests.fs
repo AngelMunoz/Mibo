@@ -906,26 +906,42 @@ let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
           (fun _ctx _gameTime -> ())
 
       use runner = new AdaptiveHeadless<int>(program)
+      use cts = new CancellationTokenSource()
 
-      // The starter runs at the startup drain, so the async is already
-      // awaiting the unfinished task: the first frame cannot contain the
-      // completion, and nothing hangs the step.
-      let first = runner.Step(TimeSpan.FromMilliseconds(16))
-      Expect.equal first 0 "The completion cannot land before the task finishes"
+      // The first frame is 0 because the task is unfinished at the startup
+      // drain; the completion (thread pool) writes 42 at a later post drain.
+      // Use RunAsync so the loop yields to the thread pool between steps —
+      // a synchronous spin loop can starve the continuation on constrained CI.
+      let mutable seenFirst = false
+      let mutable seenCompletion = false
 
-      // Completing the task posts the completion back; it reaches a later
-      // step's post drain. The step bound keeps the test from hanging if
-      // the completion never lands.
-      started.SetResult(42)
+      let work = asyncEx {
+        let! token = Async.CancellationToken
 
-      let mutable frame = 0
-      let mutable steps = 0
+        for outcome in runner.RunAsync(TimeSpan.FromMilliseconds(16), token) do
+          if not seenFirst then
+            Expect.equal
+              outcome.Frame
+              0
+              "The completion cannot land before the task finishes"
 
-      while frame <> 42 && steps < 10_000 do
-        frame <- runner.Step(TimeSpan.FromMilliseconds(16))
-        steps <- steps + 1
+            seenFirst <- true
+            started.SetResult(42)
 
-      Expect.equal frame 42 "The completion should reach a later drain"
+          if outcome.Frame = 42 then
+            seenCompletion <- true
+            cts.Cancel()
+      }
+
+      cts.CancelAfter 10_000
+
+      try
+        Async.RunSynchronously(work, cancellationToken = cts.Token)
+      with :? OperationCanceledException ->
+        ()
+
+      Expect.isTrue seenFirst "Should have seen the initial frame"
+      Expect.isTrue seenCompletion "The completion should reach a later drain"
 
     testCase
       "Posted intent runs in the same step, after Update and before the force"
