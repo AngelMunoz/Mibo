@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-08-18
+
 ### Added
 
 - **Core:** the `Mibo.Diagnostics` namespace — `FrameStats`, `FrameProfiler`, and the `Diagnostics` module. Opt in by building a `FrameProfiler` and passing it with `Program.withProfiler` / `HeadlessProgram.withProfiler` / `AdaptiveProgram.withProfiler`; without one, nothing is registered and nothing runs. The host registers the supplied profiler in the `GameContext`, so `Diagnostics.getProfiler` / `tryGetProfiler` works from any code that holds the context, on every runtime including headless runners. `FrameProfiler.Snapshot` holds windowed frame rates, simulation step rate, update and draw cost, worst frame time, thread allocation, generation 0/1/2 collection counts, slow frame count, and, where the backend reports them, per frame GPU counters. `Diagnostics.format` turns a snapshot into two overlay lines. `FrameProfiler.Enabled` turns measurement on and off at runtime; a fresh window starts on re-enable. While off, every stamp and request does nothing. The per frame cost when on is a handful of stopwatch stamps with no allocation. Fixed step drops and the MonoGame fixed step catch up flag count as slow frames.
