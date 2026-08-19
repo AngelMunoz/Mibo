@@ -9,7 +9,7 @@ index: 3
 
 Sometimes your update function needs to say "do this, but not right now". Not because the work is slow, but because *now* is the wrong moment: you're in the middle of looping over a collection, or the work belongs to the next frame, or it belongs on another thread entirely.
 
-That is what the intent queue is for. During update you queue work; the framework runs it at the moment the method name says.
+That is what the intent queue is for. During update you queue work; the framework runs it at the moment the method name says. `init` receives the same queue through its context, so startup setup can defer work too.
 
 ```fsharp
 let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
@@ -32,6 +32,8 @@ let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
 | `ctx.Intents.postAsync` | same, for `Async<'T>` work |
 
 Work queued with `post` runs **in the order you posted it** and finishes before the frame is forced, so the renderer sees the fully-reacted world, never half of one. `postNextFrame` work lands on the next step; `postTask`/`postAsync` completions land like a `post` once the work is done.
+
+From `init`, the same four calls work, and their moments line up with the `Cmd` the MVU `init` returns. `post` runs at the startup drain, right after `init` returns and before the first frame is forced, so the first frame already includes its effects. `postNextFrame` runs at the first step's boundary, before the first update. `postTask`/`postAsync` start their work at the startup drain and run the completion at a later post drain. The one rule: `init`'s context is also the subscription projection's context, and the projection must not post — it runs once per step, and its work would land a step late.
 
 ## When to use which
 

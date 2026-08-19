@@ -772,6 +772,162 @@ let adaptiveHeadlessTests =
 let adaptiveHeadlessDeferredWorkAndSubscriptionsTests =
   testList "AdaptiveHeadless deferred work and subscriptions" [
     testCase
+      "Intent posted during Init runs at the startup drain, before the first Update"
+    <| fun _ ->
+      let value = CVal.create 0
+      let trace = ResizeArray<string>()
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun ctx ->
+            ctx.Intents.post(fun () ->
+              trace.Add "post"
+              value.Set 7)
+
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+          (fun _ctx _gameTime -> trace.Add "update")
+
+      use runner = new AdaptiveHeadless<int>(program)
+      let frame = runner.Step(TimeSpan.FromMilliseconds(16))
+
+      Expect.equal
+        (List.ofSeq trace)
+        [ "post"; "update" ]
+        "An Init-posted intent should drain at startup, before the first Update"
+
+      Expect.equal
+        frame
+        7
+        "The first forced frame should include the Init-posted write"
+
+    testCase
+      "A chain posted during Init drains until empty at the startup drain"
+    <| fun _ ->
+      let value = CVal.create 0
+      let trace = ResizeArray<string>()
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun ctx ->
+            ctx.Intents.post(fun () ->
+              trace.Add "a"
+              value.Set 1
+
+              ctx.Intents.post(fun () ->
+                trace.Add "b"
+                value.Set 2))
+
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+          (fun _ctx _gameTime -> trace.Add "update")
+
+      use runner = new AdaptiveHeadless<int>(program)
+      let frame = runner.Step(TimeSpan.FromMilliseconds(16))
+
+      Expect.equal
+        (List.ofSeq trace)
+        [ "a"; "b"; "update" ]
+        "The startup drain should run until empty, before the first Update"
+
+      Expect.equal frame 2 "The first force should see the chain's final write"
+
+    testCase
+      "postNextFrame posted during Init runs at the first step's boundary, before Update"
+    <| fun _ ->
+      let value = CVal.create 0
+      let trace = ResizeArray<string>()
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun ctx ->
+            ctx.Intents.postNextFrame(fun () ->
+              trace.Add "next-step"
+              value.Set 9)
+
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+          (fun _ctx _gameTime -> trace.Add "update")
+
+      use runner = new AdaptiveHeadless<int>(program)
+
+      // The initial predicate check sees the first force, built before the
+      // first step's boundary drain, so the deferral is not there yet. The
+      // next check sees it, after one step.
+      let met =
+        runner.StepUntil((fun f -> f = 9), TimeSpan.FromMilliseconds(16))
+
+      Expect.isTrue met "The predicate should be met after one step"
+
+      Expect.equal
+        (List.ofSeq trace)
+        [ "next-step"; "update" ]
+        "The deferral should run at the first boundary, before Update"
+
+      Expect.equal runner.Frame 9 "The write should reach the force"
+
+    testCase "Intents posted during Init run exactly once"
+    <| fun _ ->
+      let value = CVal.create 0
+      let mutable count = 0
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun ctx ->
+            ctx.Intents.post(fun () ->
+              count <- count + 1
+              value.Set count)
+
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+          (fun _ctx _gameTime -> ())
+
+      use runner = new AdaptiveHeadless<int>(program)
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+      runner.Step(TimeSpan.FromMilliseconds(16)) |> ignore
+
+      Expect.equal count 1 "The startup drain should run once, not per step"
+
+    testCase
+      "postTask started during Init: starter at the startup drain, completion at a later drain"
+    <| fun _ ->
+      let mutable root = Unchecked.defaultof<cval<int>>
+      let started = TaskCompletionSource<int>()
+
+      let program =
+        AdaptiveProgram.mkProgram
+          (fun ctx ->
+            let value = CVal.create 0
+            root <- value
+
+            ctx.Intents.postTask(
+              (fun () -> started.Task),
+              (fun v -> root.Set v),
+              (fun _ -> ())
+            )
+
+            AdaptiveInit.ofFrameBuilder(fun () -> AVal.getValue value))
+          (fun _ctx _gameTime -> ())
+
+      use runner = new AdaptiveHeadless<int>(program)
+
+      // The starter runs at the startup drain, so the async is already
+      // awaiting the unfinished task: the first frame cannot contain the
+      // completion, and nothing hangs the step.
+      let first = runner.Step(TimeSpan.FromMilliseconds(16))
+      Expect.equal first 0 "The completion cannot land before the task finishes"
+
+      // Completing the task posts the completion back; it reaches a later
+      // step's post drain. The step bound keeps the test from hanging if
+      // the completion never lands.
+      started.SetResult(42)
+
+      let mutable frame = 0
+      let mutable steps = 0
+
+      while frame <> 42 && steps < 10_000 do
+        frame <- runner.Step(TimeSpan.FromMilliseconds(16))
+        steps <- steps + 1
+
+      Expect.equal frame 42 "The completion should reach a later drain"
+
+    testCase
       "Posted intent runs in the same step, after Update and before the force"
     <| fun _ ->
       let value = CVal.create 0

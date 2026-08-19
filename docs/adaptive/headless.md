@@ -11,7 +11,7 @@ An adaptive program doesn't need a window. `AdaptiveHeadless` runs the exact sam
 
 ## Stepping a game by hand
 
-Create the runner from your program, then step it. Each `Step` runs one full pass of the loop: posted work drains, update runs, queued intents drain, the frame is forced.
+Create the runner from your program, then step it. Each `Step` runs one full pass of the loop: posted work drains, update runs, queued intents drain, the frame is forced. Before the first step, the runner drains the queue once at startup: work your `init` posted through its context runs then, before the first frame is forced.
 
 ```fsharp
 open Mibo.Adaptive
@@ -27,7 +27,7 @@ runner.Step(oneFrame) |> ignore
 let frame = runner.Frame
 ```
 
-`runner.Post(work)` queues work from the test thread, the same thing `ctx.Intents.post` does from inside update. That is how a test plays the game: post the inputs, step, look at the frame.
+`runner.Post(work)` queues work from the test thread, the same thing `ctx.Intents.post` does from inside update. Posted before the first step, it runs at the startup drain instead of after an update. That is how a test plays the game: post the inputs, step, look at the frame.
 
 ```fsharp
 let unpause () = world.Paused.Set false

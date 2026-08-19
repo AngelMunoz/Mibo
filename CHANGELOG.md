@@ -8,6 +8,7 @@
 - **Raylib:** screenshots. `FrameProfiler.RequestScreenshot(path)` queues a capture that the host writes as a PNG at the given path when the frame finishes drawing. Requires a profiler built with `canScreenshot = true`. The path is used as given (no working directory join).
 - **MonoGame:** screenshots on all four backends (DirectX 11, DirectX 12, OpenGL, Vulkan), queued the same way, saved as a PNG of the back buffer. Requires a profiler built with `canScreenshot = true`. `FrameStats` also carries the frame's draw call, primitive, and texture bind counts from `GraphicsDevice.Metrics`. On the OpenGL backend the capture is flipped to match the other backends.
 - **Adaptive:** `AdaptiveHeadless` accepts an optional `profiler` constructor argument that wins over the program's; when neither is set, no profiler is created.
+- **Adaptive:** `Init` can defer work — `AdaptiveFrameContext` now exposes the intent queue (`ctx.Intents`) alongside `Update`'s `AdaptiveContext`. Work `Init` posts with `post` runs at the startup drain, right after `Init` returns and before the first frame is forced, so the first frame includes its effects; `postNextFrame` lands at the first step's boundary, before the first update; `postTask`/`postAsync` start at the startup drain and complete at a later post drain. This is the adaptive counterpart of the `Cmd` the MVU `init` returns. The subscription projection receives the same context and must not post: it runs once per step, so its work would land a step late.
 
 ## [4.4.0] - 2026-08-18
 

@@ -123,6 +123,8 @@ Every step, in order:
 
 You don't write this loop. The part that matters for your code: update always runs before the projection is forced, so the renderer never sees a half-updated world.
 
+Before the first step, the runner drains the intent queue once at startup: work `init` posted through its context (`ctx.Intents.post`, `postNextFrame`, `postTask`, `postAsync`) runs right after `init` returns and before the first frame is forced, so the first frame includes its effects. That is the adaptive counterpart of the `Cmd` the MVU `init` returns — startup setup can react like any other phase.
+
 The runner writes the game time into `ctx.Time` every step, so you can read `dt` from it. If you want animations to pause when the game does, keep a clock of your own on the world instead (write it in update unless paused, read it in the projection); the projection then stays a plain state-to-frame mapping.
 
 ## Reading state in the projection
@@ -156,4 +158,4 @@ let runner = AdaptiveHeadless(program)
 - Input, timers, and network events, registered in `init`: [Subscriptions](subscriptions.html).
 - Splitting the game into features once `update` grows: [Systems](systems.html).
 - Sharing audio, save data, and other services: [Services](services.html).
-- Setup that must run before the first frame (connect a socket, warm a cache) goes in `init`: it receives the context, so framework services like the asset cache are already available.
+- Setup that must run before the first frame (connect a socket, warm a cache) goes in `init`: it receives the context, so framework services like the asset cache are already available, and work it defers through `ctx.Intents` runs at the startup drain, before the first frame is forced (see [Intents](intents.html)).

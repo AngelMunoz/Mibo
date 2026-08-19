@@ -47,6 +47,12 @@ type StepOutcome<'Frame> = {
 /// returned frame: reads are O(1) until the next write.
 /// </para>
 /// <para>
+/// Before the first step, the runner drains the intent queue once at startup,
+/// right after <c>Init</c> returns and before the first frame is forced: work
+/// <c>Init</c> posted through its context runs before the first frame, like
+/// the <c>Cmd</c> returned from the MVU <c>init</c> function.
+/// </para>
+/// <para>
 /// The adaptive graph is confined to the thread that creates it: no locks,
 /// allocation-free steady state. The runner
 /// creates the graph lazily on the first user — the thread that first calls
@@ -149,9 +155,9 @@ type AdaptiveHeadless<'Frame>
 
       exitCell <- CVal.create false
 
-      // Init and the subscription projection get the queue-less frame
-      // context; only Update gets the full context with the intent queue.
-      frameCtx <- AdaptiveFrameContext(gameContext, timeCell, exitCell)
+      // Init and the subscription projection share the frame context; the
+      // intent queue is on it so Init can defer work to the startup drain.
+      frameCtx <- AdaptiveFrameContext(gameContext, timeCell, exitCell, intents)
 
       ctx <- AdaptiveContext(frameCtx, intents)
 
@@ -159,6 +165,12 @@ type AdaptiveHeadless<'Frame>
       frameBuilder <- init.FrameBuilder
       subscriptions <- init.Subscriptions
       disposables.AddRange init.Disposables
+
+      // Startup drain: work Init posted through its context runs here, before
+      // the first frame is forced, so the first frame includes its effects.
+      // postNextFrame work drains at the first step's boundary; postTask and
+      // postAsync completions land at a later post drain.
+      intents.Drain()
 
       // Force the first frame so Frame is never default after initialization.
       frame <- frameBuilder()
@@ -434,9 +446,12 @@ type AdaptiveHeadless<'Frame>
 
   /// <summary>
   /// Thread-safe external injection: posts work to the post lane, where it
-  /// runs on the owner thread at the next post drain — after the next step's
-  /// <c>Update</c> (after each sub-step's <c>Update</c> under fixed-step), in
-  /// post order, drained until empty, before the frame is forced. A
+  /// runs on the owner thread at the next post drain, in post order, drained
+  /// until empty, before the frame is forced. For work posted after
+  /// initialization, that drain follows the next step's <c>Update</c> (after
+  /// each sub-step's <c>Update</c> under fixed-step); for work posted before
+  /// the first step, it is the startup drain, right after <c>Init</c> and
+  /// before the first frame is forced. A
   /// convenience for foreign code (tests, network callbacks, AI drivers) that
   /// holds the runner but not the Update context: the same as
   /// <see cref="M:Mibo.Adaptive.IntentQueue.post"/>.
