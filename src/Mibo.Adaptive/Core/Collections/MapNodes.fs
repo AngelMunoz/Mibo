@@ -66,7 +66,7 @@ type MapMapNode<'K, 'V, 'U when 'K: equality>
 
       this.Register()
       Collections.loadMap mapping snapshot &state
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   interface IMapDeltaSink<'K, 'V> with
@@ -91,7 +91,7 @@ type MapMapNode<'K, 'V, 'U when 'K: equality>
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         if not state.Journal.IsEmpty then
           Collections.drainMapPush mapping &state
@@ -159,7 +159,7 @@ type FilterMapNode<'K, 'V when 'K: equality>
 
       this.Register()
       Collections.loadMap mapOpt snapshot &state
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   interface IMapDeltaSink<'K, 'V> with
@@ -184,7 +184,7 @@ type FilterMapNode<'K, 'V when 'K: equality>
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         if not state.Journal.IsEmpty then
           Collections.drainMapPush mapOpt &state
@@ -315,8 +315,8 @@ type Choose2MapNode<'K, 'V1, 'V2, 'V3 when 'K: equality>
 
       this.Register()
       Collections.loadChoose2 mapping leftSnapshot rightSnapshot &state
-      state.DepVersions[0] <- left.Version
-      state.DepVersions[1] <- right.Version
+      state.DepVersions[0] <- Collections.committedVersion left
+      state.DepVersions[1] <- Collections.committedVersion right
       initialized <- true
 
   interface IAdaptiveMap<'K, 'V3> with
@@ -337,7 +337,7 @@ type Choose2MapNode<'K, 'V1, 'V2, 'V3 when 'K: equality>
             else
               right.GetValue() |> ignore
 
-            state.DepVersions[j] <- deps[j].Version
+            state.DepVersions[j] <- Collections.committedVersion deps[j]
 
         if not state.JournalL.IsEmpty || not state.JournalR.IsEmpty then
           Collections.drainChoose2Push mapping &state
@@ -447,7 +447,7 @@ type SetToMapNode<'K, 'V, 'T when 'K: equality and 'T: equality>
         let (k, v) = toEntry item
         state.Data[k] <- v
 
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   interface ISetDeltaSink<'T> with
@@ -470,7 +470,7 @@ type SetToMapNode<'K, 'V, 'T when 'K: equality and 'T: equality>
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         if not state.Journal.IsEmpty then
           let ctx2 = GraphContext.Default
@@ -662,7 +662,7 @@ type SetToMapKeepAllNode<'K, 'V, 'T when 'K: equality and 'T: equality>
           fresh.Add v |> ignore
           state.Data[k] <- fresh
 
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   interface ISetDeltaSink<'T> with
@@ -685,7 +685,7 @@ type SetToMapKeepAllNode<'K, 'V, 'T when 'K: equality and 'T: equality>
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         if not state.Journal.IsEmpty then
           let ctx2 = GraphContext.Default
@@ -891,7 +891,7 @@ type MapToSetNode<'K, 'V, 'T when 'K: equality and 'T: equality>
         let struct (out2, _) = Collections.refAdd state.Out t
         state.Out <- out2
 
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   interface IMapDeltaSink<'K, 'V> with
@@ -916,7 +916,7 @@ type MapToSetNode<'K, 'V, 'T when 'K: equality and 'T: equality>
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         if not state.Journal.IsEmpty then
           let ctx2 = GraphContext.Default
@@ -1070,7 +1070,7 @@ type OfAvalMapNode<'K, 'V, 'S when 'K: equality and 'S :> seq<'K * 'V>>
 
       Collections.rebuildMapDiff next &state |> ignore
       state.Out.Clear()
-      state.DepVersions[0] <- value.Version
+      state.DepVersions[0] <- Collections.committedVersion value
       initialized <- true
 
   /// Re-read the value when it changed and emit the diff. Called from
@@ -1093,7 +1093,7 @@ type OfAvalMapNode<'K, 'V, 'S when 'K: equality and 'S :> seq<'K * 'V>>
         Collections.pushAndBumpMap GraphContext.Current state.Out &state.Sinks
         state.Out.Clear()
 
-      state.DepVersions[0] <- value.Version
+      state.DepVersions[0] <- Collections.committedVersion value
 
   interface IAdaptiveMap<'K, 'V> with
     member this.GetValue() =
@@ -1242,7 +1242,7 @@ type BindMapNode<'K, 'V, 'T when 'K: equality>
     | _ -> ()
 
     hasInner <- true
-    innerVersion <- inner.Version
+    innerVersion <- Collections.committedVersion inner
 
   member private this.SwapTo(next: 'T) =
     // Eager edge removal (Pitfall 1): the old inner must not deliver after
@@ -1260,7 +1260,7 @@ type BindMapNode<'K, 'V, 'T when 'K: equality>
       current <- value.GetValue()
       inner <- mapping current
       this.LoadInner()
-      state.DepVersions[0] <- value.Version
+      state.DepVersions[0] <- Collections.committedVersion value
       initialized <- true
 
   interface IMapDeltaSink<'K, 'V> with
@@ -1285,14 +1285,14 @@ type BindMapNode<'K, 'V, 'T when 'K: equality>
 
         if value.Version <> state.DepVersions[0] then
           let next = value.GetValue()
-          state.DepVersions[0] <- value.Version
+          state.DepVersions[0] <- Collections.committedVersion value
 
           if not(EqualityComparer<'T>.Default.Equals(current, next)) then
             this.SwapTo(next)
 
         if inner.Version <> innerVersion then
           inner.GetValue() |> ignore
-          innerVersion <- inner.Version
+          innerVersion <- Collections.committedVersion inner
 
         if not state.Journal.IsEmpty then
           Collections.drainBindMapPush &state
@@ -1366,7 +1366,7 @@ type AListToMapNode<'K, 'V when 'K: equality>(source: IAdaptiveList<'K * 'V>) =
         mirror.Add kv
         output[fst kv] <- snd kv
 
-      depVersion <- source.Version
+      depVersion <- Collections.committedVersion source
       initialized <- true
 
   member private this.Drain() =
@@ -1438,7 +1438,7 @@ type AListToMapNode<'K, 'V when 'K: equality>(source: IAdaptiveList<'K * 'V>) =
 
         if source.Version <> depVersion then
           source.GetValue() |> ignore
-          depVersion <- source.Version
+          depVersion <- Collections.committedVersion source
 
         if not journal.IsEmpty then
           this.Drain()
@@ -1562,7 +1562,7 @@ type MapUseMapNode<'K, 'V, 'W
         mapped[k] <- w
         state.Data[k] <- w
 
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   member private this.Drain() =
@@ -1615,7 +1615,7 @@ type MapUseMapNode<'K, 'V, 'W
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         if not state.Journal.IsEmpty then
           this.Drain()
@@ -1710,7 +1710,7 @@ type MapLookupNode<'K, 'V when 'K: equality>
     if not(EqualityComparer<'V voption>.Default.Equals(before, value)) then
       version <- version + 1L
 
-    depVersion <- source.Version
+    depVersion <- Collections.committedVersion source
 
   interface IAdaptiveValue<'V voption> with
     member this.GetValue() =
@@ -1804,7 +1804,7 @@ type MapCountNode<'K, 'V, 'Out when 'K: equality>
       out <- nextOut
       version <- version + 1L
 
-    depVersion <- source.Version
+    depVersion <- Collections.committedVersion source
 
   interface IAdaptiveValue<'Out> with
     member this.GetValue() =
@@ -2041,7 +2041,7 @@ type GroupByMapNode<'K, 'V, 'G when 'K: equality and 'G: equality>
         let kvp = e.Current
         this.ApplySet(kvp.Key, kvp.Value)
 
-      depVersion <- source.Version
+      depVersion <- Collections.committedVersion source
       initialized <- true
 
   /// Apply the source journal: route every entry into its group's child.
@@ -2151,7 +2151,7 @@ type GroupByMapNode<'K, 'V, 'G when 'K: equality and 'G: equality>
 
         if source.Version <> depVersion then
           source.GetValue() |> ignore
-          depVersion <- source.Version
+          depVersion <- Collections.committedVersion source
 
         this.Process()
         AdaptiveRuntime.addDependency (this :> IAdaptiveObject) version

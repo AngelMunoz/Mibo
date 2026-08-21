@@ -19,6 +19,13 @@ type IAdaptiveObject =
   /// <summary>Gets the current version number. Increases when the value changes.</summary>
   abstract member Version: int64
 
+/// Internal: implemented by nodes whose public <c>Version</c> inflates
+/// while dirty (the dirty indicator, "version + 1"). Dependency snapshots
+/// record <c>CommittedVersion</c> instead: capturing an inflated reading
+/// makes later version comparisons equal and skips real upstream changes.
+type internal ICommittedVersion =
+  abstract member CommittedVersion: int64
+
 /// <summary>
 /// An adaptive value that automatically tracks dependencies and recomputes when inputs change.
 /// </summary>
@@ -688,6 +695,9 @@ type AdaptiveNode<'T>([<InlineIfLambda>] compute: unit -> 'T) =
       finally
         AdaptiveRuntime.exitEvaluation ctx
 
+  interface ICommittedVersion with
+    member this.CommittedVersion = version
+
 // Round-trips the node through System.Text.Json as its bare value (see
 // ChangeableConverterFactory).
 [<JsonConverter(typeof<ChangeableConverterFactory>)>]
@@ -899,6 +909,9 @@ type MapNNode<'T, 'U>
       finally
         AdaptiveRuntime.exitEvaluation ctx
 
+  interface ICommittedVersion with
+    member this.CommittedVersion = version
+
 /// <summary>
 /// Specialized adaptive node that reduces N dependencies using a binary operation.
 /// Optimized for aggregation patterns like sum, product, min, max.
@@ -1007,6 +1020,9 @@ type ReduceNode<'T>
         if this.IsDirty() then version + 1L else version
       finally
         AdaptiveRuntime.exitEvaluation ctx
+
+  interface ICommittedVersion with
+    member this.CommittedVersion = version
 
 /// <summary>An abbreviation for <see cref="ChangeableValue&lt;'T&gt;"/> (FDA <c>cval&lt;'T&gt;</c> parity).</summary>
 type cval<'T> = ChangeableValue<'T>

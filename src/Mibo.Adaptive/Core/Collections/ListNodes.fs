@@ -114,7 +114,7 @@ type FilterMapListNode<'T, 'U>
       let snapshot = ResizeArray<'T>(source.GetValue())
       this.Register()
       this.Load(snapshot)
-      depVersion <- source.Version
+      depVersion <- Collections.committedVersion source
       initialized <- true
 
   member private this.Drain() =
@@ -251,7 +251,7 @@ type FilterMapListNode<'T, 'U>
 
         if source.Version <> depVersion then
           source.GetValue() |> ignore
-          depVersion <- source.Version
+          depVersion <- Collections.committedVersion source
 
         if not journal.IsEmpty then
           this.Drain()
@@ -369,8 +369,8 @@ type AppendListNode<'T>(left: IAdaptiveList<'T>, right: IAdaptiveList<'T>) =
       let rs = ResizeArray<'T>(right.GetValue())
       this.Register()
       this.Load(ls, rs)
-      leftVersion <- left.Version
-      rightVersion <- right.Version
+      leftVersion <- Collections.committedVersion left
+      rightVersion <- Collections.committedVersion right
       initialized <- true
 
   member private this.Drain() =
@@ -441,11 +441,11 @@ type AppendListNode<'T>(left: IAdaptiveList<'T>, right: IAdaptiveList<'T>) =
 
         if left.Version <> leftVersion then
           left.GetValue() |> ignore
-          leftVersion <- left.Version
+          leftVersion <- Collections.committedVersion left
 
         if right.Version <> rightVersion then
           right.GetValue() |> ignore
-          rightVersion <- right.Version
+          rightVersion <- Collections.committedVersion right
 
         if journalCount > 0 then
           this.Drain()
@@ -590,7 +590,7 @@ type ToSetListNode<'T when 'T: equality>(source: IAdaptiveList<'T>) =
           refs[v] <- 1
           output.Add v |> ignore
 
-      depVersion <- source.Version
+      depVersion <- Collections.committedVersion source
       initialized <- true
 
   member private this.Drain() =
@@ -670,7 +670,7 @@ type ToSetListNode<'T when 'T: equality>(source: IAdaptiveList<'T>) =
 
         if source.Version <> depVersion then
           source.GetValue() |> ignore
-          depVersion <- source.Version
+          depVersion <- Collections.committedVersion source
 
         if not journal.IsEmpty then
           this.Drain()
@@ -797,8 +797,8 @@ type BindListNode<'T, 'U>
       if
         value.Version <> lastValueVersion || inner.Version <> lastInnerVersion
       then
-        lastValueVersion <- value.Version
-        lastInnerVersion <- inner.Version
+        lastValueVersion <- Collections.committedVersion value
+        lastInnerVersion <- Collections.committedVersion inner
         let next = ResizeArray<'U>(innerView)
 
         if Collections.rebuildListDiff next data &out then
@@ -860,7 +860,7 @@ type ConcatListNode<'T>(sources: IAdaptiveList<'T>[]) =
         let _ = s.GetValue()
 
         if s.Version <> depVersions[i] then
-          depVersions[i] <- s.Version
+          depVersions[i] <- Collections.committedVersion s
           moved <- true
 
       if moved then
@@ -1065,9 +1065,9 @@ type SubListNode<'T>
         || offset.Version <> lastOffsetVersion
         || count.Version <> lastCountVersion
       then
-        lastSourceVersion <- source.Version
-        lastOffsetVersion <- offset.Version
-        lastCountVersion <- count.Version
+        lastSourceVersion <- Collections.committedVersion source
+        lastOffsetVersion <- Collections.committedVersion offset
+        lastCountVersion <- Collections.committedVersion count
         let start = min o view.Count
         let n = min c (view.Count - start)
         let next = ResizeArray<'T>(n)
@@ -1240,7 +1240,7 @@ type MapUseListNode<'T, 'W when 'W: equality and 'W :> IDisposable>
         output.Add(mapping i snapshot[i])
 
       inputCount <- snapshot.Count
-      depVersion <- source.Version
+      depVersion <- Collections.committedVersion source
       initialized <- true
 
   member private this.Drain() =
@@ -1308,7 +1308,7 @@ type MapUseListNode<'T, 'W when 'W: equality and 'W :> IDisposable>
 
         if source.Version <> depVersion then
           source.GetValue() |> ignore
-          depVersion <- source.Version
+          depVersion <- Collections.committedVersion source
 
         if not journal.IsEmpty then
           this.Drain()
@@ -1393,7 +1393,7 @@ type ListLookupNode<'T>(source: IAdaptiveList<'T>, index: int) =
     if not(EqualityComparer<'T voption>.Default.Equals(before, value)) then
       version <- version + 1L
 
-    depVersion <- source.Version
+    depVersion <- Collections.committedVersion source
 
   interface IAdaptiveValue<'T voption> with
     member this.GetValue() =
@@ -1485,7 +1485,7 @@ type ListLastNode<'T>(source: IAdaptiveList<'T>) =
     if not(EqualityComparer<'T voption>.Default.Equals(before, value)) then
       version <- version + 1L
 
-    depVersion <- source.Version
+    depVersion <- Collections.committedVersion source
 
   interface IAdaptiveValue<'T voption> with
     member this.GetValue() =
@@ -1563,7 +1563,7 @@ type ListCountNode<'T, 'Out>
       out <- nextOut
       version <- version + 1L
 
-    depVersion <- source.Version
+    depVersion <- Collections.committedVersion source
 
   interface IAdaptiveValue<'Out> with
     member this.GetValue() =

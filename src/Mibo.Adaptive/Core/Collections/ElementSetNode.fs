@@ -73,7 +73,7 @@ type ElementSetNode<'T, 'U when 'T: equality and 'U: equality>
 
         cache[item] <- entry
 
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   /// Apply the source journal with cache maintenance: removed elements drop
@@ -272,6 +272,9 @@ type ElementSetNode<'T, 'U when 'T: equality and 'U: equality>
     // recorded a phantom version and missed the next change.
     lastDrainWriteGen <- GraphContext.Default.WriteGeneration
 
+  interface ICommittedVersion with
+    member this.CommittedVersion = state.Version
+
   interface ISetDeltaSink<'T> with
     member this.OnDeltas(adds: 'T[], addCnt: int, rems: 'T[], remCnt: int) =
       if not disposed then
@@ -292,7 +295,7 @@ type ElementSetNode<'T, 'U when 'T: equality and 'U: equality>
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         this.Process()
         AdaptiveRuntime.addDependency (this :> IAdaptiveObject) state.Version

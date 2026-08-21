@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Derived maps could serve stale output indefinitely after certain read and write orders: when the first read of a chain happened while an upstream key was absent, dependency snapshots recorded a dirty-indicator version, so every later read compared equal and skipped real upstream changes. Snapshots now record settled versions, so chained `AMap.joinOn` stages, tail consumers (`tryFind`, `fold`, reductions), and derived-over-derived chains propagate removals and updates on the next read.
+
 ## [1.0.0] - 2026-08-11
 
 ### Added

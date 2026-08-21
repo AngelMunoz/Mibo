@@ -607,6 +607,14 @@ type TwoSetOp =
 
 module internal Collections =
 
+  /// The settled counter of a dependency: its committed version when it
+  /// implements <see cref="T:Mibo.Adaptive.ICommittedVersion"/>, its plain
+  /// Version otherwise (plain sources never inflate).
+  let committedVersion(dep: IAdaptiveObject) : int64 =
+    match dep with
+    | :? ICommittedVersion as cv -> cv.CommittedVersion
+    | _ -> dep.Version
+
   /// Grow an array to hold at least n items. Amortized O(1); array growth only.
   let ensureCapacity (arr: 'T[] byref) (n: int) =
     if arr.Length < n then
