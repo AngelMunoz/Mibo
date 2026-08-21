@@ -682,7 +682,7 @@ type CollectSetNode<'T, 'U when 'T: equality and 'U: equality>
         | :? ISetSinkRegistry as r -> r.AddSetSink(entry.Sink)
         | _ -> ()
 
-        entry.Version <- inner.Version
+        entry.Version <- Collections.committedVersion inner
         state.Inner[x] <- entry
 
       state.DepVersions[0] <- Collections.committedVersion source
@@ -745,11 +745,11 @@ type CollectSetNode<'T, 'U when 'T: equality and 'U: equality>
             let mutable e2 = Unchecked.defaultof<Collections.CollectEntry<'U>>
 
             if state.Inner.TryGetValue(x, &e2) then
-              e2.Version <- entry.Node.Version
+              e2.Version <- Collections.committedVersion entry.Node
               state.Inner[x] <- e2
               entry <- e2
             else
-              entry.Version <- entry.Node.Version
+              entry.Version <- Collections.committedVersion entry.Node
 
           if not hasPending && not entry.Journal.IsEmpty then
             hasPending <- true
@@ -1125,7 +1125,7 @@ type SetContainsNode<'T when 'T: equality>
     if present <> before then
       version <- version + 1L
 
-    depVersion <- source.Version
+    depVersion <- Collections.committedVersion source
 
   interface IAdaptiveValue<bool> with
     member this.GetValue() =
@@ -1213,7 +1213,7 @@ type SetCountNode<'T, 'Out when 'T: equality>
       out <- nextOut
       version <- version + 1L
 
-    depVersion <- source.Version
+    depVersion <- Collections.committedVersion source
 
   interface IAdaptiveValue<'Out> with
     member this.GetValue() =

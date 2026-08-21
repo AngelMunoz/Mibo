@@ -719,7 +719,7 @@ type SetToListNode<'T when 'T: equality>(source: IAdaptiveSet<'T>) =
       let v = source.GetValue()
 
       if source.Version <> depVersion then
-        depVersion <- source.Version
+        depVersion <- Collections.committedVersion source
         let next = ResizeArray<'T>(v)
 
         if Collections.rebuildListDiff next data &out then
@@ -927,7 +927,7 @@ type OfAvalListNode<'T, 'S when 'S :> seq<'T>>(value: IAdaptiveValue<'S>) =
       let v = value.GetValue()
 
       if value.Version <> depVersion then
-        depVersion <- value.Version
+        depVersion <- Collections.committedVersion value
         let next = ResizeArray<'T>(v)
 
         if Collections.rebuildListDiff next data &out then
@@ -1138,7 +1138,7 @@ type SortListNode<'T, 'K>
       let view = source.GetValue()
 
       if source.Version <> depVersion then
-        depVersion <- source.Version
+        depVersion <- Collections.committedVersion source
         let n = view.Count
         let keys = Array.zeroCreate n
         let next = ResizeArray<'T>(n)

@@ -5143,3 +5143,192 @@ let ``AMap joinOn tail consumers track a cascading right side under core churn``
           expFold
 
   Check.One(scenarioConfig, prop)
+
+// =============================================================================
+// Issue #113 follow-up: forced-scenario coverage for the remaining snapshot
+// families (collect entries, set contains/count resyncs, list tails, ofAVal).
+// Each test drives one lazy scalar (`total`) through a groupBy -> mapA(fold)
+// chain so that the dependency under test ends its drain dirty; reads go
+// through the top consumer only, and the first read happens before any core
+// exists (the trigger).
+// =============================================================================
+
+[<Fact>]
+let ``ASet collect tracks cascading inner sets under core churn``() =
+  let cores: cmap<int, int> = CMap.empty
+
+  let total: aval<int> =
+    let bySlot = cores |> AMap.groupBy(fun _ v -> v % 3)
+
+    let sums =
+      bySlot |> AMap.mapA(fun _ g -> g |> AMap.fold (fun acc _ v -> acc + v) 0)
+
+    sums |> AMap.fold (fun acc _ v -> acc + v) 0
+
+  let buckets = CSet.ofSeq [ 1; 2 ]
+
+  let innerFor x =
+    ASet.ofSeq [ x ] |> ASet.mapA(fun v -> AVal.map (fun t -> v * 10 + t) total)
+
+  let merged = ASet.collect innerFor (CSet.value buckets)
+
+  // Model: sum of (10 * bucket + total) over the fixed buckets.
+  let expected() =
+    (10 * 1 + 10 * 2) + 2 * AVal.getValue total
+
+  let apply(op: ChainCoreOp) =
+    match op with
+    | CoreUpsert(k, v) -> CMap.addOrUpdate k v cores |> ignore
+    | CoreRemove k -> CMap.remove k cores |> ignore
+
+  for op in
+    [ CoreUpsert(1, 5); CoreRemove(1); CoreUpsert(2, 7); CoreUpsert(1, 2) ] do
+    apply op
+
+    let actual = merged |> ASet.fold (fun acc v -> acc + v) 0 |> AVal.getValue
+
+    if actual <> expected() then
+      failwithf
+        "mismatch after %A: actual=%A expected=%A"
+        op
+        actual
+        (expected())
+
+[<Fact>]
+let ``ASet contains and count track a filtered cascading source under core churn``
+  ()
+  =
+  let cores: cmap<int, int> = CMap.empty
+
+  let total: aval<int> =
+    let bySlot = cores |> AMap.groupBy(fun _ v -> v % 3)
+
+    let sums =
+      bySlot |> AMap.mapA(fun _ g -> g |> AMap.fold (fun acc _ v -> acc + v) 0)
+
+    sums |> AMap.fold (fun acc _ v -> acc + v) 0
+
+  let baseSet = CSet.ofSeq [ 0..4 ]
+
+  let filtered =
+    CSet.value baseSet
+    |> ASet.filterA(fun x -> AVal.map (fun t -> (x + t) % 2 = 0) total)
+
+  let has3 = ASet.contains 3 filtered
+  let cnt = ASet.count filtered
+
+  let expectedCount() =
+    let t = AVal.getValue total
+    [ 0..4 ] |> List.filter(fun x -> (x + t) % 2 = 0) |> List.length
+
+  let expectedHas3() = (3 + AVal.getValue total) % 2 = 0
+
+  let apply(op: ChainCoreOp) =
+    match op with
+    | CoreUpsert(k, v) -> CMap.addOrUpdate k v cores |> ignore
+    | CoreRemove k -> CMap.remove k cores |> ignore
+
+  for op in
+    [ CoreUpsert(1, 5); CoreUpsert(2, 7); CoreRemove(1); CoreUpsert(3, 6) ] do
+    apply op
+
+    if AVal.getValue cnt <> expectedCount() then
+      failwithf
+        "count mismatch after %A: actual=%A expected=%A"
+        op
+        (AVal.getValue cnt)
+        (expectedCount())
+
+    if AVal.getValue has3 <> expectedHas3() then
+      failwithf
+        "contains mismatch after %A: actual=%A expected=%A"
+        op
+        (AVal.getValue has3)
+        (expectedHas3())
+
+[<Fact>]
+let ``AList tails track cascading element values under core churn``() =
+  let cores: cmap<int, int> = CMap.empty
+
+  let total: aval<int> =
+    let bySlot = cores |> AMap.groupBy(fun _ v -> v % 3)
+
+    let sums =
+      bySlot |> AMap.mapA(fun _ g -> g |> AMap.fold (fun acc _ v -> acc + v) 0)
+
+    sums |> AMap.fold (fun acc _ v -> acc + v) 0
+
+  let cl = CList.ofSeq [ 10; 20; 30 ]
+
+  let lst =
+    CList.value cl |> AList.mapA(fun v -> AVal.map (fun t -> v + t) total)
+
+  let srt = AList.sort lst
+
+  let expected() =
+    let t = AVal.getValue total
+    [ 10; 20; 30 ] |> List.sum |> (+)(3 * t)
+
+  let apply(op: ChainCoreOp) =
+    match op with
+    | CoreUpsert(k, v) -> CMap.addOrUpdate k v cores |> ignore
+    | CoreRemove k -> CMap.remove k cores |> ignore
+
+  for op in [ CoreUpsert(1, 5); CoreRemove(1); CoreUpsert(2, 7) ] do
+    apply op
+
+    let sumLst = lst |> AList.fold (fun acc v -> acc + v) 0 |> AVal.getValue
+    let sumSrt = srt |> AList.fold (fun acc v -> acc + v) 0 |> AVal.getValue
+
+    if sumLst <> expected() then
+      failwithf
+        "list fold mismatch after %A: actual=%A expected=%A"
+        op
+        sumLst
+        (expected())
+
+    if sumSrt <> expected() then
+      failwithf
+        "sorted list fold mismatch after %A: actual=%A expected=%A"
+        op
+        sumSrt
+        (expected())
+
+[<Fact>]
+let ``AList ofAVal tracks scalar-driven list changes under core churn``() =
+  let cores: cmap<int, int> = CMap.empty
+
+  let total: aval<int> =
+    let bySlot = cores |> AMap.groupBy(fun _ v -> v % 3)
+
+    let sums =
+      bySlot |> AMap.mapA(fun _ g -> g |> AMap.fold (fun acc _ v -> acc + v) 0)
+
+    sums |> AMap.fold (fun acc _ v -> acc + v) 0
+
+  let alst = AList.ofAVal(total |> AVal.map(fun t -> [ 10 + t; 20 + t ]))
+
+  let expected() =
+    let t = AVal.getValue total
+    (10 + t) + (20 + t)
+
+  let apply(op: ChainCoreOp) =
+    match op with
+    | CoreUpsert(k, v) -> CMap.addOrUpdate k v cores |> ignore
+    | CoreRemove k -> CMap.remove k cores |> ignore
+
+  for op in [ CoreUpsert(1, 5); CoreRemove(1); CoreUpsert(2, 7); CoreRemove(2) ] do
+    apply op
+
+    let cnt = AList.count alst |> AVal.getValue
+    let sum = alst |> AList.fold (fun acc v -> acc + v) 0 |> AVal.getValue
+
+    if cnt <> 2 then
+      failwithf "count mismatch after %A: actual=%i" op cnt
+
+    if sum <> expected() then
+      failwithf
+        "sum mismatch after %A: actual=%A expected=%A"
+        op
+        sum
+        (expected())

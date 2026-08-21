@@ -2503,7 +2503,7 @@ module internal Collections =
           | :? ISetSinkRegistry as r -> r.AddSetSink(entry.Sink)
           | _ -> ()
 
-          entry.Version <- inner.Version
+          entry.Version <- committedVersion inner
           s.Inner[x] <- entry
 
         i <- i + 1
