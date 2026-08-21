@@ -114,7 +114,7 @@ type ElementListNode<'T, 'U>
       let snapshot = ResizeArray<'T>(source.GetValue())
       this.Register()
       this.Load(snapshot)
-      depVersion <- source.Version
+      depVersion <- Collections.committedVersion source
       initialized <- true
 
   /// Apply the source journal with cache maintenance: inserts/updates run
@@ -377,7 +377,7 @@ type ElementListNode<'T, 'U>
 
         if source.Version <> depVersion then
           source.GetValue() |> ignore
-          depVersion <- source.Version
+          depVersion <- Collections.committedVersion source
 
         this.Process()
         AdaptiveRuntime.addDependency (this :> IAdaptiveObject) version

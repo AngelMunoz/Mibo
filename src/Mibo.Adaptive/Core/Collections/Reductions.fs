@@ -365,12 +365,12 @@ type SetReduceNode<'a, 'b, 's, 'v when 'a: equality>
 
           red <- acc
           value <- reduction.view red
-          depVersions[0] <- source.Version
+          depVersions[0] <- Collections.committedVersion source
           initialized <- true
 
         if source.Version <> depVersions[0] then
           source.GetValue() |> ignore
-          depVersions[0] <- source.Version
+          depVersions[0] <- Collections.committedVersion source
 
         if not journal.IsEmpty then
           this.Drain()
@@ -437,7 +437,7 @@ type ListReduceNode<'a, 'b, 's, 'v>
     if not initialized then
       this.Register()
       this.Rebuild()
-      depVersion <- source.Version
+      depVersion <- Collections.committedVersion source
       initialized <- true
 
   /// Full recompute from the current view, rebuilding the mirror. Consumes
@@ -554,7 +554,7 @@ type ListReduceNode<'a, 'b, 's, 'v>
 
         if source.Version <> depVersion then
           source.GetValue() |> ignore
-          depVersion <- source.Version
+          depVersion <- Collections.committedVersion source
 
         if not journal.IsEmpty then
           this.Drain()
@@ -775,12 +775,12 @@ type MapReduceNode<'k, 'a, 'b, 's, 'v when 'k: equality>
 
           red <- acc
           value <- reduction.view red
-          depVersions[0] <- source.Version
+          depVersions[0] <- Collections.committedVersion source
           initialized <- true
 
         if source.Version <> depVersions[0] then
           source.GetValue() |> ignore
-          depVersions[0] <- source.Version
+          depVersions[0] <- Collections.committedVersion source
 
         if not journal.IsEmpty then
           this.Drain()

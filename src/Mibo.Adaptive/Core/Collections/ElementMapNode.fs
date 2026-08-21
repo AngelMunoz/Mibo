@@ -66,7 +66,7 @@ type ElementMapNode<'K, 'V, 'U when 'K: equality>
 
         cache[k] <- entry
 
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   /// Apply the source journal with cache maintenance: removed keys drop
@@ -243,6 +243,9 @@ type ElementMapNode<'K, 'V, 'U when 'K: equality>
     // recorded a phantom version and missed the next change.
     lastDrainWriteGen <- GraphContext.Default.WriteGeneration
 
+  interface ICommittedVersion with
+    member this.CommittedVersion = state.Version
+
   interface IMapDeltaSink<'K, 'V> with
     member this.OnDeltas
       (
@@ -275,7 +278,7 @@ type ElementMapNode<'K, 'V, 'U when 'K: equality>
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         this.Process()
         AdaptiveRuntime.addDependency (this :> IAdaptiveObject) state.Version
@@ -428,7 +431,7 @@ type JoinMapNode<'K1, 'V1, 'K2, 'V2, 'U when 'K1: equality and 'K2: equality>
 
         cache[kvp.Key] <- entry
 
-      state.DepVersions[0] <- left.Version
+      state.DepVersions[0] <- Collections.committedVersion left
       initialized <- true
 
   /// Apply the source journal with cache maintenance: removed keys drop
@@ -642,6 +645,9 @@ type JoinMapNode<'K1, 'V1, 'K2, 'V2, 'U when 'K1: equality and 'K2: equality>
     // Capture AFTER the push (see ElementMapNode.Process).
     lastDrainWriteGen <- GraphContext.Default.WriteGeneration
 
+  interface ICommittedVersion with
+    member this.CommittedVersion = state.Version
+
   interface IMapDeltaSink<'K1, 'V1> with
     member this.OnDeltas
       (
@@ -674,7 +680,7 @@ type JoinMapNode<'K1, 'V1, 'K2, 'V2, 'U when 'K1: equality and 'K2: equality>
 
         if left.Version <> state.DepVersions[0] then
           left.GetValue() |> ignore
-          state.DepVersions[0] <- left.Version
+          state.DepVersions[0] <- Collections.committedVersion left
 
         this.Process()
         AdaptiveRuntime.addDependency (this :> IAdaptiveObject) state.Version

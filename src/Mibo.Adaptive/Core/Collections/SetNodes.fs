@@ -70,7 +70,7 @@ type MapSetNode<'T, 'U when 'T: equality and 'U: equality>
       let snapshot = HashSet<'T>(source.GetValue())
       this.Register()
       Collections.loadRefSet mapping snapshot &state
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   interface ISetDeltaSink<'T> with
@@ -93,7 +93,7 @@ type MapSetNode<'T, 'U when 'T: equality and 'U: equality>
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         if not state.Journal.IsEmpty then
           Collections.drainSetPush mapping &state
@@ -152,7 +152,7 @@ type FilterSetNode<'T when 'T: equality>
       let snapshot = HashSet<'T>(source.GetValue())
       this.Register()
       Collections.loadPlainSet mapOpt snapshot &state
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   interface ISetDeltaSink<'T> with
@@ -175,7 +175,7 @@ type FilterSetNode<'T when 'T: equality>
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         if not state.Journal.IsEmpty then
           Collections.drainPlainSetPush mapOpt &state
@@ -235,8 +235,8 @@ type UnionSetNode<'T when 'T: equality>
       this.RegisterSide right
       Collections.loadRefSet Id.identityV leftSnapshot &state
       Collections.loadRefSet Id.identityV rightSnapshot &state
-      state.DepVersions[0] <- left.Version
-      state.DepVersions[1] <- right.Version
+      state.DepVersions[0] <- Collections.committedVersion left
+      state.DepVersions[1] <- Collections.committedVersion right
       initialized <- true
 
   interface ISetDeltaSink<'T> with
@@ -260,7 +260,7 @@ type UnionSetNode<'T when 'T: equality>
         for j in 0..1 do
           if deps[j].Version <> state.DepVersions[j] then
             deps[j].GetValue() |> ignore
-            state.DepVersions[j] <- deps[j].Version
+            state.DepVersions[j] <- Collections.committedVersion deps[j]
 
         if not state.Journal.IsEmpty then
           Collections.drainSetPush Id.identityV &state
@@ -339,8 +339,8 @@ type TwoSourceSetNode<'T when 'T: equality>
       // The flag is set last: an exception leaves the node uninitialized.
       Collections.loadTwoSet op left right &state
       this.Register()
-      state.DepVersions[0] <- left.Version
-      state.DepVersions[1] <- right.Version
+      state.DepVersions[0] <- Collections.committedVersion left
+      state.DepVersions[1] <- Collections.committedVersion right
       initialized <- true
 
   interface Collections.ITwoSetSinkTarget<'T> with
@@ -374,7 +374,7 @@ type TwoSourceSetNode<'T when 'T: equality>
             else
               right.GetValue() |> ignore
 
-            state.DepVersions[j] <- deps[j].Version
+            state.DepVersions[j] <- Collections.committedVersion deps[j]
 
         if not state.JournalL.IsEmpty || not state.JournalR.IsEmpty then
           Collections.drainTwoSetPush op &state
@@ -429,7 +429,7 @@ type OfAvalSetNode<'T, 'S when 'T: equality and 'S :> seq<'T>>
       let next = HashSet<'T>(value.GetValue())
       Collections.rebuildSetDiff next &state |> ignore
       state.Out.Clear()
-      state.DepVersions[0] <- value.Version
+      state.DepVersions[0] <- Collections.committedVersion value
       initialized <- true
 
   /// Re-read the value when it changed and emit the diff. Called from
@@ -449,7 +449,7 @@ type OfAvalSetNode<'T, 'S when 'T: equality and 'S :> seq<'T>>
         Collections.pushAndBumpSet GraphContext.Current state.Out &state.Sinks
         state.Out.Clear()
 
-      state.DepVersions[0] <- value.Version
+      state.DepVersions[0] <- Collections.committedVersion value
 
   interface IAdaptiveSet<'T> with
     member this.GetValue() =
@@ -682,10 +682,10 @@ type CollectSetNode<'T, 'U when 'T: equality and 'U: equality>
         | :? ISetSinkRegistry as r -> r.AddSetSink(entry.Sink)
         | _ -> ()
 
-        entry.Version <- inner.Version
+        entry.Version <- Collections.committedVersion inner
         state.Inner[x] <- entry
 
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   interface Collections.ICollectTarget<'T, 'U> with
@@ -723,7 +723,7 @@ type CollectSetNode<'T, 'U when 'T: equality and 'U: equality>
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         hasPending <- not state.Journal.IsEmpty
 
@@ -745,11 +745,11 @@ type CollectSetNode<'T, 'U when 'T: equality and 'U: equality>
             let mutable e2 = Unchecked.defaultof<Collections.CollectEntry<'U>>
 
             if state.Inner.TryGetValue(x, &e2) then
-              e2.Version <- entry.Node.Version
+              e2.Version <- Collections.committedVersion entry.Node
               state.Inner[x] <- e2
               entry <- e2
             else
-              entry.Version <- entry.Node.Version
+              entry.Version <- Collections.committedVersion entry.Node
 
           if not hasPending && not entry.Journal.IsEmpty then
             hasPending <- true
@@ -846,7 +846,7 @@ type BindSetNode<'T, 'U when 'U: equality>
     | _ -> ()
 
     hasInner <- true
-    innerVersion <- inner.Version
+    innerVersion <- Collections.committedVersion inner
 
   member private this.SwapTo(next: 'T) =
     // Eager edge removal (Pitfall 1): the old inner must not deliver after
@@ -864,7 +864,7 @@ type BindSetNode<'T, 'U when 'U: equality>
       current <- value.GetValue()
       inner <- mapping current
       this.LoadInner()
-      state.DepVersions[0] <- value.Version
+      state.DepVersions[0] <- Collections.committedVersion value
       initialized <- true
 
   interface ISetDeltaSink<'U> with
@@ -887,14 +887,14 @@ type BindSetNode<'T, 'U when 'U: equality>
 
         if value.Version <> state.DepVersions[0] then
           let next = value.GetValue()
-          state.DepVersions[0] <- value.Version
+          state.DepVersions[0] <- Collections.committedVersion value
 
           if not(EqualityComparer<'T>.Default.Equals(current, next)) then
             this.SwapTo(next)
 
         if inner.Version <> innerVersion then
           inner.GetValue() |> ignore
-          innerVersion <- inner.Version
+          innerVersion <- Collections.committedVersion inner
 
         if not state.Journal.IsEmpty then
           Collections.drainBindSetPush &state
@@ -978,7 +978,7 @@ type MapUseSetNode<'A, 'B
 
         state.Set.Data.Add b |> ignore
 
-      state.DepVersions[0] <- source.Version
+      state.DepVersions[0] <- Collections.committedVersion source
       initialized <- true
 
   member private this.Drain() =
@@ -1040,7 +1040,7 @@ type MapUseSetNode<'A, 'B
 
         if source.Version <> state.DepVersions[0] then
           source.GetValue() |> ignore
-          state.DepVersions[0] <- source.Version
+          state.DepVersions[0] <- Collections.committedVersion source
 
         if not state.Journal.IsEmpty then
           this.Drain()
@@ -1125,7 +1125,7 @@ type SetContainsNode<'T when 'T: equality>
     if present <> before then
       version <- version + 1L
 
-    depVersion <- source.Version
+    depVersion <- Collections.committedVersion source
 
   interface IAdaptiveValue<bool> with
     member this.GetValue() =
@@ -1213,7 +1213,7 @@ type SetCountNode<'T, 'Out when 'T: equality>
       out <- nextOut
       version <- version + 1L
 
-    depVersion <- source.Version
+    depVersion <- Collections.committedVersion source
 
   interface IAdaptiveValue<'Out> with
     member this.GetValue() =

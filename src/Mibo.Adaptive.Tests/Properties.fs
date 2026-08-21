@@ -1857,6 +1857,49 @@ type JoinScenario = {
 
 type ExternalScenario = { ops: ExternalOp list }
 
+/// One op on the effect-core map feeding a groupBy -> mapA(fold) -> join
+/// chain (the issue-#113 shape). The payload doubles as the group key
+/// (payload % 3), so upserts move cores between groups and removals empty
+/// them.
+type ChainCoreOp =
+  | CoreUpsert of key: int * payload: int
+  | CoreRemove of key: int
+
+/// Equipment-side edits of the outer join's right map (join key 1 only).
+type ChainEquipOp =
+  | EquipUpsert of payload: int
+  | EquipRemove
+
+type ChainOp =
+  | CoreEdit of ChainCoreOp
+  | EquipEdit of ChainEquipOp
+
+let chainCoreOpGen: Gen<ChainCoreOp> =
+  Gen.frequency [
+    (4,
+     gen {
+       let! k = Gen.choose(0, 5)
+       let! v = Gen.choose(0, 99)
+       return CoreUpsert(k, v)
+     })
+    (3,
+     gen {
+       let! k = Gen.choose(0, 5)
+       return CoreRemove k
+     })
+  ]
+
+let chainOpGen: Gen<ChainOp> =
+  Gen.frequency [
+    (8, Gen.map CoreEdit chainCoreOpGen)
+    (1,
+     gen {
+       let! v = Gen.choose(0, 99)
+       return EquipEdit(EquipUpsert v)
+     })
+    (1, Gen.constant(EquipEdit EquipRemove))
+  ]
+
 let pairGen = gen {
   let! k = Gen.choose(0, 19)
   let! v = Gen.choose(0, 99)
@@ -2111,6 +2154,12 @@ type ScenarioArbs =
 
   static member ListChangeList() : Arbitrary<ListChange list> =
     Arb.fromGen(Gen.listOf listChangeGen)
+
+  static member ChainOpList() : Arbitrary<ChainOp list> =
+    Arb.fromGen(Gen.listOf chainOpGen)
+
+  static member ChainCoreOpList() : Arbitrary<ChainCoreOp list> =
+    Arb.fromGen(Gen.listOf chainCoreOpGen)
 
 let private scenarioConfig =
   Config.QuickThrowOnFailure.WithArbitrary([| typeof<ScenarioArbs> |])
@@ -4843,3 +4892,443 @@ let ``posted list ops match the sequential model``() =
     Assert.Equal<int[]>(model.ToArray(), AList.force source)
 
   Check.QuickThrowOnFailure prop
+
+// =============================================================================
+// Issue #113 regression class: a consumer that snapshots an upstream node's
+// Version AFTER forcing it can record the dirty-indicator value (committed +
+// 1); every later read-after-write then compares equal and skips the upstream
+// node, freezing its output. All reads go through the TOP of each chain only;
+// models are pure and iteration-order independent (integer sums).
+// =============================================================================
+
+[<Fact>]
+let ``AMap joinOn chains revert an upstream removal seen through the outer join``
+  ()
+  =
+  // Minimal deterministic shape of issue #113: cores -> groupBy ->
+  // mapA(fold) -> join(a, b) -> join(s1, c), first read while the inner
+  // group is absent.
+  let cores: cmap<int, struct (int * string)> = CMap.empty
+  let a: cmap<int, string> = CMap.empty
+  let c: cmap<int, string> = CMap.empty
+
+  let bySlot =
+    cores
+    |> AMap.groupBy(fun _ sc ->
+      match sc with
+      | struct (s, _) -> s)
+
+  let b: amap<int, string> =
+    bySlot
+    |> AMap.mapA(fun _ g ->
+      g
+      |> AMap.fold
+        (fun acc _ sc ->
+          match sc with
+          | struct (_, m) -> acc + m)
+        "")
+
+  let s1 =
+    AMap.joinOn (CMap.value a) b (fun _ _ -> 1) (fun _ lV rV ->
+      AVal.map2
+        (fun l r ->
+          ValueSome(l + "+" + defaultArg (Option.ofValueOption r) "-"))
+        lV
+        rV)
+
+  let d =
+    AMap.joinOn s1 (CMap.value c) (fun _ _ -> 1) (fun _ lV rV ->
+      AVal.map2
+        (fun l r ->
+          ValueSome(l + "/" + defaultArg (Option.ofValueOption r) "-"))
+        lV
+        rV)
+
+  let read() : string voption = AVal.getValue(AMap.tryFind 1 d)
+
+  CMap.addOrUpdate 1 "A" a |> ignore
+
+  if read() <> ValueSome "A+-/-" then
+    failwithf "pre read: %A" (read())
+
+  CMap.addOrUpdate 100 struct (1, "B") cores |> ignore
+
+  if read() <> ValueSome "A+B/-" then
+    failwithf "after core add: %A" (read())
+
+  CMap.remove 100 cores |> ignore
+
+  if read() <> ValueSome "A+-/-" then
+    failwithf "after core remove: %A" (read())
+
+[<Fact>]
+let ``AMap joinOn chains match the model under core churn with top-only reads``
+  ()
+  =
+  let prop(ops: ChainOp list) =
+    // cores -> groupBy -> mapA(fold sum) -> join(a, b) -> join(s1, c).
+    // The group reduction is a sum, so the model is iteration-order
+    // independent. Every read goes through the outer join's tryFind.
+    let cores: cmap<int, int> = CMap.empty
+    let a: cmap<int, string> = CMap.empty
+    let c: cmap<int, string> = CMap.empty
+    CMap.addOrUpdate 1 "A" a |> ignore
+
+    let bySlot = cores |> AMap.groupBy(fun _ v -> v % 3)
+
+    let b: amap<int, int> =
+      bySlot |> AMap.mapA(fun _ g -> g |> AMap.fold (fun acc _ v -> acc + v) 0)
+
+    let s1 =
+      AMap.joinOn (CMap.value a) b (fun _ _ -> 1) (fun _ lV rV ->
+        AVal.map2
+          (fun l r ->
+            ValueSome(
+              l
+              + "."
+              + (match r with
+                 | ValueSome v -> string v
+                 | ValueNone -> "x")
+            ))
+          lV
+          rV)
+
+    let d =
+      AMap.joinOn s1 (CMap.value c) (fun _ _ -> 1) (fun _ lV rV ->
+        AVal.map2
+          (fun l r ->
+            ValueSome(l + "/" + defaultArg (Option.ofValueOption r) ""))
+          lV
+          rV)
+
+    let coreModel = Dictionary<int, int>()
+    let mutable equip: string voption = ValueNone
+
+    let expected() =
+      let groups = Dictionary<int, int>()
+
+      for KeyValue(_, v) in coreModel do
+        let g = v % 3
+        groups[g] <- groups.GetValueOrDefault(g) + v
+
+      let mid =
+        match groups.TryGetValue(1) with
+        | true, sum -> string sum
+        | false, _ -> "x"
+
+      let left = "A." + mid
+
+      match equip with
+      | ValueSome e -> left + "/" + e
+      | ValueNone -> left + "/"
+
+    let apply(op: ChainOp) =
+      match op with
+      | CoreEdit(CoreUpsert(k, v)) ->
+        CMap.addOrUpdate k v cores |> ignore
+        coreModel[k] <- v
+      | CoreEdit(CoreRemove k) ->
+        CMap.remove k cores |> ignore
+        coreModel.Remove k |> ignore
+      | EquipEdit(EquipUpsert v) ->
+        CMap.addOrUpdate 1 (string v) c |> ignore
+        equip <- ValueSome(string v)
+      | EquipEdit EquipRemove ->
+        CMap.remove 1 c |> ignore
+        equip <- ValueNone
+
+    let actual() : string voption = AVal.getValue(AMap.tryFind 1 d)
+
+    // The first read lands while no core exists yet: it builds the outer
+    // entry against an absent right side, which is the issue trigger.
+    if actual() <> ValueSome(expected()) then
+      failwithf
+        "mismatch before any op: actual=%A expected=%A"
+        (actual())
+        (expected())
+
+    for op in ops do
+      apply op
+
+      if actual() <> ValueSome(expected()) then
+        failwithf
+          "mismatch after %A: actual=%A expected=%A"
+          op
+          (actual())
+          (expected())
+
+  Check.One(scenarioConfig, prop)
+
+[<Fact>]
+let ``AMap joinOn tail consumers track a cascading right side under core churn``
+  ()
+  =
+  // Same chain without the outer join, read through two tail consumers
+  // (tryFind and fold). The right side of the join cascades into lazy
+  // drains (groupBy children + per-entry folds), which is what makes the
+  // upstream node end its drain with the self-healing flag set.
+  let prop(ops: ChainCoreOp list) =
+    // Same chain without the outer join, read through two tail consumers
+    // (tryFind and fold). The right side of the join cascades into lazy
+    // drains (groupBy children + per-entry folds), which is what makes the
+    // upstream node end its drain with the self-healing flag set.
+    let cores: cmap<int, int> = CMap.empty
+    let a: cmap<int, string> = CMap.empty
+    CMap.addOrUpdate 1 "A" a |> ignore
+
+    let bySlot = cores |> AMap.groupBy(fun _ v -> v % 3)
+
+    let b: amap<int, int> =
+      bySlot |> AMap.mapA(fun _ g -> g |> AMap.fold (fun acc _ v -> acc + v) 0)
+
+    let j =
+      AMap.joinOn (CMap.value a) b (fun _ _ -> 1) (fun _ lV rV ->
+        AVal.map2
+          (fun l r ->
+            ValueSome(
+              l
+              + "."
+              + (match r with
+                 | ValueSome v -> string v
+                 | ValueNone -> "x")
+            ))
+          lV
+          rV)
+
+    let found = AMap.tryFind 1 j
+
+    let total = j |> AMap.fold (fun acc _ v -> acc + ";" + v) ""
+
+    let coreModel = Dictionary<int, int>()
+
+    let expected() =
+      let groups = Dictionary<int, int>()
+
+      for KeyValue(_, v) in coreModel do
+        let g = v % 3
+        groups[g] <- groups.GetValueOrDefault(g) + v
+
+      match groups.TryGetValue(1) with
+      | true, sum -> "A." + string sum
+      | false, _ -> "A.x"
+
+    let apply(op: ChainCoreOp) =
+      match op with
+      | CoreUpsert(k, v) ->
+        CMap.addOrUpdate k v cores |> ignore
+        coreModel[k] <- v
+      | CoreRemove k ->
+        CMap.remove k cores |> ignore
+        coreModel.Remove k |> ignore
+
+    for op in ops do
+      apply op
+
+      let exp = ValueSome(expected())
+
+      if AVal.getValue found <> exp then
+        failwithf
+          "tryFind mismatch after %A: actual=%A expected=%A"
+          op
+          (AVal.getValue found)
+          exp
+
+      let expFold = ";" + expected()
+
+      if AVal.getValue total <> expFold then
+        failwithf
+          "fold mismatch after %A: actual=%A expected=%A"
+          op
+          (AVal.getValue total)
+          expFold
+
+  Check.One(scenarioConfig, prop)
+
+// =============================================================================
+// Issue #113 follow-up: forced-scenario coverage for the remaining snapshot
+// families (collect entries, set contains/count resyncs, list tails, ofAVal).
+// Each test drives one lazy scalar (`total`) through a groupBy -> mapA(fold)
+// chain so that the dependency under test ends its drain dirty; reads go
+// through the top consumer only, and the first read happens before any core
+// exists (the trigger).
+// =============================================================================
+
+[<Fact>]
+let ``ASet collect tracks cascading inner sets under core churn``() =
+  let cores: cmap<int, int> = CMap.empty
+
+  let total: aval<int> =
+    let bySlot = cores |> AMap.groupBy(fun _ v -> v % 3)
+
+    let sums =
+      bySlot |> AMap.mapA(fun _ g -> g |> AMap.fold (fun acc _ v -> acc + v) 0)
+
+    sums |> AMap.fold (fun acc _ v -> acc + v) 0
+
+  let buckets = CSet.ofSeq [ 1; 2 ]
+
+  let innerFor x =
+    ASet.ofSeq [ x ] |> ASet.mapA(fun v -> AVal.map (fun t -> v * 10 + t) total)
+
+  let merged = ASet.collect innerFor (CSet.value buckets)
+
+  // Model: sum of (10 * bucket + total) over the fixed buckets.
+  let expected() =
+    (10 * 1 + 10 * 2) + 2 * AVal.getValue total
+
+  let apply(op: ChainCoreOp) =
+    match op with
+    | CoreUpsert(k, v) -> CMap.addOrUpdate k v cores |> ignore
+    | CoreRemove k -> CMap.remove k cores |> ignore
+
+  for op in
+    [ CoreUpsert(1, 5); CoreRemove(1); CoreUpsert(2, 7); CoreUpsert(1, 2) ] do
+    apply op
+
+    let actual = merged |> ASet.fold (fun acc v -> acc + v) 0 |> AVal.getValue
+
+    if actual <> expected() then
+      failwithf
+        "mismatch after %A: actual=%A expected=%A"
+        op
+        actual
+        (expected())
+
+[<Fact>]
+let ``ASet contains and count track a filtered cascading source under core churn``
+  ()
+  =
+  let cores: cmap<int, int> = CMap.empty
+
+  let total: aval<int> =
+    let bySlot = cores |> AMap.groupBy(fun _ v -> v % 3)
+
+    let sums =
+      bySlot |> AMap.mapA(fun _ g -> g |> AMap.fold (fun acc _ v -> acc + v) 0)
+
+    sums |> AMap.fold (fun acc _ v -> acc + v) 0
+
+  let baseSet = CSet.ofSeq [ 0..4 ]
+
+  let filtered =
+    CSet.value baseSet
+    |> ASet.filterA(fun x -> AVal.map (fun t -> (x + t) % 2 = 0) total)
+
+  let has3 = ASet.contains 3 filtered
+  let cnt = ASet.count filtered
+
+  let expectedCount() =
+    let t = AVal.getValue total
+    [ 0..4 ] |> List.filter(fun x -> (x + t) % 2 = 0) |> List.length
+
+  let expectedHas3() = (3 + AVal.getValue total) % 2 = 0
+
+  let apply(op: ChainCoreOp) =
+    match op with
+    | CoreUpsert(k, v) -> CMap.addOrUpdate k v cores |> ignore
+    | CoreRemove k -> CMap.remove k cores |> ignore
+
+  for op in
+    [ CoreUpsert(1, 5); CoreUpsert(2, 7); CoreRemove(1); CoreUpsert(3, 6) ] do
+    apply op
+
+    if AVal.getValue cnt <> expectedCount() then
+      failwithf
+        "count mismatch after %A: actual=%A expected=%A"
+        op
+        (AVal.getValue cnt)
+        (expectedCount())
+
+    if AVal.getValue has3 <> expectedHas3() then
+      failwithf
+        "contains mismatch after %A: actual=%A expected=%A"
+        op
+        (AVal.getValue has3)
+        (expectedHas3())
+
+[<Fact>]
+let ``AList tails track cascading element values under core churn``() =
+  let cores: cmap<int, int> = CMap.empty
+
+  let total: aval<int> =
+    let bySlot = cores |> AMap.groupBy(fun _ v -> v % 3)
+
+    let sums =
+      bySlot |> AMap.mapA(fun _ g -> g |> AMap.fold (fun acc _ v -> acc + v) 0)
+
+    sums |> AMap.fold (fun acc _ v -> acc + v) 0
+
+  let cl = CList.ofSeq [ 10; 20; 30 ]
+
+  let lst =
+    CList.value cl |> AList.mapA(fun v -> AVal.map (fun t -> v + t) total)
+
+  let srt = AList.sort lst
+
+  let expected() =
+    let t = AVal.getValue total
+    [ 10; 20; 30 ] |> List.sum |> (+)(3 * t)
+
+  let apply(op: ChainCoreOp) =
+    match op with
+    | CoreUpsert(k, v) -> CMap.addOrUpdate k v cores |> ignore
+    | CoreRemove k -> CMap.remove k cores |> ignore
+
+  for op in [ CoreUpsert(1, 5); CoreRemove(1); CoreUpsert(2, 7) ] do
+    apply op
+
+    let sumLst = lst |> AList.fold (fun acc v -> acc + v) 0 |> AVal.getValue
+    let sumSrt = srt |> AList.fold (fun acc v -> acc + v) 0 |> AVal.getValue
+
+    if sumLst <> expected() then
+      failwithf
+        "list fold mismatch after %A: actual=%A expected=%A"
+        op
+        sumLst
+        (expected())
+
+    if sumSrt <> expected() then
+      failwithf
+        "sorted list fold mismatch after %A: actual=%A expected=%A"
+        op
+        sumSrt
+        (expected())
+
+[<Fact>]
+let ``AList ofAVal tracks scalar-driven list changes under core churn``() =
+  let cores: cmap<int, int> = CMap.empty
+
+  let total: aval<int> =
+    let bySlot = cores |> AMap.groupBy(fun _ v -> v % 3)
+
+    let sums =
+      bySlot |> AMap.mapA(fun _ g -> g |> AMap.fold (fun acc _ v -> acc + v) 0)
+
+    sums |> AMap.fold (fun acc _ v -> acc + v) 0
+
+  let alst = AList.ofAVal(total |> AVal.map(fun t -> [ 10 + t; 20 + t ]))
+
+  let expected() =
+    let t = AVal.getValue total
+    (10 + t) + (20 + t)
+
+  let apply(op: ChainCoreOp) =
+    match op with
+    | CoreUpsert(k, v) -> CMap.addOrUpdate k v cores |> ignore
+    | CoreRemove k -> CMap.remove k cores |> ignore
+
+  for op in [ CoreUpsert(1, 5); CoreRemove(1); CoreUpsert(2, 7); CoreRemove(2) ] do
+    apply op
+
+    let cnt = AList.count alst |> AVal.getValue
+    let sum = alst |> AList.fold (fun acc v -> acc + v) 0 |> AVal.getValue
+
+    if cnt <> 2 then
+      failwithf "count mismatch after %A: actual=%i" op cnt
+
+    if sum <> expected() then
+      failwithf
+        "sum mismatch after %A: actual=%A expected=%A"
+        op
+        sum
+        (expected())
