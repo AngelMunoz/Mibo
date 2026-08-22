@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [4.5.1] - 2026-08-21
+
+### Changed
+
+- **Mibo.Adaptive:** bump `Mibo.Adaptive` to 1.0.1.
+
 ## [4.5.0] - 2026-08-18
 
 ### Added

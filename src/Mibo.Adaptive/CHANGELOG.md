@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-21
+
 ### Fixed
 
 - Chained derived maps no longer freeze after certain read and write orders: an upstream removal or update now propagates to chained `AMap.joinOn` stages, `tryFind`/`fold` tails, and other derived maps on the next read.
