@@ -137,13 +137,56 @@ type TransparentSkinnedInstancedCommand = {
   DistanceSq: float32
 }
 
+/// A deferred transparent part of one instance from the skinned + instanced per-instance
+/// fallback (OpenGL, or a DX12 skeleton over the grouped-uniform budget): the palette rides
+/// the command's flat array, so the entry carries the instance index and reads its slice at
+/// flush time — the per-instance scratch array the draw staged from is overwritten by the
+/// next instance before the transparent pass runs.
+[<Struct>]
+type TransparentSkinnedInstanceDraw = {
+  /// <summary>The model-mesh-part of one instance to draw.</summary>
+  Part: ModelMeshPart
+  /// <summary>The parent-bone world transform of the part's mesh for this instance.</summary>
+  World: Matrix
+  /// <summary>The resolved material (override + tint already applied).</summary>
+  Material: Material3D
+  /// <summary>The command's flat palette array (<c>instanceCount * BoneCount</c> matrices).</summary>
+  Palettes: Matrix[]
+  /// <summary>The row of <c>Palettes</c> this instance's palette occupies.</summary>
+  InstanceIndex: int
+  /// <summary>Matrices in one instance's palette (one row of <c>Palettes</c>).</summary>
+  BoneCount: int
+  /// <summary>Squared distance to the camera that deferred this draw (sort key).</summary>
+  DistanceSq: float32
+}
+
 /// One entry of the deferred transparent list. Each case carries only the fields its
 /// flush path reads — the list holds all transparent kinds, sorted by one key.
 [<Struct>]
 type TransparentEntry =
   | SingleDraw of draw: TransparentDraw
   | InstancedDraw of batch: TransparentInstancedDraw
+  | SkinnedInstanceDraw of instance: TransparentSkinnedInstanceDraw
   | SkinnedInstancedCommand of command: TransparentSkinnedInstancedCommand
+
+/// The flat palette source a per-instance fallback draw carries into deferred transparent
+/// captures (private plumbing of <c>drawAnimatedModelCore</c>: the deferral site cannot
+/// tell a shared scratch array from a caller-owned one without it).
+[<Struct>]
+type private FlatPaletteSource = {
+  Palettes: Matrix[]
+  InstanceIndex: int
+  BoneCount: int
+}
+
+/// The palette a deferred transparent skinned part uploads at flush: none (the part draws
+/// Standard), a caller-owned whole palette, or one instance's slice of a command's flat
+/// palette array (read at flush — the scratch it came from is gone by then).
+[<Struct>]
+type private TransparentPalette =
+  | NoPalette
+  | WholePalette of bones: Matrix[]
+  | SlicedPalette of palettes: Matrix[] * instanceIndex: int * boneCount: int
 
 /// <summary>
 /// Per-mesh-part draw state for a skinned + instanced command, resolved once per
@@ -773,7 +816,11 @@ module internal PbrShading =
   /// <paramref name="tint"/> modulates the resolved material's albedo color and opacity per
   /// draw (mirrors <c>shadePBR</c>'s per-instance color application) — the OpenGL fallback of
   /// skinned + instanced draws uses it for per-instance colors; the regular path passes
-  /// <c>ValueNone</c>.</summary>
+  /// <c>ValueNone</c>. <paramref name="deferPalette"/> tells the transparent deferral that
+  /// <paramref name="bones"/> is a shared per-instance scratch slice of the given flat
+  /// palette array, so deferred entries carry the instance index and read their slice at
+  /// flush time instead of holding the scratch reference; <c>ValueNone</c> keeps the
+  /// caller-owned palette reference (the regular path's contract).</summary>
   let private drawAnimatedModelCore
     (
       gd: GraphicsDevice,
@@ -785,6 +832,7 @@ module internal PbrShading =
       bones: Matrix[],
       matOverride: MaterialOverride voption,
       tint: Color voption,
+      deferPalette: FlatPaletteSource voption,
       transparentDraws: ResizeArray<TransparentEntry> voption
     ) =
     if ensureEffect(gd, res) then
@@ -892,9 +940,27 @@ module internal PbrShading =
               // Transparent: defer to the sorted pass when one is available. The
               // skinned-instanced GL fallback passes the shared list from the pipeline,
               // so each instance sorts as its own entry; ValueNone (no list reachable,
-              // or a flush-time redraw) draws immediately, unsorted.
-              match transparentDraws with
-              | ValueSome draws ->
+              // or a flush-time redraw) draws immediately, unsorted. With a flat palette
+              // source the entry carries the instance index — `bones` here is the shared
+              // per-instance scratch, overwritten by the next instance before the flush.
+              match transparentDraws, deferPalette with
+              | ValueSome draws, ValueSome flat ->
+                draws.Add(
+                  TransparentEntry.SkinnedInstanceDraw {
+                    Part = part
+                    World = world
+                    Material = mat
+                    Palettes = flat.Palettes
+                    InstanceIndex = flat.InstanceIndex
+                    BoneCount = flat.BoneCount
+                    DistanceSq =
+                      Vector3.DistanceSquared(
+                        state.CurrentCamera.Position,
+                        world.Translation
+                      )
+                  }
+                )
+              | ValueSome draws, ValueNone ->
                 draws.Add(
                   TransparentEntry.SingleDraw {
                     Part = ValueSome part
@@ -911,7 +977,7 @@ module internal PbrShading =
                       )
                   }
                 )
-              | ValueNone -> drawPartImmediately()
+              | ValueNone, _ -> drawPartImmediately()
             else
               drawPartImmediately()
       | _ -> ()
@@ -939,6 +1005,7 @@ module internal PbrShading =
       transform,
       bones,
       matOverride,
+      ValueNone,
       ValueNone,
       ValueSome transparentDraws
     )
@@ -1365,31 +1432,29 @@ module internal PbrShading =
             )
 
   /// <summary>
-  /// Draws one deferred single transparent entry (<see cref="T:Mibo.Elmish.Graphics3D.Pipelines.TransparentDraw"/>)
-  /// during the forward pass's transparent flush — PBR Standard or Skinned technique by the
-  /// part's baked effect, with material uniforms through the MaterialKey short-circuit.
-  /// Deferred instanced batches are handled by the flush itself (it calls
-  /// <c>drawInstanced</c> / <c>drawAnimatedModelInstanced</c> directly). The caller has
-  /// already switched to alpha blending + depth-read. Mirrors the per-part body of
-  /// <c>drawModel</c>/<c>drawAnimatedModelCore</c> minus the immediate-draw deferral branch.
+  /// Ensures the framework effect and uploads the frame-global + material uniforms shared
+  /// by every deferred transparent draw (the per-part technique/palette work happens in
+  /// <c>drawTransparentPart</c>). True when <c>res.Effect</c>/<c>res.Params</c> are ready
+  /// to draw with.
   /// </summary>
-  let drawTransparent
+  let private prepareTransparentDraw
     (
       gd: GraphicsDevice,
       state: byref<ForwardState>,
       frame: byref<ForwardFrame>,
       res: PbrResources,
-      entry: TransparentDraw
+      world: Matrix,
+      material: Material3D
     ) =
     if ensureEffect(gd, res) then
       match struct (res.Effect, res.Params) with
       | struct (ValueSome e, ValueSome p) ->
-        let mutable t = entry.World
+        let mutable t = world
         let mutable inv = Matrix.Identity
         Matrix.Invert(&t, &inv) |> ignore
         let normalMatrix = Matrix.Transpose inv
 
-        PbrUniforms.setMatrix p.Matrix.MatModel entry.World
+        PbrUniforms.setMatrix p.Matrix.MatModel world
 
         PbrUniforms.setMatrix p.Matrix.ViewProj (state.View * state.Projection)
 
@@ -1406,60 +1471,169 @@ module internal PbrShading =
 
           res.LightsDirty <- false
 
-        let key = materialKey &entry.Material
+        let key = materialKey &material
 
         if not res.HasLastMaterial || key <> res.LastKey then
-          PbrUniforms.uploadMaterial(&p, &entry.Material)
-          PbrUniforms.bindTextures(&p, &entry.Material, whiteTex res)
+          PbrUniforms.uploadMaterial(&p, &material)
+          PbrUniforms.bindTextures(&p, &material, whiteTex res)
           res.LastKey <- key
           res.HasLastMaterial <- true
 
+        true
+      | _ -> false
+    else
+      false
+
+  /// <summary>
+  /// Draws one deferred transparent model-mesh-part: Skinned technique + bone palette when
+  /// a palette is present and the part is skinned, Standard otherwise. Shared tail of
+  /// <c>drawTransparent</c> and <c>drawTransparentSkinnedInstance</c> — the caller has run
+  /// <c>prepareTransparentDraw</c> and matched <c>res.Effect</c>/<c>res.Params</c>.
+  /// </summary>
+  let private drawTransparentPart
+    (
+      gd: GraphicsDevice,
+      e: Effect,
+      p: PbrEffectParams,
+      frame: byref<ForwardFrame>,
+      part: ModelMeshPart,
+      palette: TransparentPalette
+    ) =
+    // Skinned parts (SkinnedEffect baked effect) get the Skinned technique and the bone
+    // palette, copied into the shared scratch, tail-filled with identity. Gate on a
+    // palette being present: a DrawModel-deferred transparent part carries none (its
+    // opaque counterpart draws Standard), so a part that merely has a baked SkinnedEffect
+    // must render Standard here too, or it would use the Skinned technique with no
+    // palette uploaded (stale/zero bones → collapsed vertices).
+    let isSkinned =
+      (match palette with
+       | NoPalette -> false
+       | _ -> true)
+      && (match part.Effect with
+          | :? SkinnedEffect -> true
+          | _ -> false)
+
+    if isSkinned then
+      e.CurrentTechnique <- e.Techniques["Skinned"]
+
+      let bonePalette = frame.BonePaletteScratch
+
+      match palette with
+      | WholePalette bones ->
+        let palCount = min bones.Length bonePalette.Length
+
+        for i = 0 to palCount - 1 do
+          bonePalette[i] <- bones[i]
+
+        for i = palCount to bonePalette.Length - 1 do
+          bonePalette[i] <- Matrix.Identity
+      | SlicedPalette(palettes, instanceIndex, boneCount) ->
+        let palCount = min boneCount bonePalette.Length
+
+        Array.Copy(
+          palettes,
+          instanceIndex * boneCount,
+          bonePalette,
+          0,
+          palCount
+        )
+
+        for i = palCount to bonePalette.Length - 1 do
+          bonePalette[i] <- Matrix.Identity
+      | NoPalette -> ()
+
+      PbrUniforms.setMatrixArray p.Matrix.Bones bonePalette
+    else
+      e.CurrentTechnique <- e.Techniques["Standard"]
+
+    let saved = part.Effect
+    part.Effect <- e
+
+    try
+      drawPart(gd, part)
+    finally
+      part.Effect <- saved
+
+  /// <summary>
+  /// Draws one deferred single transparent entry (<see cref="T:Mibo.Elmish.Graphics3D.Pipelines.TransparentDraw"/>)
+  /// during the forward pass's transparent flush — PBR Standard or Skinned technique by the
+  /// part's baked effect, with material uniforms through the MaterialKey short-circuit.
+  /// Deferred instanced batches are handled by the flush itself (it calls
+  /// <c>drawInstanced</c> / <c>drawAnimatedModelInstanced</c> directly). The caller has
+  /// already switched to alpha blending + depth-read. Mirrors the per-part body of
+  /// <c>drawModel</c>/<c>drawAnimatedModelCore</c> minus the immediate-draw deferral branch.
+  /// </summary>
+  let drawTransparent
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      frame: byref<ForwardFrame>,
+      res: PbrResources,
+      entry: TransparentDraw
+    ) =
+    if
+      prepareTransparentDraw(
+        gd,
+        &state,
+        &frame,
+        res,
+        entry.World,
+        entry.Material
+      )
+    then
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome e, ValueSome p) ->
         match entry.Part with
         | ValueSome part ->
-          // Skinned parts (SkinnedEffect baked effect) get the Skinned technique and the
-          // bone palette, copied into the shared scratch, tail-filled with identity.
-          // Gate on bones being present: a DrawModel-deferred transparent part carries
-          // ValueNone (its opaque counterpart draws Standard), so a part that merely has a
-          // baked SkinnedEffect must render Standard here too, or it would use the Skinned
-          // technique with no palette uploaded (stale/zero bones → collapsed vertices).
-          let isSkinned =
-            entry.Bones.IsSome
-            && (match part.Effect with
-                | :? SkinnedEffect -> true
-                | _ -> false)
-
-          if isSkinned then
-            e.CurrentTechnique <- e.Techniques["Skinned"]
-
+          let palette =
             match entry.Bones with
-            | ValueSome bones ->
-              let palette = frame.BonePaletteScratch
-              let palCount = min bones.Length palette.Length
+            | ValueSome bones -> WholePalette bones
+            | ValueNone -> NoPalette
 
-              for i = 0 to palCount - 1 do
-                palette[i] <- bones[i]
-
-              for i = palCount to palette.Length - 1 do
-                palette[i] <- Matrix.Identity
-
-              PbrUniforms.setMatrixArray p.Matrix.Bones palette
-            | ValueNone -> ()
-          else
-            e.CurrentTechnique <- e.Techniques["Standard"]
-
-          let saved = part.Effect
-          part.Effect <- e
-
-          try
-            drawPart(gd, part)
-          finally
-            part.Effect <- saved
+          drawTransparentPart(gd, e, p, &frame, part, palette)
         | ValueNone ->
           match entry.Mesh with
           | ValueSome mesh ->
             e.CurrentTechnique <- e.Techniques["Standard"]
             drawMeshSlice(gd, e, mesh, entry.VertexOffset, entry.StartIndex)
           | ValueNone -> ()
+      | _ -> ()
+
+  /// <summary>
+  /// Draws one deferred transparent part of a single instance from the skinned + instanced
+  /// per-instance fallback (<see cref="T:Mibo.Elmish.Graphics3D.Pipelines.TransparentSkinnedInstanceDraw"/>):
+  /// the same path as <c>drawTransparent</c>, with the bone palette read as one slice of
+  /// the command's flat palette array — the per-instance scratch the capture staged from
+  /// does not survive until the flush.
+  /// </summary>
+  let drawTransparentSkinnedInstance
+    (
+      gd: GraphicsDevice,
+      state: byref<ForwardState>,
+      frame: byref<ForwardFrame>,
+      res: PbrResources,
+      entry: TransparentSkinnedInstanceDraw
+    ) =
+    if
+      prepareTransparentDraw(
+        gd,
+        &state,
+        &frame,
+        res,
+        entry.World,
+        entry.Material
+      )
+    then
+      match struct (res.Effect, res.Params) with
+      | struct (ValueSome e, ValueSome p) ->
+        drawTransparentPart(
+          gd,
+          e,
+          p,
+          &frame,
+          entry.Part,
+          SlicedPalette(entry.Palettes, entry.InstanceIndex, entry.BoneCount)
+        )
       | _ -> ()
 
   /// <summary>
@@ -1701,6 +1875,11 @@ module internal PbrShading =
             slice,
             matOverride,
             tint,
+            ValueSome {
+              Palettes = palettes
+              InstanceIndex = i
+              BoneCount = boneCount
+            },
             deferList
           )
       else

@@ -350,6 +350,7 @@ type ForwardPipelineBase
             match e with
             | TransparentEntry.SingleDraw d -> d.DistanceSq
             | TransparentEntry.InstancedDraw d -> d.DistanceSq
+            | TransparentEntry.SkinnedInstanceDraw d -> d.DistanceSq
             | TransparentEntry.SkinnedInstancedCommand d -> d.DistanceSq
 
           (dist b).CompareTo(dist a)
@@ -1448,6 +1449,16 @@ type ForwardPipelineBase
             match transparentDraws[i] with
             | TransparentEntry.SingleDraw d ->
               PbrShading.drawTransparent(gd, &state, &scene, pbrRes, d)
+            | TransparentEntry.SkinnedInstanceDraw d ->
+              // One instance's part from the GL per-instance fallback: its palette is
+              // read as a slice of the command's flat array (see the capture site).
+              PbrShading.drawTransparentSkinnedInstance(
+                gd,
+                &state,
+                &scene,
+                pbrRes,
+                d
+              )
             | TransparentEntry.InstancedDraw d ->
               PbrShading.drawInstanced(
                 gd,
