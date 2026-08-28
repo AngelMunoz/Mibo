@@ -75,3 +75,111 @@ let shadowPassTests =
       Expect.isTrue hasCasters2 "DirLights[0] casts"
     }
   ]
+
+// ──────────────────────────────────────────────
+// Instanced opacity gates (transparent instanced batches cast no shadow)
+// ──────────────────────────────────────────────
+
+let private instancedCollection() =
+  let c = ShadowPassHelpers.MeshDrawCollection()
+  c.Begin(true)
+  c
+
+let private finishInstancedCount(c: ShadowPassHelpers.MeshDrawCollection) =
+  let struct (_, _, _, _, instancedCount) = c.Finish()
+  instancedCount
+
+[<Tests>]
+let instancedOpacityGateTests =
+  testList "MeshDrawCollection instanced opacity gate" [
+    test "opaque instanced draw is collected" {
+      let c = instancedCollection()
+
+      c.Add(
+        Command3D.DrawMeshInstanced(
+          Unchecked.defaultof<Raylib_cs.Mesh>,
+          [||],
+          Material3D.defaults,
+          4
+        )
+      )
+
+      Expect.equal (finishInstancedCount c) 1 "opaque batch collected"
+    }
+
+    test "transparent instanced draw is not collected" {
+      let c = instancedCollection()
+
+      c.Add(
+        Command3D.DrawMeshInstanced(
+          Unchecked.defaultof<Raylib_cs.Mesh>,
+          [||],
+          {
+            Material3D.defaults with
+                Opacity = 0.5f
+          },
+          4
+        )
+      )
+
+      Expect.equal (finishInstancedCount c) 0 "transparent batch not collected"
+    }
+
+    test "invisible instanced draw is not collected" {
+      let c = instancedCollection()
+
+      c.Add(
+        Command3D.DrawMeshInstanced(
+          Unchecked.defaultof<Raylib_cs.Mesh>,
+          [||],
+          {
+            Material3D.defaults with
+                Opacity = 0.0f
+          },
+          4
+        )
+      )
+
+      Expect.equal (finishInstancedCount c) 0 "invisible batch not collected"
+    }
+
+    test "transparent skinned instanced draw is not collected" {
+      let c = instancedCollection()
+
+      c.Add(
+        Command3D.DrawSkinnedMeshInstanced(
+          Unchecked.defaultof<Raylib_cs.Mesh>,
+          [||],
+          [||],
+          {
+            Material3D.defaults with
+                Opacity = 0.5f
+          },
+          4,
+          2
+        )
+      )
+
+      Expect.equal
+        (finishInstancedCount c)
+        0
+        "transparent skinned batch not collected"
+    }
+
+    test "opaque skinned instanced draw is collected" {
+      let c = instancedCollection()
+
+      c.Add(
+        Command3D.DrawSkinnedMeshInstanced(
+          Unchecked.defaultof<Raylib_cs.Mesh>,
+          [||],
+          [||],
+          Material3D.defaults,
+          4,
+          2
+        )
+      )
+
+      Expect.equal (finishInstancedCount c) 1 "opaque skinned batch collected"
+    }
+  ]

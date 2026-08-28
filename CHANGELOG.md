@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Raylib 3D, MonoGame 3D:** instanced draws now respect the material's `Opacity` like regular draws. Previously a transparent instanced batch rendered as a solid object on MonoGame (the frame's opaque blend state was never switched) and blended immediately with depth writes on raylib, so it occluded geometry drawn behind it; now `0 < Opacity < 1` defers to the sorted transparent pass (blended, no depth writes) and `Opacity <= 0` draws nothing. Transparent units also stop casting shadows and stop appearing in the depth texture that depth-based post-process effects sample. Classification is per instance and per part, not per batch: on MonoGame the instances whose per-instance tint alpha is below 255 defer and blend while the opaque instances stay inline with their shadows and depth writes, and skinned + instanced models with mixed part opacities keep their opaque parts inline. Each deferred unit sorts by the distance to the average position of the instances it carries, so ordering between those instances stays submission order. The material transparency docs state these rules and the custom-effect exception (`beginEffect`/`endEffect` scopes draw as-is; `drawImmediate` gives full blend/depth control).
+
 ## [4.5.1] - 2026-08-21
 
 ### Changed

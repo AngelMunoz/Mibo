@@ -41,6 +41,32 @@ buffer
 
 One draw call renders all 100 cubes. (On MonoGame, pass `prims.Cube` and `Matrix[]` transforms; the member takes your backend's mesh and matrix types.)
 
+### Opacity
+
+The material's `Opacity` follows the same three tiers as regular meshes: `>= 1` renders
+inline and casts shadows, `0 < Opacity < 1` defers to the sorted transparent pass and
+casts no shadows, `<= 0` draws nothing. Classification is per instance and per part, not
+per batch:
+
+- A transparent **material** is a property of the whole batch, so it defers the batch as
+  one unit.
+- A **per-instance tint alpha** below 255 (MonoGame) defers only that instance: the
+  opaque instances stay in the inline pass and keep casting shadows, while the
+  transparent ones defer and blend. One faded instance does not make the whole batch
+  transparent.
+- A skinned + instanced model with **mixed part opacities** (a `PerMesh` resolver or
+  authored materials) draws its opaque parts inline and defers only its transparent
+  parts.
+
+A deferred unit sorts by the distance to the average position of the instances it
+carries, so ordering between those instances stays submission order. For a handful of
+large transparent surfaces that must blend in perfect order, draw them as regular
+transparent meshes instead of instances.
+
+Instanced draws inside a `beginEffect`/`endEffect` scope are the exception — custom
+effects own their transparency (see
+[materials → Transparency](materials.md#transparency) for the `drawImmediate` escape).
+
 ## Per-instance color (MonoGame only)
 
 Pass an optional `colors` array to tint each instance individually. The albedo is multiplied by `color.rgb` and the final alpha by `color.a`:
@@ -55,6 +81,10 @@ buffer
 ```
 
 The array may be shorter than `count`: instances beyond `colors.Length` render white. A custom effect that opts into instancing can receive the per-instance color by declaring `float4 InstanceColor : TEXCOORD5` in its vertex input; effects that don't declare it still work (the built-in fallback shades colored draws). See [Shader Uniform Reference](../shader-uniforms.html#Instancing-opt-in).
+
+A color alpha below `255` makes that instance semi-transparent; the framework scans the
+array once per command and, when any alpha is below `255`, defers the whole batch to the
+sorted transparent pass (even with an opaque material).
 
 > _**NOTE**_: Per-instance color is **MonoGame only**. Passing `colors` on raylib raises `NotSupportedException`; its instanced draw has a fixed instance attribute layout.
 

@@ -585,6 +585,52 @@ module internal ShadowPassHelpers =
     DistanceSq: float32
   }
 
+  /// A deferred transparent instanced batch: one draw call for the whole batch, sorted
+  /// by its centroid. The command carries one material, so the batch is one unit.
+  [<Struct>]
+  type TransparentInstancedDraw = {
+    Mesh: Mesh
+    Transforms: Matrix4x4[]
+    Material: Material3D
+    InstanceCount: int
+    DistanceSq: float32
+  }
+
+  /// A deferred transparent skinned + instanced batch: like <see cref="T:Mibo.Elmish.Graphics3D.Pipelines.TransparentInstancedDraw"/>
+  /// plus the flat per-instance bone palettes.
+  [<Struct>]
+  type TransparentSkinnedInstancedDraw = {
+    Mesh: Mesh
+    Transforms: Matrix4x4[]
+    Palettes: Matrix4x4[]
+    Material: Material3D
+    InstanceCount: int
+    BoneCount: int
+    DistanceSq: float32
+  }
+
+  /// One entry of the deferred transparent list. Each case carries only the fields its
+  /// flush path reads — the list holds all transparent kinds, sorted by one key.
+  [<Struct>]
+  type TransparentEntry =
+    | SingleDraw of draw: TransparentMeshDraw
+    | InstancedDraw of batch: TransparentInstancedDraw
+    | SkinnedInstancedDraw of skinnedBatch: TransparentSkinnedInstancedDraw
+
+  /// Sort key for a deferred instanced batch: squared distance from the camera to the
+  /// average instance translation. The batch sorts as one unit; ordering between its
+  /// instances stays submission order (the accepted batch-level approximation).
+  let inline instanceCentroidDistanceSq
+    (cameraPos: Vector3, transforms: Matrix4x4[], count: int)
+    =
+    let mutable acc = Vector3.Zero
+
+    for i = 0 to count - 1 do
+      acc <- acc + transforms[i].Translation
+
+    let centroid = acc / float32 count
+    Vector3.DistanceSquared(cameraPos, centroid)
+
   /// <summary>
   /// Grow-only pooled collection of mesh draws for the shadow pass, gathered per command
   /// (<c>Begin</c> → <c>Add</c>* → <c>Finish</c>) instead of a count scan + rent-exact +
@@ -620,9 +666,8 @@ module internal ShadowPassHelpers =
     /// <summary>Collects one buffer command. Draws emitted while shadows are disabled are
     /// skipped (they don't cast); materials with <c>Opacity &lt; 1.0</c> are also skipped —
     /// transparent geometry doesn't cast shadows (the depth pass is binary, no alpha test,
-    /// so a blended object must not write shadow depth). Instanced draws are collected
-    /// whole regardless: their commands carry a material, but it is not consulted here
-    /// (per-part material resolution for instanced draws is a v1 limitation).</summary>
+    /// so a blended object must not write shadow depth). Instanced commands carry one
+    /// material for the whole batch and are gated on it the same way.</summary>
     member _.Add(cmd: Command3D) =
       match cmd with
       | Command3D.DisableShadows -> shadowsEnabled <- false
@@ -691,37 +736,39 @@ module internal ShadowPassHelpers =
             }
 
             meshCount <- meshCount + 1
-      | Command3D.DrawMeshInstanced(mesh, transforms, _, instanceCount) when
+      | Command3D.DrawMeshInstanced(mesh, transforms, material, instanceCount) when
         shadowsEnabled
         ->
-        ensureInst(instancedCount + 1)
+        if material.Opacity >= 1.0f then
+          ensureInst(instancedCount + 1)
 
-        instancedDraws[instancedCount] <- {
-          Mesh = mesh
-          Transforms = transforms
-          Palettes = ValueNone
-          InstanceCount = instanceCount
-          BoneCount = 0
-        }
+          instancedDraws[instancedCount] <- {
+            Mesh = mesh
+            Transforms = transforms
+            Palettes = ValueNone
+            InstanceCount = instanceCount
+            BoneCount = 0
+          }
 
-        instancedCount <- instancedCount + 1
+          instancedCount <- instancedCount + 1
       | Command3D.DrawSkinnedMeshInstanced(mesh,
                                            transforms,
                                            palettes,
-                                           _,
+                                           material,
                                            instanceCount,
                                            boneCount) when shadowsEnabled ->
-        ensureInst(instancedCount + 1)
+        if material.Opacity >= 1.0f then
+          ensureInst(instancedCount + 1)
 
-        instancedDraws[instancedCount] <- {
-          Mesh = mesh
-          Transforms = transforms
-          Palettes = ValueSome palettes
-          InstanceCount = instanceCount
-          BoneCount = boneCount
-        }
+          instancedDraws[instancedCount] <- {
+            Mesh = mesh
+            Transforms = transforms
+            Palettes = ValueSome palettes
+            InstanceCount = instanceCount
+            BoneCount = boneCount
+          }
 
-        instancedCount <- instancedCount + 1
+          instancedCount <- instancedCount + 1
       | _ -> ()
 
     /// <summary>Partitions the collected mesh draws (non-skinned first, skinned at the end)
@@ -2650,13 +2697,20 @@ type ForwardPipelineBase
   // boundaries, DrawImmediate, end of frame), then drawn after all opaque geometry with
   // depth writes off. The PBR fragment already outputs alpha and the default ALPHA blend
   // is always active, so the flush toggles only the depth mask. Grow-only, reused across frames.
-  let transparentDraws = ResizeArray<TransparentMeshDraw>()
+  let transparentDraws = ResizeArray<TransparentEntry>()
 
   // Cached far-to-near comparer for the transparent sort — one object for the pipeline
   // lifetime, no per-frame allocation (List.Sort with a comparer sorts in place).
-  let transparentComparer: IComparer<TransparentMeshDraw> =
-    { new IComparer<TransparentMeshDraw> with
-        member _.Compare(a, b) = b.DistanceSq.CompareTo(a.DistanceSq)
+  let transparentComparer: IComparer<TransparentEntry> =
+    { new IComparer<TransparentEntry> with
+        member _.Compare(a, b) =
+          let dist(e: TransparentEntry) =
+            match e with
+            | TransparentEntry.SingleDraw d -> d.DistanceSq
+            | TransparentEntry.InstancedDraw d -> d.DistanceSq
+            | TransparentEntry.SkinnedInstancedDraw d -> d.DistanceSq
+
+          (dist b).CompareTo(dist a)
     }
 
   let applyPostProcess
@@ -3654,13 +3708,15 @@ type ForwardPipelineBase
               mat3d
             )
           elif mat3d.Opacity > 0.0f then
-            transparentDraws.Add {
-              Mesh = mesh
-              Transform = transform
-              Bones = ValueNone
-              Material = mat3d
-              DistanceSq = distSq
-            }
+            transparentDraws.Add(
+              TransparentEntry.SingleDraw {
+                Mesh = mesh
+                Transform = transform
+                Bones = ValueNone
+                Material = mat3d
+                DistanceSq = distSq
+              }
+            )
 
       // Draws the deferred transparents (sorted far-to-near) and clears the list. Must run
       // while a camera is active (DrawMesh requires BeginMode3D) and before any EndMode3D /
@@ -3678,13 +3734,44 @@ type ForwardPipelineBase
           Rlgl.DisableDepthMask()
 
           for i = 0 to transparentDraws.Count - 1 do
-            let d = transparentDraws[i]
-
-            match d.Bones with
-            | ValueNone ->
-              handleDrawMesh(
-                forwardShader,
-                &variants.Forward,
+            // Each case re-enters its own handler — batch entries redraw the whole
+            // batch with one call, single entries keep the plain mesh/skinned paths.
+            match transparentDraws[i] with
+            | TransparentEntry.SingleDraw d ->
+              match d.Bones with
+              | ValueNone ->
+                handleDrawMesh(
+                  forwardShader,
+                  &variants.Forward,
+                  lights,
+                  maxPt,
+                  maxSp,
+                  pointShadowSlots,
+                  spotShadowSlots,
+                  currentCamera,
+                  d.Mesh,
+                  d.Transform,
+                  d.Material
+                )
+              | ValueSome bones ->
+                handleDrawSkinnedMesh(
+                  skinnedShader,
+                  &variants.Skinned,
+                  lights,
+                  maxPt,
+                  maxSp,
+                  pointShadowSlots,
+                  spotShadowSlots,
+                  currentCamera,
+                  d.Mesh,
+                  d.Transform,
+                  d.Material,
+                  bones
+                )
+            | TransparentEntry.InstancedDraw d ->
+              handleDrawMeshInstanced(
+                instancedShader,
+                &variants.Instanced,
                 lights,
                 maxPt,
                 maxSp,
@@ -3692,23 +3779,27 @@ type ForwardPipelineBase
                 spotShadowSlots,
                 currentCamera,
                 d.Mesh,
-                d.Transform,
-                d.Material
-              )
-            | ValueSome bones ->
-              handleDrawSkinnedMesh(
-                skinnedShader,
-                &variants.Skinned,
-                lights,
-                maxPt,
-                maxSp,
-                pointShadowSlots,
-                spotShadowSlots,
-                currentCamera,
-                d.Mesh,
-                d.Transform,
+                d.Transforms,
                 d.Material,
-                bones
+                d.InstanceCount
+              )
+            | TransparentEntry.SkinnedInstancedDraw d ->
+              handleDrawSkinnedMeshInstanced(
+                skinnedInstancedShader,
+                &variants.SkinnedInstanced,
+                lights,
+                maxPt,
+                maxSp,
+                pointShadowSlots,
+                spotShadowSlots,
+                currentCamera,
+                palettePool,
+                d.Mesh,
+                d.Transforms,
+                d.Palettes,
+                d.Material,
+                d.InstanceCount,
+                d.BoneCount
               )
 
           Rlgl.EnableDepthMask()
@@ -3830,17 +3921,19 @@ type ForwardPipelineBase
                     material
                   )
                 elif material.Opacity > 0.0f then
-                  transparentDraws.Add {
-                    Mesh = mesh
-                    Transform = transform
-                    Bones = ValueNone
-                    Material = material
-                    DistanceSq =
-                      Vector3.DistanceSquared(
-                        currentCamera.Position,
-                        transform.Translation
-                      )
-                  }
+                  transparentDraws.Add(
+                    TransparentEntry.SingleDraw {
+                      Mesh = mesh
+                      Transform = transform
+                      Bones = ValueNone
+                      Material = material
+                      DistanceSq =
+                        Vector3.DistanceSquared(
+                          currentCamera.Position,
+                          transform.Translation
+                        )
+                    }
+                  )
               | Command3D.DrawModel(model, transform) ->
                 if modelAllOpaque(model, ValueNone) then
                   handleDrawModel(
@@ -3908,58 +4001,114 @@ type ForwardPipelineBase
                     bones
                   )
                 elif material.Opacity > 0.0f then
-                  transparentDraws.Add {
-                    Mesh = mesh
-                    Transform = transform
-                    Bones = ValueSome bones
-                    Material = material
-                    DistanceSq =
-                      Vector3.DistanceSquared(
-                        currentCamera.Position,
-                        transform.Translation
-                      )
-                  }
+                  transparentDraws.Add(
+                    TransparentEntry.SingleDraw {
+                      Mesh = mesh
+                      Transform = transform
+                      Bones = ValueSome bones
+                      Material = material
+                      DistanceSq =
+                        Vector3.DistanceSquared(
+                          currentCamera.Position,
+                          transform.Translation
+                        )
+                    }
+                  )
               | Command3D.DrawMeshInstanced(mesh,
                                             transforms,
                                             material,
                                             instanceCount) ->
-                handleDrawMeshInstanced(
-                  instancedShader,
-                  &variants.Instanced,
-                  lights,
-                  maxPt,
-                  maxSp,
-                  pointShadowSlots,
-                  spotShadowSlots,
-                  currentCamera,
-                  mesh,
-                  transforms,
-                  material,
-                  instanceCount
-                )
+                // Same three-tier gate as DrawMesh: inline opaque, defer transparent
+                // (whole batch, centroid sort key), skip invisible.
+                if material.Opacity >= 1.0f then
+                  handleDrawMeshInstanced(
+                    instancedShader,
+                    &variants.Instanced,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    currentCamera,
+                    mesh,
+                    transforms,
+                    material,
+                    instanceCount
+                  )
+                elif material.Opacity > 0.0f then
+                  // Clamp to the transforms array before the centroid sort key indexes
+                  // it (the MonoGame backend classifies with the same clamp); a count
+                  // past the buffer would throw here and again at the flush redraw.
+                  let count =
+                    min
+                      instanceCount
+                      (if isNull transforms then 0 else transforms.Length)
+
+                  if count > 0 then
+                    transparentDraws.Add(
+                      TransparentEntry.InstancedDraw {
+                        Mesh = mesh
+                        Transforms = transforms
+                        Material = material
+                        InstanceCount = count
+                        DistanceSq =
+                          instanceCentroidDistanceSq(
+                            currentCamera.Position,
+                            transforms,
+                            count
+                          )
+                      }
+                    )
               | Command3D.DrawSkinnedMeshInstanced(mesh,
                                                    transforms,
                                                    palettes,
                                                    material,
                                                    instanceCount,
                                                    boneCount) ->
-                handleDrawSkinnedMeshInstanced(
-                  skinnedInstancedShader,
-                  &variants.SkinnedInstanced,
-                  lights,
-                  maxPt,
-                  maxSp,
-                  pointShadowSlots,
-                  spotShadowSlots,
-                  currentCamera,
-                  palettePool,
-                  mesh,
-                  transforms,
-                  palettes,
-                  material,
-                  instanceCount,
-                  boneCount
-                )
+                if material.Opacity >= 1.0f then
+                  handleDrawSkinnedMeshInstanced(
+                    skinnedInstancedShader,
+                    &variants.SkinnedInstanced,
+                    lights,
+                    maxPt,
+                    maxSp,
+                    pointShadowSlots,
+                    spotShadowSlots,
+                    currentCamera,
+                    palettePool,
+                    mesh,
+                    transforms,
+                    palettes,
+                    material,
+                    instanceCount,
+                    boneCount
+                  )
+                elif material.Opacity > 0.0f then
+                  // Clamp to the transforms array before the centroid sort key indexes
+                  // it (the MonoGame backend classifies with the same clamp); a count
+                  // past the buffer would throw here and again at the flush redraw.
+                  let count =
+                    min
+                      instanceCount
+                      (if isNull transforms then 0 else transforms.Length)
+
+                  if count > 0 then
+                    transparentDraws.Add(
+                      TransparentEntry.SkinnedInstancedDraw {
+                        Mesh = mesh
+                        Transforms = transforms
+                        Palettes = palettes
+                        Material = material
+                        InstanceCount = count
+                        BoneCount = boneCount
+                        DistanceSq =
+                          instanceCentroidDistanceSq(
+                            currentCamera.Position,
+                            transforms,
+                            count
+                          )
+                      }
+                    )
               | _ -> ()
             | ValueSome _ ->
               this.Shade(frame, activeEffect, &currentCamera, buffer[i])

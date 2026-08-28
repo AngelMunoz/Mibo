@@ -168,12 +168,25 @@ Rules:
   alpha channel (`Color.A`); on MonoGame, from the effect's alpha (`BasicEffect.Alpha` /
   `SkinnedEffect.Alpha`). On both backends the sorted transparent pass uses alpha blending
   with depth writes off (depth test on) for its duration.
-- **Limitations.** Instanced draws and draws inside a `beginEffect`/`endEffect` scope are
-  not deferred in this version: they render immediately and unsorted. On raylib such a
-  transparent surface still blends (with depth writes on, since it skips the sorted flush);
-  on MonoGame it renders effectively opaque, because the frame's `BlendState.Opaque` is not
-  switched for these immediate draws. Either way a transparent instanced or effect-scoped
-  surface may look wrong against sorted transparents; prefer fully opaque materials for them.
+- **Instanced draws follow the same tiers, per instance and per part.** An instanced
+  command with a transparent material defers to the sorted pass as one unit and stops
+  casting shadows; `Opacity <= 0` draws nothing. On MonoGame, per-instance tint colors
+  participate per instance: the instances whose alpha is below 255 defer and blend while
+  the opaque instances stay in the inline pass and keep their shadows and depth writes —
+  one faded instance does not make the whole batch transparent. Skinned + instanced
+  models with mixed part opacities keep their opaque parts inline the same way. Each
+  deferred unit sorts by the distance to the average position of the instances it
+  carries, so ordering *between* those instances stays submission order — for a few
+  large surfaces that must order perfectly, draw them as regular (non-instanced)
+  transparent meshes.
+- **Custom effects own their transparency.** Draws inside a `beginEffect`/`endEffect`
+  scope are not deferred or sorted by the framework: they render immediately with the
+  scope's effect. On MonoGame the frame's `BlendState.Opaque` stays on, so a transparent
+  material under a custom effect renders solid. For custom transparency use
+  `drawImmediate`: its callback runs at render time with the graphics device and the
+  gathered scene data, so you can set your own blend and depth states. The callback must
+  restore blend/depth state before returning — the framework restores only viewport and
+  camera state around it.
 
 ## Primitive meshes
 

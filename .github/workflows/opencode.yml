@@ -31,5 +31,5 @@ jobs:
           OPENCODE_PERMISSION: '{ "bash": {  "*": "deny", "gh*": "allow", "gh pr review*": "deny", "dotnet*": "allow" }, "external_directory": { "*": "deny" } }'
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode-go/mimo-v2.5
-          variant: max
+          model: opencode-go/muse-spark-1.2-contributor
+          variant: high
