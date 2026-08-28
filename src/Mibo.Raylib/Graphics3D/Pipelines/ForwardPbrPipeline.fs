@@ -4035,21 +4035,30 @@ type ForwardPipelineBase
                     material,
                     instanceCount
                   )
-                elif material.Opacity > 0.0f && instanceCount > 0 then
-                  transparentDraws.Add(
-                    TransparentEntry.InstancedDraw {
-                      Mesh = mesh
-                      Transforms = transforms
-                      Material = material
-                      InstanceCount = instanceCount
-                      DistanceSq =
-                        instanceCentroidDistanceSq(
-                          currentCamera.Position,
-                          transforms,
-                          instanceCount
-                        )
-                    }
-                  )
+                elif material.Opacity > 0.0f then
+                  // Clamp to the transforms array before the centroid sort key indexes
+                  // it (the MonoGame backend classifies with the same clamp); a count
+                  // past the buffer would throw here and again at the flush redraw.
+                  let count =
+                    min
+                      instanceCount
+                      (if isNull transforms then 0 else transforms.Length)
+
+                  if count > 0 then
+                    transparentDraws.Add(
+                      TransparentEntry.InstancedDraw {
+                        Mesh = mesh
+                        Transforms = transforms
+                        Material = material
+                        InstanceCount = count
+                        DistanceSq =
+                          instanceCentroidDistanceSq(
+                            currentCamera.Position,
+                            transforms,
+                            count
+                          )
+                      }
+                    )
               | Command3D.DrawSkinnedMeshInstanced(mesh,
                                                    transforms,
                                                    palettes,
@@ -4074,23 +4083,32 @@ type ForwardPipelineBase
                     instanceCount,
                     boneCount
                   )
-                elif material.Opacity > 0.0f && instanceCount > 0 then
-                  transparentDraws.Add(
-                    TransparentEntry.SkinnedInstancedDraw {
-                      Mesh = mesh
-                      Transforms = transforms
-                      Palettes = palettes
-                      Material = material
-                      InstanceCount = instanceCount
-                      BoneCount = boneCount
-                      DistanceSq =
-                        instanceCentroidDistanceSq(
-                          currentCamera.Position,
-                          transforms,
-                          instanceCount
-                        )
-                    }
-                  )
+                elif material.Opacity > 0.0f then
+                  // Clamp to the transforms array before the centroid sort key indexes
+                  // it (the MonoGame backend classifies with the same clamp); a count
+                  // past the buffer would throw here and again at the flush redraw.
+                  let count =
+                    min
+                      instanceCount
+                      (if isNull transforms then 0 else transforms.Length)
+
+                  if count > 0 then
+                    transparentDraws.Add(
+                      TransparentEntry.SkinnedInstancedDraw {
+                        Mesh = mesh
+                        Transforms = transforms
+                        Palettes = palettes
+                        Material = material
+                        InstanceCount = count
+                        BoneCount = boneCount
+                        DistanceSq =
+                          instanceCentroidDistanceSq(
+                            currentCamera.Position,
+                            transforms,
+                            count
+                          )
+                      }
+                    )
               | _ -> ()
             | ValueSome _ ->
               this.Shade(frame, activeEffect, &currentCamera, buffer[i])
