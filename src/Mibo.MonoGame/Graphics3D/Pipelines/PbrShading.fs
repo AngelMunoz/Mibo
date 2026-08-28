@@ -110,7 +110,8 @@ type TransparentDraw = {
 }
 
 /// A deferred transparent instanced batch: one draw call for the whole batch, sorted by
-/// its centroid. The command carries one material, so the batch is one unit.
+/// its centroid. The command carries one material, so the batch is one unit — but the
+/// transparent half of a tint-alpha split carries only those instances (Filter).
 [<Struct>]
 type TransparentInstancedDraw = {
   Mesh: PrimitiveMesh
@@ -121,10 +122,14 @@ type TransparentInstancedDraw = {
   VertexOffset: int
   StartIndex: int
   DistanceSq: float32
+  /// Which instances of the command this entry draws (the transparent half of a split).
+  Filter: Opacity.InstanceOpacityFilter
 }
 
-/// A deferred transparent skinned + instanced command (any transparent part defers the
-/// whole command): the flush re-renders it through <c>drawAnimatedModelInstanced</c>.
+/// A deferred transparent half of a skinned + instanced command. A mixed command defers
+/// up to two halves — its transparent-material parts (all instances) and the transparent
+/// tint instances of its opaque parts — each re-rendered through
+/// <c>drawAnimatedModelInstanced</c> with these filters.
 [<Struct>]
 type TransparentSkinnedInstancedCommand = {
   Model: Model
@@ -135,6 +140,10 @@ type TransparentSkinnedInstancedCommand = {
   InstanceCount: int
   BoneCount: int
   DistanceSq: float32
+  /// Which parts (draw units) this entry draws.
+  UnitFilter: Opacity.SkinnedInstancedUnitFilter
+  /// Which instances this entry draws.
+  InstanceFilter: Opacity.InstanceOpacityFilter
 }
 
 /// A deferred transparent part of one instance from the skinned + instanced per-instance
@@ -1194,8 +1203,10 @@ module internal PbrShading =
   /// uploads them, and binds the two-stream vertex layout (mesh on stream 0, colored per-instance
   /// rows on stream 1 — world on TEXCOORD1..4, color on TEXCOORD5). Instances past
   /// <paramref name="colors"/>' length are clamped to <c>Color.White</c> (identity multiplier).
-  /// Returns the clamped instance count (0 when there is nothing to draw) and the instance vertex
-  /// buffer.
+  /// <paramref name="filter"/> keeps only the matching instances (opaque tints, transparent
+  /// tints, or all) — the kept rows are written compacted, so the returned count can be
+  /// smaller than the requested one. Returns the staged instance count (0 when nothing
+  /// matched or there is nothing to draw) and the instance vertex buffer.
   /// </summary>
   /// <remarks>Does not bind indices or draw — the caller selects its effect/technique, uploads
   /// scene data, and issues <c>DrawInstancedPrimitives</c>.</remarks>
@@ -1206,7 +1217,8 @@ module internal PbrShading =
       mesh: PrimitiveMesh,
       transforms: Matrix[],
       colors: Color[],
-      instanceCount: int
+      instanceCount: int,
+      filter: Opacity.InstanceOpacityFilter
     ) : struct (int * VertexBuffer) =
     // Clamp to the transforms array: an instanceCount larger than the buffer
     // would index out of range when staging per-instance world matrices.
@@ -1222,52 +1234,71 @@ module internal PbrShading =
 
       let colorCount = if isNull colors then 0 else colors.Length
 
+      // Compacted write: instances the filter rejects leave a gap that is never
+      // uploaded. All = every instance; the other two classify by tint alpha
+      // (alpha 255 = opaque — see Opacity.InstanceOpacityFilter).
+      let mutable staged = 0
+
       for i = 0 to instanceCount - 1 do
-        let color = if i < colorCount then colors[i] else Color.White
+        let alpha = (if i < colorCount then colors[i].A else 255uy)
 
-        res.InstanceColorStaging[i] <-
-          VertexInstanceWorldColor.Create(transforms[i], color)
+        let keep =
+          match filter with
+          | Opacity.InstanceOpacityFilter.All -> true
+          | Opacity.InstanceOpacityFilter.OpaqueOnly -> alpha = 255uy
+          | Opacity.InstanceOpacityFilter.TransparentOnly -> alpha < 255uy
 
-      // Must stay a DynamicVertexBuffer for the same reason as stageInstanceData:
-      // the native DX12 backend needs the discard-rename path for intra-frame re-uploads.
-      match res.InstanceColorVertexBuffer with
-      | ValueNone ->
-        let vb =
-          new DynamicVertexBuffer(
-            gd,
-            typeof<VertexInstanceWorldColor>,
-            instanceCount,
-            BufferUsage.WriteOnly
-          )
+        if keep then
+          let color = if i < colorCount then colors[i] else Color.White
 
-        res.InstanceColorVertexBuffer <- ValueSome vb
-      | ValueSome vb when vb.VertexCount < instanceCount ->
-        vb.Dispose()
+          res.InstanceColorStaging[staged] <-
+            VertexInstanceWorldColor.Create(transforms[i], color)
 
-        let vb' =
-          new DynamicVertexBuffer(
-            gd,
-            typeof<VertexInstanceWorldColor>,
-            instanceCount,
-            BufferUsage.WriteOnly
-          )
+          staged <- staged + 1
 
-        res.InstanceColorVertexBuffer <- ValueSome vb'
-      | _ -> ()
-
-      let instVB =
+      if staged = 0 then
+        struct (0, Unchecked.defaultof<VertexBuffer>)
+      else
+        // Must stay a DynamicVertexBuffer for the same reason as stageInstanceData:
+        // the native DX12 backend needs the discard-rename path for intra-frame re-uploads.
         match res.InstanceColorVertexBuffer with
-        | ValueSome vb -> vb
-        | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable (created above)
+        | ValueNone ->
+          let vb =
+            new DynamicVertexBuffer(
+              gd,
+              typeof<VertexInstanceWorldColor>,
+              staged,
+              BufferUsage.WriteOnly
+            )
 
-      instVB.SetData(res.InstanceColorStaging, 0, instanceCount)
+          res.InstanceColorVertexBuffer <- ValueSome vb
+        | ValueSome vb when vb.VertexCount < staged ->
+          vb.Dispose()
 
-      let bindings = res.InstanceBindings
-      bindings[0] <- VertexBufferBinding(mesh.Vertices, 0, 0)
-      bindings[1] <- VertexBufferBinding(instVB, 0, 1)
-      gd.SetVertexBuffers(bindings)
+          let vb' =
+            new DynamicVertexBuffer(
+              gd,
+              typeof<VertexInstanceWorldColor>,
+              staged,
+              BufferUsage.WriteOnly
+            )
 
-      struct (instanceCount, instVB)
+          res.InstanceColorVertexBuffer <- ValueSome vb'
+        | _ -> ()
+
+        let instVB =
+          match res.InstanceColorVertexBuffer with
+          | ValueSome vb -> vb
+          | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable (created above)
+
+        instVB.SetData(res.InstanceColorStaging, 0, staged)
+
+        let bindings = res.InstanceBindings
+        bindings[0] <- VertexBufferBinding(mesh.Vertices, 0, 0)
+        bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+        gd.SetVertexBuffers(bindings)
+
+        struct (staged, instVB)
 
   /// <summary>
   /// Handles <c>DrawInstanced</c>: native hardware instancing via two vertex streams (mesh + per-
@@ -1277,6 +1308,8 @@ module internal PbrShading =
   /// TEXCOORD5) is bound and the <c>InstancedColor</c> technique is used (PBR effect and the
   /// Instanced.fx fallback alike); instances past the colors array's length draw white.
   /// <c>ValueNone</c> keeps the plain <see cref="T:Mibo.Elmish.Graphics3D.VertexInstanceWorld"/> path.
+  /// <paramref name="filter"/> stages only the matching instances (a batch split by tint alpha
+  /// draws its opaque half inline and defers the transparent half — the caller classifies).
   /// </summary>
   let drawInstanced
     (
@@ -1290,13 +1323,22 @@ module internal PbrShading =
       material: Material3D,
       instanceCount: int,
       vertexOffset: int,
-      startIndex: int
+      startIndex: int,
+      filter: Opacity.InstanceOpacityFilter
     ) =
     let struct (instanceCount, _instVB) =
       match colors with
       | ValueNone -> stageInstanceData(gd, res, mesh, transforms, instanceCount)
       | ValueSome cs ->
-        stageInstanceColorData(gd, res, mesh, transforms, cs, instanceCount)
+        stageInstanceColorData(
+          gd,
+          res,
+          mesh,
+          transforms,
+          cs,
+          instanceCount,
+          filter
+        )
 
     if instanceCount > 0 then
       gd.Indices <- mesh.Indices
@@ -1636,7 +1678,6 @@ module internal PbrShading =
         )
       | _ -> ()
 
-  /// <summary>
   /// Stages one chunk (or group) of a skinned + instanced draw: packs the chunk's
   /// per-instance rows (world matrix + chunk-local palette index, plus color when
   /// <paramref name="colors"/> is <c>ValueSome</c>) into the matching growable instance
@@ -1650,7 +1691,11 @@ module internal PbrShading =
   /// Instances past <paramref name="colors"/>' length are clamped to <c>Color.White</c>
   /// (identity multiplier), matching
   /// <see cref="M:Mibo.Elmish.Graphics3D.Pipelines.PbrShading.stageInstanceColorData"/>.
-  /// </summary>
+  /// <paramref name="filter"/> keeps only the matching instances; a kept row keeps its
+  /// ORIGINAL chunk-local palette offset, so the chunk's palette texture/group (staged
+  /// for every instance) still addresses the right palette. Returns the staged row count
+  /// and the vertex buffer — count 0 (null buffer) when the filter matched no instance
+  /// of the chunk.
   let private stagePaletteInstanceVB
     (
       gd: GraphicsDevice,
@@ -1662,8 +1707,9 @@ module internal PbrShading =
       chunks: struct (int * int * Texture2D)[],
       chunkTotal: int,
       chunkStart: int,
-      chunkCount: int
-    ) : VertexBuffer =
+      chunkCount: int,
+      filter: Opacity.InstanceOpacityFilter
+    ) : struct (int * VertexBuffer) =
     match colors with
     | ValueSome cs ->
       if res.InstancePaletteColorStaging.Length < chunkCount then
@@ -1675,54 +1721,72 @@ module internal PbrShading =
       // PaletteOffset is chunk-local: palette storage (texture chunk or uniform
       // group on the DX12 path) holds this chunk only. DX12 pre-multiplies by
       // boneCount (the grouped shader takes the offset directly — a
-      // groupBoneCount uniform would not survive DX12 mgfx reflection).
+      // groupBoneCount uniform would not survive DX12 mgfx reflection). With a
+      // filter the offset stays the instance's ORIGINAL chunk-local index: the
+      // palette storage is staged for every instance, so a compacted row must
+      // still address its own palette.
       let dx12 = isDirectX12Backend()
+      let mutable staged = 0
 
       for i = 0 to chunkCount - 1 do
         let gi = chunkStart + i
-        let color = if gi < colorCount then cs[gi] else Color.White
+        let alpha = (if gi < colorCount then cs[gi].A else 255uy)
 
-        res.InstancePaletteColorStaging[i] <-
-          VertexInstanceWorldPaletteColor.Create(
-            transforms[gi],
-            color,
-            (if dx12 then float32(i * boneCount) else float32 i)
-          )
+        let keep =
+          match filter with
+          | Opacity.InstanceOpacityFilter.All -> true
+          | Opacity.InstanceOpacityFilter.OpaqueOnly -> alpha = 255uy
+          | Opacity.InstanceOpacityFilter.TransparentOnly -> alpha < 255uy
 
-      // Must stay a DynamicVertexBuffer for the same reason as stageInstanceData:
-      // the native DX12 backend needs the discard-rename path for intra-frame re-uploads.
-      match res.InstancePaletteColorVertexBuffer with
-      | ValueNone ->
-        let vb =
-          new DynamicVertexBuffer(
-            gd,
-            typeof<VertexInstanceWorldPaletteColor>,
-            chunkCount,
-            BufferUsage.WriteOnly
-          )
+        if keep then
+          let color = if gi < colorCount then cs[gi] else Color.White
 
-        res.InstancePaletteColorVertexBuffer <- ValueSome vb
-      | ValueSome vb when vb.VertexCount < chunkCount ->
-        vb.Dispose()
+          res.InstancePaletteColorStaging[staged] <-
+            VertexInstanceWorldPaletteColor.Create(
+              transforms[gi],
+              color,
+              (if dx12 then float32(i * boneCount) else float32 i)
+            )
 
-        let vb' =
-          new DynamicVertexBuffer(
-            gd,
-            typeof<VertexInstanceWorldPaletteColor>,
-            chunkCount,
-            BufferUsage.WriteOnly
-          )
+          staged <- staged + 1
 
-        res.InstancePaletteColorVertexBuffer <- ValueSome vb'
-      | _ -> ()
-
-      let instVB =
+      if staged = 0 then
+        struct (0, null)
+      else
+        // Must stay a DynamicVertexBuffer for the same reason as stageInstanceData:
+        // the native DX12 backend needs the discard-rename path for intra-frame re-uploads.
         match res.InstancePaletteColorVertexBuffer with
-        | ValueSome vb -> vb
-        | ValueNone -> Unchecked.defaultof<DynamicVertexBuffer> // unreachable (created above)
+        | ValueNone ->
+          let vb =
+            new DynamicVertexBuffer(
+              gd,
+              typeof<VertexInstanceWorldPaletteColor>,
+              staged,
+              BufferUsage.WriteOnly
+            )
 
-      instVB.SetData(res.InstancePaletteColorStaging, 0, chunkCount)
-      instVB
+          res.InstancePaletteColorVertexBuffer <- ValueSome vb
+        | ValueSome vb when vb.VertexCount < staged ->
+          vb.Dispose()
+
+          let vb' =
+            new DynamicVertexBuffer(
+              gd,
+              typeof<VertexInstanceWorldPaletteColor>,
+              staged,
+              BufferUsage.WriteOnly
+            )
+
+          res.InstancePaletteColorVertexBuffer <- ValueSome vb'
+        | _ -> ()
+
+        let instVB =
+          match res.InstancePaletteColorVertexBuffer with
+          | ValueSome vb -> vb
+          | ValueNone -> Unchecked.defaultof<DynamicVertexBuffer> // unreachable
+
+        instVB.SetData(res.InstancePaletteColorStaging, 0, staged)
+        struct (staged, instVB)
     | ValueNone ->
       let dx12 = isDirectX12Backend()
 
@@ -1782,7 +1846,7 @@ module internal PbrShading =
 
       // Cached rows are command-global: this chunk's rows start at chunkStart.
       instVB.SetData(staged, (if dx12 then 0 else chunkStart), chunkCount)
-      instVB
+      struct (chunkCount, instVB)
 
   /// <summary>
   /// Handles <c>DrawAnimatedModelInstanced</c>: one instanced draw per mesh part per chunk for
@@ -1806,6 +1870,11 @@ module internal PbrShading =
   /// <c>Skinned</c> path on OpenGL (no vertex texture fetch) and for user effects on DX12
   /// (the grouped-uniform contract is framework-PBR-only) — per-instance colors then
   /// modulate the resolved material's albedo/opacity.
+  /// <paramref name="unitFilter"/> and <paramref name="instanceFilter"/> select which parts
+  /// and which instances draw: a command with mixed part opacities or mixed tint alphas
+  /// draws its opaque half inline (the caller passes <c>OpaqueOnly</c> filters) and its
+  /// transparent halves at the transparent flush. Invisible parts (Opacity &lt;= 0) never
+  /// draw, whatever the filters.
   /// </summary>
   let drawAnimatedModelInstanced
     (
@@ -1821,6 +1890,8 @@ module internal PbrShading =
       colors: Color[] voption,
       instanceCount: int,
       boneCount: int,
+      unitFilter: Opacity.SkinnedInstancedUnitFilter,
+      instanceFilter: Opacity.InstanceOpacityFilter,
       deferList: ResizeArray<TransparentEntry> voption
     ) =
     // Clamp to the transforms array: an instanceCount larger than the buffer would index
@@ -2145,13 +2216,24 @@ module internal PbrShading =
           // non-uniform group (e.g. a PerMesh override splitting it) falls back to
           // per-part units for this command. User-effect targets never merge —
           // per-part scene uploads are their contract.
+          // The unit filter selects by the unit's resolved opacity: a mixed
+          // command draws its opaque units inline and defers its transparent
+          // units — a uniform merged group shares one MaterialKey (opacity
+          // included), so the group classifies as one unit.
           let units = res.SkinnedInstancedUnits
           units.Clear()
 
+          let unitKept(opacity: float32) =
+            match unitFilter with
+            | Opacity.SkinnedInstancedUnitFilter.All -> opacity > 0.0f
+            | Opacity.SkinnedInstancedUnitFilter.OpaqueOnly -> opacity >= 1.0f
+            | Opacity.SkinnedInstancedUnitFilter.TransparentOnly ->
+              0.0f < opacity && opacity < 1.0f
+
           let addPartUnit(info: SkinnedInstancedPartInfo) =
             // Fully-invisible parts (Opacity <= 0) draw nothing at all — the third tier
-            // of the material opacity contract.
-            if info.Mat.Opacity > 0.0f then
+            // of the material opacity contract — whatever the filter.
+            if unitKept info.Mat.Opacity then
               units.Add {
                 VB = info.Part.VertexBuffer
                 IB = info.Part.IndexBuffer
@@ -2199,7 +2281,7 @@ module internal PbrShading =
                   if uniform then
                     // The group shares one MaterialKey (opacity included) — one
                     // visibility check covers all members.
-                    if info.Mat.Opacity > 0.0f then
+                    if unitKept info.Mat.Opacity then
                       units.Add {
                         VB = mp.VertexBuffer
                         IB = mp.IndexBuffer
@@ -2219,178 +2301,116 @@ module internal PbrShading =
             for info in partInfos do
               addPartUnit info
 
-          let mutable chunkIdx = 0
+          // Nothing to draw for this half (e.g. TransparentOnly units on an
+          // all-opaque command, or a filter that matched no instance) — skip the
+          // chunk staging entirely.
+          if units.Count > 0 then
+            let mutable chunkIdx = 0
 
-          while chunkIdx < chunkTotal do
-            let struct (chunkStart, chunkCount, paletteTex) = chunks[chunkIdx]
+            while chunkIdx < chunkTotal do
+              let struct (chunkStart, chunkCount, paletteTex) = chunks[chunkIdx]
 
-            let instVB =
-              stagePaletteInstanceVB(
-                gd,
-                res,
-                transforms,
-                colors,
-                count,
-                boneCount,
-                chunks,
-                chunkTotal,
-                chunkStart,
-                chunkCount
-              )
-
-            // Per-chunk palette storage (effect params are effect-global — set
-            // once per chunk, not per part). On DX11/Vulkan the palette texture
-            // uploads to the main effect; on DX12 the bone palette array uploads
-            // to the isolated grouped effect (the main effect's grouped params
-            // are null on DX12 — dropped by mgfx reflection).
-            if isNull paletteTex then
-              match res.GroupedParams with
-              | ValueSome gp ->
-                if
-                  res.GroupPaletteScratch.Length < PaletteGroup.MaxMatrices
-                then
-                  res.GroupPaletteScratch <-
-                    Array.zeroCreate PaletteGroup.MaxMatrices
-
-                Array.Copy(
-                  palettes,
-                  chunkStart * boneCount,
-                  res.GroupPaletteScratch,
-                  0,
-                  chunkCount * boneCount
-                )
-
-                PbrUniforms.setMatrixArray
-                  gp.Matrix.BonePaletteGroup
-                  res.GroupPaletteScratch
-              | ValueNone -> ()
-            else
-              match res.Params with
-              | ValueSome p ->
-                PbrUniforms.setTexture p.Matrix.PaletteTex paletteTex
-
-                PbrUniforms.setVec2
-                  p.Matrix.PaletteTexSize
-                  (Vector2(float32(boneCount * 4), float32 chunkCount))
-              | ValueNone -> ()
-
-
-
-            for unit in units do
-              let info = unit.Info
-
-              match target with
-              | UserEffectTarget(effect, _) when info.IsSkinned ->
-                // User effect opted in: it inherits scene DATA by name (not the PBR
-                // shader). matModel carries the mesh parent-bone world; the instance
-                // world arrives on stream 1 and the bone palette via
-                // paletteTex/paletteTexSize — the contract the built-in
-                // SkinnedInstanced VS implements.
-                SceneUpload.uploadToEffect(
+              let struct (stagedCount, instVB) =
+                stagePaletteInstanceVB(
                   gd,
-                  effect,
-                  state.View,
-                  state.Projection,
-                  state.CurrentCamera.Position,
-                  info.World,
-                  info.NormalMatrix,
-                  frame.Lights,
-                  frame.Shadows,
-                  ValueNone,
-                  info.Mat,
-                  frame.Time
+                  res,
+                  transforms,
+                  colors,
+                  count,
+                  boneCount,
+                  chunks,
+                  chunkTotal,
+                  chunkStart,
+                  chunkCount,
+                  instanceFilter
                 )
 
-                match effect.Parameters["paletteTex"] with
-                | null -> ()
-                | pp -> pp.SetValue paletteTex
+              // A chunk the instance filter emptied stages nothing — skip its
+              // palette upload and its per-unit draws.
+              if stagedCount > 0 then
 
-                match effect.Parameters["paletteTexSize"] with
-                | null -> ()
-                | pp ->
-                  pp.SetValue(
-                    Vector2(float32(boneCount * 4), float32 chunkCount)
-                  )
-
-                let bindings = res.InstanceBindings
-                bindings[0] <- VertexBufferBinding(unit.VB, 0, 0)
-                bindings[1] <- VertexBufferBinding(instVB, 0, 1)
-                gd.SetVertexBuffers(bindings)
-
-                gd.Indices <- unit.IB
-
-                for pass in effect.CurrentTechnique.Passes do
-                  pass.Apply()
-
-                  gd.DrawInstancedPrimitives(
-                    PrimitiveType.TriangleList,
-                    unit.VertexOffset,
-                    unit.StartIndex,
-                    unit.PrimitiveCount,
-                    chunkCount
-                  )
-              | _ ->
-                // Framework PBR effect: SkinnedInstanced(+Color) — or the
-                // grouped-uniform SkinnedInstancedGrouped(+Color) on DX12 —
-                // for skinned parts; Instanced(+Color) for the rest (their
-                // stream 0 has no bone channels; the extra stream-1 elements
-                // are simply unread). On DX12 the grouped-uniform skinned path
-                // uses the isolated ForwardPbrGrouped effect (the main effect's
-                // bonePaletteGroup params are null on DX12).
-                let struct (drawEffect, drawParams) =
-                  if info.UseGrouped then
-                    struct (res.GroupedEffect, res.GroupedParams)
-                  else
-                    struct (res.Effect, res.Params)
-
-                match struct (drawEffect, drawParams) with
-                | struct (ValueSome e, ValueSome p) ->
-                  e.CurrentTechnique <- info.Technique
-
-                  PbrUniforms.setMatrix p.Matrix.MatModel info.World
-
-                  // The grouped effect has separate uniform handles from the
-                  // main effect, so it gets its own MaterialKey short-circuit
-                  // (HasLastGroupedMaterial/LastGroupedKey) — same pattern, keyed
-                  // on the grouped effect's uploads.
-                  let mat = info.Mat
-
-                  if info.UseGrouped then
+                // Per-chunk palette storage (effect params are effect-global — set
+                // once per chunk, not per part). On DX11/Vulkan the palette texture
+                // uploads to the main effect; on DX12 the bone palette array uploads
+                // to the isolated grouped effect (the main effect's grouped params
+                // are null on DX12 — dropped by mgfx reflection).
+                if isNull paletteTex then
+                  match res.GroupedParams with
+                  | ValueSome gp ->
                     if
-                      not res.HasLastGroupedMaterial
-                      || info.MatKey <> res.LastGroupedKey
+                      res.GroupPaletteScratch.Length < PaletteGroup.MaxMatrices
                     then
-                      PbrUniforms.uploadMaterial(&p, &mat)
-                      PbrUniforms.bindTextures(&p, &mat, whiteTex res)
-                      res.LastGroupedKey <- info.MatKey
-                      res.HasLastGroupedMaterial <- true
-                  else if
-                    not res.HasLastMaterial || info.MatKey <> res.LastKey
-                  then
-                    PbrUniforms.uploadMaterial(&p, &mat)
-                    PbrUniforms.bindTextures(&p, &mat, whiteTex res)
-                    res.LastKey <- info.MatKey
-                    res.HasLastMaterial <- true
+                      res.GroupPaletteScratch <-
+                        Array.zeroCreate PaletteGroup.MaxMatrices
 
-                  let bindings = res.InstanceBindings
-                  bindings[0] <- VertexBufferBinding(unit.VB, 0, 0)
-                  bindings[1] <- VertexBufferBinding(instVB, 0, 1)
-                  gd.SetVertexBuffers(bindings)
+                    Array.Copy(
+                      palettes,
+                      chunkStart * boneCount,
+                      res.GroupPaletteScratch,
+                      0,
+                      chunkCount * boneCount
+                    )
 
-                  gd.Indices <- unit.IB
+                    PbrUniforms.setMatrixArray
+                      gp.Matrix.BonePaletteGroup
+                      res.GroupPaletteScratch
+                  | ValueNone -> ()
+                else
+                  match res.Params with
+                  | ValueSome p ->
+                    PbrUniforms.setTexture p.Matrix.PaletteTex paletteTex
 
-                  // The Effect save/swap only applies to original parts (a merged
-                  // unit has no ModelMeshPart of its own).
-                  let saved =
-                    match unit.SourcePart with
-                    | ValueSome part ->
-                      let s = part.Effect
-                      part.Effect <- e
-                      s
-                    | ValueNone -> null
+                    PbrUniforms.setVec2
+                      p.Matrix.PaletteTexSize
+                      (Vector2(float32(boneCount * 4), float32 chunkCount))
+                  | ValueNone -> ()
 
-                  try
-                    for pass in e.CurrentTechnique.Passes do
+
+
+                for unit in units do
+                  let info = unit.Info
+
+                  match target with
+                  | UserEffectTarget(effect, _) when info.IsSkinned ->
+                    // User effect opted in: it inherits scene DATA by name (not the PBR
+                    // shader). matModel carries the mesh parent-bone world; the instance
+                    // world arrives on stream 1 and the bone palette via
+                    // paletteTex/paletteTexSize — the contract the built-in
+                    // SkinnedInstanced VS implements.
+                    SceneUpload.uploadToEffect(
+                      gd,
+                      effect,
+                      state.View,
+                      state.Projection,
+                      state.CurrentCamera.Position,
+                      info.World,
+                      info.NormalMatrix,
+                      frame.Lights,
+                      frame.Shadows,
+                      ValueNone,
+                      info.Mat,
+                      frame.Time
+                    )
+
+                    match effect.Parameters["paletteTex"] with
+                    | null -> ()
+                    | pp -> pp.SetValue paletteTex
+
+                    match effect.Parameters["paletteTexSize"] with
+                    | null -> ()
+                    | pp ->
+                      pp.SetValue(
+                        Vector2(float32(boneCount * 4), float32 chunkCount)
+                      )
+
+                    let bindings = res.InstanceBindings
+                    bindings[0] <- VertexBufferBinding(unit.VB, 0, 0)
+                    bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+                    gd.SetVertexBuffers(bindings)
+
+                    gd.Indices <- unit.IB
+
+                    for pass in effect.CurrentTechnique.Passes do
                       pass.Apply()
 
                       gd.DrawInstancedPrimitives(
@@ -2398,15 +2418,86 @@ module internal PbrShading =
                         unit.VertexOffset,
                         unit.StartIndex,
                         unit.PrimitiveCount,
-                        chunkCount
+                        stagedCount
                       )
-                  finally
-                    match unit.SourcePart with
-                    | ValueSome part -> part.Effect <- saved
-                    | ValueNone -> ()
-                | _ -> ()
+                  | _ ->
+                    // Framework PBR effect: SkinnedInstanced(+Color) — or the
+                    // grouped-uniform SkinnedInstancedGrouped(+Color) on DX12 —
+                    // for skinned parts; Instanced(+Color) for the rest (their
+                    // stream 0 has no bone channels; the extra stream-1 elements
+                    // are simply unread). On DX12 the grouped-uniform skinned path
+                    // uses the isolated ForwardPbrGrouped effect (the main effect's
+                    // bonePaletteGroup params are null on DX12).
+                    let struct (drawEffect, drawParams) =
+                      if info.UseGrouped then
+                        struct (res.GroupedEffect, res.GroupedParams)
+                      else
+                        struct (res.Effect, res.Params)
 
-            chunkIdx <- chunkIdx + 1
+                    match struct (drawEffect, drawParams) with
+                    | struct (ValueSome e, ValueSome p) ->
+                      e.CurrentTechnique <- info.Technique
+
+                      PbrUniforms.setMatrix p.Matrix.MatModel info.World
+
+                      // The grouped effect has separate uniform handles from the
+                      // main effect, so it gets its own MaterialKey short-circuit
+                      // (HasLastGroupedMaterial/LastGroupedKey) — same pattern, keyed
+                      // on the grouped effect's uploads.
+                      let mat = info.Mat
+
+                      if info.UseGrouped then
+                        if
+                          not res.HasLastGroupedMaterial
+                          || info.MatKey <> res.LastGroupedKey
+                        then
+                          PbrUniforms.uploadMaterial(&p, &mat)
+                          PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                          res.LastGroupedKey <- info.MatKey
+                          res.HasLastGroupedMaterial <- true
+                      else if
+                        not res.HasLastMaterial || info.MatKey <> res.LastKey
+                      then
+                        PbrUniforms.uploadMaterial(&p, &mat)
+                        PbrUniforms.bindTextures(&p, &mat, whiteTex res)
+                        res.LastKey <- info.MatKey
+                        res.HasLastMaterial <- true
+
+                      let bindings = res.InstanceBindings
+                      bindings[0] <- VertexBufferBinding(unit.VB, 0, 0)
+                      bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+                      gd.SetVertexBuffers(bindings)
+
+                      gd.Indices <- unit.IB
+
+                      // The Effect save/swap only applies to original parts (a merged
+                      // unit has no ModelMeshPart of its own).
+                      let saved =
+                        match unit.SourcePart with
+                        | ValueSome part ->
+                          let s = part.Effect
+                          part.Effect <- e
+                          s
+                        | ValueNone -> null
+
+                      try
+                        for pass in e.CurrentTechnique.Passes do
+                          pass.Apply()
+
+                          gd.DrawInstancedPrimitives(
+                            PrimitiveType.TriangleList,
+                            unit.VertexOffset,
+                            unit.StartIndex,
+                            unit.PrimitiveCount,
+                            stagedCount
+                          )
+                      finally
+                        match unit.SourcePart with
+                        | ValueSome part -> part.Effect <- saved
+                        | ValueNone -> ()
+                    | _ -> ()
+
+                chunkIdx <- chunkIdx + 1
         finally
           match target with
           | UserEffectTarget(effect, _) ->
@@ -2717,6 +2808,8 @@ module internal PbrShading =
       match res.TryInstancedTechnique(effect) with
       | null ->
         // Effect didn't opt in — fall back to the PBR instanced path (see remarks).
+        // Custom-effect scopes own their transparency (draw as-is): the whole
+        // command draws through the user effect, unfiltered.
         drawInstanced(
           gd,
           &state,
@@ -2728,14 +2821,23 @@ module internal PbrShading =
           material,
           count,
           vertexOffset,
-          startIndex
+          startIndex,
+          Opacity.InstanceOpacityFilter.All
         )
       | instancedTech ->
         let struct (instanceCount, _instVB) =
           match colors with
           | ValueNone -> stageInstanceData(gd, res, mesh, transforms, count)
           | ValueSome cs ->
-            stageInstanceColorData(gd, res, mesh, transforms, cs, count)
+            stageInstanceColorData(
+              gd,
+              res,
+              mesh,
+              transforms,
+              cs,
+              count,
+              Opacity.InstanceOpacityFilter.All
+            )
 
         if instanceCount > 0 then
           gd.Indices <- mesh.Indices
@@ -2812,6 +2914,8 @@ module internal PbrShading =
         colors,
         count,
         boneCount,
+        Opacity.SkinnedInstancedUnitFilter.All,
+        Opacity.InstanceOpacityFilter.All,
         ValueNone
       )
 

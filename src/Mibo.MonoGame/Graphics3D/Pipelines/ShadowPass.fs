@@ -87,6 +87,12 @@ type ShadowInstancedDraw = {
   /// <summary>First index of the mesh's slice within its shared buffer (startIndex).</summary>
   StartIndex: int
   Transforms: Matrix[]
+  /// The command's per-instance tint colors — read by the instance filter (null when
+  /// the command drew uncolored; nothing to filter then).
+  Colors: Color[] voption
+  /// Which instances cast: the transparent tint instances defer to the sorted
+  /// transparent pass in the forward pipeline, so depth renders the opaque half only.
+  Filter: Opacity.InstanceOpacityFilter
   InstanceCount: int
   /// Whether this draw was emitted while shadows were enabled (see ShadowMeshDraw).
   CastsShadow: bool
@@ -119,6 +125,13 @@ type ShadowSkinnedInstancedDraw = {
   PrimitiveCount: int
   Transforms: Matrix[]
   Palettes: Matrix[]
+  /// The command's per-instance tint colors — read by the instance filter (null when
+  /// the command drew uncolored; nothing to filter then).
+  Colors: Color[] voption
+  /// Which instances of this entry cast: the transparent tint instances defer to the
+  /// sorted transparent pass in the forward pipeline, so depth renders the opaque
+  /// half only.
+  Filter: Opacity.InstanceOpacityFilter
   InstanceCount: int
   BoneCount: int
   /// Whether this draw was emitted while shadows were enabled (see ShadowMeshDraw).
@@ -718,135 +731,200 @@ module internal ShadowPass =
                               material,
                               instanceCount,
                               vertexOffset,
-                              startIndex) when
-      instanceCount > 0
-      && material.Opacity >= 1.0f
-      && not(Opacity.anyTransparentInstanceColor colors)
-      ->
-      // The world's instanced geometry (block grid, platforms, etc.). Collected whole (one entry
-      // per emitted DrawInstanced). Transparent batches (material opacity or any per-instance
-      // color alpha below 1) cast no shadow and write no scene depth — same tier as the
-      // non-instanced draws. No per-instance cull — the sample chunk-culls the source
-      // commands, so the emitted count is already bounded.
-      if res.CollectedInstancedCount >= shadowInstancedDraws.Length then
-        Array.Resize(&shadowInstancedDraws, shadowInstancedDraws.Length * 2)
-        res.InstancedDraws <- shadowInstancedDraws
+                              startIndex) ->
+      // The world's instanced geometry (block grid, platforms, etc.). Same tiers as
+      // the forward pass, at the same granularity: a transparent material casts
+      // nothing (the whole batch defers there), an opaque material casts its
+      // OPAQUE instances — the transparent tint instances defer to the sorted
+      // transparent pass in the forward pipeline, so depth (binary, no alpha test)
+      // renders the opaque half only. No per-instance cull beyond that — the
+      // sample chunk-culls the source commands, so the emitted count is bounded.
+      let count =
+        if isNull transforms then
+          0
+        else
+          min instanceCount transforms.Length
 
-      shadowInstancedDraws[res.CollectedInstancedCount] <- {
-        Mesh = mesh
-        VertexOffset = vertexOffset
-        StartIndex = startIndex
-        Transforms = transforms
-        InstanceCount = instanceCount
-        CastsShadow = castEnabled
-      }
+      if count > 0 && material.Opacity >= 1.0f then
+        let filter =
+          if Opacity.anyTransparentInstanceColor(colors, count) then
+            Opacity.InstanceOpacityFilter.OpaqueOnly
+          else
+            Opacity.InstanceOpacityFilter.All
 
-      res.CollectedInstancedCount <- res.CollectedInstancedCount + 1
+        if res.CollectedInstancedCount >= shadowInstancedDraws.Length then
+          Array.Resize(&shadowInstancedDraws, shadowInstancedDraws.Length * 2)
+          res.InstancedDraws <- shadowInstancedDraws
+
+        shadowInstancedDraws[res.CollectedInstancedCount] <- {
+          Mesh = mesh
+          VertexOffset = vertexOffset
+          StartIndex = startIndex
+          Transforms = transforms
+          Colors = colors
+          Filter = filter
+          InstanceCount = count
+          CastsShadow = castEnabled
+        }
+
+        res.CollectedInstancedCount <- res.CollectedInstancedCount + 1
     | Command3D.DrawAnimatedModelInstanced(model,
                                            transforms,
                                            palettes,
                                            matOverride,
                                            colors,
                                            instanceCount,
-                                           boneCount) when
-      instanceCount > 0
-      && not(Opacity.animatedModelAnyTransparentPart(model, matOverride))
-      && not(Opacity.anyTransparentInstanceColor colors)
-      ->
-      // Skinned + instanced casters: one entry per SkinnedEffect part — or one per
-      // MERGED skinned part group off-GL (depth binds no material state, so merged
-      // geometry is always valid here; the GL per-instance fallback needs the real
-      // parts for their Effect). Sharing the command's transforms + flat palettes.
-      // Whole-command opacity gate: a command with any transparent part defers as one
-      // batch in the forward pass, so it casts no shadow and writes no scene depth.
-      let addDraw
-        (
-          part: ModelMeshPart,
-          vb: VertexBuffer,
-          ib: IndexBuffer,
-          vertexOffset: int,
-          startIndex: int,
-          primitiveCount: int
-        ) =
-        if
-          res.CollectedSkinnedInstancedCount
-          >= shadowSkinnedInstancedDraws.Length
-        then
-          Array.Resize(
-            &shadowSkinnedInstancedDraws,
-            shadowSkinnedInstancedDraws.Length * 2
-          )
-
-          res.SkinnedInstancedDraws <- shadowSkinnedInstancedDraws
-
-        shadowSkinnedInstancedDraws[res.CollectedSkinnedInstancedCount] <- {
-          Part = part
-          VertexBuffer = vb
-          IndexBuffer = ib
-          VertexOffset = vertexOffset
-          StartIndex = startIndex
-          PrimitiveCount = primitiveCount
-          Transforms = transforms
-          Palettes = palettes
-          InstanceCount = instanceCount
-          BoneCount = boneCount
-          CastsShadow = castEnabled
-        }
-
-        res.CollectedSkinnedInstancedCount <-
-          res.CollectedSkinnedInstancedCount + 1
-
-      let mergedParts =
-        if PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL then
-          ValueNone
+                                           boneCount) ->
+      // Skinned + instanced casters, classified like the forward pass: per PART and
+      // per INSTANCE. A part whose resolved material is transparent OR invisible
+      // (Opacity <= 0) draws nothing opaque there, so it casts nothing; an opaque
+      // part casts its OPAQUE instances (transparent tint instances defer).
+      // Commands with no opaque part collect nothing at all.
+      let count =
+        if isNull transforms then
+          0
         else
-          MergedModelParts.tryGet(gd, model)
+          min instanceCount transforms.Length
 
-      match mergedParts with
-      | ValueSome merged ->
-        res.MergedCovered.Clear()
+      if count > 0 then
+        let struct (anyTransparentPart, anyOpaquePart, anyInvisiblePart) =
+          Opacity.animatedModelPartOpacityMix(model, matOverride)
 
-        for mp in merged do
-          for sp in mp.SourceParts do
-            res.MergedCovered.Add sp |> ignore
+        let filter =
+          if Opacity.anyTransparentInstanceColor(colors, count) then
+            Opacity.InstanceOpacityFilter.OpaqueOnly
+          else
+            Opacity.InstanceOpacityFilter.All
 
-          if mp.IsSkinned then
-            addDraw(
-              null,
-              mp.VertexBuffer,
-              mp.IndexBuffer,
-              0,
-              0,
-              mp.PrimitiveCount
+        let addDraw
+          (
+            part: ModelMeshPart,
+            vb: VertexBuffer,
+            ib: IndexBuffer,
+            vertexOffset: int,
+            startIndex: int,
+            primitiveCount: int
+          ) =
+          if
+            res.CollectedSkinnedInstancedCount
+            >= shadowSkinnedInstancedDraws.Length
+          then
+            Array.Resize(
+              &shadowSkinnedInstancedDraws,
+              shadowSkinnedInstancedDraws.Length * 2
             )
 
-        for mesh in model.Meshes do
-          for part in mesh.MeshParts do
-            match part.Effect with
-            | :? SkinnedEffect when not(res.MergedCovered.Contains part) ->
-              addDraw(
-                part,
-                part.VertexBuffer,
-                part.IndexBuffer,
-                part.VertexOffset,
-                part.StartIndex,
-                part.PrimitiveCount
-              )
-            | _ -> ()
-      | ValueNone ->
-        for mesh in model.Meshes do
-          for part in mesh.MeshParts do
-            match part.Effect with
-            | :? SkinnedEffect ->
-              addDraw(
-                part,
-                part.VertexBuffer,
-                part.IndexBuffer,
-                part.VertexOffset,
-                part.StartIndex,
-                part.PrimitiveCount
-              )
-            | _ -> ()
+            res.SkinnedInstancedDraws <- shadowSkinnedInstancedDraws
+
+          shadowSkinnedInstancedDraws[res.CollectedSkinnedInstancedCount] <- {
+            Part = part
+            VertexBuffer = vb
+            IndexBuffer = ib
+            VertexOffset = vertexOffset
+            StartIndex = startIndex
+            PrimitiveCount = primitiveCount
+            Transforms = transforms
+            Palettes = palettes
+            Colors = colors
+            Filter = filter
+            InstanceCount = count
+            BoneCount = boneCount
+            CastsShadow = castEnabled
+          }
+
+          res.CollectedSkinnedInstancedCount <-
+            res.CollectedSkinnedInstancedCount + 1
+
+        // Part-material resolution mirroring the forward pass's flat part counter.
+        let partIsOpaque (part: ModelMeshPart) (partIndex: int) =
+          match matOverride with
+          | ValueSome(MaterialOverride.All m) -> m.Opacity >= 1.0f
+          | ValueSome(MaterialOverride.PerMesh f) ->
+            (f partIndex).Opacity >= 1.0f
+          | ValueNone -> (Material3D.fromModelMeshPart part).Opacity >= 1.0f
+
+        // The merged fast path needs EVERY part opaque — an invisible or
+        // transparent part inside a merged group would cast from behind its
+        // deferred (or absent) forward draw. Mixed commands collect per part,
+        // opaque parts only.
+        if not anyTransparentPart && not anyInvisiblePart then
+          // Every part is opaque — merged groups are uniform. One entry per
+          // SkinnedEffect part off-GL (or per MERGED skinned part group — depth
+          // binds no material state, so merged geometry is always valid here;
+          // the GL per-instance fallback needs the real parts for their Effect).
+          // Sharing the command's transforms + flat palettes.
+          let mergedParts =
+            if PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL then
+              ValueNone
+            else
+              MergedModelParts.tryGet(gd, model)
+
+          match mergedParts with
+          | ValueSome merged ->
+            res.MergedCovered.Clear()
+
+            for mp in merged do
+              for sp in mp.SourceParts do
+                res.MergedCovered.Add sp |> ignore
+
+              if mp.IsSkinned then
+                addDraw(
+                  null,
+                  mp.VertexBuffer,
+                  mp.IndexBuffer,
+                  0,
+                  0,
+                  mp.PrimitiveCount
+                )
+
+            for mesh in model.Meshes do
+              for part in mesh.MeshParts do
+                match part.Effect with
+                | :? SkinnedEffect when not(res.MergedCovered.Contains part) ->
+                  addDraw(
+                    part,
+                    part.VertexBuffer,
+                    part.IndexBuffer,
+                    part.VertexOffset,
+                    part.StartIndex,
+                    part.PrimitiveCount
+                  )
+                | _ -> ()
+          | ValueNone ->
+            for mesh in model.Meshes do
+              for part in mesh.MeshParts do
+                match part.Effect with
+                | :? SkinnedEffect ->
+                  addDraw(
+                    part,
+                    part.VertexBuffer,
+                    part.IndexBuffer,
+                    part.VertexOffset,
+                    part.StartIndex,
+                    part.PrimitiveCount
+                  )
+                | _ -> ()
+        elif anyOpaquePart then
+          // Mixed command: collect the opaque parts only, never merged — a merged
+          // group can mix an opaque with a transparent part, and only the opaque
+          // half of the command casts.
+          let mutable partIndex = 0
+
+          for mesh in model.Meshes do
+            for part in mesh.MeshParts do
+              match part.Effect with
+              | :? SkinnedEffect when partIsOpaque part partIndex ->
+                addDraw(
+                  part,
+                  part.VertexBuffer,
+                  part.IndexBuffer,
+                  part.VertexOffset,
+                  part.StartIndex,
+                  part.PrimitiveCount
+                )
+              | _ -> ()
+
+              partIndex <- partIndex + 1
     | _ -> ()
 
   /// <summary>
@@ -996,64 +1074,87 @@ module internal ShadowPass =
             res.InstanceStaging <-
               Array.zeroCreate<VertexInstanceWorld> instanceCount
 
+          // Filter by tint alpha when the entry carries colors: the transparent
+          // instances deferred to the sorted pass, so depth (binary, no alpha
+          // test) renders the kept half only. Kept rows are written compacted.
+          let cs =
+            match draw.Colors with
+            | ValueSome c when not(isNull c) -> c
+            | _ -> null
+
+          let colorCount = if isNull cs then 0 else cs.Length
+          let mutable staged = 0
+
           for i = 0 to instanceCount - 1 do
-            res.InstanceStaging[i] <-
-              VertexInstanceWorld.Create draw.Transforms[i]
+            let alpha = (if i < colorCount then cs[i].A else 255uy)
 
-          // NOTE: must stay a DynamicVertexBuffer — same DX12 upload-ordering
-          // hazard as the forward pass (see PbrShading.stageInstanceData): static
-          // buffer SetData executes out of order vs draws, so instanced shadow
-          // casters would read the last group's matrices.
-          match res.InstanceVertexBuffer with
-          | ValueNone ->
-            let vb =
-              new DynamicVertexBuffer(
-                gd,
-                typeof<VertexInstanceWorld>,
-                instanceCount,
-                BufferUsage.WriteOnly
-              )
+            let keep =
+              match draw.Filter with
+              | Opacity.InstanceOpacityFilter.All -> true
+              | Opacity.InstanceOpacityFilter.OpaqueOnly -> alpha = 255uy
+              | Opacity.InstanceOpacityFilter.TransparentOnly -> alpha < 255uy
 
-            res.InstanceVertexBuffer <- ValueSome vb
-          | ValueSome vb when vb.VertexCount < instanceCount ->
-            vb.Dispose()
+            if keep then
+              res.InstanceStaging[staged] <-
+                VertexInstanceWorld.Create draw.Transforms[i]
 
-            let vb' =
-              new DynamicVertexBuffer(
-                gd,
-                typeof<VertexInstanceWorld>,
-                instanceCount,
-                BufferUsage.WriteOnly
-              )
+              staged <- staged + 1
 
-            res.InstanceVertexBuffer <- ValueSome vb'
-          | _ -> ()
-
-          let instVB =
+          if staged > 0 then
+            // NOTE: must stay a DynamicVertexBuffer — same DX12 upload-ordering
+            // hazard as the forward pass (see PbrShading.stageInstanceData): static
+            // buffer SetData executes out of order vs draws, so instanced shadow
+            // casters would read the last group's matrices.
             match res.InstanceVertexBuffer with
-            | ValueSome vb -> vb
-            | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
+            | ValueNone ->
+              let vb =
+                new DynamicVertexBuffer(
+                  gd,
+                  typeof<VertexInstanceWorld>,
+                  staged,
+                  BufferUsage.WriteOnly
+                )
 
-          instVB.SetData(res.InstanceStaging, 0, instanceCount)
+              res.InstanceVertexBuffer <- ValueSome vb
+            | ValueSome vb when vb.VertexCount < staged ->
+              vb.Dispose()
 
-          let bindings = res.InstanceBindings
-          bindings[0] <- VertexBufferBinding(draw.Mesh.Vertices, 0, 0)
-          bindings[1] <- VertexBufferBinding(instVB, 0, 1)
-          gd.SetVertexBuffers(bindings)
+              let vb' =
+                new DynamicVertexBuffer(
+                  gd,
+                  typeof<VertexInstanceWorld>,
+                  staged,
+                  BufferUsage.WriteOnly
+                )
 
-          gd.Indices <- draw.Mesh.Indices
-          PbrUniforms.setMatrix shadowParams.ViewProj viewProj
+              res.InstanceVertexBuffer <- ValueSome vb'
+            | _ -> ()
 
-          for pass in effect.CurrentTechnique.Passes do
-            pass.Apply()
+            let instVB =
+              match res.InstanceVertexBuffer with
+              | ValueSome vb -> vb
+              | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
 
-            gd.DrawInstancedPrimitives(
-              PrimitiveType.TriangleList,
-              draw.VertexOffset,
-              draw.StartIndex,
-              draw.Mesh.PrimitiveCount,
-              instanceCount
-            )
+            instVB.SetData(res.InstanceStaging, 0, staged)
+
+            let bindings = res.InstanceBindings
+            bindings[0] <- VertexBufferBinding(draw.Mesh.Vertices, 0, 0)
+            bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+            gd.SetVertexBuffers(bindings)
+
+            gd.Indices <- draw.Mesh.Indices
+            PbrUniforms.setMatrix shadowParams.ViewProj viewProj
+
+            for pass in effect.CurrentTechnique.Passes do
+              pass.Apply()
+
+              gd.DrawInstancedPrimitives(
+                PrimitiveType.TriangleList,
+                draw.VertexOffset,
+                draw.StartIndex,
+                draw.Mesh.PrimitiveCount,
+                staged
+              )
 
     effect.CurrentTechnique <- effect.Techniques["Depth"]
 
@@ -1119,28 +1220,46 @@ module internal ShadowPass =
 
             let boneCount = draw.BoneCount
 
+            // Instance filter: the deferred transparent half of a split command
+            // never writes depth.
+            let cs =
+              match draw.Colors with
+              | ValueSome c when not(isNull c) -> c
+              | _ -> null
+
+            let colorCount = if isNull cs then 0 else cs.Length
+
+            let instanceCasts(i: int) =
+              let alpha = (if i < colorCount then cs[i].A else 255uy)
+
+              match draw.Filter with
+              | Opacity.InstanceOpacityFilter.All -> true
+              | Opacity.InstanceOpacityFilter.OpaqueOnly -> alpha = 255uy
+              | Opacity.InstanceOpacityFilter.TransparentOnly -> alpha < 255uy
+
             if boneCount > 0 then
               for i = 0 to instanceCount - 1 do
-                PbrUniforms.setMatrix shadowParams.MatModel draw.Transforms[i]
-                PbrUniforms.setMatrix shadowParams.ViewProj viewProj
+                if instanceCasts i then
+                  PbrUniforms.setMatrix shadowParams.MatModel draw.Transforms[i]
+                  PbrUniforms.setMatrix shadowParams.ViewProj viewProj
 
-                let palCount = min boneCount boneScratch.Length
+                  let palCount = min boneCount boneScratch.Length
 
-                for b = 0 to palCount - 1 do
-                  boneScratch[b] <- draw.Palettes[i * boneCount + b]
+                  for b = 0 to palCount - 1 do
+                    boneScratch[b] <- draw.Palettes[i * boneCount + b]
 
-                for b = palCount to boneScratch.Length - 1 do
-                  boneScratch[b] <- Matrix.Identity
+                  for b = palCount to boneScratch.Length - 1 do
+                    boneScratch[b] <- Matrix.Identity
 
-                PbrUniforms.setMatrixArray shadowParams.Bones boneScratch
+                  PbrUniforms.setMatrixArray shadowParams.Bones boneScratch
 
-                let saved = draw.Part.Effect
-                draw.Part.Effect <- effect
+                  let saved = draw.Part.Effect
+                  draw.Part.Effect <- effect
 
-                try
-                  drawPart(gd, draw.Part)
-                finally
-                  draw.Part.Effect <- saved
+                  try
+                    drawPart(gd, draw.Part)
+                  finally
+                    draw.Part.Effect <- saved
 
         effect.CurrentTechnique <- effect.Techniques["Depth"]
       else
@@ -1218,122 +1337,158 @@ module internal ShadowPass =
                   let struct (chunkStart, chunkCount, paletteTex) =
                     chunks[chunkIdx]
 
-                  // DX11/Vulkan: shared per-frame staging (InstanceWorldCache) —
-                  // the chunk plan is shared with the forward pass, so one staging
-                  // pass per frame serves both passes' VB uploads. DX12 stages per
-                  // pass (its forward/depth group budgets differ).
-                  let staged =
-                    if isDX12 then
+                  // Instance filtering: the deferred transparent half never writes
+                  // depth, so a split command's casters stage their opaque half only.
+                  // A kept row keeps its ORIGINAL chunk-local palette offset (texture
+                  // row, or the premultiplied DX12 group base), so the chunk's palette
+                  // storage — staged for every instance — still addresses the right
+                  // palette.
+                  let cs =
+                    match draw.Colors with
+                    | ValueSome c when not(isNull c) -> c
+                    | _ -> null
+
+                  let colorCount = if isNull cs then 0 else cs.Length
+
+                  let filtered =
+                    draw.Filter <> Opacity.InstanceOpacityFilter.All
+
+                  // DX11/Vulkan: shared per-frame staging (InstanceWorldCache) when
+                  // unfiltered — the chunk plan is shared with the forward pass, so
+                  // one staging pass per frame serves both passes' VB uploads. DX12
+                  // stages per pass (its forward/depth group budgets differ); a
+                  // filtered half stages its own rows everywhere (the cache serves
+                  // full chunks only).
+                  let stagedSrc, stagedOffset, stagedCount =
+                    if isDX12 || filtered then
                       if res.SkinnedInstancedStaging.Length < chunkCount then
                         res.SkinnedInstancedStaging <-
                           Array.zeroCreate<VertexInstanceWorldPalette>
                             chunkCount
 
-                      for i = 0 to chunkCount - 1 do
-                        res.SkinnedInstancedStaging[i] <-
-                          VertexInstanceWorldPalette.Create(
-                            draw.Transforms[chunkStart + i],
-                            // chunk-local AND pre-multiplied by boneCount: the
-                            // DX12 grouped depth shader uses the offset as the
-                            // palette base directly (no groupBoneCount uniform).
-                            float32(i * boneCount)
-                          )
+                      let mutable written = 0
 
-                      res.SkinnedInstancedStaging
+                      for i = 0 to chunkCount - 1 do
+                        let gi = chunkStart + i
+
+                        let alpha =
+                          (if gi < colorCount then cs[gi].A else 255uy)
+
+                        let keep =
+                          match draw.Filter with
+                          | Opacity.InstanceOpacityFilter.All -> true
+                          | Opacity.InstanceOpacityFilter.OpaqueOnly ->
+                            alpha = 255uy
+                          | Opacity.InstanceOpacityFilter.TransparentOnly ->
+                            alpha < 255uy
+
+                        if keep then
+                          res.SkinnedInstancedStaging[written] <-
+                            VertexInstanceWorldPalette.Create(
+                              draw.Transforms[gi],
+                              // chunk-local original index, pre-multiplied by
+                              // boneCount on DX12: the grouped depth shader uses the
+                              // offset as the palette base directly.
+                              (if isDX12 then
+                                 float32(i * boneCount)
+                               else
+                                 float32 i)
+                            )
+
+                          written <- written + 1
+
+                      (res.SkinnedInstancedStaging, 0, written)
                     else
-                      res.InstanceWorlds.Obtain(
+                      (res.InstanceWorlds.Obtain(
                         draw.Transforms,
                         instanceCount,
                         chunks,
                         chunkTotal
-                      )
+                       ),
+                       chunkStart,
+                       chunkCount)
 
-                  // Must stay a DynamicVertexBuffer — same DX12 upload-ordering hazard
-                  // as the other instanced paths (see renderInstancedSpan).
-                  match res.SkinnedInstancedVertexBuffer with
-                  | ValueNone ->
-                    let vb =
-                      new DynamicVertexBuffer(
-                        gd,
-                        typeof<VertexInstanceWorldPalette>,
-                        chunkCount,
-                        BufferUsage.WriteOnly
-                      )
-
-                    res.SkinnedInstancedVertexBuffer <- ValueSome vb
-                  | ValueSome vb when vb.VertexCount < chunkCount ->
-                    vb.Dispose()
-
-                    let vb' =
-                      new DynamicVertexBuffer(
-                        gd,
-                        typeof<VertexInstanceWorldPalette>,
-                        chunkCount,
-                        BufferUsage.WriteOnly
-                      )
-
-                    res.SkinnedInstancedVertexBuffer <- ValueSome vb'
-                  | _ -> ()
-
-                  let instVB =
+                  if stagedCount > 0 then
+                    // Must stay a DynamicVertexBuffer — same DX12 upload-ordering hazard
+                    // as the other instanced paths (see renderInstancedSpan).
                     match res.SkinnedInstancedVertexBuffer with
-                    | ValueSome vb -> vb
-                    | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
+                    | ValueNone ->
+                      let vb =
+                        new DynamicVertexBuffer(
+                          gd,
+                          typeof<VertexInstanceWorldPalette>,
+                          stagedCount,
+                          BufferUsage.WriteOnly
+                        )
 
-                  // Cached rows are command-global: this chunk's rows start at
-                  // chunkStart (DX12's per-pass staging starts at 0).
-                  instVB.SetData(
-                    staged,
-                    (if isDX12 then 0 else chunkStart),
-                    chunkCount
-                  )
+                      res.SkinnedInstancedVertexBuffer <- ValueSome vb
+                    | ValueSome vb when vb.VertexCount < stagedCount ->
+                      vb.Dispose()
 
-                  // Per-chunk palette storage: the cached texture on DX11/Vulkan,
-                  // the bonePaletteGroup constant array on DX12 (null paletteTex).
-                  if isNull paletteTex then
-                    if
-                      res.GroupPaletteScratch.Length < PaletteGroup.MaxMatricesDepth
-                    then
-                      res.GroupPaletteScratch <-
-                        Array.zeroCreate PaletteGroup.MaxMatricesDepth
+                      let vb' =
+                        new DynamicVertexBuffer(
+                          gd,
+                          typeof<VertexInstanceWorldPalette>,
+                          stagedCount,
+                          BufferUsage.WriteOnly
+                        )
 
-                    Array.Copy(
-                      draw.Palettes,
-                      chunkStart * boneCount,
-                      res.GroupPaletteScratch,
-                      0,
-                      chunkCount * boneCount
-                    )
+                      res.SkinnedInstancedVertexBuffer <- ValueSome vb'
+                    | _ -> ()
 
-                    PbrUniforms.setMatrixArray
-                      shadowEffectParams.BonePaletteGroup
-                      res.GroupPaletteScratch
-                  else
-                    PbrUniforms.setTexture
-                      shadowEffectParams.PaletteTex
-                      paletteTex
+                    let instVB =
+                      match res.SkinnedInstancedVertexBuffer with
+                      | ValueSome vb -> vb
+                      | ValueNone -> Unchecked.defaultof<VertexBuffer> // unreachable
 
-                    PbrUniforms.setVec2
-                      shadowEffectParams.PaletteTexSize
-                      (Vector2(float32(boneCount * 4), float32 chunkCount))
+                    instVB.SetData(stagedSrc, stagedOffset, stagedCount)
 
-                  let bindings = res.InstanceBindings
-                  bindings[0] <- VertexBufferBinding(draw.VertexBuffer, 0, 0)
-                  bindings[1] <- VertexBufferBinding(instVB, 0, 1)
-                  gd.SetVertexBuffers(bindings)
+                    // Per-chunk palette storage: the cached texture on DX11/Vulkan,
+                    // the bonePaletteGroup constant array on DX12 (null paletteTex).
+                    if isNull paletteTex then
+                      if
+                        res.GroupPaletteScratch.Length < PaletteGroup.MaxMatricesDepth
+                      then
+                        res.GroupPaletteScratch <-
+                          Array.zeroCreate PaletteGroup.MaxMatricesDepth
 
-                  gd.Indices <- draw.IndexBuffer
+                      Array.Copy(
+                        draw.Palettes,
+                        chunkStart * boneCount,
+                        res.GroupPaletteScratch,
+                        0,
+                        chunkCount * boneCount
+                      )
 
-                  for pass in shadowEffect.CurrentTechnique.Passes do
-                    pass.Apply()
+                      PbrUniforms.setMatrixArray
+                        shadowEffectParams.BonePaletteGroup
+                        res.GroupPaletteScratch
+                    else
+                      PbrUniforms.setTexture
+                        shadowEffectParams.PaletteTex
+                        paletteTex
 
-                    gd.DrawInstancedPrimitives(
-                      PrimitiveType.TriangleList,
-                      draw.VertexOffset,
-                      draw.StartIndex,
-                      draw.PrimitiveCount,
-                      chunkCount
-                    )
+                      PbrUniforms.setVec2
+                        shadowEffectParams.PaletteTexSize
+                        (Vector2(float32(boneCount * 4), float32 chunkCount))
+
+                    let bindings = res.InstanceBindings
+                    bindings[0] <- VertexBufferBinding(draw.VertexBuffer, 0, 0)
+                    bindings[1] <- VertexBufferBinding(instVB, 0, 1)
+                    gd.SetVertexBuffers(bindings)
+
+                    gd.Indices <- draw.IndexBuffer
+
+                    for pass in shadowEffect.CurrentTechnique.Passes do
+                      pass.Apply()
+
+                      gd.DrawInstancedPrimitives(
+                        PrimitiveType.TriangleList,
+                        draw.VertexOffset,
+                        draw.StartIndex,
+                        draw.PrimitiveCount,
+                        stagedCount
+                      )
 
                   chunkIdx <- chunkIdx + 1
 

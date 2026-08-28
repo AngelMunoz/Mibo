@@ -45,14 +45,26 @@ One draw call renders all 100 cubes. (On MonoGame, pass `prims.Cube` and `Matrix
 
 The material's `Opacity` follows the same three tiers as regular meshes: `>= 1` renders
 inline and casts shadows, `0 < Opacity < 1` defers to the sorted transparent pass and
-casts no shadows, `<= 0` draws nothing. A transparent batch defers **as one unit** and
-sorts by the distance to the average instance position, so ordering between instances of
-the same batch stays submission order. For a handful of large transparent surfaces that
-must blend in perfect order, draw them as regular transparent meshes instead of instances.
+casts no shadows, `<= 0` draws nothing. Classification is per instance and per part, not
+per batch:
 
-Skinned + instanced commands defer as one command when any part (or, on MonoGame, any
-per-instance color alpha) is transparent. Instanced draws inside a `beginEffect`/`endEffect`
-scope are the exception — custom effects own their transparency (see
+- A transparent **material** is a property of the whole batch, so it defers the batch as
+  one unit.
+- A **per-instance tint alpha** below 255 (MonoGame) defers only that instance: the
+  opaque instances stay in the inline pass and keep casting shadows, while the
+  transparent ones defer and blend. One faded instance does not make the whole batch
+  transparent.
+- A skinned + instanced model with **mixed part opacities** (a `PerMesh` resolver or
+  authored materials) draws its opaque parts inline and defers only its transparent
+  parts.
+
+A deferred unit sorts by the distance to the average position of the instances it
+carries, so ordering between those instances stays submission order. For a handful of
+large transparent surfaces that must blend in perfect order, draw them as regular
+transparent meshes instead of instances.
+
+Instanced draws inside a `beginEffect`/`endEffect` scope are the exception — custom
+effects own their transparency (see
 [materials → Transparency](materials.md#transparency) for the `drawImmediate` escape).
 
 ## Per-instance color (MonoGame only)

@@ -507,9 +507,11 @@ type ForwardPipelineBase
                                 instanceCount,
                                 vertexOffset,
                                 startIndex) ->
-        // Same three-tier gate as the non-instanced draws: invisible draws nothing,
-        // opaque (material and every instance color) draws inline, transparent defers
-        // to the sorted pass as one batch keyed by its centroid.
+        // Same three tiers as the non-instanced draws: invisible draws nothing, a
+        // transparent material defers the whole batch (one material covers every
+        // instance), an opaque material classifies PER INSTANCE — only the instances
+        // whose tint alpha is below 255 defer (blended, no shadows, no scene depth);
+        // the opaque instances stay inline as their own compacted instanced draw.
         let count =
           if isNull transforms then
             0
@@ -517,23 +519,60 @@ type ForwardPipelineBase
             min instanceCount transforms.Length
 
         if count > 0 && material.Opacity > 0.0f then
-          if
-            material.Opacity >= 1.0f
-            && not(Opacity.anyTransparentInstanceColor colors)
-          then
-            PbrShading.drawInstanced(
-              gd,
-              &state,
-              &frame,
-              pbrRes,
-              mesh,
-              transforms,
-              colors,
-              material,
-              instanceCount,
-              vertexOffset,
-              startIndex
-            )
+          if material.Opacity >= 1.0f then
+            let struct (transparentCount, transparentDistSq) =
+              Opacity.instanceSubsetStats(
+                state.CurrentCamera.Position,
+                transforms,
+                colors,
+                count
+              )
+
+            if transparentCount = 0 then
+              PbrShading.drawInstanced(
+                gd,
+                &state,
+                &frame,
+                pbrRes,
+                mesh,
+                transforms,
+                colors,
+                material,
+                instanceCount,
+                vertexOffset,
+                startIndex,
+                Opacity.InstanceOpacityFilter.All
+              )
+            else
+              if transparentCount < count then
+                PbrShading.drawInstanced(
+                  gd,
+                  &state,
+                  &frame,
+                  pbrRes,
+                  mesh,
+                  transforms,
+                  colors,
+                  material,
+                  instanceCount,
+                  vertexOffset,
+                  startIndex,
+                  Opacity.InstanceOpacityFilter.OpaqueOnly
+                )
+
+              transparentDraws.Add(
+                TransparentEntry.InstancedDraw {
+                  Mesh = mesh
+                  Transforms = transforms
+                  Colors = colors
+                  Material = material
+                  InstanceCount = count
+                  VertexOffset = vertexOffset
+                  StartIndex = startIndex
+                  DistanceSq = transparentDistSq
+                  Filter = Opacity.InstanceOpacityFilter.TransparentOnly
+                }
+              )
           else
             transparentDraws.Add(
               TransparentEntry.InstancedDraw {
@@ -550,6 +589,7 @@ type ForwardPipelineBase
                     transforms,
                     count
                   )
+                Filter = Opacity.InstanceOpacityFilter.All
               }
             )
       | Command3D.DrawAnimatedModelInstanced(model,
@@ -559,12 +599,14 @@ type ForwardPipelineBase
                                              colors,
                                              instanceCount,
                                              boneCount) ->
-        // Skinned + instanced classification. A whole-model invisible override draws
-        // nothing. On OpenGL the command goes straight through — its per-instance
-        // fallback classifies per part/instance into the shared list (finer sort keys).
-        // On the real-instancing backends any transparent part (or instance color)
-        // defers the whole command as one batch — parts cannot split without losing
-        // the single instanced draw call.
+        // Skinned + instanced classification, PER PART and PER INSTANCE. A whole-model
+        // invisible override draws nothing. On OpenGL the command goes straight
+        // through — its per-instance fallback classifies per part/instance into the
+        // shared list (finer sort keys). On the real-instancing backends a mixed
+        // command draws its opaque parts' opaque instances inline (shadows, depth
+        // writes, scene depth) and defers the rest as sorted halves: the
+        // transparent-material parts (all their instances), and the transparent tint
+        // instances of the opaque parts.
         let transformCount = if isNull transforms then 0 else transforms.Length
 
         let paletteLen = if isNull palettes then 0 else palettes.Length
@@ -590,45 +632,115 @@ type ForwardPipelineBase
               colors,
               instanceCount,
               boneCount,
+              Opacity.SkinnedInstancedUnitFilter.All,
+              Opacity.InstanceOpacityFilter.All,
               ValueSome transparentDraws
             )
-          elif
-            Opacity.animatedModelAnyTransparentPart(model, matOverride)
-            || Opacity.anyTransparentInstanceColor colors
-          then
-            transparentDraws.Add(
-              TransparentEntry.SkinnedInstancedCommand {
-                Model = model
-                Transforms = transforms
-                Palettes = palettes
-                MatOverride = matOverride
-                Colors = colors
-                InstanceCount = count
-                BoneCount = boneCount
-                DistanceSq =
-                  Opacity.instanceCentroidDistanceSq(
-                    state.CurrentCamera.Position,
-                    transforms,
-                    count
-                  )
-              }
-            )
           else
-            PbrShading.drawAnimatedModelInstanced(
-              gd,
-              &state,
-              &frame,
-              pbrRes,
-              SkinnedInstancedTarget.PbrTarget,
-              model,
-              transforms,
-              palettes,
-              matOverride,
-              colors,
-              instanceCount,
-              boneCount,
-              ValueNone
-            )
+            let struct (anyTransparentPart, anyOpaquePart, _anyInvisiblePart) =
+              Opacity.animatedModelPartOpacityMix(model, matOverride)
+
+            let struct (transparentCount, transparentDistSq) =
+              Opacity.instanceSubsetStats(
+                state.CurrentCamera.Position,
+                transforms,
+                colors,
+                count
+              )
+
+            // When every instance is transparent the inline half stages zero
+            // instances (the deferred half covers them all) — the OpaqueOnly
+            // filter still applies, or those instances would draw unblended.
+            let inlineInstanceFilter =
+              if transparentCount > 0 then
+                Opacity.InstanceOpacityFilter.OpaqueOnly
+              else
+                Opacity.InstanceOpacityFilter.All
+
+            // A command with no opaque part (all transparent or all invisible)
+            // has nothing to draw inline — skip straight to the deferrals.
+            if
+              anyOpaquePart && not anyTransparentPart && transparentCount = 0
+            then
+              PbrShading.drawAnimatedModelInstanced(
+                gd,
+                &state,
+                &frame,
+                pbrRes,
+                SkinnedInstancedTarget.PbrTarget,
+                model,
+                transforms,
+                palettes,
+                matOverride,
+                colors,
+                instanceCount,
+                boneCount,
+                Opacity.SkinnedInstancedUnitFilter.All,
+                Opacity.InstanceOpacityFilter.All,
+                ValueNone
+              )
+            else
+              // The opaque parts' opaque instances stay inline — all instances when
+              // no tint splits them, the opaque half of the split otherwise.
+              if anyOpaquePart then
+                PbrShading.drawAnimatedModelInstanced(
+                  gd,
+                  &state,
+                  &frame,
+                  pbrRes,
+                  SkinnedInstancedTarget.PbrTarget,
+                  model,
+                  transforms,
+                  palettes,
+                  matOverride,
+                  colors,
+                  instanceCount,
+                  boneCount,
+                  Opacity.SkinnedInstancedUnitFilter.OpaqueOnly,
+                  inlineInstanceFilter,
+                  ValueNone
+                )
+
+              // Transparent-material parts defer with all their instances.
+              if anyTransparentPart then
+                transparentDraws.Add(
+                  TransparentEntry.SkinnedInstancedCommand {
+                    Model = model
+                    Transforms = transforms
+                    Palettes = palettes
+                    MatOverride = matOverride
+                    Colors = colors
+                    InstanceCount = count
+                    BoneCount = boneCount
+                    DistanceSq =
+                      Opacity.instanceCentroidDistanceSq(
+                        state.CurrentCamera.Position,
+                        transforms,
+                        count
+                      )
+                    UnitFilter =
+                      Opacity.SkinnedInstancedUnitFilter.TransparentOnly
+                    InstanceFilter = Opacity.InstanceOpacityFilter.All
+                  }
+                )
+
+              // Transparent tint instances of the opaque parts defer as their own half.
+              if anyOpaquePart && transparentCount > 0 then
+                transparentDraws.Add(
+                  TransparentEntry.SkinnedInstancedCommand {
+                    Model = model
+                    Transforms = transforms
+                    Palettes = palettes
+                    MatOverride = matOverride
+                    Colors = colors
+                    InstanceCount = count
+                    BoneCount = boneCount
+                    DistanceSq = transparentDistSq
+                    UnitFilter = Opacity.SkinnedInstancedUnitFilter.OpaqueOnly
+                    InstanceFilter =
+                      Opacity.InstanceOpacityFilter.TransparentOnly
+                  }
+                )
       | _ -> ()
     | ValueSome userEffect ->
       // Per-group scope: shade with the user effect via name-resolved SceneUpload. The effect
@@ -1471,7 +1583,8 @@ type ForwardPipelineBase
                 d.Material,
                 d.InstanceCount,
                 d.VertexOffset,
-                d.StartIndex
+                d.StartIndex,
+                d.Filter
               )
             | TransparentEntry.SkinnedInstancedCommand d ->
               PbrShading.drawAnimatedModelInstanced(
@@ -1487,6 +1600,8 @@ type ForwardPipelineBase
                 d.Colors,
                 d.InstanceCount,
                 d.BoneCount,
+                d.UnitFilter,
+                d.InstanceFilter,
                 ValueNone
               )
 
