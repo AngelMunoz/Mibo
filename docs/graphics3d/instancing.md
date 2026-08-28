@@ -41,6 +41,20 @@ buffer
 
 One draw call renders all 100 cubes. (On MonoGame, pass `prims.Cube` and `Matrix[]` transforms; the member takes your backend's mesh and matrix types.)
 
+### Opacity
+
+The material's `Opacity` follows the same three tiers as regular meshes: `>= 1` renders
+inline and casts shadows, `0 < Opacity < 1` defers to the sorted transparent pass and
+casts no shadows, `<= 0` draws nothing. A transparent batch defers **as one unit** and
+sorts by the distance to the average instance position, so ordering between instances of
+the same batch stays submission order. For a handful of large transparent surfaces that
+must blend in perfect order, draw them as regular transparent meshes instead of instances.
+
+Skinned + instanced commands defer as one command when any part (or, on MonoGame, any
+per-instance color alpha) is transparent. Instanced draws inside a `beginEffect`/`endEffect`
+scope are the exception — custom effects own their transparency (see
+[materials → Transparency](materials.md#transparency) for the `drawImmediate` escape).
+
 ## Per-instance color (MonoGame only)
 
 Pass an optional `colors` array to tint each instance individually. The albedo is multiplied by `color.rgb` and the final alpha by `color.a`:
@@ -55,6 +69,10 @@ buffer
 ```
 
 The array may be shorter than `count`: instances beyond `colors.Length` render white. A custom effect that opts into instancing can receive the per-instance color by declaring `float4 InstanceColor : TEXCOORD5` in its vertex input; effects that don't declare it still work (the built-in fallback shades colored draws). See [Shader Uniform Reference](../shader-uniforms.html#Instancing-opt-in).
+
+A color alpha below `255` makes that instance semi-transparent; the framework scans the
+array once per command and, when any alpha is below `255`, defers the whole batch to the
+sorted transparent pass (even with an opaque material).
 
 > _**NOTE**_: Per-instance color is **MonoGame only**. Passing `colors` on raylib raises `NotSupportedException`; its instanced draw has a fixed instance attribute layout.
 

@@ -26,6 +26,9 @@ float3 AmbientColor;
 float3 DirLightDir;
 float3 DirLightColor;
 float3 AlbedoColor;
+// Material opacity — the pipeline uploads it and (during the transparent flush)
+// blends with it. The PBR effect reads the same uniform name.
+float opacity = 1.0;
 
 // Stream 1: per-instance world matrix, row-major. Each row is a Vector4.
 // Usage indices 1..4 so they don't collide with mesh VertexPositionNormalTexture's
@@ -60,7 +63,7 @@ float4 PS_Main(VS_OUTPUT input) : SV_TARGET {
   float3 L = normalize(-DirLightDir);
   float diffuse = max(dot(N, L), 0.0);
   float3 lighting = AmbientColor + DirLightColor * diffuse;
-  return float4(AlbedoColor * lighting, 1.0);
+  return float4(AlbedoColor * lighting, opacity);
 }
 
 technique Instanced {
@@ -104,7 +107,7 @@ float4 PS_MainColor(VS_OUTPUT_COLOR input) : SV_TARGET {
   float3 L = normalize(-DirLightDir);
   float diffuse = max(dot(N, L), 0.0);
   float3 lighting = AmbientColor + DirLightColor * diffuse;
-  return float4(AlbedoColor * input.InstanceColor.rgb * lighting, input.InstanceColor.a);
+  return float4(AlbedoColor * input.InstanceColor.rgb * lighting, opacity * input.InstanceColor.a);
 }
 
 technique InstancedColor {

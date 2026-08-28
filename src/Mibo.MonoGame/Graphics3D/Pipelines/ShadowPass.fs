@@ -714,13 +714,19 @@ module internal ShadowPass =
           | _ -> ()
     | Command3D.DrawInstanced(mesh,
                               transforms,
-                              _colors,
-                              _material,
+                              colors,
+                              material,
                               instanceCount,
                               vertexOffset,
-                              startIndex) when instanceCount > 0 ->
+                              startIndex) when
+      instanceCount > 0
+      && material.Opacity >= 1.0f
+      && not(Opacity.anyTransparentInstanceColor colors)
+      ->
       // The world's instanced geometry (block grid, platforms, etc.). Collected whole (one entry
-      // per emitted DrawInstanced). No per-instance cull — the sample chunk-culls the source
+      // per emitted DrawInstanced). Transparent batches (material opacity or any per-instance
+      // color alpha below 1) cast no shadow and write no scene depth — same tier as the
+      // non-instanced draws. No per-instance cull — the sample chunk-culls the source
       // commands, so the emitted count is already bounded.
       if res.CollectedInstancedCount >= shadowInstancedDraws.Length then
         Array.Resize(&shadowInstancedDraws, shadowInstancedDraws.Length * 2)
@@ -739,14 +745,20 @@ module internal ShadowPass =
     | Command3D.DrawAnimatedModelInstanced(model,
                                            transforms,
                                            palettes,
-                                           _,
-                                           _,
+                                           matOverride,
+                                           colors,
                                            instanceCount,
-                                           boneCount) when instanceCount > 0 ->
+                                           boneCount) when
+      instanceCount > 0
+      && not(Opacity.animatedModelAnyTransparentPart(model, matOverride))
+      && not(Opacity.anyTransparentInstanceColor colors)
+      ->
       // Skinned + instanced casters: one entry per SkinnedEffect part — or one per
       // MERGED skinned part group off-GL (depth binds no material state, so merged
       // geometry is always valid here; the GL per-instance fallback needs the real
       // parts for their Effect). Sharing the command's transforms + flat palettes.
+      // Whole-command opacity gate: a command with any transparent part defers as one
+      // batch in the forward pass, so it casts no shadow and writes no scene depth.
       let addDraw
         (
           part: ModelMeshPart,
