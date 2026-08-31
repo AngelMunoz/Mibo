@@ -805,6 +805,16 @@ module internal ShadowPass =
             startIndex: int,
             primitiveCount: int
           ) =
+          // Semantically-colliding parts draw from their rebuilt streams
+          // (colliding UV channels dropped once, cached) so the composed
+          // two-stream layout reads the instance rows untouched. Merged
+          // entries (part = null) only exist for non-colliding models.
+          let struct (vb, ib, vertexOffset, startIndex) =
+            if isNull part then
+              struct (vb, ib, vertexOffset, startIndex)
+            else
+              InstancedPartStreams.resolve(gd, part)
+
           if
             res.CollectedSkinnedInstancedCount
             >= shadowSkinnedInstancedDraws.Length
@@ -854,7 +864,15 @@ module internal ShadowPass =
           // the GL per-instance fallback needs the real parts for their Effect).
           // Sharing the command's transforms + flat palettes.
           let mergedParts =
-            if PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL then
+            if
+              PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL
+              || SkinnedInstanceSemantics.modelCollides model
+            then
+              // GL takes the per-instance fallback (needs the real parts for
+              // their Effect); semantically-colliding models must too — merged
+              // geometry concatenates the raw vertex bytes (colliding channels
+              // included), so their parts collect per part and draw from the
+              // rebuilt streams (InstancedPartStreams).
               ValueNone
             else
               MergedModelParts.tryGet(gd, model)
@@ -1204,6 +1222,10 @@ module internal ShadowPass =
           beyond
         else
           false
+
+      // Semantically-colliding models need no fallback here: their parts were
+      // collected with rebuilt streams (InstancedPartStreams), so the grouped
+      // / palette-texture instanced techniques read the instance rows cleanly.
 
       if
         PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL

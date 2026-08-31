@@ -1901,15 +1901,13 @@ module internal PbrShading =
     let count = min instanceCount transformCount
 
     if count > 0 && paletteLen > 0 && boneCount > 0 then
-      // Per-instance fallback: OpenGL (no vertex texture fetch). DX12 uses the
-      // grouped-uniform path (SkinnedInstancedGrouped via the isolated ForwardPbrGrouped
-      // effect — the main effect's grouped params are dropped by DX12 mgfx reflection)
-      // unless the skeleton exceeds the grouped-uniform budget
-      // (PaletteGroup.MaxMatrices) — more bones than a group holds can't ride the
-      // constant array, so DX12 falls back to per-instance draws too.
-      // User effects on DX12 still fall back to per-instance (a user effect's
-      // SkinnedInstanced technique expects the VS-texture contract — broken on DX12;
-      // the grouped-uniform path is framework-PBR-only).
+      // Per-instance fallback: OpenGL (no vertex texture fetch), DX12 skeletons
+      // beyond the grouped budget (PaletteGroup.MaxMatrices), and user effects
+      // on DX12 (the grouped-uniform contract is framework-PBR-only). Models
+      // whose mesh UV channels collide with the instance stream's
+      // TextureCoordinate 1..6 semantics do NOT fall back: their parts' vertex
+      // streams are rebuilt once via InstancedPartStreams (see below), so they
+      // batch for real.
       let perInstanceFallback =
         isOpenGLBackend()
         || (isDirectX12Backend()
@@ -2234,19 +2232,34 @@ module internal PbrShading =
             // Fully-invisible parts (Opacity <= 0) draw nothing at all — the third tier
             // of the material opacity contract — whatever the filter.
             if unitKept info.Mat.Opacity then
+              // Semantically-colliding parts draw from their rebuilt streams
+              // (colliding UV channels dropped once, cached) so the composed
+              // two-stream layout reads the instance rows untouched.
+              let struct (vb, ib, vOff, sIdx) =
+                InstancedPartStreams.resolve(gd, info.Part)
+
               units.Add {
-                VB = info.Part.VertexBuffer
-                IB = info.Part.IndexBuffer
-                VertexOffset = info.Part.VertexOffset
-                StartIndex = info.Part.StartIndex
+                VB = vb
+                IB = ib
+                VertexOffset = vOff
+                StartIndex = sIdx
                 PrimitiveCount = info.Part.PrimitiveCount
                 Info = info
                 SourcePart = ValueSome info.Part
               }
 
+          // Colliding models skip merging: merged geometry concatenates the raw
+          // vertex bytes (colliding channels included), so its buffers would
+          // collide too. Their parts draw rebuilt — and still instanced.
+          let modelCollides = SkinnedInstanceSemantics.modelCollides model
+
           match
             (match target with
-             | PbrTarget -> MergedModelParts.tryGet(gd, model)
+             | PbrTarget ->
+               if modelCollides then
+                 ValueNone
+               else
+                 MergedModelParts.tryGet(gd, model)
              | UserEffectTarget _ -> ValueNone)
           with
           | ValueSome merged ->

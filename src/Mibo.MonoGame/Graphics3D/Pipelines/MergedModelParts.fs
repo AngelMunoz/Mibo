@@ -319,3 +319,188 @@ module internal MergedModelParts =
     match cache.GetValue(model, fun m -> build(gd, m)) with
     | null -> ValueNone
     | parts -> ValueSome parts
+
+/// <summary>Per-part vertex-stream rebuild for semantically-colliding models.
+///
+/// The instance vertex stream declares its world-matrix rows and palette offset
+/// on TextureCoordinate usage indices 1..6; MonoGame's input-layout builders
+/// match shader inputs to the first bound stream carrying the semantic (DX12)
+/// or renumber duplicates (DirectX), so a mesh whose vertices carry extra UV
+/// channels on those indices silently steals or shifts the instance stream's
+/// semantics and corrupts every instance transform (see
+/// <c>SkinnedInstanceSemantics</c>).
+///
+/// The fix keeps real batching: this module rebuilds a colliding part's vertex
+/// buffer ONCE — copying only the elements the instanced shaders read
+/// (position, texcoord 0, normal, blend indices/weights, everything
+/// non-colliding) into a compacted declaration, slicing the part's own
+/// vertices, and rebasing its index slice. Draw sites consume the cached
+/// (vb, ib, vertexOffset, startIndex) tuple exactly like a merged part; the
+/// extra channels were never read by any instanced technique, so output is
+/// bit-identical. Lifetime mirrors <c>MergedModelParts</c>: GPU buffers die
+/// with the part/Model, the weak table keeps them collectible.</summary>
+module internal InstancedPartStreams =
+
+  let private formatSize(fmt: VertexElementFormat) =
+    match fmt with
+    | VertexElementFormat.Single -> 4
+    | VertexElementFormat.Vector2 -> 8
+    | VertexElementFormat.Vector3 -> 12
+    | VertexElementFormat.Vector4 -> 16
+    | VertexElementFormat.Color -> 4
+    | VertexElementFormat.Byte4 -> 4
+    | VertexElementFormat.Short2 -> 4
+    | VertexElementFormat.Short4 -> 8
+    | VertexElementFormat.NormalizedShort2 -> 4
+    | VertexElementFormat.NormalizedShort4 -> 8
+    | VertexElementFormat.HalfVector2 -> 4
+    | VertexElementFormat.HalfVector4 -> 8
+    | _ -> failwith $"unsupported vertex element format: {fmt}"
+
+  let private collides(el: VertexElement) =
+    el.VertexElementUsage = VertexElementUsage.TextureCoordinate
+    && el.UsageIndex >= 1
+    && el.UsageIndex <= 6
+
+  /// Reference wrapper — ConditionalWeakTable values must be reference types.
+  [<Sealed>]
+  type private Streams(vb: VertexBuffer, ib: IndexBuffer, vOff: int, sIdx: int)
+    =
+    member _.Vb = vb
+    member _.Ib = ib
+    member _.VOff = vOff
+    member _.SIdx = sIdx
+
+  let private cache = ConditionalWeakTable<ModelMeshPart, Streams>()
+
+  /// <summary>The streams to draw <paramref name="part"/> with on a two-stream
+  /// instanced draw: the original buffers when the declaration doesn't collide,
+  /// otherwise a rebuilt (vb, ib, 0, 0) slice. Cached per part.</summary>
+  let resolve
+    (gd: GraphicsDevice, part: ModelMeshPart)
+    : struct (VertexBuffer * IndexBuffer * int * int) =
+    match cache.TryGetValue(part) with
+    | true, streams ->
+      struct (streams.Vb, streams.Ib, streams.VOff, streams.SIdx)
+    | false, _ ->
+      let struct (vb, ib, vOff, sIdx) =
+        if not(SkinnedInstanceSemantics.partCollides part) then
+          struct (part.VertexBuffer,
+                  part.IndexBuffer,
+                  part.VertexOffset,
+                  part.StartIndex)
+        else
+          let srcDecl = part.VertexBuffer.VertexDeclaration
+          let srcStride = srcDecl.VertexStride
+          let srcElements = srcDecl.GetVertexElements()
+
+          let keep = srcElements |> Array.filter(fun el -> not(collides el))
+
+          // Compact the kept elements to the front; offsets stay aligned to
+          // each format's own size.
+          let mutable cursor = 0
+
+          let newElements =
+            keep
+            |> Array.map(fun el ->
+              let offset = cursor
+
+              cursor <- cursor + formatSize el.VertexElementFormat
+
+              VertexElement(
+                offset,
+                el.VertexElementFormat,
+                el.VertexElementUsage,
+                el.UsageIndex
+              ))
+
+          let newStride = cursor
+
+          // Vertices: slice this part's vertices, dropping the colliding
+          // channels' bytes.
+          let src =
+            Array.zeroCreate<byte>(part.VertexBuffer.VertexCount * srcStride)
+
+          part.VertexBuffer.GetData<byte>(src)
+
+          let dst = Array.zeroCreate<byte>(part.NumVertices * newStride)
+
+          for v = 0 to part.NumVertices - 1 do
+            let srcBase = (part.VertexOffset + v) * srcStride
+            let dstBase = v * newStride
+
+            for i = 0 to keep.Length - 1 do
+              Array.blit
+                src
+                (srcBase + keep[i].Offset)
+                dst
+                (dstBase + newElements[i].Offset)
+                (formatSize keep[i].VertexElementFormat)
+
+          let vb =
+            new VertexBuffer(
+              gd,
+              new VertexDeclaration(newStride, newElements),
+              part.NumVertices,
+              BufferUsage.None
+            )
+
+          vb.SetData<byte> dst
+
+          // Indices: this part's index slice, rebased to the sliced vertices.
+          let indexCount = part.PrimitiveCount * 3
+
+          let ib =
+            if
+              part.IndexBuffer.IndexElementSize = IndexElementSize.ThirtyTwoBits
+            then
+              let indices = Array.zeroCreate<int> indexCount
+
+              part.IndexBuffer.GetData<int>(
+                part.StartIndex * 4,
+                indices,
+                0,
+                indexCount
+              )
+
+              for j = 0 to indexCount - 1 do
+                indices[j] <- indices[j] - part.VertexOffset
+
+              let ib =
+                new IndexBuffer(
+                  gd,
+                  IndexElementSize.ThirtyTwoBits,
+                  indexCount,
+                  BufferUsage.None
+                )
+
+              ib.SetData<int> indices
+              ib
+            else
+              let indices = Array.zeroCreate<uint16> indexCount
+
+              part.IndexBuffer.GetData<uint16>(
+                part.StartIndex * 2,
+                indices,
+                0,
+                indexCount
+              )
+
+              for j = 0 to indexCount - 1 do
+                indices[j] <- indices[j] - uint16 part.VertexOffset
+
+              let ib =
+                new IndexBuffer(
+                  gd,
+                  IndexElementSize.SixteenBits,
+                  indexCount,
+                  BufferUsage.None
+                )
+
+              ib.SetData<uint16> indices
+              ib
+
+          struct (vb, ib, 0, 0)
+
+      cache.Add(part, Streams(vb, ib, vOff, sIdx))
+      struct (vb, ib, vOff, sIdx)

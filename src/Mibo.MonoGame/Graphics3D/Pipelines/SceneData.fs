@@ -140,6 +140,57 @@ module internal PaletteGroup =
 
       total
 
+/// <summary>Semantic-collision detection for the skinned + instanced two-stream
+/// draws. The instance vertex stream carries the per-instance world rows and
+/// palette offset on TextureCoordinate usage indices 1..6 (5 = instance color).
+/// MonoGame's input-layout builders match each shader input to the first bound
+/// stream that carries the semantic (DX12 native) or renumber duplicates
+/// (DirectX), so a mesh whose vertices carry extra UV channels —
+/// TextureCoordinate 1..6, e.g. the Kenney platformer-kit characters' texture
+/// ID channel — silently steals or shifts the instance stream's semantics and
+/// corrupts every instance transform. Colliding parts are rebuilt once via
+/// <c>InstancedPartStreams</c> (colliding channels dropped) so they still
+/// batch; TextureCoordinate 0 never collides.</summary>
+module internal SkinnedInstanceSemantics =
+
+  /// True when <paramref name="part"/>'s vertex declaration carries a
+  /// TextureCoordinate element on usage index 1..6.
+  let partCollides(part: ModelMeshPart) : bool =
+    let mutable found = false
+
+    let elements =
+      (if isNull(box part.VertexBuffer) then
+         [||]
+       else
+         part.VertexBuffer.VertexDeclaration.GetVertexElements())
+
+    let mutable i = 0
+
+    while not found && i < elements.Length do
+      let el = elements[i]
+
+      found <-
+        el.VertexElementUsage = VertexElementUsage.TextureCoordinate
+        && el.UsageIndex >= 1
+        && el.UsageIndex <= 6
+
+      i <- i + 1
+
+    found
+
+  /// True when any mesh part of <paramref name="model"/> collides (see
+  /// <see cref="M:partCollides"/>). Instance rows ride TEXCOORD1..4 (+5/6), so
+  /// a second UV channel anywhere in the model corrupts the composed streams.
+  let modelCollides(model: Model) : bool =
+    let mutable found = false
+
+    for mesh in model.Meshes do
+      for part in mesh.MeshParts do
+        if not found then
+          found <- partCollides part
+
+    found
+
 /// <summary>
 /// Pools <see cref="T:Microsoft.Xna.Framework.Graphics.Texture2D"/> bone-palette textures
 /// (<see cref="F:Microsoft.Xna.Framework.Graphics.SurfaceFormat.Vector4"/>) keyed by
