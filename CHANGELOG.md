@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.5.3] - 2026-08-31
+
 ### Fixed
 
 - **MonoGame 3D:** skinned + instanced draws render correctly on models whose meshes carry extra texture coordinate channels (usage indices 1 to 6, for example the Kenney platformer-kit characters). The per-copy data rides those same shader inputs, so the mesh data replaced it and every copy rendered as broken geometry. The pipeline now strips the colliding channels once per model (cached) and the draw batches as usual; models without extra channels draw exactly as before. Shaders must read mesh UVs from channel 0 only in skinned + instanced draws, and affected models skip mesh-part merging — one draw per part instead of one per merged group.
