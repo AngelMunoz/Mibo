@@ -396,6 +396,10 @@ module internal InstancedPartStreams =
 
           let keep = srcElements |> Array.filter(fun el -> not(collides el))
 
+          // Per-element byte sizes, hoisted out of the per-vertex copy loop.
+          let keepSizes =
+            keep |> Array.map(fun el -> formatSize el.VertexElementFormat)
+
           // Compact the kept elements to the front; offsets stay aligned to
           // each format's own size.
           let mutable cursor = 0
@@ -416,17 +420,23 @@ module internal InstancedPartStreams =
 
           let newStride = cursor
 
-          // Vertices: slice this part's vertices, dropping the colliding
-          // channels' bytes.
-          let src =
-            Array.zeroCreate<byte>(part.VertexBuffer.VertexCount * srcStride)
+          // Vertices: read back ONLY this part's slice of the shared buffer —
+          // content models pack every part into one buffer, and a whole-buffer
+          // readback per colliding part would sync and copy the mesh's every
+          // byte once per part. Then drop the colliding channels' bytes.
+          let src = Array.zeroCreate<byte>(part.NumVertices * srcStride)
 
-          part.VertexBuffer.GetData<byte>(src)
+          part.VertexBuffer.GetData<byte>(
+            part.VertexOffset * srcStride,
+            src,
+            0,
+            src.Length
+          )
 
           let dst = Array.zeroCreate<byte>(part.NumVertices * newStride)
 
           for v = 0 to part.NumVertices - 1 do
-            let srcBase = (part.VertexOffset + v) * srcStride
+            let srcBase = v * srcStride
             let dstBase = v * newStride
 
             for i = 0 to keep.Length - 1 do
@@ -435,7 +445,7 @@ module internal InstancedPartStreams =
                 (srcBase + keep[i].Offset)
                 dst
                 (dstBase + newElements[i].Offset)
-                (formatSize keep[i].VertexElementFormat)
+                keepSizes[i]
 
           let vb =
             new VertexBuffer(

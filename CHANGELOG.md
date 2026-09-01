@@ -4,7 +4,8 @@
 
 ### Fixed
 
-- **MonoGame 3D:** skinned + instanced draws render correctly on models whose meshes carry extra texture coordinate channels (texture coordinate usage indices 1 to 6, for example the Kenney platformer-kit characters). An instanced draw binds two vertex streams (the mesh and one block of per-copy data), and MonoGame's input layout gives each shader input to the first stream that carries the name, so a mesh channel on those names replaced the per-copy position data and every copy rendered as broken geometry. Parts with such channels now get a rebuilt vertex buffer on their first instanced draw: the pipeline drops the colliding channels, rebases the index buffer, and caches the result for the model's lifetime; the draw then batches as usual. Models without extra channels draw exactly as before. Models that need the rebuild skip mesh-part merging, so they batch one draw per part instead of one per merged group.
+- **MonoGame 3D:** skinned + instanced draws render correctly on models whose meshes carry extra texture coordinate channels (usage indices 1 to 6, for example the Kenney platformer-kit characters). The per-copy data rides those same shader inputs, so the mesh data replaced it and every copy rendered as broken geometry. The pipeline now strips the colliding channels once per model (cached) and the draw batches as usual; models without extra channels draw exactly as before. Shaders must read mesh UVs from channel 0 only in skinned + instanced draws, and affected models skip mesh-part merging — one draw per part instead of one per merged group.
+- **MonoGame 3D (DirectX 12):** skinned + instanced shadows no longer crash for models with more than 448 bones. Past that bone budget the shadow pass draws per instance, and a model whose mesh parts merge crashed that path. Merged models now draw per instance there, so shadows render.
 
 ## [4.5.2] - 2026-08-28
 

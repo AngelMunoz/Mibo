@@ -1,6 +1,7 @@
 namespace Mibo.Elmish.Graphics3D.Pipelines
 
 open System
+open System.Runtime.CompilerServices
 open System.Runtime.InteropServices
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
@@ -150,20 +151,16 @@ module internal PaletteGroup =
 /// ID channel — silently steals or shifts the instance stream's semantics and
 /// corrupts every instance transform. Colliding parts are rebuilt once via
 /// <c>InstancedPartStreams</c> (colliding channels dropped) so they still
-/// batch; TextureCoordinate 0 never collides.</summary>
+/// batch; TextureCoordinate 0 never collides.
+///
+/// The per-model answer is cached: <c>GetVertexElements</c> clones its array
+/// per call and the call sites run per frame, so the scan must not repeat.</summary>
 module internal SkinnedInstanceSemantics =
 
-  /// True when <paramref name="part"/>'s vertex declaration carries a
-  /// TextureCoordinate element on usage index 1..6.
-  let partCollides(part: ModelMeshPart) : bool =
+  /// True when <paramref name="elements"/> contain a TextureCoordinate element
+  /// on usage index 1..6. Pure — no graphics device needed, unit-testable.</summary>
+  let elementsCollide(elements: VertexElement[]) : bool =
     let mutable found = false
-
-    let elements =
-      (if isNull(box part.VertexBuffer) then
-         [||]
-       else
-         part.VertexBuffer.VertexDeclaration.GetVertexElements())
-
     let mutable i = 0
 
     while not found && i < elements.Length do
@@ -178,18 +175,39 @@ module internal SkinnedInstanceSemantics =
 
     found
 
+  /// True when <paramref name="part"/>'s vertex declaration carries a
+  /// TextureCoordinate element on usage index 1..6.
+  let partCollides(part: ModelMeshPart) : bool =
+    if isNull(box part.VertexBuffer) then
+      false
+    else
+      elementsCollide(part.VertexBuffer.VertexDeclaration.GetVertexElements())
+
+  // Reference wrapper — ConditionalWeakTable values must be reference types.
+  [<Sealed>]
+  type private Collision(value: bool) =
+    member _.Value = value
+
+  let private cache = ConditionalWeakTable<Model, Collision>()
+
   /// True when any mesh part of <paramref name="model"/> collides (see
   /// <see cref="M:partCollides"/>). Instance rows ride TEXCOORD1..4 (+5/6), so
   /// a second UV channel anywhere in the model corrupts the composed streams.
+  /// Cached per model for the model's lifetime — the scan allocates and the
+  /// call sites are per frame.</summary>
   let modelCollides(model: Model) : bool =
-    let mutable found = false
+    match cache.TryGetValue model with
+    | true, collision -> collision.Value
+    | false, _ ->
+      let mutable found = false
 
-    for mesh in model.Meshes do
-      for part in mesh.MeshParts do
-        if not found then
-          found <- partCollides part
+      for mesh in model.Meshes do
+        for part in mesh.MeshParts do
+          if not found then
+            found <- partCollides part
 
-    found
+      cache.Add(model, Collision found)
+      found
 
 /// <summary>
 /// Pools <see cref="T:Microsoft.Xna.Framework.Graphics.Texture2D"/> bone-palette textures

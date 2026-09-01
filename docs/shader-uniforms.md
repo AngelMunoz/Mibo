@@ -291,6 +291,16 @@ float4 paletteBoneRow(int boneIndex, int row, float instance) {
 }
 ```
 
+> **Mesh UV channels.** In a skinned + instanced draw, `TEXCOORD1..6` on the
+> instance stream are the per-instance data (world rows on `TEXCOORD1..4`,
+> tint on `TEXCOORD5`, palette offset on `TEXCOORD6`) — they are not mesh UVs.
+> Read mesh UVs from `TEXCOORD0` only. A model whose meshes carry extra UV
+> channels (`TEXCOORD1..6`) has those channels dropped before the draw: the
+> framework rebuilds the mesh vertex buffer without them (cached for the
+> model's lifetime) because MonoGame's input layout would otherwise hand the
+> mesh channel to a shader input that expects the instance row. A shader that
+> samples a second UV set gets no data from those models, with no error.
+
 > The OpenGL shader profile has no vertex texture fetch, so
 > `SkinnedInstanced` does not exist there: the `SkinnedInstanced` technique
 > probe is skipped on that backend and the framework draws per-instance

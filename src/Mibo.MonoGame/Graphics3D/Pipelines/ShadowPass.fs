@@ -805,15 +805,13 @@ module internal ShadowPass =
             startIndex: int,
             primitiveCount: int
           ) =
-          // Semantically-colliding parts draw from their rebuilt streams
-          // (colliding UV channels dropped once, cached) so the composed
-          // two-stream layout reads the instance rows untouched. Merged
-          // entries (part = null) only exist for non-colliding models.
-          let struct (vb, ib, vertexOffset, startIndex) =
-            if isNull part then
-              struct (vb, ib, vertexOffset, startIndex)
-            else
-              InstancedPartStreams.resolve(gd, part)
+          // Per-part entries (part <> null) store their ORIGINAL streams — the
+          // two-stream render below resolves semantically-colliding parts
+          // through InstancedPartStreams at bind time, so the GL and
+          // DX12-over-budget fallbacks (which never bind stream 1, so cannot
+          // collide) never build rebuilt buffers nothing draws. Merged entries
+          // (part = null) exist only for non-colliding models and draw their
+          // merged buffers as passed.
 
           if
             res.CollectedSkinnedInstancedCount
@@ -1223,9 +1221,11 @@ module internal ShadowPass =
         else
           false
 
-      // Semantically-colliding models need no fallback here: their parts were
-      // collected with rebuilt streams (InstancedPartStreams), so the grouped
-      // / palette-texture instanced techniques read the instance rows cleanly.
+      // Semantically-colliding models need no fallback here: the two-stream
+      // bind below resolves each part through InstancedPartStreams (rebuilt,
+      // cached), so the grouped / palette-texture instanced techniques read
+      // the instance rows cleanly. This fallback never binds stream 1, so the
+      // collision cannot occur on it.
 
       if
         PlatformInfo.GraphicsBackend = GraphicsBackend.OpenGL
@@ -1275,13 +1275,35 @@ module internal ShadowPass =
 
                   PbrUniforms.setMatrixArray shadowParams.Bones boneScratch
 
-                  let saved = draw.Part.Effect
-                  draw.Part.Effect <- effect
+                  if isNull draw.Part then
+                    // Merged entry: no ModelMeshPart to swap an Effect on.
+                    // Bind the merged buffers and apply the depth effect
+                    // directly — the technique/pass state is the same one
+                    // drawPart would apply through the swapped part effect.
+                    // Reached when a DX12 span-mate exceeds the grouped budget
+                    // (over 448 bones) and forces this whole span onto the
+                    // per-instance fallback.
+                    if draw.PrimitiveCount > 0 then
+                      gd.SetVertexBuffer draw.VertexBuffer
+                      gd.Indices <- draw.IndexBuffer
 
-                  try
-                    drawPart(gd, draw.Part)
-                  finally
-                    draw.Part.Effect <- saved
+                      for p in effect.CurrentTechnique.Passes do
+                        p.Apply()
+
+                        gd.DrawIndexedPrimitives(
+                          PrimitiveType.TriangleList,
+                          draw.VertexOffset,
+                          draw.StartIndex,
+                          draw.PrimitiveCount
+                        )
+                  else
+                    let saved = draw.Part.Effect
+                    draw.Part.Effect <- effect
+
+                    try
+                      drawPart(gd, draw.Part)
+                    finally
+                      draw.Part.Effect <- saved
 
         effect.CurrentTechnique <- effect.Techniques["Depth"]
       else
@@ -1494,20 +1516,34 @@ module internal ShadowPass =
                         shadowEffectParams.PaletteTexSize
                         (Vector2(float32(boneCount * 4), float32 chunkCount))
 
+                    // Two-stream bind: per-part draws resolve here — a
+                    // colliding part swaps to its rebuilt streams (cached per
+                    // part, so steady state is a table lookup), a clean part
+                    // resolves to its original buffers. Merged entries
+                    // (part = null) bind the merged buffers from the record.
+                    let struct (meshVB, meshIB, meshVOff, meshSIdx) =
+                      if isNull draw.Part then
+                        struct (draw.VertexBuffer,
+                                draw.IndexBuffer,
+                                draw.VertexOffset,
+                                draw.StartIndex)
+                      else
+                        InstancedPartStreams.resolve(gd, draw.Part)
+
                     let bindings = res.InstanceBindings
-                    bindings[0] <- VertexBufferBinding(draw.VertexBuffer, 0, 0)
+                    bindings[0] <- VertexBufferBinding(meshVB, 0, 0)
                     bindings[1] <- VertexBufferBinding(instVB, 0, 1)
                     gd.SetVertexBuffers(bindings)
 
-                    gd.Indices <- draw.IndexBuffer
+                    gd.Indices <- meshIB
 
                     for pass in shadowEffect.CurrentTechnique.Passes do
                       pass.Apply()
 
                       gd.DrawInstancedPrimitives(
                         PrimitiveType.TriangleList,
-                        draw.VertexOffset,
-                        draw.StartIndex,
+                        meshVOff,
+                        meshSIdx,
                         draw.PrimitiveCount,
                         stagedCount
                       )

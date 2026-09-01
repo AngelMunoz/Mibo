@@ -14,6 +14,7 @@
     <Compile Include="LitBatchTests.fs" />
     <Compile Include="Animation3DTests.fs" />
     <Compile Include="MergedModelPartsTests.fs" />
+    <Compile Include="SkinnedInstanceSemanticsTests.fs" />
     <Compile Include="BlockPlanTests.fs" />
     <Compile Include="ShadowPassTests.fs" />
     <Compile Include="PaletteGroupTests.fs" />

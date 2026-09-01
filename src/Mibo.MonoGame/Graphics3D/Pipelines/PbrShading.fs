@@ -2146,14 +2146,19 @@ module internal PbrShading =
               let mergedMap =
                 System.Collections.Generic.Dictionary<ModelMeshPart, MergedPart>()
 
-              // The map is plain data — always built from the model's merged groups;
-              // the units build below decides per command whether merging applies.
-              match MergedModelParts.tryGet(gd, model) with
-              | ValueSome merged ->
-                for mp in merged do
-                  for sp in mp.SourceParts do
-                    mergedMap[sp] <- mp
-              | ValueNone -> ()
+              // The map is plain data — always built from the model's merged
+              // groups; the units build below decides per command whether
+              // merging applies. Colliding models skip the build: merged
+              // geometry carries the colliding channels, is never drawn for
+              // them (the units build below refuses to merge), and building it
+              // would spend a full readback plus GPU buffers nothing reads.
+              if not(SkinnedInstanceSemantics.modelCollides model) then
+                match MergedModelParts.tryGet(gd, model) with
+                | ValueSome merged ->
+                  for mp in merged do
+                    for sp in mp.SourceParts do
+                      mergedMap[sp] <- mp
+                | ValueNone -> ()
 
               let e': SkinnedInstancedModelEntry = {
                 Plain = plain.ToArray()
