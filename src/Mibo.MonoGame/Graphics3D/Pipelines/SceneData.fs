@@ -1,6 +1,7 @@
 namespace Mibo.Elmish.Graphics3D.Pipelines
 
 open System
+open System.Runtime.CompilerServices
 open System.Runtime.InteropServices
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
@@ -139,6 +140,74 @@ module internal PaletteGroup =
           struct (start, min groupSize (instanceCount - start), null)
 
       total
+
+/// <summary>Semantic-collision detection for the skinned + instanced two-stream
+/// draws. The instance vertex stream carries the per-instance world rows and
+/// palette offset on TextureCoordinate usage indices 1..6 (5 = instance color).
+/// MonoGame's input-layout builders match each shader input to the first bound
+/// stream that carries the semantic (DX12 native) or renumber duplicates
+/// (DirectX), so a mesh whose vertices carry extra UV channels —
+/// TextureCoordinate 1..6, e.g. the Kenney platformer-kit characters' texture
+/// ID channel — silently steals or shifts the instance stream's semantics and
+/// corrupts every instance transform. Colliding parts are rebuilt once via
+/// <c>InstancedPartStreams</c> (colliding channels dropped) so they still
+/// batch; TextureCoordinate 0 never collides.
+///
+/// The per-model answer is cached: <c>GetVertexElements</c> clones its array
+/// per call and the call sites run per frame, so the scan must not repeat.</summary>
+module internal SkinnedInstanceSemantics =
+
+  /// True when <paramref name="elements"/> contain a TextureCoordinate element
+  /// on usage index 1..6. Pure — no graphics device needed, unit-testable.</summary>
+  let elementsCollide(elements: VertexElement[]) : bool =
+    let mutable found = false
+    let mutable i = 0
+
+    while not found && i < elements.Length do
+      let el = elements[i]
+
+      found <-
+        el.VertexElementUsage = VertexElementUsage.TextureCoordinate
+        && el.UsageIndex >= 1
+        && el.UsageIndex <= 6
+
+      i <- i + 1
+
+    found
+
+  /// True when <paramref name="part"/>'s vertex declaration carries a
+  /// TextureCoordinate element on usage index 1..6.
+  let partCollides(part: ModelMeshPart) : bool =
+    if isNull(box part.VertexBuffer) then
+      false
+    else
+      elementsCollide(part.VertexBuffer.VertexDeclaration.GetVertexElements())
+
+  // Reference wrapper — ConditionalWeakTable values must be reference types.
+  [<Sealed>]
+  type private Collision(value: bool) =
+    member _.Value = value
+
+  let private cache = ConditionalWeakTable<Model, Collision>()
+
+  /// True when any mesh part of <paramref name="model"/> collides (see
+  /// <see cref="M:partCollides"/>). Instance rows ride TEXCOORD1..4 (+5/6), so
+  /// a second UV channel anywhere in the model corrupts the composed streams.
+  /// Cached per model for the model's lifetime — the scan allocates and the
+  /// call sites are per frame.</summary>
+  let modelCollides(model: Model) : bool =
+    match cache.TryGetValue model with
+    | true, collision -> collision.Value
+    | false, _ ->
+      let mutable found = false
+
+      for mesh in model.Meshes do
+        for part in mesh.MeshParts do
+          if not found then
+            found <- partCollides part
+
+      cache.Add(model, Collision found)
+      found
 
 /// <summary>
 /// Pools <see cref="T:Microsoft.Xna.Framework.Graphics.Texture2D"/> bone-palette textures
