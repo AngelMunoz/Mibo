@@ -6,7 +6,21 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Properties/AssemblyInfo.fs" />
+    <InternalsVisibleTo Include="Mibo.Core.Tests" />
+    <InternalsVisibleTo Include="Mibo.Raylib" />
+    <InternalsVisibleTo Include="Mibo.Raylib.Tests" />
+    <InternalsVisibleTo Include="Mibo.MonoGame" />
+    <InternalsVisibleTo Include="Mibo.Mvu" />
+    <InternalsVisibleTo Include="Mibo.Mvu.Tests" />
+    <InternalsVisibleTo Include="Mibo.Adaptive.Mibo" />
+    <InternalsVisibleTo Include="Mibo.Adaptive.Mibo.Tests" />
+    <InternalsVisibleTo Include="Mibo.Raylib.Mvu" />
+    <InternalsVisibleTo Include="Mibo.Raylib.Adaptive" />
+    <InternalsVisibleTo Include="Mibo.MonoGame.Mvu" />
+    <InternalsVisibleTo Include="Mibo.MonoGame.Adaptive" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="Collections.fs" />
     <Compile Include="Color.fs" />
     <Compile Include="Animation3D.fs" />

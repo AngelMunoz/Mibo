@@ -5,9 +5,10 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Mibo.Raylib.Tests" />
+    <InternalsVisibleTo Include="Mibo.Raylib.Mvu" />
+    <InternalsVisibleTo Include="Mibo.Raylib.Adaptive" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Properties/AssemblyInfo.fs" />
     <Compile Include="Color.fs" />
     <Compile Include="RaylibHelpers.fs" />
     <Compile Include="Window.fs" />

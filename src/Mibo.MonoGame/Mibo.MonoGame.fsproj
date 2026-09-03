@@ -20,7 +20,6 @@
     <Compile Include="Animation3D.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Diagnostics.fs" />
-    <Compile Include="GameContext.fs" />
     <Compile Include="Animation.fs" />
     <Compile Include="Camera.fs" />
     <Compile Include="Culling.fs" />
