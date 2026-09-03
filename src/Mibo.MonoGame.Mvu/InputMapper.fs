@@ -55,12 +55,59 @@ module InputMapper =
         member _.CurrentState = state
 
         member _.Update() =
-          let kb = Keyboard.GetState()
-          let ms = Mouse.GetState()
-          let g0 = GamePad.GetState(0)
-          let g1 = GamePad.GetState(1)
-          let g2 = GamePad.GetState(2)
-          let g3 = GamePad.GetState(3)
+          // Map-aware snapshot: only fetch the devices the map's triggers
+          // actually reference (same policy as the delta path in
+          // InputMapperDeltas.attachDeltas). A keyboard-only map must not pay
+          // mouse + four gamepad polls per Update (the pollers are consulted
+          // only for mapped triggers, so skipping the fetch is
+          // behavior-identical). Unfetched devices leave default states whose
+          // pollers answer false — and are never asked anyway.
+          let mutable useKeyboard = false
+          let mutable useMouse = false
+          let mutable useGamepad = false
+
+          for KeyValue(trigger, _) in map.TriggerToActions do
+            match trigger with
+            | Key _
+            | KeyCombo _ -> useKeyboard <- true
+            | MouseButton _ -> useMouse <- true
+            | GamepadButton _ -> useGamepad <- true
+
+          let kb =
+            if useKeyboard then
+              Keyboard.GetState()
+            else
+              Unchecked.defaultof<KeyboardState>
+
+          let ms =
+            if useMouse then
+              Mouse.GetState()
+            else
+              Unchecked.defaultof<MouseState>
+
+          let g0 =
+            if useGamepad then
+              GamePad.GetState(0)
+            else
+              Unchecked.defaultof<GamePadState>
+
+          let g1 =
+            if useGamepad then
+              GamePad.GetState(1)
+            else
+              Unchecked.defaultof<GamePadState>
+
+          let g2 =
+            if useGamepad then
+              GamePad.GetState(2)
+            else
+              Unchecked.defaultof<GamePadState>
+
+          let g3 =
+            if useGamepad then
+              GamePad.GetState(3)
+            else
+              Unchecked.defaultof<GamePadState>
 
           let isGpDown (p: int) (b: GamepadButtonCode) =
             match p with

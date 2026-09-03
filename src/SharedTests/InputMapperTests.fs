@@ -1,4 +1,4 @@
-module Mibo.Raylib.Tests.InputMapper
+module Mibo.SharedTests.InputMapper
 
 open Expecto
 open Mibo.Input

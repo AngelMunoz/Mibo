@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="InputMapperTests.fs" />
+    <Compile Include="../SharedTests/InputMapperTests.fs" />
     <Compile Include="CameraTests.fs" />
     <Compile Include="RenderBufferTests.fs" />
     <Compile Include="Layout3DTests.fs" />
