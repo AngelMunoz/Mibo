@@ -9,8 +9,6 @@
 
   <ItemGroup>
     <Compile Include="InputMapperTests.fs" />
-    <Compile Include="ElmishTests.fs" />
-    <Compile Include="HeadlessTests.fs" />
     <Compile Include="LayoutTests.fs" />
     <Compile Include="HexGridTests.fs" />
     <Compile Include="HexLayoutTests.fs" />
@@ -20,7 +18,6 @@
     <Compile Include="LayeredHex3DTests.fs" />
     <Compile Include="Spatial2DTests.fs" />
     <Compile Include="Spatial3DTests.fs" />
-    <Compile Include="AdaptiveHeadlessTests.fs" />
     <Compile Include="DiagnosticsTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>

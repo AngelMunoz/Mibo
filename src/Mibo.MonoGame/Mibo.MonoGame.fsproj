@@ -7,6 +7,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Mibo.MonoGame.Tests" />
+    <InternalsVisibleTo Include="Mibo.MonoGame.Mvu" />
+    <InternalsVisibleTo Include="Mibo.MonoGame.Adaptive" />
   </ItemGroup>
 
   <ItemGroup>
@@ -14,14 +16,11 @@
     <Compile Include="Color.fs" />
     <Compile Include="Window.fs" />
     <Compile Include="Input.fs" />
-    <Compile Include="InputMapper.fs" />
+    <Compile Include="InputMapperDeltas.fs" />
     <Compile Include="Animation3D.fs" />
     <Compile Include="Assets.fs" />
-    <Compile Include="Program.fs" />
     <Compile Include="Diagnostics.fs" />
-    <Compile Include="Runtime.fs" />
-    <Compile Include="AdaptiveProgram.fs" />
-    <Compile Include="Adaptive.Runtime.fs" />
+    <Compile Include="GameContext.fs" />
     <Compile Include="Animation.fs" />
     <Compile Include="Camera.fs" />
     <Compile Include="Culling.fs" />

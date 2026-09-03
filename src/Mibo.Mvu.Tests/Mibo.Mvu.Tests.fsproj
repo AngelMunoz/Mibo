@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <TargetFramework>net8.0</TargetFramework>
+    <GenerateProgramFile>false</GenerateProgramFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="ElmishTests.fs" />
+    <Compile Include="HeadlessTests.fs" />
+    <Compile Include="DiagnosticsTests.fs" />
+    <Compile Include="Main.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mibo.Core\Mibo.Core.fsproj" />
+    <ProjectReference Include="..\Mibo.Mvu\Mibo.Mvu.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="IcedTasks" Version="0.11.9" />
+    <PackageReference Include="Expecto" Version="10.*" />
+    <PackageReference Include="YoloDev.Expecto.TestSdk" Version="0.15.*" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+  </ItemGroup>
+</Project>

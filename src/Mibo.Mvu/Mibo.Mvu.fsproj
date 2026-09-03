@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Elmish.Time.fs" />
+    <Compile Include="Elmish.Commands.fs" />
+    <Compile Include="Elmish.System.fs" />
+    <Compile Include="Elmish.Subscriptions.fs" />
+    <Compile Include="Elmish.ProgramTypes.fs" />
+    <Compile Include="InputSubscriptions.fs" />
+    <Compile Include="Elmish.Program.fs" />
+    <Compile Include="Elmish.Loop.fs" />
+    <Compile Include="Elmish.Headless.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mibo.Core\Mibo.Core.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Ionide.KeepAChangelog.Tasks" Version="0.3.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

@@ -10,21 +10,16 @@
     <Compile Include="Collections.fs" />
     <Compile Include="Color.fs" />
     <Compile Include="Animation3D.fs" />
-    <Compile Include="Elmish.Time.fs" />
-    <Compile Include="Elmish.Commands.fs" />
-    <Compile Include="Elmish.System.fs" />
-    <Compile Include="Elmish.Subscriptions.fs" />
-    <Compile Include="Elmish.Rendering.fs" />
+    <Compile Include="SubId.fs" />
+    <Compile Include="Time.fs" />
+    <Compile Include="Rendering.fs" />
     <Compile Include="Diagnostics.fs" />
     <Compile Include="Window.fs" />
-    <Compile Include="Elmish.ProgramTypes.fs" />
+    <Compile Include="GameConfig.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Input.fs" />
     <Compile Include="InputMapper.fs" />
     <Compile Include="InputServices.fs" />
-    <Compile Include="Elmish.Program.fs" />
-    <Compile Include="Elmish.Loop.fs" />
-    <Compile Include="Elmish.Headless.fs" />
     <Compile Include="Layout/Grid2D.fs" />
     <Compile Include="Layout/HexGrid.fs" />
     <Compile Include="Layout/Spatial2D.fs" />
@@ -46,12 +41,6 @@
     <Compile Include="Graphics3D/Light3D.fs" />
     <Compile Include="Graphics2D/Types.fs" />
     <Compile Include="Graphics/Draw.fs" />
-    <Compile Include="AdaptiveProgram.fs" />
-    <Compile Include="Adaptive.Headless.fs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\Mibo.Adaptive\Mibo.Adaptive.fsproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -7,7 +7,7 @@ index: 8
 
 # Headless Mode
 
-The headless runtime runs your Elmish update loop without graphics, input polling, or a window. It lives in `Mibo.Core`, so it works with no backend referenced at all. Use it for unit testing, server-side simulation, and CLI debugging.
+The headless runtime runs your Elmish update loop without graphics, input polling, or a window. It lives in `Mibo.Mvu`, so it works with no backend referenced at all. Use it for unit testing, server-side simulation, and CLI debugging.
 
 ## Core Definition
 

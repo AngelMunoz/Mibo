@@ -17,12 +17,19 @@ General setup and usage instructions can be found in the [README.md](README.md) 
 
 ## Project Structure
 
-All of the projects live in the `src` folder:
+All of the projects live in the `src` folder. The framework splits into two runtime lanes (MVU and Adaptive) on top of a shared kernel — neither lane depends on the other:
 
-- `Mibo.Core`: Backend-agnostic core (Cmd/Sub/System/GameTime/RenderBuffer/Program/IRenderer/GameContext). No backend dependency.
-- `Mibo.Raylib`: raylib backend (depends on `Mibo.Core`)
-- `Mibo.MonoGame`: MonoGame backend, DesktopGL/OpenGL and WindowsDX/DirectX (depends on `Mibo.Core`)
-- `Mibo.Core.Tests` / `Mibo.Raylib.Tests` / `Mibo.MonoGame.Tests`: the per-package test suites
+- `Mibo.Core`: Runtime-neutral kernel (GameContext/GameTime/RenderBuffer/IRenderer/Input contracts/SubId/Layout/Diagnostics). No backend, MVU, or adaptive dependency.
+- `Mibo.Mvu`: the Elmish/MVU runtime (Cmd/Sub/Program/Loop/Headless + MVU input subscription helpers; depends on `Mibo.Core`)
+- `Mibo.Adaptive`: the dependency-free adaptive-data library (adopted from AdaptiveSlop)
+- `Mibo.Adaptive.Mibo`: the Mibo-side adaptive runtime (AdaptiveProgram/AdaptiveHeadless; depends on `Mibo.Core` + `Mibo.Adaptive`)
+- `Mibo.Raylib`: neutral raylib shell (renderers/camera/windowing/input polling; depends on `Mibo.Core`)
+- `Mibo.Raylib.Mvu`: MVU host for raylib — `RaylibProgram`, `RaylibGame`, `InputMapper.subscribe` (depends on `Mibo.Raylib` + `Mibo.Mvu`)
+- `Mibo.Raylib.Adaptive`: adaptive host for raylib — `AdaptiveRaylibGame`, `InputMapper.subscribeAdaptive` (depends on `Mibo.Raylib` + `Mibo.Adaptive.Mibo`)
+- `Mibo.MonoGame`: neutral MonoGame shell, DesktopGL/OpenGL and WindowsDX/DirectX (depends on `Mibo.Core`)
+- `Mibo.MonoGame.Mvu`: MVU host for MonoGame — `MonoGameProgram`, `MiboGame`, `InputMapper.subscribe` (depends on `Mibo.MonoGame` + `Mibo.Mvu`)
+- `Mibo.MonoGame.Adaptive`: adaptive host for MonoGame — `AdaptiveMonoGameProgram`, `AdaptiveMonoGameGame`, `InputMapper.subscribeAdaptive` (depends on `Mibo.MonoGame` + `Mibo.Adaptive.Mibo`)
+- `Mibo.Core.Tests` / `Mibo.Mvu.Tests` / `Mibo.Adaptive.Mibo.Tests` / `Mibo.Raylib.Tests` / `Mibo.MonoGame.Tests` / `Mibo.Adaptive.Tests`: the per-package test suites
 - `Templates`: the `Mibo.Templates` NuGet package — `dotnet new` starters for both runtimes: `mibo-2d`/`mibo-3d` (raylib) and `mibo-mg-2d`/`mibo-mg-3d` (MonoGame) scaffold the MVU runtime; the same names with an `-adaptive` suffix (`mibo-2d-adaptive`, `mibo-mg-3d-adaptive`, …) scaffold the adaptive runtime
 
 Sample games live in a separate repository: [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) — including the 2D platformer, the 3D platformer, SpaceBattle, PingPong, and the FPS sample.

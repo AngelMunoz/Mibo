@@ -1,13 +1,13 @@
 # AGENTS.md: Mibo MonoGame 3D Game
 
 This is a **Mibo** game project. Mibo is an Elmish-based F# game framework.
-This template targets the **MonoGame** backend (`Mibo.MonoGame`, host `MiboGame`)
+This template targets the **MonoGame** backend (`Mibo.MonoGame.Mvu`, host `MiboGame`)
 and ships **three interchangeable thin clients** sharing one library:
 
 - `src/`: shared library (`Library.fs` + `MiboMono3D.fsproj`, net10.0). All
   game logic, the view, and a `create()` composition root that builds the
   `MonoGameProgram` (with the content root already configured). References
-  `Mibo.MonoGame` + `MonoGame.Framework.Native` (the compile-time,
+  `Mibo.MonoGame.Mvu` + `MonoGame.Framework.Native` (the compile-time,
   backend-neutral types).
 - `Content/`: shared MonoGame content pipeline (`Content.mgcb`). Each thin
   client builds it via `MonoGame.Content.Builder.Task`, so assets land in all

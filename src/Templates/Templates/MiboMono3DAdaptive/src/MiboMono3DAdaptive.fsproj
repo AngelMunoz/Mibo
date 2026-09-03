@@ -10,8 +10,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Mibo.MonoGame" Version="4.*" />
-    <PackageReference Include="Mibo.Adaptive" Version="4.*" />
+    <PackageReference Include="Mibo.MonoGame.Adaptive" Version="5.*" />
     <PackageReference Include="MonoGame.Framework.Native" Version="3.8.5" PrivateAssets="all" />
   </ItemGroup>
 

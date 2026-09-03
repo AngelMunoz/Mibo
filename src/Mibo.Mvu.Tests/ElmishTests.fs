@@ -1,4 +1,4 @@
-module Mibo.Core.Tests.Elmish
+module Mibo.Mvu.Tests.Elmish
 
 open Expecto
 open Mibo.Elmish

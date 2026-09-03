@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Mibo:** the framework now ships as two independent runtime lanes on a shared kernel. `Mibo.Mvu` carries the Elmish/MVU runtime (`Cmd`, `Sub`, `Program`, loops, and headless support); `Mibo.Adaptive.Mibo` carries the Mibo-side adaptive runtime (`AdaptiveProgram`, `AdaptiveHeadless`); `Mibo.Raylib.Mvu` and `Mibo.MonoGame.Mvu` host MVU games, and `Mibo.Raylib.Adaptive` and `Mibo.MonoGame.Adaptive` host adaptive games, on top of the unchanged `Mibo.Raylib` and `Mibo.MonoGame` shells. MVU installs pull no adaptive code, and adaptive installs pull no MVU code.
+
+### Changed
+
+- **Breaking:** **Core:** `Mibo.Core` no longer depends on `Mibo.Adaptive`, and the code behind it moved to the new packages: the Elmish machinery to `Mibo.Mvu`, the adaptive program and runner to `Mibo.Adaptive.Mibo`. Every namespace, type, and member keeps its name and home, so no source changes are required — reference the host package for your lane (`Mibo.Raylib.Mvu`/`Mibo.MonoGame.Mvu` for MVU, `Mibo.Raylib.Adaptive`/`Mibo.MonoGame.Adaptive` for adaptive, `Mibo.Mvu` or `Mibo.Adaptive.Mibo` for headless) and recompile.
+- **Templates:** MVU starters now reference the `*.Mvu` packages and adaptive starters reference the single `*.Adaptive` package, which brings `Mibo.Adaptive` transitively. This also removes the stale `Mibo.Adaptive` `4.*` pin that no longer matched the adaptive package's independent versioning. Starters now pin `5.*`.
+
 ## [4.5.3] - 2026-08-31
 
 ### Fixed
