@@ -10,7 +10,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Mibo.Raylib" Version="4.*" />
+    <PackageReference Include="Mibo.Raylib.Mvu" Version="5.*" />
   </ItemGroup>
 
 </Project>

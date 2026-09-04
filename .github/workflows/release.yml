@@ -5,11 +5,13 @@ on:
 
 jobs:
   create-release:
-    # Mibo.Core's package depends on Mibo.Adaptive (the nuspec pins the last
-    # released adaptive version), so adaptive must reach NuGet first — a
-    # consumer restoring Mibo.Core in the window before Mibo.Adaptive exists
-    # would fail. The adaptive job skips quietly when its changelog has no
-    # released version; this job then proceeds as before.
+    # Mibo.Adaptive.Mibo (the Mibo-side adaptive runtime) pins the adaptive
+    # version currently in src/Mibo.Adaptive/CHANGELOG.md, so adaptive must
+    # reach NuGet first — a consumer restoring Mibo.Adaptive.Mibo in the window
+    # before Mibo.Adaptive exists would fail. The adaptive job skips quietly
+    # when its changelog has no released version; this job then proceeds as
+    # before. Mibo.Core itself has no adaptive dependency: MVU-only consumers
+    # (Mibo.Core, Mibo.Mvu, Mibo.*.Mvu) never pull Mibo.Adaptive.
     needs: create-adaptive-release
     runs-on: ubuntu-latest
     permissions:
@@ -97,12 +99,26 @@ jobs:
       # Mibo.Adaptive has its own changelog and versioning (it versions itself
       # through its ChangelogFile) and is released by the dedicated job below,
       # so it is excluded from the main pack — otherwise the main release
-      # would ship the adaptive package with the repo version. Mibo.Templates
-      # versions from the repo changelog like the libraries and ships here.
+      # would ship the adaptive package with the repo version. Pack order
+      # follows the dependency graph so each nuspec pins an already-listed
+      # version: kernel -> runtime -> shell -> host. Mibo.Adaptive.Mibo comes
+      # last among the libraries because it also pins Mibo.Adaptive.
+      # Mibo.Templates versions from the repo changelog like the libraries
+      # and ships here.
       - name: Pack
         if: steps.check_tag.outputs.exists == 'false'
         run: |
-          for p in src/Mibo.Core/Mibo.Core.fsproj src/Mibo.Raylib/Mibo.Raylib.fsproj src/Mibo.MonoGame/Mibo.MonoGame.fsproj src/Templates/Mibo.Templates.csproj; do
+          for p in \
+            src/Mibo.Core/Mibo.Core.fsproj \
+            src/Mibo.Mvu/Mibo.Mvu.fsproj \
+            src/Mibo.Raylib/Mibo.Raylib.fsproj \
+            src/Mibo.Raylib.Mvu/Mibo.Raylib.Mvu.fsproj \
+            src/Mibo.Raylib.Adaptive/Mibo.Raylib.Adaptive.fsproj \
+            src/Mibo.MonoGame/Mibo.MonoGame.fsproj \
+            src/Mibo.MonoGame.Mvu/Mibo.MonoGame.Mvu.fsproj \
+            src/Mibo.MonoGame.Adaptive/Mibo.MonoGame.Adaptive.fsproj \
+            src/Mibo.Adaptive.Mibo/Mibo.Adaptive.Mibo.fsproj \
+            src/Templates/Mibo.Templates.csproj; do
             dotnet pack --configuration Release --no-build --output nupkgs "$p"
           done
 

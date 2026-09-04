@@ -19,22 +19,31 @@ Both encourage pure game logic and predictable state management, and both let yo
 
 ## The Mibo packages
 
-Mibo is split into four packages so your game logic stays portable while the rendering backend stays swappable:
+Mibo is split into two independent runtime lanes (MVU and Adaptive) on top of a shared kernel and swappable backend shells, so your game logic stays portable and neither runtime pulls the other:
 
 ```text
-Mibo.Core          ← the shared core (Program builders for both runtimes, Cmd/Sub,
-                     System pipeline, GameTime, IRenderer, GameContext,
-                     IInput/IInputMapper contracts, IAssetCache, HeadlessProgram,
-                     AdaptiveProgram/AdaptiveHeadless, Layout/Layout3D)
-Mibo.Adaptive      ← the incremental-computation library powering the adaptive
-                     runtime (cval/aval, cset/cmap/clist + views), usable standalone
-Mibo.Raylib        ← the raylib backend (hosts: RaylibGame, AdaptiveRaylibGame; GLSL shaders)
-Mibo.MonoGame      ← the MonoGame backend (hosts: MiboGame, AdaptiveMonoGameGame; HLSL .fx shaders)
+Mibo.Core              ← the shared kernel (GameContext, GameTime, IRenderer,
+                         RenderBuffer, SubId, IInput/IInputMapper contracts,
+                         IAssetCache, Layout/Layout3D, Diagnostics)
+Mibo.Mvu               ← the MVU runtime (Cmd/Sub, Program builders, System
+                         pipeline, HeadlessProgram, MVU input subscriptions)
+Mibo.Adaptive          ← the incremental-computation library powering the adaptive
+                         runtime (cval/aval, cset/cmap/clist + views), usable standalone
+Mibo.Adaptive.Mibo     ← the Mibo-side adaptive runtime (AdaptiveProgram,
+                         AdaptiveHeadless)
+Mibo.Raylib            ← the neutral raylib shell (renderers, camera, windowing)
+Mibo.Raylib.Mvu        ← MVU host for raylib (RaylibProgram/RaylibGame; GLSL shaders)
+Mibo.Raylib.Adaptive   ← adaptive host for raylib (AdaptiveRaylibGame)
+Mibo.MonoGame          ← the neutral MonoGame shell (renderers, camera, windowing)
+Mibo.MonoGame.Mvu      ← MVU host for MonoGame (MonoGameProgram/MiboGame; HLSL .fx shaders)
+Mibo.MonoGame.Adaptive ← adaptive host for MonoGame (AdaptiveMonoGameGame)
 ```
+
+Reference the host package for your lane: `Mibo.Raylib.Mvu`/`Mibo.MonoGame.Mvu` for MVU games, `Mibo.Raylib.Adaptive`/`Mibo.MonoGame.Adaptive` for adaptive games. MVU installs pull no adaptive code; adaptive installs pull no MVU code. All types keep the namespaces they always had.
 
 `cval`/`aval` and friends are the adaptive containers; the [Adaptive](adaptive/overview.html) docs introduce them.
 
-**The guiding rule:** if it is a contract that the Program builder, a runtime host, the headless runner, or portable user code needs, it lives in Mibo.Core. Backend-specific implementations and any type that leaks a backend handle stay in the backend.
+**The guiding rule:** if it is a contract that a runtime, a host, the headless runner, or portable user code needs, it lives in Mibo.Core. Backend-specific implementations and any type that leaks a backend handle stay in the backend shell; the runtime-specific hosts layer on top of the shell.
 
 | Backend | MVU host | Adaptive host | Shaders | Best for |
 |---------|----------|---------------|---------|----------|

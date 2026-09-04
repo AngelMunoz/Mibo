@@ -1,14 +1,14 @@
 # AGENTS.md: Mibo MonoGame 3D Adaptive Game
 
 This is a **Mibo** game project built on the **adaptive runtime**. This
-template targets the **MonoGame** backend (`Mibo.MonoGame`, host
+template targets the **MonoGame** backend (`Mibo.MonoGame.Adaptive`, host
 `AdaptiveMonoGameGame`) and ships **three interchangeable thin clients**
 sharing one library:
 
 - `src/`: shared library (`Library.fs` + `MiboMono3DAdaptive.fsproj`,
   net10.0). All game logic, the view, and a `create()` composition root that
   builds the `AdaptiveMonoGameProgram` (with the content root already
-  configured). References `Mibo.MonoGame` + `Mibo.Adaptive` +
+  configured). References `Mibo.MonoGame.Adaptive` +
   `MonoGame.Framework.Native` (the compile-time, backend-neutral types).
 - `Content/`: shared MonoGame content pipeline (`Content.mgcb`). Each thin
   client builds it via `MonoGame.Content.Builder.Task`, so assets land in all

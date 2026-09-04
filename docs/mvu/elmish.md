@@ -7,7 +7,7 @@ index: 1
 
 # The Elmish Architecture in Games
 
-Mibo uses the Elmish (MVU) pattern to provide a clean, predictable way to manage game state and side effects. The MVU loop lives in `Mibo.Core`, so it is identical across every backend.
+Mibo uses the Elmish (MVU) pattern to provide a clean, predictable way to manage game state and side effects. The MVU loop lives in `Mibo.Mvu`, so it is identical across every backend.
 
 ## The Model
 

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net8.0</TargetFrameworks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="InputMapper.fs" />
+    <Compile Include="Elmish.Program.fs" />
+    <Compile Include="Elmish.Runtime.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mibo.Raylib\Mibo.Raylib.fsproj" />
+    <ProjectReference Include="..\Mibo.Mvu\Mibo.Mvu.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Ionide.KeepAChangelog.Tasks" Version="0.3.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

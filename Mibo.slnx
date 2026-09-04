@@ -2,12 +2,20 @@
   <Folder Name="/src/">
     <Project Path="src/Mibo.Core/Mibo.Core.fsproj" />
     <Project Path="src/Mibo.Core.Tests/Mibo.Core.Tests.fsproj" />
+    <Project Path="src/Mibo.Mvu/Mibo.Mvu.fsproj" />
+    <Project Path="src/Mibo.Mvu.Tests/Mibo.Mvu.Tests.fsproj" />
     <Project Path="src/Mibo.Adaptive/Mibo.Adaptive.fsproj" />
+    <Project Path="src/Mibo.Adaptive.Mibo/Mibo.Adaptive.Mibo.fsproj" />
+    <Project Path="src/Mibo.Adaptive.Mibo.Tests/Mibo.Adaptive.Mibo.Tests.fsproj" />
     <Project Path="src/Mibo.Adaptive.Tests/Mibo.Adaptive.Tests.fsproj" />
     <Project Path="src/Mibo.Adaptive.Benchmarks/Mibo.Adaptive.Benchmarks.fsproj" />
     <Project Path="src/Mibo.MonoGame/Mibo.MonoGame.fsproj" />
+    <Project Path="src/Mibo.MonoGame.Mvu/Mibo.MonoGame.Mvu.fsproj" />
+    <Project Path="src/Mibo.MonoGame.Adaptive/Mibo.MonoGame.Adaptive.fsproj" />
     <Project Path="src/Mibo.MonoGame.Tests/Mibo.MonoGame.Tests.fsproj" />
     <Project Path="src/Mibo.Raylib/Mibo.Raylib.fsproj" />
+    <Project Path="src/Mibo.Raylib.Mvu/Mibo.Raylib.Mvu.fsproj" />
+    <Project Path="src/Mibo.Raylib.Adaptive/Mibo.Raylib.Adaptive.fsproj" />
     <Project Path="src/Mibo.Raylib.Tests/Mibo.Raylib.Tests.fsproj" />
     <Project Path="src/Templates/Mibo.Templates.csproj" />
   </Folder>

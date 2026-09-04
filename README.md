@@ -35,6 +35,25 @@ Mibo aims to solve 80/20 of use cases for enabling developers to focus on game l
 - **Input Mapper** — Listen to raw input and map it to semantic actions
 - **Performance** — zero-allocation hot paths: spatial grid queries return a single result array per call, and per-frame dictionary lookups, light merging, and render-pipeline bookkeeping allocate nothing
 
+## Packages
+
+Mibo ships as two independent runtime lanes on top of a shared kernel. Pick one lane per game — MVU installs pull no adaptive code, and adaptive installs pull no MVU code:
+
+| Package | Gives you |
+|---|---|
+| `Mibo.Core` | Runtime-neutral kernel: `GameContext`, `GameTime`, render buffers, input contracts, layout, diagnostics |
+| `Mibo.Mvu` | The Elmish/MVU runtime: `Cmd`, `Sub`, `Program`, loops, and headless support |
+| `Mibo.Adaptive` | The dependency-free incremental computation library (`CVal`/`AVal` roots, adaptive sets, maps, and lists) |
+| `Mibo.Adaptive.Mibo` | The Mibo-side adaptive runtime: `AdaptiveProgram`, `AdaptiveHeadless` |
+| `Mibo.Raylib` | Neutral raylib shell: renderers, camera, windowing, input polling |
+| `Mibo.Raylib.Mvu` | MVU host for raylib (`RaylibProgram`, `RaylibGame`) |
+| `Mibo.Raylib.Adaptive` | Adaptive host for raylib (`AdaptiveRaylibGame`) |
+| `Mibo.MonoGame` | Neutral MonoGame shell (same surface as the raylib shell) |
+| `Mibo.MonoGame.Mvu` | MVU host for MonoGame (`MonoGameProgram`, `MiboGame`) |
+| `Mibo.MonoGame.Adaptive` | Adaptive host for MonoGame (`AdaptiveMonoGameProgram`) |
+
+MVU games reference `Mibo.Raylib.Mvu` or `Mibo.MonoGame.Mvu`; adaptive games reference `Mibo.Raylib.Adaptive` or `Mibo.MonoGame.Adaptive` (which bring the kernel, shell, and `Mibo.Adaptive` transitively). All namespaces and type names are unchanged from previous releases — the split only moves code between packages.
+
 ## Getting started
 
 Prerequisites:
@@ -75,7 +94,7 @@ You'll find examples of:
 - **PingPong** - A networked multiplayer Pong game with a client-server architecture over WebSockets. The server runs game logic and broadcasts state; the client renders locally and sends input.
   - Mibo.Raylib Client
   - Mibo.MonoGame Client
-  - dotnet app acting as a server running Mibo.Core's headless support
+  - dotnet app acting as a server running Mibo.Mvu's headless support
 
 **3D:**
 

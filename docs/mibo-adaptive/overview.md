@@ -49,4 +49,4 @@ Rule of thumb: general incremental computing → FSharp.Data.Adaptive. Tight loo
 * [Transactions & Threading](threading.html): batching, owner-thread confinement, cross-thread posting.
 * [Performance](performance.html): the zero-allocation contract, measurement, and the join cost rule.
 
-The Mibo integration on top of the library (`AdaptiveProgram`, hosts, the intent queue) is documented under [Adaptive](../adaptive/program.html); it lives in `Mibo.Core`, which references this package.
+The Mibo integration on top of the library (`AdaptiveProgram`, hosts, the intent queue) is documented under [Adaptive](../adaptive/program.html); it lives in `Mibo.Adaptive.Mibo`, which references this package.

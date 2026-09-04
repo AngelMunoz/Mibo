@@ -5,24 +5,22 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Mibo.Raylib.Tests" />
+    <InternalsVisibleTo Include="Mibo.Raylib.Mvu" />
+    <InternalsVisibleTo Include="Mibo.Raylib.Adaptive" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Properties/AssemblyInfo.fs" />
     <Compile Include="Color.fs" />
     <Compile Include="RaylibHelpers.fs" />
     <Compile Include="Window.fs" />
     <Compile Include="Input.fs" />
-    <Compile Include="InputMapper.fs" />
+    <Compile Include="InputMapperDeltas.fs" />
     <Compile Include="Camera.fs" />
     <Compile Include="Culling.fs" />
     <Compile Include="Animation.fs" />
     <Compile Include="Animation3D.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Texture.fs" />
-    <Compile Include="Elmish.Program.fs" />
     <Compile Include="Diagnostics.fs" />
-    <Compile Include="Elmish.Runtime.fs" />
-    <Compile Include="Adaptive.Runtime.fs" />
     <Compile Include="DefaultShaders.fs" />
     <Compile Include="Graphics2D/Lighting/LightTypes.fs" />
     <Compile Include="Graphics2D/Lighting/LitShader.fs" />

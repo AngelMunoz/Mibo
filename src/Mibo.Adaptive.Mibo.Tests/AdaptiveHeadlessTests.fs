@@ -1,4 +1,4 @@
-module Mibo.Adaptive.Tests.AdaptiveHeadless
+module Mibo.Adaptive.Mibo.Tests.AdaptiveHeadless
 
 open System
 open System.Threading

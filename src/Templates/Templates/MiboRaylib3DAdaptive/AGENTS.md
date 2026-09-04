@@ -8,7 +8,7 @@ more. **Before creating a new sub-module, check the docs**; the building
 block you are about to write likely already exists. Compose existing pieces;
 do not reinvent them.
 
-This template targets the **raylib-cs** backend (`Mibo.Raylib`, host
+This template targets the **raylib-cs** backend (`Mibo.Raylib.Adaptive`, host
 `AdaptiveRaylibGame`).
 
 > **Default renderer.** The template wires a `Renderer3D` with Mibo's built-in

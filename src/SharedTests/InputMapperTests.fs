@@ -1,4 +1,4 @@
-module Mibo.Raylib.Tests.InputMapper
+module Mibo.SharedTests.InputMapper
 
 open Expecto
 open Mibo.Input
@@ -230,7 +230,7 @@ let tests =
       heldKeys <- heldKeys |> Set.add KeyCode.LeftControl
 
       let state1, comboStates1 =
-        InputMapper.buildActions
+        InputMapperDeltas.buildActions
           getMap
           Map.empty
           Set.empty
@@ -252,7 +252,7 @@ let tests =
       heldKeys <- heldKeys |> Set.add KeyCode.S
 
       let state2, _comboStates2 =
-        InputMapper.buildActions
+        InputMapperDeltas.buildActions
           getMap
           comboStates1
           state1.Held
@@ -290,7 +290,7 @@ let tests =
       heldKeys <- heldKeys |> Set.remove KeyCode.S
 
       let state1, _comboStates1 =
-        InputMapper.buildActions
+        InputMapperDeltas.buildActions
           getMap
           initialComboStates
           (Set.ofList [ Save ])
@@ -328,7 +328,7 @@ let tests =
       let getMap() = map
 
       let build prevState pressed released =
-        InputMapper.buildActions
+        InputMapperDeltas.buildActions
           getMap
           Map.empty
           prevState
@@ -395,7 +395,7 @@ let tests =
       mouseDown <- true
 
       let state1, _comboStates1 =
-        InputMapper.buildActions
+        InputMapperDeltas.buildActions
           getMap
           Map.empty
           Set.empty
@@ -433,7 +433,7 @@ let tests =
       heldKeys <- heldKeys |> Set.add KeyCode.LeftControl
 
       let state1, cs1 =
-        InputMapper.buildActions
+        InputMapperDeltas.buildActions
           getMap
           Map.empty
           Set.empty
@@ -451,7 +451,7 @@ let tests =
       heldKeys <- heldKeys |> Set.add KeyCode.G
 
       let state2, cs2 =
-        InputMapper.buildActions
+        InputMapperDeltas.buildActions
           getMap
           cs1
           state1.Held
@@ -470,7 +470,7 @@ let tests =
       heldKeys <- heldKeys |> Set.add KeyCode.D
 
       let state3, cs3 =
-        InputMapper.buildActions
+        InputMapperDeltas.buildActions
           getMap
           cs2
           state2.Held
@@ -486,7 +486,7 @@ let tests =
       heldKeys <- heldKeys |> Set.remove KeyCode.G
 
       let state4, cs4 =
-        InputMapper.buildActions
+        InputMapperDeltas.buildActions
           getMap
           cs3
           state3.Held
@@ -509,7 +509,7 @@ let tests =
       heldKeys <- heldKeys |> Set.remove KeyCode.D
 
       let state5, _cs5 =
-        InputMapper.buildActions
+        InputMapperDeltas.buildActions
           getMap
           cs4
           state4.Held

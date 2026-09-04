@@ -1,4 +1,4 @@
-module Mibo.Core.Tests.Headless
+module Mibo.Mvu.Tests.Headless
 
 open System
 open System.Threading

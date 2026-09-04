@@ -7,7 +7,7 @@ renderer, and more. **Before creating a new sub-module, check the docs**; the
 building block you are about to write likely already exists. Compose existing
 pieces; do not reinvent them.
 
-This template targets the **raylib-cs** backend (`Mibo.Raylib`, host `RaylibGame`).
+This template targets the **raylib-cs** backend (`Mibo.Raylib.Mvu`, host `RaylibGame`).
 
 > **Default renderer.** The template wires a `Renderer2D` over a **deferred
 > command buffer**: the view fills a `RenderBuffer2D` with `Command2D` values
