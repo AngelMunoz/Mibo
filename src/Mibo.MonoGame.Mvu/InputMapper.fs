@@ -114,7 +114,11 @@ module InputMapper =
             | 0 -> InputMapperDeltas.isGamepadButtonDownFor g0 0 b
             | 1 -> InputMapperDeltas.isGamepadButtonDownFor g1 1 b
             | 2 -> InputMapperDeltas.isGamepadButtonDownFor g2 2 b
-            | _ -> InputMapperDeltas.isGamepadButtonDownFor g3 3 b
+            | 3 -> InputMapperDeltas.isGamepadButtonDownFor g3 3 b
+            // Players past 3 do not exist on MonoGame: report not-down,
+            // matching raylib (its native call returns false for unknown pad
+            // indexes).
+            | _ -> false
 
           // For the poll-driven service, derive Held/Started/Released from the
           // current "is this trigger held?" snapshot, diffing Held against the

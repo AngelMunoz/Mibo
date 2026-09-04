@@ -221,7 +221,10 @@ module internal InputMapperDeltas =
         | 0 -> isGamepadButtonDownFor g0 0 b
         | 1 -> isGamepadButtonDownFor g1 1 b
         | 2 -> isGamepadButtonDownFor g2 2 b
-        | _ -> isGamepadButtonDownFor g3 3 b
+        | 3 -> isGamepadButtonDownFor g3 3 b
+        // Players past 3 do not exist on MonoGame: report not-down, matching
+        // raylib (its native call returns false for unknown pad indexes).
+        | _ -> false
 
       let state, newComboStates =
         buildActions
