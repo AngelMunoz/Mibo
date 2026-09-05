@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-09-05
+
 ### Added
 
 - **Core:** the portable audio contract (`Mibo.Audio`). `Voice` carries the per-play knobs — volume, pan, and pitch as a speed multiplier (1.0 = normal) — and both backends clamp the knobs to the same ranges, so an out-of-range value behaves identically instead of crashing one backend. The `IAudio` service plays overlapping sound effects by key, drives the single looping music channel (play, pause, seek, position, live volume, fades), exposes the music slider value that fade-ins return to, and sets a master volume that scales the whole mix, music included. `Attenuation2D.compute` pans and fades a sound from 2D listener and source positions. Keys are game vocabulary ("jump", "overworld"); playing an unregistered key plays nothing, so headless runs and tests need no audio device. There are no mix groups: a sound-effect "bus" is model state the game multiplies into the voice, and music is one channel with one live knob. Every windowed host registers `IAudio` before user `init` runs, advances it once per frame, and disposes it on shutdown.
