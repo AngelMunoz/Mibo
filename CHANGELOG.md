@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-09-04
+
 ### Added
 
 - **Mibo:** the framework now ships as two independent runtime lanes on a shared kernel. `Mibo.Mvu` carries the Elmish/MVU runtime (`Cmd`, `Sub`, `Program`, loops, and headless support); `Mibo.Adaptive.Mibo` carries the Mibo-side adaptive runtime (`AdaptiveProgram`, `AdaptiveHeadless`); `Mibo.Raylib.Mvu` and `Mibo.MonoGame.Mvu` host MVU games, and `Mibo.Raylib.Adaptive` and `Mibo.MonoGame.Adaptive` host adaptive games, on top of the unchanged `Mibo.Raylib` and `Mibo.MonoGame` shells. MVU installs pull no adaptive code, and adaptive installs pull no MVU code.
