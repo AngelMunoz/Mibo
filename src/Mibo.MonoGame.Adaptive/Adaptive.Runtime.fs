@@ -261,16 +261,17 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
         | :? IDisposable as d -> d.Dispose()
         | _ -> ()
 
-      // Mirror AdaptiveRaylibGame's teardown order: renderers → runner → assets.
+      // Mirror AdaptiveRaylibGame's teardown order: renderers → runner →
+      // assets → audio.
       runnerOpt |> ValueOption.iter(fun runner -> runner.Dispose())
-
-      audioServiceOpt |> ValueOption.iter(fun audio -> audio.Dispose())
 
       ctxOpt
       |> ValueOption.iter(fun ctx ->
         match GameContext.tryGetService<IAssets> ctx with
         | ValueSome assets -> assets.Dispose()
         | _ -> ())
+
+      audioServiceOpt |> ValueOption.iter(fun audio -> audio.Dispose())
 
     base.Dispose(disposing)
 

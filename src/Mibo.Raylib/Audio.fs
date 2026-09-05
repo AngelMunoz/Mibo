@@ -236,10 +236,14 @@ type AudioService(baseAssetPath: string voption) as this =
 
     member _.SeekMusic(seconds: float32) : unit =
       if hasMusic && not disposed then
+        // SeekMusicStream takes seconds; clamp to the track length.
         let length = Raylib.GetMusicTimeLength(currentMusic)
 
         let position =
-          if length <= 0.0f then 0.0f else clamp01(seconds / length)
+          if length <= 0.0f then
+            0.0f
+          else
+            min (max seconds 0.0f) length
 
         Raylib.SeekMusicStream(currentMusic, position)
 

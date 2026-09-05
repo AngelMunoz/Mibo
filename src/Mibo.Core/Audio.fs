@@ -166,6 +166,17 @@ type IAudio =
   abstract Tick: dt: float32 -> unit
 
 /// <summary>
+/// State shared by the MVU command helpers and the adaptive intent helpers:
+/// the volume a <c>fadeMusicIn</c> fades toward. Both helper lanes read and
+/// write it, so the rule lives in one place; each windowed service keeps its
+/// own copy for its fade starts and new-track volume.
+/// </summary>
+module internal AudioHelperState =
+
+  /// <summary>The last volume passed to <c>Audio.setMusicVolume</c> / <c>Intents.setMusicVolume</c> (1.0 if never set).</summary>
+  let mutable MusicTargetVolume = 1.0f
+
+/// <summary>
 /// 2D positional attenuation: turns a listener facing plus listener/source
 /// positions into a <see cref="T:Mibo.Audio.Voice"/> (Volume and Pan set,
 /// Pitch 1). This is the portable alternative to the MonoGame-only 3D audio

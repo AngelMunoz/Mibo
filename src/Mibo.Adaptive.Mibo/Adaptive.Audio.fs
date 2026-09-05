@@ -13,17 +13,9 @@ open Mibo.Audio
 // intent, and a silent no-op when no service is registered.
 //
 // The mirror of the MVU set (module Mibo.Elmish.Audio): the same keys, the
-// same knobs, the same music-channel rules.
+// same knobs, the same music-channel rules. The fade-in target (the last
+// setMusicVolume value) is the shared AudioHelperState in Mibo.Core.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// <summary>Internal memory for the audio intents: the volume a fade-in returns to.</summary>
-/// <remarks>
-/// Mirrors the module state behind the MVU <c>Audio.fadeMusicIn</c>: the last
-/// value passed to <c>setMusicVolume</c> (1.0 if never set). The portable
-/// IAudio contract has no member to read it back, so the helpers remember it.
-/// </remarks>
-module internal AudioIntentState =
-  let mutable MusicTargetVolume = 1.0f
 
 /// <summary>
 /// Hosts the <see cref="T:Mibo.Adaptive.IntentQueue"/> audio extensions.
@@ -43,11 +35,11 @@ module AudioIntents =
   /// <remarks>
   /// <para>
   /// The sounds and tracks are registered before <c>init</c> runs — the hosts
-  /// register the audio service unconditionally; bind the bank yourself with
-  /// <c>AdaptiveProgram.withServiceRegistration</c> calling
-  /// <c>RegisterSound</c>/<c>RegisterMusic</c> on the backend's audio service.
-  /// Playing an unregistered key is a silent no-op, as is every helper when no
-  /// audio service is registered (headless runs).
+  /// register the audio service unconditionally, and the backend program
+  /// builders (<c>AdaptiveRaylibProgram.withBank</c> /
+  /// <c>AdaptiveMonoGameProgram.withBank</c>) load the bank. Playing an
+  /// unregistered key is a silent no-op, as is every helper when no audio
+  /// service is registered (headless runs).
   /// </para>
   /// <para>
   /// There are no mix groups: a sound-effect "bus" is model state the game
@@ -148,7 +140,7 @@ module AudioIntents =
     /// <param name="ctx">The game context.</param>
     /// <param name="volume">Music volume (1.0 = full, 0.0 = silent).</param>
     member this.setMusicVolume(ctx: GameContext, volume: float32) : unit =
-      AudioIntentState.MusicTargetVolume <- volume
+      AudioHelperState.MusicTargetVolume <- volume
 
       this.post(fun () ->
         match GameContext.tryGetService<IAudio> ctx with
@@ -159,7 +151,7 @@ module AudioIntents =
     /// <param name="ctx">The game context.</param>
     /// <param name="seconds">Fade duration in seconds.</param>
     member this.fadeMusicIn(ctx: GameContext, seconds: float32) : unit =
-      let target = AudioIntentState.MusicTargetVolume
+      let target = AudioHelperState.MusicTargetVolume
 
       this.post(fun () ->
         match GameContext.tryGetService<IAudio> ctx with

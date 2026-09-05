@@ -61,7 +61,18 @@ let sfxBank =
 mkProgram |> RaylibProgram.withBank sfxBank
 ```
 
-Adaptive programs bind the bank themselves through `AdaptiveProgram.withServiceRegistration`, calling `RegisterSound`/`RegisterMusic` on the backend's audio service (`AudioService` in `Mibo.Elmish`).
+Adaptive programs get the same builder on their per-backend wrappers:
+
+```fsharp
+let program =
+  AdaptiveProgram.mkProgram init update
+  |> AdaptiveRaylibProgram.withBank [ Sound ("jump", "assets/jump.wav") ]
+
+let mgProgram =
+  AdaptiveProgram.mkProgram init update
+  |> AdaptiveMonoGameProgram.ofProgram
+  |> AdaptiveMonoGameProgram.withBank [ Sound ("jump", Pipeline "audio/jump") ]
+```
 
 ### Path rules
 
@@ -109,7 +120,11 @@ Audio.playWith ctx "enemy-step" voice
 | `Audio.fadeMusicIn ctx 2.0f` | `intents.fadeMusicIn(ctx, 2.0f)` | `FadeMusic(last, 2.0f)` | fade in toward the last `setMusicVolume` value |
 | `Audio.fadeMusicOut ctx 1.5f` | `intents.fadeMusicOut(ctx, 1.5f)` | `FadeMusic(0.0f, 1.5f)` | fade out; the music stops at the end |
 
-\* `MusicPosition` reads a value, so it is only on the service (call it from `update`/`Subscribe` directly), not a command.
+Behavior notes (both backends behave the same way):
+
+- `seekMusic` clamps to the track: positions before the start clamp to 0, positions past the end clamp to the track length. Seeking a paused track stays paused at the new position.
+- `pauseMusic`/`resumeMusic` do nothing when no track has started.
+- `setMasterVolume` applies immediately — sounds that are already playing get quieter or louder on the next mix, on both backends.
 
 A fade to (or below) zero stops the music when it completes. A fade to a positive volume leaves it playing. A newly started track cancels any running fade and starts at the slider volume — a fade-out ends the track that was playing; it is not a sticky volume.
 
@@ -140,15 +155,19 @@ let update ctx state msg =
 
 ## The slider pattern: sfx "groups" are model state
 
-The framework has no mix groups or audio categories. The composition is ordinary F# in your model:
+The framework has no mix groups or audio categories. The composition is ordinary F# in your model — one field per "bus", multiplied into the voice at every play site:
 
 ```fsharp
-// options menu: two model fields, two knobs
-let sfx key = Audio.playWith ctx key { Voice.center with Volume = model.SfxVolume }
+// options menu: two model fields, two knobs.
+// The "sfx bus" is just model.SfxVolume applied at each play site.
+let sfx volume key = Audio.playWith ctx key (Voice.ofVolume volume)
 
 | Slider v ->
-    { model with SfxVolume = v },
-    Audio.setMusicVolume ctx v      // music slider, live
+    let model = { model with SfxVolume = v }
+    model,
+    Cmd.batch
+      [ Audio.setMusicVolume ctx v   // music slider, live
+        sfx v "ui-click" ]           // sfx at the new bus volume
 ```
 
 ## MonoGame 3D audio

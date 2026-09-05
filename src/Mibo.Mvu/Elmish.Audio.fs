@@ -50,12 +50,6 @@ open Mibo.Audio
 [<RequireQualifiedAccess>]
 module Audio =
 
-  // The volume a fadeMusicIn returns to: the last value passed to
-  // setMusicVolume (1.0 if never set). Kept here because the portable IAudio
-  // contract has no member to read it back — both services remember the
-  // value for their own fade starts, and this remembers it for the helpers.
-  let mutable private musicTargetVolume = 1.0f
-
   /// <summary>Plays the sound registered under <paramref name="key"/> with the default voice.</summary>
   /// <param name="ctx">The game context (the helpers resolve the audio service from it).</param>
   /// <param name="key">The key the sound was registered under in the bank.</param>
@@ -129,7 +123,7 @@ module Audio =
   /// <param name="ctx">The game context.</param>
   /// <param name="volume">Music volume (1.0 = full, 0.0 = silent).</param>
   let setMusicVolume (ctx: GameContext) (volume: float32) : Cmd<'Msg> =
-    musicTargetVolume <- volume
+    AudioHelperState.MusicTargetVolume <- volume
 
     match GameContext.tryGetService<IAudio> ctx with
     | ValueSome audio ->
@@ -140,7 +134,7 @@ module Audio =
   /// <param name="ctx">The game context.</param>
   /// <param name="seconds">Fade duration in seconds.</param>
   let fadeMusicIn (ctx: GameContext) (seconds: float32) : Cmd<'Msg> =
-    let target = musicTargetVolume
+    let target = AudioHelperState.MusicTargetVolume
 
     match GameContext.tryGetService<IAudio> ctx with
     | ValueSome audio ->

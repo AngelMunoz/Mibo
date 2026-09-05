@@ -60,6 +60,63 @@ type AdaptiveMonoGameProgram<'Frame> = {
 module AdaptiveMonoGameProgram =
 
   /// <summary>
+  /// One entry of a sound bank: a game-vocabulary key bound to the source
+  /// that plays under it. The whole bank loads before the program's
+  /// <c>Init</c> runs.
+  /// </summary>
+  type BankEntry =
+    /// <summary>A sound effect: plays with <c>Intents.play</c>, overlaps itself through an 8-slot pool.</summary>
+    | Sound of key: string * Source
+    /// <summary>A music track for the single music channel.</summary>
+    | Music of key: string * Source
+
+  /// <summary>
+  /// Configures the game's sound bank: every entry loads before the program's
+  /// <c>Init</c> runs, so <c>Intents.play</c>/<c>Intents.playMusic</c> can
+  /// start sounds from the first step.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Each entry names its own <see cref="T:Mibo.Elmish.Source"/> —
+  /// <c>Pipeline</c> for MGCB assets, <c>File</c> for loose files (WAV sound
+  /// effects; music goes through the platform decoders). List order is load
+  /// order; a key registered twice keeps the first entry.
+  /// </para>
+  /// <para>
+  /// The adaptive counterpart of
+  /// <see cref="M:Mibo.Elmish.MonoGameProgram.withBank"/>: same entries, same
+  /// load slot (service registrations run before <c>Init</c>).
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// let mgProgram =
+  ///   AdaptiveProgram.mkProgram init update
+  ///   |&gt; AdaptiveMonoGameProgram.ofProgram
+  ///   |&gt; AdaptiveMonoGameProgram.withBank
+  ///     [ Sound("jump", Pipeline "audio/jump")
+  ///       Music("overworld", File "music/overworld.ogg") ]
+  /// </code>
+  /// </example>
+  let withBank
+    (bank: BankEntry list)
+    (program: AdaptiveMonoGameProgram<'Frame>)
+    : AdaptiveMonoGameProgram<'Frame> =
+    {
+      program with
+          Program =
+            program.Program
+            |> AdaptiveProgram.withServiceRegistration(fun ctx ->
+              match GameContext.tryGetService<AudioService> ctx with
+              | ValueSome audio ->
+                for entry in bank do
+                  match entry with
+                  | Sound(key, source) -> audio.RegisterSound(key, source)
+                  | Music(key, source) -> audio.RegisterMusic(key, source)
+              | ValueNone -> ())
+    }
+
+  /// <summary>
   /// Wraps an <see cref="T:Mibo.Adaptive.AdaptiveProgram`1"/> into an
   /// <see cref="T:Mibo.Adaptive.AdaptiveMonoGameProgram`1"/> with no device-level
   /// configuration.

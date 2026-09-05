@@ -56,9 +56,18 @@ type Source =
 /// plus its 8-instance ring played round-robin. The cursor always advances,
 /// so the 9th playback of a key steals the slot of the oldest one.
 /// </summary>
+/// <remarks>
+/// Each slot carries its own pooled <c>AudioEmitter</c> and a 3D flag,
+/// allocated once at registration — <c>Play3D</c> never allocates. Arming a
+/// slot always sets the flag (2D plays clear it, 3D plays set it), so the
+/// per-frame re-attenuation sweep never applies a stale emitter over a fresh
+/// playback, and a slot can never be tracked twice.
+/// </remarks>
 type private SoundBankEntry = {
   Effect: SoundEffect
   Instances: SoundEffectInstance[]
+  Emitters: AudioEmitter[]
+  SlotIs3D: bool[]
   mutable Cursor: int
 }
 
@@ -151,10 +160,9 @@ type AudioService(content: ContentManager) =
   let mutable fadeDuration = 0.0f
   let mutable fadeStopOnComplete = false
 
-  // 3D audio: where the listener hears from, plus the live 3D plays swept
-  // each Tick so a moving listener re-attenuates them without restarting.
+  // 3D audio: where the listener hears from. Live 3D plays are found through
+  // the per-slot emitters and flags on each bank entry (see SoundBankEntry).
   let listener = AudioListener()
-  let active3D = ResizeArray<struct (SoundEffectInstance * AudioEmitter)>()
 
   let clamp01 v =
     if v < 0.0f then 0.0f
@@ -177,8 +185,13 @@ type AudioService(content: ContentManager) =
     match sounds.TryGetValue(key) with
     | true, entry when not disposed ->
       entry.Cursor <- (entry.Cursor + 1) % entry.Instances.Length
+      let slot = entry.Cursor
 
-      let instance = entry.Instances[entry.Cursor]
+      // A 2D play re-arms the slot: retire its 3D flag so the Tick sweep
+      // cannot apply the slot's old emitter over this playback's pan.
+      entry.SlotIs3D[slot] <- false
+
+      let instance = entry.Instances[slot]
       instance.Volume <- voice.Volume
       instance.Pan <- voice.Pan
       instance.Pitch <- voice.Pitch
@@ -225,13 +238,19 @@ type AudioService(content: ContentManager) =
     match sounds.TryGetValue(key) with
     | true, entry when not disposed ->
       entry.Cursor <- (entry.Cursor + 1) % entry.Instances.Length
-
-      let instance = entry.Instances[entry.Cursor]
+      let slot = entry.Cursor
 
       let v = defaultArg voice Voice.center
-      let emitter = AudioEmitter()
+
+      // The slot's pooled emitter: written in place, never allocated. The
+      // flag stays on through the playback so the Tick sweep re-attenuates
+      // against the moving listener.
+      let emitter = entry.Emitters[slot]
       emitter.Position <- emitterPosition
       emitter.Velocity <- defaultArg emitterVelocity Vector3.Zero
+      entry.SlotIs3D[slot] <- true
+
+      let instance = entry.Instances[slot]
 
       // Apply3D reads the instance volume, so set the knobs before it, and
       // apply before Play (the platform contract). Geometry decides pan.
@@ -239,9 +258,6 @@ type AudioService(content: ContentManager) =
       instance.Pitch <- v.Pitch
       instance.Apply3D(listener, emitter)
       instance.Play()
-
-      // Tracked so a moving listener re-attenuates the live playback in Tick.
-      active3D.Add(struct (instance, emitter))
     | _ -> ()
 
   /// <summary>Registers a sound effect from a pipeline asset or a loose WAV file. Loading a key twice keeps the first registration.</summary>
@@ -250,16 +266,16 @@ type AudioService(content: ContentManager) =
   member _.RegisterSound(key: string, source: Source) =
     if not(sounds.ContainsKey key) then
       let effect = loadEffect source
-      let instances = Array.init 8 (fun _ -> effect.CreateInstance())
 
-      sounds.Add(
-        key,
-        {
-          Effect = effect
-          Instances = instances
-          Cursor = 0
-        }
-      )
+      let entry = {
+        Effect = effect
+        Instances = Array.init 8 (fun _ -> effect.CreateInstance())
+        Emitters = Array.init 8 (fun _ -> AudioEmitter())
+        SlotIs3D = Array.zeroCreate 8
+        Cursor = 0
+      }
+
+      sounds.Add(key, entry)
 
       match source with
       | File _ -> fileOwned.Add key |> ignore
@@ -296,25 +312,21 @@ type AudioService(content: ContentManager) =
             MediaPlayer.Stop()
             appliedVolume <- musicVolume
 
-      // Re-attenuate live 3D plays against the current listener, dropping
-      // the ones that finished.
-      if active3D.Count > 0 then
-        let mutable i = 0
+      // Re-attenuate live 3D plays against the current listener. A slot is
+      // in the sweep only while its 3D flag is on and its instance still
+      // plays; re-arming the slot (2D or 3D) flips the flag first.
+      for KeyValue(_, entry) in sounds do
+        for slot in 0 .. entry.Instances.Length - 1 do
+          if entry.SlotIs3D[slot] then
+            let instance = entry.Instances[slot]
 
-        while i < active3D.Count do
-          let struct (instance, emitter) = active3D[i]
-
-          if instance.State = SoundState.Playing then
-            instance.Apply3D(listener, emitter)
-            i <- i + 1
-          else
-            active3D.RemoveAt i
+            if instance.State = SoundState.Playing then
+              instance.Apply3D(listener, entry.Emitters[slot])
 
   /// <summary>Disposes the instance ring and the loose-file sounds and songs. Pipeline assets stay owned by the ContentManager.</summary>
   member _.Dispose() : unit =
     if not disposed then
       disposed <- true
-      active3D.Clear()
 
       if hasMusic then
         MediaPlayer.Stop()
@@ -352,8 +364,6 @@ type AudioService(content: ContentManager) =
             if instance.State <> SoundState.Stopped then
               instance.Stop()
 
-        active3D.Clear()
-
     member this.PlayMusic(key: string) : unit = this.playMusicKey(key, true)
 
     member this.PlayMusicOnce(key: string) : unit =
@@ -361,20 +371,36 @@ type AudioService(content: ContentManager) =
 
     member this.StopMusic() : unit = this.stopMusicNow()
 
+    // Guarded by hasMusic, like the raylib backend: pausing or resuming with
+    // no track started is a no-op.
     member _.PauseMusic() : unit =
-      if not disposed then
+      if hasMusic && not disposed then
         MediaPlayer.Pause()
 
     member _.ResumeMusic() : unit =
-      if not disposed then
+      if hasMusic && not disposed then
         MediaPlayer.Resume()
 
     member _.SeekMusic(seconds: float32) : unit =
       if hasMusic && not disposed then
-        MediaPlayer.Play(
-          currentSong,
-          TimeSpan.FromSeconds(max 0.0f (float32 seconds) |> float)
-        )
+        // Clamp to the track length, like the raylib backend.
+        let length = float32 currentSong.Duration.TotalSeconds
+
+        let position =
+          if length <= 0.0f then
+            0.0f
+          else
+            min (max seconds 0.0f) length
+
+        // Play(song, position) is the only seek MonoGame offers, and it
+        // starts playback — restore a paused state so seeking a paused track
+        // stays paused, matching the ray backend.
+        let wasPaused = MediaPlayer.State = MediaState.Paused
+
+        MediaPlayer.Play(currentSong, TimeSpan.FromSeconds(float position))
+
+        if wasPaused then
+          MediaPlayer.Pause()
 
     member _.MusicPosition() : float32 =
       if hasMusic && not disposed then
