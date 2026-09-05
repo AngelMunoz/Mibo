@@ -77,6 +77,10 @@ let init (ctx: GameContext): struct(Model * Cmd<Msg>) =
 > include the raw file in the output directory (e.g. `<CopyToOutputDirectory>` / `<Content>` in
 > the `.fsproj`).
 
+> _**NOTE (Sound)**_: `IAssets.Sound` loads a single raw audio handle for direct use. For the
+> game-audio surface — keyed sound banks, overlapping playback, looping music, fades, and
+> positional audio — see [Audio](audio.html).
+
 ## Texture configuration (raylib)
 
 The raylib loader generates mipmaps (smaller scaled-down copies used for far-away detail) and forces **trilinear** filtering (blending between mip levels) on every texture at load time; good for 3D/PBR surfaces, but it makes tiles sampled from a gutterless spritesheet bleed at the edges. A texture's filter is a property of the texture itself (not the draw batch), so override it per texture with the `Texture` helper module:

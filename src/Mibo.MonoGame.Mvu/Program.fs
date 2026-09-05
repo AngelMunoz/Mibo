@@ -66,6 +66,64 @@ type MonoGameProgram<'Model, 'Msg> = {
 module MonoGameProgram =
 
   /// <summary>
+  /// One entry of a sound bank: a game-vocabulary key bound to the source
+  /// that plays under it. The whole bank loads before user <c>init</c> runs.
+  /// </summary>
+  type BankEntry =
+    /// <summary>A sound effect: plays with <c>Audio.play</c>, overlaps itself through an 8-slot pool.</summary>
+    | Sound of key: string * Source
+    /// <summary>A music track for the single music channel.</summary>
+    | Music of key: string * Source
+
+  /// <summary>
+  /// Configures the game's sound bank: every entry loads before user
+  /// <c>init</c> runs, so <c>Audio.play</c>/<c>Audio.playMusic</c> can start
+  /// sounds from the very first message.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Each entry names its own <see cref="T:Mibo.Elmish.Source"/> —
+  /// <c>Pipeline</c> for MGCB assets, <c>File</c> for loose files (WAV sound
+  /// effects; music goes through the platform decoders). The bank is an
+  /// ordinary F# value: a list literal for small games, or a generated value
+  /// for large ones (a naming convention, a manifest, a directory scan). List
+  /// order is load order. One call configures the whole bank.
+  /// </para>
+  /// <para>
+  /// Keys are game vocabulary ("jump", "overworld"); a key registered twice
+  /// keeps the first entry. A missing pipeline asset throws at startup, where
+  /// a configuration mistake belongs.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// let mgProgram =
+  ///   Program.mkProgram init update
+  ///   |&gt; MonoGameProgram.ofProgram
+  ///   |&gt; MonoGameProgram.withBank
+  ///     [ Sound("jump", Pipeline "audio/jump")
+  ///       Music("overworld", File "music/overworld.ogg") ]
+  /// </code>
+  /// </example>
+  let withBank
+    (bank: BankEntry list)
+    (program: MonoGameProgram<'Model, 'Msg>)
+    : MonoGameProgram<'Model, 'Msg> =
+    {
+      program with
+          Program =
+            program.Program
+            |> Program.withServiceRegistration(fun ctx ->
+              match GameContext.tryGetService<AudioService> ctx with
+              | ValueSome audio ->
+                for entry in bank do
+                  match entry with
+                  | Sound(key, source) -> audio.RegisterSound(key, source)
+                  | Music(key, source) -> audio.RegisterMusic(key, source)
+              | ValueNone -> ())
+    }
+
+  /// <summary>
   /// Wraps a Core <see cref="T:Mibo.Elmish.Program`2"/> into a
   /// <see cref="T:Mibo.Elmish.MonoGameProgram`2"/> with no device-level
   /// configuration.
