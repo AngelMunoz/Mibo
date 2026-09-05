@@ -151,14 +151,23 @@ Every helper resolves the service from the `GameContext` and yields `Cmd.none` w
 
 ## Adaptive audio
 
-The adaptive set is a surface on the context — `ctx.Audio` — in `Init` and `Update` alike. Each call posts one closure that resolves the service at drain time (Headless-safe, no-op without a registered audio service); posted from `Init`, the work lands in the startup drain before the first frame:
+The adaptive set is a surface on the context — `ctx.Audio` — in `Init` and `Update` alike. Each call resolves the audio service on the spot (a no-op when none is registered, so headless runs allocate nothing) and posts one closure that captures just the service; posted from `Init`, the work lands in the startup drain before the first frame:
 
 ```fsharp
-let update ctx state msg =
-  match msg with
-  | Jump ->
-      ctx.Audio.play("jump")
-      { state with Vy = jumpSpeed }
+let update (world: World) (ctx: AdaptiveContext) (gameTime: GameTime) =
+    // ...loop over gems, decide which are collected...
+
+    for gem in collected do
+        world.Score.UpdateTo((world.Score |> AVal.getValue) + gem.Points) |> ignore
+        ctx.Audio.play("pickup")        // runs after this step's update
+```
+
+From `Init`, the same surface posts into the startup drain — before the first frame:
+
+```fsharp
+let init (ctx: AdaptiveFrameContext) =
+    ctx.Audio.playMusic("overworld")    // plays before the first frame
+    AdaptiveInit.ofFrameBuilder buildFrame
 ```
 
 ## The slider pattern: sfx "groups" are model state
