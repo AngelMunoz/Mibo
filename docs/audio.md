@@ -18,7 +18,9 @@ audio.PlayMusic "overworld"      // loops
 audio.FadeMusic(0.0f, 1.5f)      // fade out over 1.5 s, then stop
 ```
 
-> _**NOTE**_: You rarely resolve `IAudio` by hand. MVU programs have the [command helpers](#mvu-commands) (`Audio.play ctx "jump"`), adaptive programs have the [intent helpers](#adaptive-intents) (`ctx.Intents.play(ctx.Context, "jump")`).
+> _**NOTE**_: You rarely resolve `IAudio` by hand. MVU programs have the [command helpers](#mvu-commands) (`Audio.play ctx "jump"`), adaptive programs have the [audio surface](#adaptive-audio) (`ctx.Audio.play("jump")`).
+
+> _**NOTE**_: As with `IAssets`, the backend audio types live in the shared **`Mibo.Elmish`** namespace in both shells (`AudioService`, and on MonoGame `Source`/`MonoGameAudio`). A project that references **both** backends sees two `AudioService`/`Source` types and must qualify them by namespace — an unusual setup, but worth knowing.
 
 ## How it works
 
@@ -116,17 +118,17 @@ Audio.playWith ctx "enemy-step" voice
 
 ## Music channel
 
-| Helper (MVU) | Intent (adaptive) | Service call | Effect |
+| Helper (MVU) | Surface (adaptive) | Service call | Effect |
 |---|---|---|---|
-| `Audio.playMusic ctx key` | `intents.playMusic(ctx, key)` | `PlayMusic key` | start looping (the background-music case) |
-| `Audio.playMusicOnce ctx key` | `intents.playMusicOnce(ctx, key)` | `PlayMusicOnce key` | play through, then stop |
-| `Audio.stopMusic ctx` | `intents.stopMusic(ctx)` | `StopMusic()` | stop and reset to the start |
-| `Audio.pauseMusic ctx` / `resumeMusic ctx` | `intents.pauseMusic(ctx)` / `resumeMusic(ctx)` | `PauseMusic()` / `ResumeMusic()` | park / continue |
-| `Audio.seekMusic ctx 12.0f` | `intents.seekMusic(ctx, 12.0f)` | `SeekMusic 12.0f` | jump to an absolute time |
+| `Audio.playMusic ctx key` | `ctx.Audio.playMusic key` | `PlayMusic key` | start looping (the background-music case) |
+| `Audio.playMusicOnce ctx key` | `ctx.Audio.playMusicOnce key` | `PlayMusicOnce key` | play through, then stop |
+| `Audio.stopMusic ctx` | `ctx.Audio.stopMusic()` | `StopMusic()` | stop and reset to the start |
+| `Audio.pauseMusic ctx` / `resumeMusic ctx` | `ctx.Audio.pauseMusic()` / `resumeMusic()` | `PauseMusic()` / `ResumeMusic()` | park / continue |
+| `Audio.seekMusic ctx 12.0f` | `ctx.Audio.seekMusic 12.0f` | `SeekMusic 12.0f` | jump to an absolute time |
 | — (read, not a command) | — | `MusicPosition()` | playback position in seconds |
-| `Audio.setMusicVolume ctx v` | `intents.setMusicVolume(ctx, v)` | `SetMusicVolume v` | the music slider, live |
-| `Audio.fadeMusicIn ctx 2.0f` | `intents.fadeMusicIn(ctx, 2.0f)` | `FadeMusic(last, 2.0f)` | fade in toward the last `setMusicVolume` value |
-| `Audio.fadeMusicOut ctx 1.5f` | `intents.fadeMusicOut(ctx, 1.5f)` | `FadeMusic(0.0f, 1.5f)` | fade out; the music stops at the end |
+| `Audio.setMusicVolume ctx v` | `ctx.Audio.setMusicVolume v` | `SetMusicVolume v` | the music slider, live |
+| `Audio.fadeMusicIn ctx 2.0f` | `ctx.Audio.fadeMusicIn 2.0f` | `FadeMusic(last, 2.0f)` | fade in toward the last `setMusicVolume` value |
+| `Audio.fadeMusicOut ctx 1.5f` | `ctx.Audio.fadeMusicOut 1.5f` | `FadeMusic(0.0f, 1.5f)` | fade out; the music stops at the end |
 
 Behavior notes (both backends behave the same way):
 
@@ -147,15 +149,15 @@ Every helper resolves the service from the `GameContext` and yields `Cmd.none` w
 | GameOver   -> model, Audio.fadeMusicOut ctx 1.5f
 ```
 
-## Adaptive intents
+## Adaptive audio
 
-The adaptive set mirrors the MVU set as members on `IntentQueue` — they hang off the `ctx.Intents` value you already hold, post one closure, and resolve the service at drain time (Headless-safe):
+The adaptive set is a surface on the context — `ctx.Audio` — in `Init` and `Update` alike. Each call posts one closure that resolves the service at drain time (Headless-safe, no-op without a registered audio service); posted from `Init`, the work lands in the startup drain before the first frame:
 
 ```fsharp
 let update ctx state msg =
   match msg with
   | Jump ->
-      ctx.Intents.play(ctx.Context, "jump")
+      ctx.Audio.play("jump")
       { state with Vy = jumpSpeed }
 ```
 

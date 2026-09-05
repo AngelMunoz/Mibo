@@ -244,6 +244,12 @@ type AudioService(content: ContentManager) =
 
       let instance = entry.Instances[slot]
       let v = Voice.clamp voice
+
+      // Stop first: Play() early-returns on a Playing slot (and resumes a
+      // Paused one), so re-arming a live slot must reset it or the steal
+      // would drop the new playback and keep the old one.
+      instance.Stop()
+
       instance.Volume <- v.Volume
       instance.Pan <- v.Pan
       instance.Pitch <- toMonoGamePitch v.Pitch
@@ -308,6 +314,11 @@ type AudioService(content: ContentManager) =
       // apply before Play (the platform contract). Geometry decides pan.
       instance.Volume <- v.Volume
       instance.Pitch <- toMonoGamePitch v.Pitch
+
+      // Stop first, like the 2D path: a live slot must reset before Play(),
+      // which early-returns on Playing (and resumes Paused).
+      instance.Stop()
+
       instance.Apply3D(listener, emitter)
       instance.Play()
     | _ -> ()

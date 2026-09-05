@@ -27,14 +27,14 @@ module AdaptiveRaylibProgram =
   /// decodes (WAV, OGG, MP3, FLAC, QOA).
   /// </remarks>
   type BankEntry =
-    /// <summary>A sound effect: plays with <c>Intents.play</c>, overlaps itself through an 8-slot pool.</summary>
+    /// <summary>A sound effect: plays with <c>ctx.Audio.play</c>, overlaps itself through an 8-slot pool.</summary>
     | Sound of key: string * path: string
     /// <summary>A music track for the single music channel.</summary>
     | Music of key: string * path: string
 
   /// <summary>
   /// Configures the game's sound bank: every entry loads before the program's
-  /// <c>Init</c> runs, so <c>Intents.play</c>/<c>Intents.playMusic</c> can
+  /// <c>Init</c> runs, so <c>ctx.Audio.play</c>/<c>ctx.Audio.playMusic</c> can
   /// start sounds from the first step.
   /// </summary>
   /// <remarks>

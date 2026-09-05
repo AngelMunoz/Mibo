@@ -200,7 +200,12 @@ type AudioService(baseAssetPath: string voption) as this =
           appliedVolume <- fadeTo
 
           if fadeStopOnComplete then
-            Raylib.StopMusicStream(currentMusic)
+            // Guarded like every other music call: a fade can be requested
+            // before any track ever played (currentMusic is then a default
+            // handle).
+            if hasMusic then
+              Raylib.StopMusicStream(currentMusic)
+
             appliedVolume <- musicVolume
             musicState <- MusicChannelState.Stopped
 
