@@ -33,7 +33,7 @@ open Mibo.Audio
 /// <para>
 /// <c>fadeMusicIn</c> fades toward the last volume passed to
 /// <c>setMusicVolume</c> (1.0 if never set), so the music slider and fades
-/// compose: <c>setMusicVolume ctx 0.8f</code> once, then
+/// compose: <c>setMusicVolume ctx 0.8f</c> once, then
 /// <c>fadeMusicIn ctx 2.0f</c> after every track start.
 /// </para>
 /// </remarks>
