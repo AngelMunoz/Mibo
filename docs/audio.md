@@ -84,7 +84,7 @@ let mgProgram =
 | Sound source | file path (relative to `withAssetsBasePath` when set) | `Pipeline name` (MGCB asset, no extension) or `File path` (loose **WAV**) |
 | Music source | file path (same base-path rule) | `Pipeline name` or `File path` (loaded through `Song.FromUri`, platform decoders) |
 | Formats | WAV, OGG, MP3, FLAC, QOA | Pipeline: every format the pipeline imports. Loose: WAV for sound effects; music depends on the platform decoder |
-| Missing file | logged warning, the key plays nothing — never throws | `Pipeline`: throws at bank load (startup). `File` sound: throws at bank load. `File` music: not read until played — a missing file fails at `MediaPlayer.Play` |
+| Missing file | logged warning, the key is skipped and plays nothing — never throws | `Pipeline`: throws at bank load (startup). `File` sound: throws at bank load. `File` music: not read until played — a missing file fails at `MediaPlayer.Play` |
 
 > _**NOTE**_: On MonoGame, the pipeline is the guaranteed path. Loose files must ship with the game (copy them to the output directory yourself), and loose sound effects are WAV-only. The raylib silence-on-missing rule means a typo'd path is easy to miss — test your bank with sound audible at least once.
 

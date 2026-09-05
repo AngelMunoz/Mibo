@@ -150,30 +150,38 @@ type AudioService(baseAssetPath: string voption) as this =
     if hasMusic && not disposed then
       Raylib.SetMusicVolume(currentMusic, v)
 
-  /// <summary>Registers a sound effect from a file path. Loading a key twice keeps the first registration.</summary>
+  /// <summary>Registers a sound effect from a file path. Loading a key twice keeps the first registration. A file that fails to load is skipped (raylib logs a warning) — its key plays nothing.</summary>
   /// <param name="key">The game-vocabulary key to play the sound with (e.g. "jump").</param>
   /// <param name="path">File path (relative to the program's asset base path when one is set).</param>
   member _.RegisterSound(key: string, path: string) =
     if not(sounds.ContainsKey key) then
       let sound = Raylib.LoadSound(resolvePath path)
 
-      let aliases = Array.init 8 (fun _ -> Raylib.LoadSoundAlias(sound))
+      // A missing/unreadable file loads as an empty handle (raylib only
+      // logs a warning) whose stream buffer is null — LoadSoundAlias
+      // dereferences it, so invalid loads are skipped and the key stays a
+      // silent no-op.
+      if Raylib.IsSoundValid(sound).AsBool() then
+        let aliases = Array.init 8 (fun _ -> Raylib.LoadSoundAlias(sound))
 
-      sounds.Add(
-        key,
-        {
-          Source = sound
-          Aliases = aliases
-          Cursor = 0
-        }
-      )
+        sounds.Add(
+          key,
+          {
+            Source = sound
+            Aliases = aliases
+            Cursor = 0
+          }
+        )
 
-  /// <summary>Registers a music track from a file path. Loading a key twice keeps the first registration.</summary>
+  /// <summary>Registers a music track from a file path. Loading a key twice keeps the first registration. A file that fails to load is skipped (raylib logs a warning) — the key plays nothing.</summary>
   /// <param name="key">The game-vocabulary key to start the track with (e.g. "overworld").</param>
   /// <param name="path">File path (relative to the program's asset base path when one is set).</param>
   member _.RegisterMusic(key: string, path: string) =
     if not(musics.ContainsKey key) then
-      musics.Add(key, Raylib.LoadMusicStream(resolvePath path))
+      let music = Raylib.LoadMusicStream(resolvePath path)
+
+      if Raylib.IsMusicValid(music).AsBool() then
+        musics.Add(key, music)
 
   /// <summary>The current music slider value — the volume a fade-in returns to.</summary>
   member _.MusicVolume() : float32 = musicVolume
