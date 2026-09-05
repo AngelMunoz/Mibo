@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Core:** the portable audio contract (`Mibo.Audio`): `Voice` carries the per-play knobs (volume, pan, pitch) as a zero-allocation struct built from `Voice.center`/`ofVolume`/`at`, and the `IAudio` service plays overlapping sound effects by key, drives the single looping music channel (play, pause, seek, position, live volume, fades), and sets the master volume. `Attenuation2D.compute` turns a 2D listener facing plus positions into a pan/volume voice, and `Fade.volume` is the shared fade math. Keys are game vocabulary ("jump", "overworld"); playing an unregistered key is a silent no-op, so headless runs need no audio device. There are no mix groups: a sound-effect "bus" is model state the game multiplies into the voice, and music is one channel with one live knob. Every windowed host registers `IAudio` before user `init` runs, advances it once per frame, and disposes it on shutdown — game code never calls the per-frame tick.
+- **Raylib:** the audio service behind `IAudio`: register file paths (resolved against the program's asset base path), get an 8-alias pool per sound that shares the sample data (so overlap costs no extra audio memory) and a single streamed music channel. WAV, OGG, MP3, FLAC, and QOA load from loose files.
+- **MonoGame:** the audio service behind `IAudio`, where each bank entry names its source explicitly: `Pipeline` loads an MGCB asset through the content manager (the guaranteed path, missing assets throw at startup) and `File` loads a loose WAV sound effect or a decoder-backed loose music file. Sounds play through a service-owned 8-instance ring, so per-play knobs apply live. `MonoGameAudio` extends the contract with 3D audio: set the listener (the camera is the usual choice), play positioned sounds with distance attenuation, panning, and Doppler shift, and tune `DistanceScale`/`DopplerScale`; live plays re-attenuate automatically as the listener moves.
+- **MVU:** `Audio` commands — `play`, `playWith`, `stopAll`, the music-channel set (`playMusic`, `playMusicOnce`, `stopMusic`, `pauseMusic`, `resumeMusic`, `seekMusic`, `setMusicVolume`, `fadeMusicIn`, `fadeMusicOut`), and `setMasterVolume`. Each resolves the audio service from the context and yields `Cmd.none` when audio is absent (headless-safe). `RaylibProgram.withBank` / `MonoGameProgram.withBank` declare the whole sound bank as one list value (a literal or a generated one) and load it before user `init` runs.
+- **Adaptive:** the same audio surface as intent members on `IntentQueue` (`ctx.Intents.play(ctx.Context, "jump")`, plus the full music set), posting one closure that resolves the service at drain time — Headless-safe like every intent.
+
 ## [5.0.0] - 2026-09-04
 
 ### Added

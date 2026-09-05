@@ -2,6 +2,7 @@ namespace Mibo.Adaptive
 
 open System
 open Raylib_cs
+open Mibo.Audio
 open Mibo.Input
 open Mibo.Elmish
 open Mibo.Diagnostics
@@ -84,6 +85,14 @@ type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
     GameContext.register<IAssets> assets ctx
     GameContext.register<IWindow> (RaylibWindow(config.WindowMode)) ctx
 
+    // The audio service is registered unconditionally (like IAssets): the
+    // program's bank registrations resolve it, and Tick/Dispose run whether
+    // or not the program ever plays a sound. Paths resolve against the
+    // program's asset base path, the same rule as the asset service.
+    let audio = new AudioService(program.AssetsBasePath)
+    GameContext.register<IAudio> audio ctx
+    GameContext.register<AudioService> audio ctx
+
     // Only a profiler supplied with withProfiler is registered and measured.
     // The runner resolves the same field on its first Step.
     let profilerOpt = program.Profiler
@@ -116,6 +125,9 @@ type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
 
       // Poll hardware input before the program's Update phase reads it.
       inputServiceOpt |> ValueOption.iter(fun svc -> svc.Poll())
+
+      // Advance music streaming and fade interpolation before the step.
+      audio.Tick(dt)
 
       // Check for window resize and update context dimensions.
       if Raylib.IsWindowResized().AsBool() then
@@ -156,5 +168,6 @@ type AdaptiveRaylibGame<'Frame>(program: AdaptiveProgram<'Frame>) =
 
     runner.Dispose()
     assets.Dispose()
+    audio.Dispose()
     Raylib.CloseAudioDevice()
     Raylib.CloseWindow()

@@ -3,6 +3,7 @@ namespace Mibo.Elmish
 open System
 open System.Collections.Generic
 open Raylib_cs
+open Mibo.Audio
 open Mibo.Diagnostics
 open Mibo.Input
 open Mibo.Windowing
@@ -54,6 +55,14 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
     GameContext.register<IAssets> assets ctx
     GameContext.register<IWindow> (RaylibWindow(config.WindowMode)) ctx
 
+    // The audio service is registered unconditionally (like IAssets): the
+    // program's bank registrations resolve it, and Tick/Dispose run whether
+    // or not the program ever plays a sound. Paths resolve against the
+    // program's asset base path, the same rule as the asset service.
+    let audio = new AudioService(program.AssetsBasePath)
+    GameContext.register<IAudio> audio ctx
+    GameContext.register<AudioService> audio ctx
+
     // Only a profiler supplied with withProfiler is registered and measured.
     let profilerOpt = program.Profiler
 
@@ -89,6 +98,9 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
 
       // Poll hardware input before processing messages
       inputServiceOpt |> ValueOption.iter(fun svc -> svc.Poll())
+
+      // Advance music streaming and fade interpolation.
+      audio.Tick(dt)
 
       // Check for window resize and update context dimensions
       if Raylib.IsWindowResized().AsBool() then
@@ -134,5 +146,6 @@ type RaylibGame<'Model, 'Msg>(program: Program<'Model, 'Msg>) =
 
     loop.DisposeSubs()
     (GameContext.getService<IAssets> ctx).Dispose()
+    audio.Dispose()
     Raylib.CloseAudioDevice()
     Raylib.CloseWindow()

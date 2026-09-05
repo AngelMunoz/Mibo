@@ -23,6 +23,64 @@ open Mibo.Input
 module RaylibProgram =
 
   /// <summary>
+  /// One entry of a sound bank: a game-vocabulary key bound to the file that
+  /// plays under it. The whole bank loads before user <c>init</c> runs.
+  /// </summary>
+  /// <remarks>
+  /// Paths resolve against the program's asset base path
+  /// (<see cref="M:Mibo.Elmish.Program.withAssetsBasePath"/>) — the same rule
+  /// as the asset service. Formats: whatever the raylib build decodes (WAV,
+  /// OGG, MP3, FLAC, QOA).
+  /// </remarks>
+  type BankEntry =
+    /// <summary>A sound effect: plays with <c>Audio.play</c>, overlaps itself through an 8-slot pool.</summary>
+    | Sound of key: string * path: string
+    /// <summary>A music track for the single music channel.</summary>
+    | Music of key: string * path: string
+
+  /// <summary>
+  /// Configures the game's sound bank: every entry loads before user
+  /// <c>init</c> runs, so <c>Audio.play</c>/<c>Audio.playMusic</c> can start
+  /// sounds from the very first message.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The bank is an ordinary F# value: a list literal for small games, or a
+  /// generated value for large ones (a naming convention, a manifest, a
+  /// directory scan). List order is load order. One call configures the whole
+  /// bank; there are no per-asset builder calls.
+  /// </para>
+  /// <para>
+  /// Each entry becomes a registration callback that runs where every other
+  /// service registration runs — after the host registers its services,
+  /// before <c>Init</c>. Keys are game vocabulary ("jump", "overworld"); a
+  /// key registered twice keeps the first entry.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// let program =
+  ///   mkProgram init update
+  ///   |&gt; RaylibProgram.withBank
+  ///     [ Sound("jump", "assets/jump.wav")
+  ///       Music("overworld", "assets/overworld.ogg") ]
+  /// </code>
+  /// </example>
+  let withBank
+    (bank: BankEntry list)
+    (program: Program<'Model, 'Msg>)
+    : Program<'Model, 'Msg> =
+    program
+    |> Program.withServiceRegistration(fun ctx ->
+      match GameContext.tryGetService<AudioService> ctx with
+      | ValueSome audio ->
+        for entry in bank do
+          match entry with
+          | Sound(key, path) -> audio.RegisterSound(key, path)
+          | Music(key, path) -> audio.RegisterMusic(key, path)
+      | ValueNone -> ())
+
+  /// <summary>
   /// Configures the game to register an <see cref="T:Mibo.Input.IInputMapper`1"/> service
   /// backed by raylib's polling API.
   /// </summary>

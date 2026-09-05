@@ -3,6 +3,7 @@ namespace Mibo.Elmish
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open Mibo.Audio
 open Mibo.Diagnostics
 open Mibo.Input
 open Mibo.Windowing
@@ -48,6 +49,7 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
   let renderers = ResizeArray<IRenderer<'Model>>()
   let mutable inputServiceOpt: IInput voption = ValueNone
   let mutable ctxOpt: GameContext voption = ValueNone
+  let mutable audioServiceOpt: AudioService voption = ValueNone
 
   // Only a profiler supplied with withProfiler is measured. LoadContent
   // registers it.
@@ -136,6 +138,17 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
     let assets = AssetsService.create this.Content
     GameContext.register<IAssets> assets ctx
 
+    // The audio service is registered unconditionally (like IAssets): the
+    // program's bank registrations resolve it, and Tick/Dispose run whether
+    // or not the program ever plays a sound. The same instance goes in under
+    // the portable IAudio key, the MonoGameAudio key (the 3D surface), and
+    // its own type (the bank builders resolve that one).
+    let audio = new AudioService(this.Content)
+    GameContext.register<IAudio> audio ctx
+    GameContext.register<MonoGameAudio> audio ctx
+    GameContext.register<AudioService> audio ctx
+    audioServiceOpt <- ValueSome audio
+
     profilerOpt
     |> ValueOption.iter(fun profiler ->
       GameContext.register<FrameProfiler> profiler ctx)
@@ -162,6 +175,11 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
      | ValueNone -> ())
 
     inputServiceOpt |> ValueOption.iter(fun svc -> svc.Poll())
+
+    // Advance music fades and 3D re-attenuation.
+    audioServiceOpt
+    |> ValueOption.iter(fun audio ->
+      audio.Tick(float32 gameTime.ElapsedGameTime.TotalSeconds))
 
     match ctxOpt with
     | ValueSome ctx ->
@@ -251,6 +269,8 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
         match GameContext.tryGetService<IAssets> ctx with
         | ValueSome assets -> assets.Dispose()
         | _ -> ())
+
+      audioServiceOpt |> ValueOption.iter(fun audio -> audio.Dispose())
 
       loop.DisposeSubs()
 

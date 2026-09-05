@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <Compile Include="InputMapperTests.fs" />
+    <Compile Include="AudioTests.fs" />
     <Compile Include="LayoutTests.fs" />
     <Compile Include="HexGridTests.fs" />
     <Compile Include="HexLayoutTests.fs" />

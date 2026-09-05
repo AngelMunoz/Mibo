@@ -3,6 +3,7 @@ namespace Mibo.Adaptive
 open System
 open Microsoft.Xna.Framework
 open Microsoft.Xna.Framework.Graphics
+open Mibo.Audio
 open Mibo.Input
 open Mibo.Elmish
 open Mibo.Diagnostics
@@ -57,6 +58,7 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
   let mutable inputServiceOpt: IInput voption = ValueNone
   let mutable ctxOpt: GameContext voption = ValueNone
   let mutable runnerOpt: AdaptiveHeadless<'Frame> voption = ValueNone
+  let mutable audioServiceOpt: AudioService voption = ValueNone
 
   // Only a profiler supplied with withProfiler is measured. LoadContent
   // registers it; the runner resolves the same field on its first Step.
@@ -142,6 +144,17 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
     let assets = AssetsService.create this.Content
     GameContext.register<IAssets> assets ctx
 
+    // The audio service is registered unconditionally (like IAssets): the
+    // program's bank registrations resolve it, and Tick/Dispose run whether
+    // or not the program ever plays a sound. The same instance goes in under
+    // the portable IAudio key, the MonoGameAudio key (the 3D surface), and
+    // its own type (bank registrations resolve that one).
+    let audio = new AudioService(this.Content)
+    GameContext.register<IAudio> audio ctx
+    GameContext.register<MonoGameAudio> audio ctx
+    GameContext.register<AudioService> audio ctx
+    audioServiceOpt <- ValueSome audio
+
     profilerOpt
     |> ValueOption.iter(fun profiler ->
       GameContext.register<FrameProfiler> profiler ctx)
@@ -171,6 +184,11 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
     base.Update gameTime
 
     inputServiceOpt |> ValueOption.iter(fun svc -> svc.Poll())
+
+    // Advance music fades and 3D re-attenuation before the step.
+    audioServiceOpt
+    |> ValueOption.iter(fun audio ->
+      audio.Tick(float32 gameTime.ElapsedGameTime.TotalSeconds))
 
     match struct (ctxOpt, runnerOpt) with
     | ValueSome ctx, ValueSome runner ->
@@ -245,6 +263,8 @@ type AdaptiveMonoGameGame<'Frame>(mgProgram: AdaptiveMonoGameProgram<'Frame>) as
 
       // Mirror AdaptiveRaylibGame's teardown order: renderers → runner → assets.
       runnerOpt |> ValueOption.iter(fun runner -> runner.Dispose())
+
+      audioServiceOpt |> ValueOption.iter(fun audio -> audio.Dispose())
 
       ctxOpt
       |> ValueOption.iter(fun ctx ->

@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="Elmish.Time.fs" />
     <Compile Include="Elmish.Commands.fs" />
+    <Compile Include="Elmish.Audio.fs" />
     <Compile Include="Elmish.System.fs" />
     <Compile Include="Elmish.Subscriptions.fs" />
     <Compile Include="Elmish.ProgramTypes.fs" />

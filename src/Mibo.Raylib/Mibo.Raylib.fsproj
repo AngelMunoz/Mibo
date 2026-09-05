@@ -19,6 +19,7 @@
     <Compile Include="Animation.fs" />
     <Compile Include="Animation3D.fs" />
     <Compile Include="Assets.fs" />
+    <Compile Include="Audio.fs" />
     <Compile Include="Texture.fs" />
     <Compile Include="Diagnostics.fs" />
     <Compile Include="DefaultShaders.fs" />
