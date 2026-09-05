@@ -30,6 +30,15 @@ type private SoundBankEntry = {
   mutable Cursor: int
 }
 
+/// <summary>The state of the single music channel, tracked because raylib cannot distinguish a paused stream from a stopped one.</summary>
+type private MusicChannelState =
+  /// <summary>No track selected, or stopped by StopMusic or a fade-out.</summary>
+  | Stopped
+  /// <summary>A track is playing.</summary>
+  | Playing
+  /// <summary>A track is parked at its position.</summary>
+  | Paused
+
 /// <summary>
 /// The raylib-backed <see cref="T:Mibo.Audio.IAudio"/>: file-path sound/music
 /// registration, an 8-alias ring per sound, a single music channel, and the
@@ -71,6 +80,9 @@ type AudioService(baseAssetPath: string voption) as this =
   // The single music channel: the track that plays, and the volume state.
   let mutable hasMusic = false
   let mutable currentMusic = Unchecked.defaultof<Music>
+  // The channel state, tracked so seek (and pause/resume) can honor
+  // stopped-vs-paused — raylib cannot tell them apart on its own.
+  let mutable musicState = MusicChannelState.Stopped
   // The last explicitly-set music volume (the slider); new tracks start here.
   let mutable musicVolume = 1.0f
   // The volume applied to the channel right now (the fade may be en route).
@@ -95,10 +107,11 @@ type AudioService(baseAssetPath: string voption) as this =
       entry.Cursor <- (entry.Cursor + 1) % entry.Aliases.Length
 
       let alias = entry.Aliases[entry.Cursor]
+      let v = Voice.clamp voice
 
-      Raylib.SetSoundVolume(alias, voice.Volume)
-      Raylib.SetSoundPan(alias, voice.Pan)
-      Raylib.SetSoundPitch(alias, voice.Pitch)
+      Raylib.SetSoundVolume(alias, v.Volume)
+      Raylib.SetSoundPan(alias, v.Pan)
+      Raylib.SetSoundPitch(alias, v.Pitch)
       Raylib.PlaySound(alias)
     | _ -> ()
 
@@ -114,6 +127,7 @@ type AudioService(baseAssetPath: string voption) as this =
 
       currentMusic <- m
       hasMusic <- true
+      musicState <- MusicChannelState.Playing
       currentMusic.Looping <- CBool looping
       Raylib.SetMusicVolume(currentMusic, appliedVolume)
       Raylib.PlayMusicStream(currentMusic)
@@ -125,6 +139,7 @@ type AudioService(baseAssetPath: string voption) as this =
 
     fadeActive <- false
     appliedVolume <- musicVolume
+    musicState <- MusicChannelState.Stopped
 
   member private _.setMusicVolumeNow(volume: float32) =
     let v = clamp01 volume
@@ -160,6 +175,9 @@ type AudioService(baseAssetPath: string voption) as this =
     if not(musics.ContainsKey key) then
       musics.Add(key, Raylib.LoadMusicStream(resolvePath path))
 
+  /// <summary>The current music slider value — the volume a fade-in returns to.</summary>
+  member _.MusicVolume() : float32 = musicVolume
+
   /// <summary>Advances music streaming and fade interpolation by one frame. The host calls this every frame; calling it yourself double-steps the music.</summary>
   /// <param name="dt">Elapsed seconds since the last frame.</param>
   member _.Tick(dt: float32) : unit =
@@ -184,6 +202,7 @@ type AudioService(baseAssetPath: string voption) as this =
           if fadeStopOnComplete then
             Raylib.StopMusicStream(currentMusic)
             appliedVolume <- musicVolume
+            musicState <- MusicChannelState.Stopped
 
   /// <summary>Unloads every registered sound, alias, and music stream.</summary>
   member _.Dispose() : unit =
@@ -226,17 +245,25 @@ type AudioService(baseAssetPath: string voption) as this =
 
     member this.StopMusic() : unit = this.stopMusicNow()
 
+    // Guarded by the tracked channel state, like the MonoGame backend:
+    // pausing, resuming, or seeking with no running track is a no-op, and a
+    // seek never starts a stopped track.
     member _.PauseMusic() : unit =
-      if hasMusic && not disposed then
+      if hasMusic && musicState = MusicChannelState.Playing && not disposed then
         Raylib.PauseMusicStream(currentMusic)
+        musicState <- MusicChannelState.Paused
 
     member _.ResumeMusic() : unit =
-      if hasMusic && not disposed then
+      if hasMusic && musicState = MusicChannelState.Paused && not disposed then
         Raylib.ResumeMusicStream(currentMusic)
+        musicState <- MusicChannelState.Playing
 
     member _.SeekMusic(seconds: float32) : unit =
-      if hasMusic && not disposed then
-        // SeekMusicStream takes seconds; clamp to the track length.
+      if
+        hasMusic && musicState <> MusicChannelState.Stopped && not disposed
+      then
+        // SeekMusicStream takes seconds; clamp to the track length. A paused
+        // track stays paused (the seek only repositions the decoder).
         let length = Raylib.GetMusicTimeLength(currentMusic)
 
         let position =
@@ -273,7 +300,11 @@ type AudioService(baseAssetPath: string voption) as this =
         fadeStopOnComplete <- target <= 0.0f
 
     member _.SetMasterVolume(volume: float32) : unit =
+      // raylib's device master already scales the whole mix (sounds + music),
+      // matching the portable rule.
       Raylib.SetMasterVolume(clamp01 volume)
+
+    member _.MusicVolume() : float32 = musicVolume
 
     member this.Tick(dt: float32) : unit = this.Tick(dt)
 

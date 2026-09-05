@@ -264,6 +264,10 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
         | :? IDisposable as d -> d.Dispose()
         | _ -> ()
 
+      // One teardown rule across the hosts: simulation teardown (subs, or
+      // the adaptive runner) → assets → audio.
+      loop.DisposeSubs()
+
       ctxOpt
       |> ValueOption.iter(fun ctx ->
         match GameContext.tryGetService<IAssets> ctx with
@@ -271,8 +275,6 @@ type MiboGame<'Model, 'Msg>(mgProgram: MonoGameProgram<'Model, 'Msg>) as this =
         | _ -> ())
 
       audioServiceOpt |> ValueOption.iter(fun audio -> audio.Dispose())
-
-      loop.DisposeSubs()
 
     base.Dispose(disposing)
 

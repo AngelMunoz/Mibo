@@ -24,7 +24,8 @@ audio.FadeMusic(0.0f, 1.5f)      // fade out over 1.5 s, then stop
 
 - **Every windowed host registers `IAudio` before your `init` runs** (like `IAssets`), advances it once per frame, and disposes it on shutdown. You never call `Tick` — the host does.
 - **Keys are game vocabulary** ("jump", "overworld"). You register what each key loads in your program's bank; after that, every helper and the service itself speak only keys. Playing an unregistered key is a silent no-op, which keeps headless runs and tests safe.
-- **Sound effects overlap.** Each key owns a pool of 8 playback slots played round-robin, so a machine-gun key can layer itself up to 8 times before the oldest playback is stolen.
+- **Sound effects overlap.** Each key owns a pool of 8 playback slots played round-robin, so a machine-gun key can layer itself up to 8 times before the oldest playback is stolen. On MonoGame the slots are created on the key's first plays, not at bank load — a large bank costs no platform voices until its keys actually play.
+- **Platform ceilings (MonoGame).** DesktopGL mixes through a pool of 256 OpenAL sources; WindowsDX allows 512 XAudio2 source voices per device. Both are per-device playback ceilings, far above what a game plays at once, but they cap the 8-per-key rings, not just your audible layers.
 - **Music is a single channel.** Starting a track replaces the one playing (`MediaPlayer` is a singleton on MonoGame, so the portable contract promises one track at a time).
 - **No mix groups, by design.** A "group volume" is your model state: multiply it into the voice at the play site (see [the slider pattern](#the-slider-pattern-sfx-groups-are-model-state)).
 
@@ -81,8 +82,9 @@ let mgProgram =
 | Sound source | file path (relative to `withAssetsBasePath` when set) | `Pipeline name` (MGCB asset, no extension) or `File path` (loose **WAV**) |
 | Music source | file path (same base-path rule) | `Pipeline name` or `File path` (loaded through `Song.FromUri`, platform decoders) |
 | Formats | WAV, OGG, MP3, FLAC, QOA | Pipeline: every format the pipeline imports. Loose: WAV for sound effects; music depends on the platform decoder |
+| Missing file | logged warning, the key plays nothing — never throws | `Pipeline`: throws at bank load (startup). `File` sound: throws at bank load. `File` music: not read until played — a missing file fails at `MediaPlayer.Play` |
 
-> _**NOTE**_: On MonoGame, the pipeline is the guaranteed path. Loose files must ship with the game (copy them to the output directory yourself), and loose sound effects are WAV-only. A missing pipeline asset throws at startup, where a configuration mistake belongs.
+> _**NOTE**_: On MonoGame, the pipeline is the guaranteed path. Loose files must ship with the game (copy them to the output directory yourself), and loose sound effects are WAV-only. The raylib silence-on-missing rule means a typo'd path is easy to miss — test your bank with sound audible at least once.
 
 ## Voices: per-play knobs
 
@@ -94,6 +96,12 @@ Audio.playWith ctx "land" (Voice.ofVolume 0.7f)          // quieter
 Audio.playWith ctx "whoosh" { Voice.center with Pan = -1.0f }  // full left
 Audio.playWith ctx "hit" (Voice.at 0.5f 0.3f)            // volume + pan
 ```
+
+Every service clamps the knobs at the play site, so an out-of-range value behaves the same on both backends instead of crashing one of them:
+
+- **Volume** clamps to 0.0..1.0.
+- **Pan** clamps to −1.0 (left) .. 1.0 (right).
+- **Pitch** is a speed multiplier: 1.0 = normal, 0.5 = half speed, 2.0 = double speed. It clamps to 0.5..2.0 — one octave each way, the exact range every backend expresses. (The backends store pitch differently internally — MonoGame uses octave offsets from normal — the services translate.)
 
 ### 2D positional audio (portable)
 
@@ -122,13 +130,11 @@ Audio.playWith ctx "enemy-step" voice
 
 Behavior notes (both backends behave the same way):
 
-- `seekMusic` clamps to the track: positions before the start clamp to 0, positions past the end clamp to the track length. Seeking a paused track stays paused at the new position.
+- `seekMusic` clamps to the track: positions before the start clamp to 0, positions past the end clamp to the track length. A seek never starts a stopped track — call `playMusic` to start one. A paused track stays paused at the new position.
 - `pauseMusic`/`resumeMusic` do nothing when no track has started.
-- `setMasterVolume` applies immediately — sounds that are already playing get quieter or louder on the next mix, on both backends.
+- `setMasterVolume` is the one knob above everything: it scales the whole mix — every sound effect **and** the music channel — and applies immediately, including to sounds that are already playing.
 
 A fade to (or below) zero stops the music when it completes. A fade to a positive volume leaves it playing. A newly started track cancels any running fade and starts at the slider volume — a fade-out ends the track that was playing; it is not a sticky volume.
-
-`Audio.setMasterVolume ctx v` scales every sound effect (music volume is the separate `setMusicVolume` knob).
 
 ## MVU commands
 

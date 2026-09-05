@@ -14,7 +14,8 @@ open Mibo.Audio
 //
 // The mirror of the MVU set (module Mibo.Elmish.Audio): the same keys, the
 // same knobs, the same music-channel rules. The fade-in target (the last
-// setMusicVolume value) is the shared AudioHelperState in Mibo.Core.
+// setMusicVolume value) is read from the service (IAudio.MusicVolume), so
+// there is no shared helper state.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// <summary>
@@ -140,22 +141,18 @@ module AudioIntents =
     /// <param name="ctx">The game context.</param>
     /// <param name="volume">Music volume (1.0 = full, 0.0 = silent).</param>
     member this.setMusicVolume(ctx: GameContext, volume: float32) : unit =
-      AudioHelperState.MusicTargetVolume <- volume
-
       this.post(fun () ->
         match GameContext.tryGetService<IAudio> ctx with
         | ValueSome audio -> audio.SetMusicVolume volume
         | ValueNone -> ())
 
-    /// <summary>Fades the music in over <paramref name="seconds"/>, toward the last volume passed to <c>setMusicVolume</c> (1.0 if never set).</summary>
+    /// <summary>Fades the music in over <paramref name="seconds"/>, toward the current music slider value — the last volume passed to <c>setMusicVolume</c> (1.0 if never set), read from the service at drain time.</summary>
     /// <param name="ctx">The game context.</param>
     /// <param name="seconds">Fade duration in seconds.</param>
     member this.fadeMusicIn(ctx: GameContext, seconds: float32) : unit =
-      let target = AudioHelperState.MusicTargetVolume
-
       this.post(fun () ->
         match GameContext.tryGetService<IAudio> ctx with
-        | ValueSome audio -> audio.FadeMusic(target, seconds)
+        | ValueSome audio -> audio.FadeMusic(audio.MusicVolume(), seconds)
         | ValueNone -> ())
 
     /// <summary>Fades the music out over <paramref name="seconds"/>; the music stops when the fade completes.</summary>
@@ -167,7 +164,7 @@ module AudioIntents =
         | ValueSome audio -> audio.FadeMusic(0.0f, seconds)
         | ValueNone -> ())
 
-    /// <summary>Sets the master volume that scales every sound effect. Music volume is set separately with <c>setMusicVolume</c>.</summary>
+    /// <summary>Sets the master volume that scales the whole mix — every sound effect and the music channel, live (see <see cref="M:Mibo.Audio.IAudio.SetMasterVolume"/>).</summary>
     /// <param name="ctx">The game context.</param>
     /// <param name="volume">Master volume (1.0 = full).</param>
     member this.setMasterVolume(ctx: GameContext, volume: float32) : unit =

@@ -46,13 +46,13 @@ open System
 /// </example>
 [<Struct>]
 type Voice = {
-  /// <summary>Playback volume. 1.0 = full volume, 0.0 = silent.</summary>
+  /// <summary>Playback volume. 1.0 = full volume, 0.0 = silent. Values outside 0.0..1.0 clamp at the service entry.</summary>
   Volume: float32
 
-  /// <summary>Stereo pan. -1.0 = fully left, 0.0 = center, 1.0 = fully right.</summary>
+  /// <summary>Stereo pan. -1.0 = fully left, 0.0 = center, 1.0 = fully right. Values outside -1.0..1.0 clamp at the service entry.</summary>
   Pan: float32
 
-  /// <summary>Playback pitch/speed. 1.0 = normal; 2.0 = one octave up (twice as fast).</summary>
+  /// <summary>Playback pitch as a speed multiplier: 1.0 = normal, 0.5 = half speed, 2.0 = double speed. This is the raylib convention, translated per backend (MonoGame stores pitches as octave offsets from normal). Values outside 0.5..2.0 (one octave down or up) clamp at the service entry — the range every backend expresses.</summary>
   Pitch: float32
 }
 
@@ -67,15 +67,24 @@ module Voice =
 
   /// <summary>A voice with the given volume, centered, normal pitch.</summary>
   /// <param name="volume">Playback volume (1.0 = full).</param>
-  let ofVolume(volume: float32) : Voice = { center with Volume = volume }
+  let inline ofVolume(volume: float32) : Voice = { center with Volume = volume }
 
   /// <summary>A voice with the given volume and pan, normal pitch.</summary>
   /// <param name="volume">Playback volume (1.0 = full).</param>
   /// <param name="pan">Stereo pan (-1 left .. 1 right).</param>
-  let at (volume: float32) (pan: float32) : Voice = {
+  let inline at (volume: float32) (pan: float32) : Voice = {
     center with
         Volume = volume
         Pan = pan
+  }
+
+  /// <summary>Clamps a voice to the portable ranges — Volume 0.0..1.0, Pan -1.0..1.0, Pitch 0.5..2.0. The services call this at the entry of every play, so an out-of-range knob can never crash one backend while playing fine on another.</summary>
+  /// <param name="voice">The voice to clamp.</param>
+  /// <returns>The same voice with every knob inside its portable range.</returns>
+  let inline clamp(voice: Voice) : Voice = {
+    Volume = min (max voice.Volume 0.0f) 1.0f
+    Pan = min (max voice.Pan -1.0f) 1.0f
+    Pitch = min (max voice.Pitch 0.5f) 2.0f
   }
 
 /// <summary>
@@ -155,26 +164,19 @@ type IAudio =
 
   // ── global ───────────────────────────────────────────────────────────────
 
-  /// <summary>Sets the master volume that scales every sound effect. Music volume is set separately with <see cref="M:Mibo.Audio.IAudio.SetMusicVolume(System.Single)"/>.</summary>
-  /// <param name="volume">Master volume (1.0 = full).</param>
+  /// <summary>Sets the master volume that scales the whole mix — every sound effect and the music channel — live, on sounds that are already playing too. Rule on both backends: master volume is the one knob above everything; per-backend engines apply it differently, the services make them behave the same. Music volume is set separately with <see cref="M:Mibo.Audio.IAudio.SetMusicVolume(System.Single)"/>.</summary>
+  /// <param name="volume">Master volume (1.0 = full). Values outside 0.0..1.0 clamp.</param>
   abstract SetMasterVolume: volume: float32 -> unit
+
+  /// <summary>The music volume — the current value of the music slider, as set through <see cref="M:Mibo.Audio.IAudio.SetMusicVolume(System.Single)"/> (1.0 if never set). This is the volume a fade with no explicit target returns to, so the MVU <c>fadeMusicIn</c> and adaptive <c>fadeMusicIn</c> helpers read it from here.</summary>
+  /// <returns>The music slider value, 0.0..1.0.</returns>
+  abstract MusicVolume: unit -> float32
 
   // ── per-frame tick (hosts call this; users never do) ────────────────────
 
   /// <summary>Advances music streaming and fade interpolation by one frame. The windowed hosts call this every frame; calling it yourself double-steps the music.</summary>
   /// <param name="dt">Elapsed seconds since the last frame.</param>
   abstract Tick: dt: float32 -> unit
-
-/// <summary>
-/// State shared by the MVU command helpers and the adaptive intent helpers:
-/// the volume a <c>fadeMusicIn</c> fades toward. Both helper lanes read and
-/// write it, so the rule lives in one place; each windowed service keeps its
-/// own copy for its fade starts and new-track volume.
-/// </summary>
-module internal AudioHelperState =
-
-  /// <summary>The last volume passed to <c>Audio.setMusicVolume</c> / <c>Intents.setMusicVolume</c> (1.0 if never set).</summary>
-  let mutable MusicTargetVolume = 1.0f
 
 /// <summary>
 /// 2D positional attenuation: turns a listener facing plus listener/source
@@ -259,7 +261,7 @@ module Fade =
   /// <param name="elapsed">Seconds since the fade started.</param>
   /// <param name="duration">Total fade duration in seconds.</param>
   /// <returns>The interpolated volume: the start value before the fade begins, the target value at and past the end.</returns>
-  let volume
+  let inline volume
     (startVolume: float32)
     (targetVolume: float32)
     (elapsed: float32)

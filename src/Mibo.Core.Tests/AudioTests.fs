@@ -29,6 +29,57 @@ let tests =
             Pitch = 1.0f
           }
           "volume voice"
+
+      testCase "clamp keeps an in-range voice untouched"
+      <| fun _ ->
+        let voice = {
+          Volume = 0.4f
+          Pan = -0.7f
+          Pitch = 1.5f
+        }
+
+        Expect.equal (Voice.clamp voice) voice "in-range voice unchanged"
+
+      testCase "clamp pulls volume into 0..1"
+      <| fun _ ->
+        Expect.equal
+          (Voice.clamp { Voice.center with Volume = 1.2f }).Volume
+          1.0f
+          "high volume"
+
+        Expect.equal
+          (Voice.clamp { Voice.center with Volume = -0.5f }).Volume
+          0.0f
+          "negative volume"
+
+      testCase "clamp pulls pan into -1..1"
+      <| fun _ ->
+        Expect.equal
+          (Voice.clamp { Voice.center with Pan = 3.0f }).Pan
+          1.0f
+          "hard right"
+
+        Expect.equal
+          (Voice.clamp { Voice.center with Pan = -3.0f }).Pan
+          -1.0f
+          "hard left"
+
+      testCase "clamp pulls pitch into the one-octave range"
+      <| fun _ ->
+        Expect.equal
+          (Voice.clamp { Voice.center with Pitch = 4.0f }).Pitch
+          2.0f
+          "double speed cap"
+
+        Expect.equal
+          (Voice.clamp { Voice.center with Pitch = 0.1f }).Pitch
+          0.5f
+          "half speed cap"
+
+        Expect.equal
+          (Voice.clamp { Voice.center with Pitch = 0.0f }).Pitch
+          0.5f
+          "zero pitch clamps up"
     ]
 
     testList "Attenuation2D" [

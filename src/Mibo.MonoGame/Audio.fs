@@ -57,11 +57,22 @@ type Source =
 /// so the 9th playback of a key steals the slot of the oldest one.
 /// </summary>
 /// <remarks>
+/// <para>
+/// The instance slots are created lazily — slot k on the k-th play of the
+/// key — because every created slot is a live XAudio2 <c>SourceVoice</c> on
+/// WindowsDX (device limit: 512) and banks can hold many keys. A key that
+/// never plays costs nothing; the cursor cycles in order, so the created
+/// slots are always <c>0 .. Cursor</c>.
+/// </para>
+/// <para>
 /// Each slot carries its own pooled <c>AudioEmitter</c> and a 3D flag,
 /// allocated once at registration — <c>Play3D</c> never allocates. Arming a
 /// slot always sets the flag (2D plays clear it, 3D plays set it), so the
 /// per-frame re-attenuation sweep never applies a stale emitter over a fresh
-/// playback, and a slot can never be tracked twice.
+/// playback, and a slot can never be tracked twice. The per-entry
+/// <c>Has3D</c> flag turns the per-frame sweep into one bool read for keys
+/// (and whole banks) that never play in 3D.
+/// </para>
 /// </remarks>
 type private SoundBankEntry = {
   Effect: SoundEffect
@@ -69,7 +80,17 @@ type private SoundBankEntry = {
   Emitters: AudioEmitter[]
   SlotIs3D: bool[]
   mutable Cursor: int
+  mutable Has3D: bool
 }
+
+/// <summary>The state of the single music channel, tracked alongside <c>MediaPlayer.State</c> so both backends apply the same seek rule.</summary>
+type private MusicChannelState =
+  /// <summary>No track selected, or stopped by StopMusic or a fade-out.</summary>
+  | Stopped
+  /// <summary>A track is playing.</summary>
+  | Playing
+  /// <summary>A track is parked at its position.</summary>
+  | Paused
 
 /// <summary>
 /// The MonoGame-only 3D audio surface, extending <see cref="T:Mibo.Audio.IAudio"/>
@@ -147,10 +168,18 @@ type AudioService(content: ContentManager) =
   // The single music channel: the track that plays, and the volume state.
   let mutable hasMusic = false
   let mutable currentSong = Unchecked.defaultof<Song>
+  // The channel state, tracked so seek and pause/resume honor
+  // stopped-vs-paused identically to the raylib backend.
+  let mutable musicState = MusicChannelState.Stopped
   // The last explicitly-set music volume (the slider); new tracks start here.
   let mutable musicVolume = 1.0f
-  // The volume applied to the channel right now (the fade may be en route).
+  // The volume applied to the channel right now, before the master scale
+  // (the fade may be en route).
   let mutable appliedVolume = 1.0f
+  // Master volume scales the whole mix (the portable rule). MonoGame's
+  // SoundEffect.MasterVolume covers the sound effects; the music channel is
+  // scaled by hand on every application.
+  let mutable masterVolume = 1.0f
 
   // Fade state machine, advanced by Tick.
   let mutable fadeActive = false
@@ -169,6 +198,18 @@ type AudioService(content: ContentManager) =
     elif v > 1.0f then 1.0f
     else v
 
+  // Portable Voice.Pitch is a speed multiplier (1.0 = normal, clamped
+  // 0.5..2 by Voice.clamp); MonoGame stores the pitch as a base-2 exponent
+  // (0 = normal, +1 = one octave up) on both XAudio2 and OpenAL.
+  let toMonoGamePitch(multiplier: float32) : float32 =
+    System.MathF.Log2 multiplier
+
+  // The music channel volume is the applied (pre-master) volume scaled by
+  // the master — the single place the master rule touches music.
+  let applyMusicVolume() =
+    if not disposed then
+      MediaPlayer.Volume <- appliedVolume * masterVolume
+
   let loadEffect(source: Source) : SoundEffect =
     match source with
     | Pipeline name -> content.Load<SoundEffect> name
@@ -181,20 +222,31 @@ type AudioService(content: ContentManager) =
       // Song.FromUri requires an absolute URI.
       Song.FromUri(Path.GetFileName path, Uri(Path.GetFullPath path))
 
-  member private _.playKey(key: string, voice: Voice) =
+  // Advances the ring cursor and returns the slot index, creating the slot's
+  // instance on its first use (see SoundBankEntry on why lazily).
+  member private _.nextSlot(entry: SoundBankEntry) : int =
+    entry.Cursor <- (entry.Cursor + 1) % entry.Instances.Length
+    let slot = entry.Cursor
+
+    if isNull entry.Instances[slot] then
+      entry.Instances[slot] <- entry.Effect.CreateInstance()
+
+    slot
+
+  member private this.playKey(key: string, voice: Voice) =
     match sounds.TryGetValue(key) with
     | true, entry when not disposed ->
-      entry.Cursor <- (entry.Cursor + 1) % entry.Instances.Length
-      let slot = entry.Cursor
+      let slot = this.nextSlot entry
 
       // A 2D play re-arms the slot: retire its 3D flag so the Tick sweep
       // cannot apply the slot's old emitter over this playback's pan.
       entry.SlotIs3D[slot] <- false
 
       let instance = entry.Instances[slot]
-      instance.Volume <- voice.Volume
-      instance.Pan <- voice.Pan
-      instance.Pitch <- voice.Pitch
+      let v = Voice.clamp voice
+      instance.Volume <- v.Volume
+      instance.Pan <- v.Pan
+      instance.Pitch <- toMonoGamePitch v.Pitch
       instance.Play()
     | _ -> ()
 
@@ -206,9 +258,10 @@ type AudioService(content: ContentManager) =
       appliedVolume <- musicVolume
 
       hasMusic <- true
+      musicState <- MusicChannelState.Playing
       currentSong <- song
       MediaPlayer.IsRepeating <- looping
-      MediaPlayer.Volume <- appliedVolume
+      applyMusicVolume()
       MediaPlayer.Play(song)
     | _ -> ()
 
@@ -218,15 +271,14 @@ type AudioService(content: ContentManager) =
 
     fadeActive <- false
     appliedVolume <- musicVolume
+    musicState <- MusicChannelState.Stopped
 
   member private _.setMusicVolumeNow(volume: float32) =
     let v = clamp01 volume
     musicVolume <- v
     appliedVolume <- v
     fadeActive <- false
-
-    if not disposed then
-      MediaPlayer.Volume <- v
+    applyMusicVolume()
 
   member private this.play3DKey
     (
@@ -237,10 +289,10 @@ type AudioService(content: ContentManager) =
     ) =
     match sounds.TryGetValue(key) with
     | true, entry when not disposed ->
-      entry.Cursor <- (entry.Cursor + 1) % entry.Instances.Length
-      let slot = entry.Cursor
+      let slot = this.nextSlot entry
+      entry.Has3D <- true
 
-      let v = defaultArg voice Voice.center
+      let v = Voice.clamp(defaultArg voice Voice.center)
 
       // The slot's pooled emitter: written in place, never allocated. The
       // flag stays on through the playback so the Tick sweep re-attenuates
@@ -255,7 +307,7 @@ type AudioService(content: ContentManager) =
       // Apply3D reads the instance volume, so set the knobs before it, and
       // apply before Play (the platform contract). Geometry decides pan.
       instance.Volume <- v.Volume
-      instance.Pitch <- v.Pitch
+      instance.Pitch <- toMonoGamePitch v.Pitch
       instance.Apply3D(listener, emitter)
       instance.Play()
     | _ -> ()
@@ -269,10 +321,14 @@ type AudioService(content: ContentManager) =
 
       let entry = {
         Effect = effect
-        Instances = Array.init 8 (fun _ -> effect.CreateInstance())
+        // Slots are created lazily on the k-th play of the key (see
+        // SoundBankEntry): a bank of many keys costs no platform voices
+        // until the keys actually play.
+        Instances = Array.create 8 (null: SoundEffectInstance)
         Emitters = Array.init 8 (fun _ -> AudioEmitter())
         SlotIs3D = Array.zeroCreate 8
         Cursor = 0
+        Has3D = false
       }
 
       sounds.Add(key, entry)
@@ -302,7 +358,7 @@ type AudioService(content: ContentManager) =
         let v = Fade.volume fadeFrom fadeTo fadeElapsed fadeDuration
 
         appliedVolume <- v
-        MediaPlayer.Volume <- v
+        MediaPlayer.Volume <- v * masterVolume
 
         if fadeElapsed >= fadeDuration then
           fadeActive <- false
@@ -311,17 +367,20 @@ type AudioService(content: ContentManager) =
           if fadeStopOnComplete then
             MediaPlayer.Stop()
             appliedVolume <- musicVolume
+            musicState <- MusicChannelState.Stopped
 
-      // Re-attenuate live 3D plays against the current listener. A slot is
-      // in the sweep only while its 3D flag is on and its instance still
-      // plays; re-arming the slot (2D or 3D) flips the flag first.
+      // Re-attenuate live 3D plays against the current listener. The entry
+      // flag keeps the sweep at one bool read for keys that never play in
+      // 3D; within a 3D key, a slot is in the sweep only while its flag is
+      // on and its instance still plays (re-arming flips the flag first).
       for KeyValue(_, entry) in sounds do
-        for slot in 0 .. entry.Instances.Length - 1 do
-          if entry.SlotIs3D[slot] then
-            let instance = entry.Instances[slot]
+        if entry.Has3D then
+          for slot in 0 .. entry.Instances.Length - 1 do
+            if entry.SlotIs3D[slot] then
+              let instance = entry.Instances[slot]
 
-            if instance.State = SoundState.Playing then
-              instance.Apply3D(listener, entry.Emitters[slot])
+              if instance.State = SoundState.Playing then
+                instance.Apply3D(listener, entry.Emitters[slot])
 
   /// <summary>Disposes the instance ring and the loose-file sounds and songs. Pipeline assets stay owned by the ContentManager.</summary>
   member _.Dispose() : unit =
@@ -332,10 +391,12 @@ type AudioService(content: ContentManager) =
         MediaPlayer.Stop()
         hasMusic <- false
 
-      // The instance ring is always service-owned.
+      // The instance ring is always service-owned; slots may not exist yet
+      // (lazy creation).
       for KeyValue(_, entry) in sounds do
         for instance in entry.Instances do
-          instance.Dispose()
+          if not(isNull instance) then
+            instance.Dispose()
 
       // Loose files were loaded and are disposed here; pipeline assets are
       // owned (and disposed) by the ContentManager.
@@ -361,7 +422,7 @@ type AudioService(content: ContentManager) =
       if not disposed then
         for KeyValue(_, entry) in sounds do
           for instance in entry.Instances do
-            if instance.State <> SoundState.Stopped then
+            if not(isNull instance) && instance.State <> SoundState.Stopped then
               instance.Stop()
 
     member this.PlayMusic(key: string) : unit = this.playMusicKey(key, true)
@@ -371,18 +432,23 @@ type AudioService(content: ContentManager) =
 
     member this.StopMusic() : unit = this.stopMusicNow()
 
-    // Guarded by hasMusic, like the raylib backend: pausing or resuming with
-    // no track started is a no-op.
+    // Guarded by the tracked channel state, like the raylib backend:
+    // pausing, resuming, or seeking with no running track is a no-op, and a
+    // seek never starts a stopped track.
     member _.PauseMusic() : unit =
-      if hasMusic && not disposed then
+      if hasMusic && musicState = MusicChannelState.Playing && not disposed then
         MediaPlayer.Pause()
+        musicState <- MusicChannelState.Paused
 
     member _.ResumeMusic() : unit =
-      if hasMusic && not disposed then
+      if hasMusic && musicState = MusicChannelState.Paused && not disposed then
         MediaPlayer.Resume()
+        musicState <- MusicChannelState.Playing
 
     member _.SeekMusic(seconds: float32) : unit =
-      if hasMusic && not disposed then
+      if
+        hasMusic && musicState <> MusicChannelState.Stopped && not disposed
+      then
         // Clamp to the track length, like the raylib backend.
         let length = float32 currentSong.Duration.TotalSeconds
 
@@ -395,7 +461,7 @@ type AudioService(content: ContentManager) =
         // Play(song, position) is the only seek MonoGame offers, and it
         // starts playback — restore a paused state so seeking a paused track
         // stays paused, matching the ray backend.
-        let wasPaused = MediaPlayer.State = MediaState.Paused
+        let wasPaused = musicState = MusicChannelState.Paused
 
         MediaPlayer.Play(currentSong, TimeSpan.FromSeconds(float position))
 
@@ -428,9 +494,16 @@ type AudioService(content: ContentManager) =
         fadeStopOnComplete <- target <= 0.0f
 
     member _.SetMasterVolume(volume: float32) : unit =
-      // MasterVolume scales every sound effect instance; music volume stays
-      // a separate knob (MediaPlayer.Volume).
-      SoundEffect.MasterVolume <- clamp01 volume
+      // Master volume scales the whole mix (the portable rule): the sound
+      // effects through SoundEffect.MasterVolume (live — the setter
+      // re-applies to playing instances), the music channel through our own
+      // scaling, re-applied right here.
+      let v = clamp01 volume
+      masterVolume <- v
+      SoundEffect.MasterVolume <- v
+      applyMusicVolume()
+
+    member _.MusicVolume() : float32 = musicVolume
 
     member this.Tick(dt: float32) : unit = this.Tick(dt)
 

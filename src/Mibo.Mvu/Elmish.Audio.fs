@@ -123,21 +123,18 @@ module Audio =
   /// <param name="ctx">The game context.</param>
   /// <param name="volume">Music volume (1.0 = full, 0.0 = silent).</param>
   let setMusicVolume (ctx: GameContext) (volume: float32) : Cmd<'Msg> =
-    AudioHelperState.MusicTargetVolume <- volume
-
     match GameContext.tryGetService<IAudio> ctx with
     | ValueSome audio ->
       Cmd.ofEffect(Effect(fun _ -> audio.SetMusicVolume volume))
     | ValueNone -> Cmd.none
 
-  /// <summary>Fades the music in over <paramref name="seconds"/>, toward the last volume passed to <see cref="M:Mibo.Elmish.Audio.setMusicVolume"/> (1.0 if never set).</summary>
+  /// <summary>Fades the music in over <paramref name="seconds"/>, toward the current music slider value — the last volume passed to <see cref="M:Mibo.Elmish.Audio.setMusicVolume"/> (1.0 if never set), read from the service.</summary>
   /// <param name="ctx">The game context.</param>
   /// <param name="seconds">Fade duration in seconds.</param>
   let fadeMusicIn (ctx: GameContext) (seconds: float32) : Cmd<'Msg> =
-    let target = AudioHelperState.MusicTargetVolume
-
     match GameContext.tryGetService<IAudio> ctx with
     | ValueSome audio ->
+      let target = audio.MusicVolume()
       Cmd.ofEffect(Effect(fun _ -> audio.FadeMusic(target, seconds)))
     | ValueNone -> Cmd.none
 
@@ -150,7 +147,7 @@ module Audio =
       Cmd.ofEffect(Effect(fun _ -> audio.FadeMusic(0.0f, seconds)))
     | ValueNone -> Cmd.none
 
-  /// <summary>Sets the master volume that scales every sound effect. Music volume is set separately with <see cref="M:Mibo.Elmish.Audio.setMusicVolume"/>.</summary>
+  /// <summary>Sets the master volume that scales the whole mix — every sound effect and the music channel, live (see <see cref="M:Mibo.Audio.IAudio.SetMasterVolume"/>).</summary>
   /// <param name="ctx">The game context.</param>
   /// <param name="volume">Master volume (1.0 = full).</param>
   let setMasterVolume (ctx: GameContext) (volume: float32) : Cmd<'Msg> =
