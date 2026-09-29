@@ -777,6 +777,16 @@ let styleTests =
 
       expectCell g 0 0 (ValueSome 2) "weathered"
       expectCell g 1 0 (ValueSome 2) "weathered"
+
+    testCase "noiseBy generates the scattered cells"
+    <| fun _ ->
+      let stamp = Stamp.box 4 1 [ Flow.noiseBy 2 1 (fun x _ -> x * 10 + 1) ]
+      let g, _ = runInto 4 1 stamp
+
+      expectCell g 0 0 (ValueSome 1) "generated at x 0"
+      expectCell g 1 0 (ValueSome 11) "generated at x 1"
+      expectCell g 2 0 ValueNone "not scattered"
+      expectCell g 3 0 ValueNone "not scattered"
   ]
 
 [<Tests>]
@@ -886,6 +896,43 @@ let landmarkTests =
             ])
           |> ignore)
         "duplicate element name"
+
+    testCase "landmark rects clip to the container"
+    <| fun _ ->
+      let stamp =
+        Flow.overlay [
+          Stamp.tagged [ "exit" ] (Stamp.box 20 2 [ Flow.fill 7 ])
+          |> Stamp.named "gate"
+          |> Flow.docked (Dock.Bottom ||| Dock.CenterX) 0
+        ]
+
+      let g, placed = runInto 10 4 stamp
+
+      expectCell g 0 2 (ValueSome 7) "painted from the left edge"
+      expectCell g 9 3 (ValueSome 7) "painted to the right edge"
+
+      Expect.equal
+        (Flow.tryPosition "gate" placed)
+        (ValueSome { X = 0; Y = 2; W = 10; H = 2 })
+        "clipped to the container"
+
+      Expect.equal
+        (Flow.taggedRects "exit" placed)
+        [ { X = 0; Y = 2; W = 10; H = 2 } ]
+        "tagged rect clips too"
+
+    testCase "tryTagGrid hands out the raw bit grid"
+    <| fun _ ->
+      let stamp = Flow.overlay [ Flow.region [ "zone" ] 0 0 ]
+      let _, placed = runInto 6 4 stamp
+
+      match Flow.tryTagGrid "zone" placed with
+      | ValueSome cells ->
+        Expect.isTrue cells.[0 + 0 * 6] "inside the region"
+        Expect.isTrue cells.[5 + 3 * 6] "inside the region"
+      | ValueNone -> failtest "the region has a grid"
+
+      Expect.equal (Flow.tryTagGrid "unknown" placed) ValueNone "unknown tag"
 
     testCase "tagged and named compose with docking"
     <| fun _ ->

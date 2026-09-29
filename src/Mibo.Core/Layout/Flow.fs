@@ -257,6 +257,8 @@ module internal FlowImpl =
   /// parent. The child section keeps the child's own origin, so stamps paint
   /// exactly where they are placed; ops that respect section bounds
   /// (fill/border/checker/...) clamp at the parent's right/bottom edge.
+  /// Landmarks record the intersection of `r` with the parent, so reported
+  /// rects never describe cells that nothing painted.
   let paintChild
     (parent: GridSection2D<'T>)
     (r: CellRect)
@@ -264,19 +266,26 @@ module internal FlowImpl =
     (stamp: Stamp<'T>)
     : unit =
     if r.W > 0 && r.H > 0 && overlaps r (rectOf parent) then
-      recordLandmarks registry stamp r
-
       let bounds = rectOf parent
-      let w = min r.W (bounds.X + bounds.W - r.X)
-      let h = min r.H (bounds.Y + bounds.H - r.Y)
+      let x1 = max r.X bounds.X
+      let y1 = max r.Y bounds.Y
+      let x2 = min (r.X + r.W) (bounds.X + bounds.W)
+      let y2 = min (r.Y + r.H) (bounds.Y + bounds.H)
 
-      if w > 0 && h > 0 then
+      if x2 > x1 && y2 > y1 then
+        recordLandmarks registry stamp {
+          X = x1
+          Y = y1
+          W = x2 - x1
+          H = y2 - y1
+        }
+
         let child: GridSection2D<'T> = {
           BackingGrid = parent.BackingGrid
           OffsetX = r.X
           OffsetY = r.Y
-          Width = w
-          Height = h
+          Width = x2 - r.X
+          Height = y2 - r.Y
         }
 
         stamp.Paint child registry
@@ -562,6 +571,10 @@ module Stamp =
                 stamp
       }
 
+/// Build-time level authoring: stamps, box styles, containers, and landmark
+/// recording all run when the level builds (`Flow.run`/`Flow.build`), never
+/// per frame. Build once, then keep per-frame queries on `Flow.isTag`, or
+/// hoist the lookup with `Flow.tryTagGrid`.
 [<RequireQualifiedAccess>]
 module Flow =
   let private linearStamp
@@ -781,13 +794,26 @@ module Flow =
       Layout.replaceScatter oldContent newContent probability seed s |> ignore
 
   /// Stamps a small paint pipeline `count` times at random spots in the box
-  /// (seeded) — rock clusters, puddles, rubble.
+  /// (seeded) — rock clusters, puddles, rubble. The pipeline receives a
+  /// section whose offset is the chosen cell and whose extent runs to the
+  /// box's bottom-right corner, so paint relative to the section origin.
   let clumps
     (count: int)
     (seed: int)
     (paint: GridSection2D<'T> -> GridSection2D<'T>)
     : BoxStyle<'T> =
     fun s -> Layout.scatterStamp count seed paint s |> ignore
+
+  /// Scatters `count` cells of generated content over the box (seeded); the
+  /// callback receives the cell coordinates (x across the box, y down the
+  /// box) and returns the content. The sparse counterpart of `texture` —
+  /// prop variety picked per scattered cell.
+  let noiseBy
+    (count: int)
+    (seed: int)
+    (generator: int -> int -> 'T)
+    : BoxStyle<'T> =
+    fun s -> Layout.scatterBy count seed generator s |> ignore
 
   /// A context-sized box of styles: paints whatever area its container
   /// assigns to it — a grid area, an overlay layer, a docked rectangle, an
@@ -1216,9 +1242,20 @@ module Flow =
     | true, rects -> rects
     | false, _ -> []
 
+  /// The raw per-cell bit grid of `tag` (`x + y * landmarks.Width`), for hot
+  /// loops: hoist the lookup out of the loop and read the array per cell.
+  /// `ValueNone` when no cell carries the tag. Out of range indices are
+  /// never tagged, so bounds checks stay with the caller.
+  let tryTagGrid (tag: string) (landmarks: Landmarks) : bool[] voption =
+    match landmarks.Cells.TryGetValue tag with
+    | true, cells -> ValueSome cells
+    | false, _ -> ValueNone
+
   /// Per-cell walking query: is cell (x, y) covered by an element tagged
   /// `tag` (or marked with it in the tiles via `Flow.scanTiles`)? Out of
-  /// range cells are never tagged. One array read, no allocation.
+  /// range cells are never tagged. One dictionary lookup and one array
+  /// read, no allocation; hoist the lookup with `Flow.tryTagGrid` in tight
+  /// loops.
   let isTag (tag: string) (x: int) (y: int) (landmarks: Landmarks) : bool =
     if x < 0 || y < 0 || x >= landmarks.Width || y >= landmarks.Height then
       false
