@@ -25,7 +25,7 @@ let private runInto
   (w: int)
   (h: int)
   (stamp: Stamp<int>)
-  : CellGrid2D<int> * MountResult =
+  : CellGrid2D<int> * Landmarks =
   let g = mkGrid w h
   let struct (g, placed) = g |> Flow.run stamp
   g, placed
@@ -538,7 +538,7 @@ let harbourTests =
           Gap = 1
           Areas = [ "plaza market"; "plaza woods"; "docks woods" ]
           Places = [
-            "plaza", plaza
+            "plaza", Stamp.tagged [ "safe-zone" ] plaza
             "market", market
             "woods", woods
             "docks", docks
@@ -690,4 +690,126 @@ let styleTests =
 
       expectCell g 0 0 (ValueSome 2) "weathered"
       expectCell g 1 0 (ValueSome 2) "weathered"
+  ]
+
+[<Tests>]
+let landmarkTests =
+  testList "landmarks" [
+    testCase "tagged elements group their rectangles"
+    <| fun _ ->
+      let stamp =
+        Flow.row { FlowOpts.Default with Gap = 2 } [
+          Stamp.tagged [ "spawn" ] (tile 2 1 1)
+          Stamp.tagged [ "spawn"; "danger" ] (tile 2 1 2)
+        ]
+
+      let _, placed = runInto 10 1 stamp
+
+      let spawns = Flow.taggedRects "spawn" placed
+      Expect.hasLength spawns 2 "two spawn rects"
+
+      Expect.equal
+        (Flow.taggedRects "danger" placed)
+        [ { X = 4; Y = 0; W = 2; H = 1 } ]
+        "danger rect, most recent first"
+
+      Expect.equal (Flow.taggedRects "nothing" placed) [] "unknown tag"
+
+    testCase "tagged cells answer walking queries"
+    <| fun _ ->
+      let stamp =
+        Flow.grid {
+          Cols = [ Fixed 3; Fixed 3 ]
+          Rows = [ Fixed 4 ]
+          Gap = 0
+          Areas = [ "zone rest" ]
+          Places = [
+            "zone", Flow.region [ "no-build" ] 0 0
+            "rest", Flow.canvas [ Flow.fill 9 ]
+          ]
+        }
+
+      let g, placed = runInto 6 4 stamp
+
+      Expect.isTrue (Flow.isTag "no-build" 0 0 placed) "inside the region"
+      Expect.isTrue (Flow.isTag "no-build" 2 1 placed) "region corner"
+      Expect.isFalse (Flow.isTag "no-build" 3 1 placed) "outside the region"
+      Expect.isFalse (Flow.isTag "no-build" 5 3 placed) "far outside"
+
+      Expect.isFalse
+        (Flow.isTag "no-build" -1 0 placed)
+        "out of range is never tagged"
+
+      Expect.isFalse (Flow.isTag "unknown" 0 0 placed) "unknown tag"
+
+      expectCell g 3 1 (ValueSome 9) "the neighbor area paints normally"
+
+    testCase "region stretches like any zero-footprint child"
+    <| fun _ ->
+      let stamp =
+        Flow.grid {
+          Cols = [ Fixed 4 ]
+          Rows = [ Fixed 4 ]
+          Gap = 0
+          Areas = [ "a" ]
+          Places = [ "a", Flow.region [ "arena" ] 0 0 ]
+        }
+
+      let _, placed = runInto 4 4 stamp
+
+      Expect.isTrue (Flow.isTag "arena" 3 3 placed) "stretched over the area"
+
+      Expect.equal
+        (Flow.taggedRects "arena" placed)
+        [ { X = 0; Y = 0; W = 4; H = 4 } ]
+        "region rect covers the area"
+
+    testCase "scanTiles derives cell tags from the painted tiles"
+    <| fun _ ->
+      let stamp = Flow.row FlowOpts.Default [ tile 2 1 1; tile 2 1 2 ]
+
+      let g, placed = runInto 5 1 stamp
+
+      let tileTags _ _ (v: int) =
+        if v = 2 then seq { "dangerous" } else seq { "safe" }
+
+      let scanned = placed |> Landmarks.scanTiles tileTags g
+
+      Expect.isTrue (Flow.isTag "safe" 0 0 scanned) "tile 1 is safe"
+      Expect.isTrue (Flow.isTag "safe" 1 0 scanned) "tile 1 is safe"
+      Expect.isTrue (Flow.isTag "dangerous" 2 0 scanned) "tile 2 is dangerous"
+      Expect.isTrue (Flow.isTag "dangerous" 3 0 scanned) "tile 2 is dangerous"
+
+      Expect.isFalse
+        (Flow.isTag "dangerous" 0 0 scanned)
+        "tile 1 is not dangerous"
+
+      Expect.isFalse (Flow.isTag "safe" 4 0 scanned) "empty cell has no tags"
+
+    testCase "tagged and named compose with docking"
+    <| fun _ ->
+      let gate =
+        Stamp.tagged [ "exit"; "no-build" ] (Stamp.box 0 1 [ Flow.fill 7 ])
+        |> Flow.docked (Dock.StretchX ||| Dock.Bottom) 0
+
+      let stamp = Flow.overlay [ gate ]
+      let g, placed = runInto 6 4 stamp
+
+      expectCell g 0 3 (ValueSome 7) "gate painted on the bottom edge"
+
+      Expect.equal
+        (Flow.tryPosition "gate2" placed)
+        ValueNone
+        "no name, no position"
+
+      Expect.equal
+        (Flow.taggedRects "exit" placed)
+        [ { X = 0; Y = 3; W = 6; H = 1 } ]
+        "tagged with the docked rectangle"
+
+      Expect.isTrue
+        (Flow.isTag "exit" 3 3 placed)
+        "walkable query on the docked rect"
+
+      Expect.isFalse (Flow.isTag "exit" 3 2 placed) "one above is not the gate"
   ]

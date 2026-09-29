@@ -7,12 +7,52 @@ open System.Collections.Generic
 [<Struct>]
 type CellRect = { X: int; Y: int; W: int; H: int }
 
-/// Named element positions collected during a mount.
-type Positions = Dictionary<string, CellRect>
+/// Landmarks collected while a level lays out: named element rectangles,
+/// tag groups of rectangles, and per-cell tag bit grids for fast walking
+/// queries. Tags are opaque strings; the engine stores and queries them,
+/// the game defines what they mean.
+type Landmarks = {
+  Width: int
+  Height: int
+  /// Resolved rectangle of every `Stamp.named` element (unique, last wins).
+  Named: Dictionary<string, CellRect>
+  /// Rectangles grouped by tag, one entry per `Stamp.tagged` element.
+  Tagged: Dictionary<string, CellRect list>
+  /// One flat bit grid per tag (`x + y * Width`); filled by tagged areas and
+  /// by `Flow.scanTiles`.
+  Cells: Dictionary<string, bool[]>
+}
 
-/// Paint signature of a stamp. The registry carries named element positions
-/// while a mount runs; ad-hoc paints pass ValueNone.
-type StampPaint<'T> = GridSection2D<'T> -> Positions voption -> unit
+module Landmarks =
+  /// Marks every cell of the grid that carries one of the tags returned by
+  /// `extract` for its content. This derives the per-cell bit grids from the
+  /// painted tiles, so cell-true regions (noise-carved woods, scattered
+  /// chests) answer walking queries without the engine knowing the tags.
+  let scanTiles
+    (extract: int -> int -> 'T -> string seq)
+    (grid: CellGrid2D<'T>)
+    (landmarks: Landmarks)
+    : Landmarks =
+    for y in 0 .. landmarks.Height - 1 do
+      for x in 0 .. landmarks.Width - 1 do
+        match CellGrid2D.get x y grid with
+        | ValueNone -> ()
+        | ValueSome tile ->
+          for tag in extract x y tile do
+            match landmarks.Cells.TryGetValue tag with
+            | true, cells -> cells.[x + y * landmarks.Width] <- true
+            | false, _ ->
+              let cells =
+                Array.create (landmarks.Width * landmarks.Height) false
+
+              cells.[x + y * landmarks.Width] <- true
+              landmarks.Cells.[tag] <- cells
+
+    landmarks
+
+/// Paint signature of a stamp. The landmark registry is filled while the
+/// level lays out; ad-hoc paints pass ValueNone.
+type StampPaint<'T> = GridSection2D<'T> -> Landmarks voption -> unit
 
 /// A box style: paints the whole area of the element it is applied to,
 /// relative to that area. Box styles never take coordinates; they combine in
@@ -55,13 +95,16 @@ type Dock =
 
 /// A sized, composable element for the Flow layout DSL. `W`/`H` are the
 /// element footprint in cells; `Paint` draws into a section of that
-/// footprint. Holds a function value, so it never uses structural equality.
+/// footprint. `Tags` are opaque strings recorded into the landmark registry
+/// with the element's resolved rectangle. Holds a function value, so it
+/// never uses structural equality.
 [<Struct; NoEquality; NoComparison>]
 type Stamp<'T> = {
   W: int
   H: int
   Expand: int
   Name: string voption
+  Tags: string list
   Paint: StampPaint<'T>
 }
 
@@ -85,9 +128,6 @@ type FlowOpts = {
     Justify = Start
     Wrap = false
   }
-
-/// Result of `Flow.run`: the resolved rectangle of every named element.
-type MountResult = { Positions: Positions }
 
 /// Options and content for `Flow.grid`: track sizes, the area template, the
 /// gap between tracks, and the stamps placed into named areas. Area names
@@ -166,17 +206,48 @@ module internal FlowImpl =
   let inline private overlaps (a: CellRect) (b: CellRect) : bool =
     a.X < b.X + b.W && a.Y < b.Y + b.H && a.X + a.W > b.X && a.Y + a.H > b.Y
 
-  let recordPosition
-    (registry: Positions voption)
-    (name: string voption)
+  /// Records one placed element under its name (unique, last wins) and under
+  /// each of its tags (additive), rasterizing the rectangle into the per-tag
+  /// cell bit grids.
+  let recordLandmarks
+    (registry: Landmarks voption)
+    (stamp: Stamp<'T>)
     (r: CellRect)
     : unit =
     match registry with
-    | ValueSome dict ->
-      match name with
-      | ValueSome n -> dict.[n] <- r
-      | ValueNone -> ()
     | ValueNone -> ()
+    | ValueSome landmarks ->
+      match stamp.Name with
+      | ValueSome n -> landmarks.Named.[n] <- r
+      | ValueNone -> ()
+
+      if not stamp.Tags.IsEmpty then
+        let x1 = max 0 r.X
+        let y1 = max 0 r.Y
+        let x2 = min (r.X + r.W) (landmarks.Width)
+        let y2 = min (r.Y + r.H) (landmarks.Height)
+
+        for tag in stamp.Tags do
+          let existing =
+            match landmarks.Tagged.TryGetValue tag with
+            | true, rects -> rects
+            | false, _ -> []
+
+          landmarks.Tagged.[tag] <- r :: existing
+
+          match landmarks.Cells.TryGetValue tag with
+          | true, cells ->
+            for y in y1 .. y2 - 1 do
+              for x in x1 .. x2 - 1 do
+                cells.[x + y * landmarks.Width] <- true
+          | false, _ ->
+            let cells = Array.create (landmarks.Width * landmarks.Height) false
+
+            for y in y1 .. y2 - 1 do
+              for x in x1 .. x2 - 1 do
+                cells.[x + y * landmarks.Width] <- true
+
+            landmarks.Cells.[tag] <- cells
 
   /// Paints a child into `r`, skipping it when it lies fully outside the
   /// parent. The child section keeps the child's own origin, so stamps paint
@@ -185,11 +256,11 @@ module internal FlowImpl =
   let paintChild
     (parent: GridSection2D<'T>)
     (r: CellRect)
-    (registry: Positions voption)
+    (registry: Landmarks voption)
     (stamp: Stamp<'T>)
     : unit =
     if r.W > 0 && r.H > 0 && overlaps r (rectOf parent) then
-      recordPosition registry stamp.Name r
+      recordLandmarks registry stamp r
 
       let bounds = rectOf parent
       let w = min r.W (bounds.X + bounds.W - r.X)
@@ -218,6 +289,7 @@ module Stamp =
       H = h
       Expand = 0
       Name = ValueNone
+      Tags = []
       Paint = fun s _ -> paint s
     }
 
@@ -248,6 +320,15 @@ module Stamp =
         Name = ValueSome name
   }
 
+  /// Tags an element so `Flow.run` groups its resolved rectangle under each
+  /// tag and marks the covered cells in the per-tag bit grids. Tags are
+  /// opaque to the engine; the game defines what they mean. Multiple
+  /// elements can share a tag, and one element can carry several.
+  let tagged (tags: string list) (stamp: Stamp<'T>) : Stamp<'T> = {
+    stamp with
+        Tags = tags @ stamp.Tags
+  }
+
   /// Marks an element to share the leftover main-axis space of its container
   /// with weight 1. Expanded elements split the leftover space by weight.
   let expand(stamp: Stamp<'T>) : Stamp<'T> = {
@@ -272,6 +353,7 @@ module Stamp =
       H = h
       Expand = 0
       Name = ValueNone
+      Tags = []
       Paint =
         fun s registry ->
           FlowImpl.paintChild
@@ -308,6 +390,7 @@ module Stamp =
       H = h
       Expand = 0
       Name = ValueNone
+      Tags = []
       Paint =
         fun s registry ->
           FlowImpl.paintChild
@@ -344,6 +427,7 @@ module Stamp =
       H = h
       Expand = 0
       Name = ValueNone
+      Tags = []
       Paint =
         fun s registry ->
           FlowImpl.paintChild s (FlowImpl.rectOf s) registry first
@@ -370,6 +454,7 @@ module Stamp =
       H = h
       Expand = 0
       Name = ValueNone
+      Tags = []
       Paint =
         fun s registry ->
           FlowImpl.paintChild
@@ -404,6 +489,7 @@ module Stamp =
       H = h
       Expand = 0
       Name = ValueNone
+      Tags = []
       Paint =
         fun s registry ->
           FlowImpl.paintChild
@@ -430,6 +516,7 @@ module Stamp =
         H = stamp.H
         Expand = 0
         Name = ValueNone
+        Tags = []
         Paint =
           fun s registry ->
             for i in 0 .. count - 1 do
@@ -470,6 +557,7 @@ module Flow =
         H = h
         Expand = 0
         Name = ValueNone
+        Tags = []
         Paint =
           fun s registry ->
             let assigned = FlowImpl.rectOf s
@@ -677,6 +765,7 @@ module Flow =
     H = 0
     Expand = 0
     Name = ValueNone
+    Tags = []
     Paint =
       fun s _ ->
         for style in styles do
@@ -833,6 +922,7 @@ module Flow =
       H = h
       Expand = 0
       Name = ValueNone
+      Tags = []
       Paint =
         fun s registry ->
           let assigned = FlowImpl.rectOf s
@@ -896,6 +986,7 @@ module Flow =
     H = 0
     Expand = 0
     Name = ValueNone
+    Tags = []
     Paint =
       fun s registry ->
         let r =
@@ -953,6 +1044,7 @@ module Flow =
         H = h
         Expand = 0
         Name = ValueNone
+        Tags = []
         Paint =
           fun s registry ->
             let r = FlowImpl.rectOf s
@@ -975,6 +1067,7 @@ module Flow =
       H = h
       Expand = 0
       Name = ValueNone
+      Tags = []
       Paint =
         fun s registry ->
           let bounds = FlowImpl.rectOf s
@@ -1000,24 +1093,30 @@ module Flow =
     section
 
   /// Lays a stamp out over the whole grid and returns the grid together with
-  /// the resolved rectangles of every named element it contains:
+  /// its landmarks: the resolved rectangles of named elements, tag groups,
+  /// and per-cell tag bit grids:
   ///
   /// `let struct (level, placed) = grid |> Flow.run levelBody`
   let run
     (stamp: Stamp<'T>)
     (grid: CellGrid2D<'T>)
-    : struct (CellGrid2D<'T> * MountResult) =
-    let positions = Positions()
+    : struct (CellGrid2D<'T> * Landmarks) =
+    let landmarks: Landmarks = {
+      Width = grid.Width
+      Height = grid.Height
+      Named = Dictionary()
+      Tagged = Dictionary()
+      Cells = Dictionary()
+    }
 
-    match stamp.Name with
-    | ValueSome n ->
-      positions.[n] <- {
-        X = 0
-        Y = 0
-        W = grid.Width
-        H = grid.Height
-      }
-    | ValueNone -> ()
+    let full: CellRect = {
+      X = 0
+      Y = 0
+      W = grid.Width
+      H = grid.Height
+    }
+
+    FlowImpl.recordLandmarks (ValueSome landmarks) stamp full
 
     let section: GridSection2D<'T> = {
       BackingGrid = grid
@@ -1027,11 +1126,35 @@ module Flow =
       Height = grid.Height
     }
 
-    stamp.Paint section (ValueSome positions)
-    struct (grid, { Positions = positions })
+    stamp.Paint section (ValueSome landmarks)
+    struct (grid, landmarks)
 
   /// Looks up the resolved rectangle of a named element.
-  let tryPosition (name: string) (result: MountResult) : CellRect voption =
-    match result.Positions.TryGetValue name with
+  let tryPosition (name: string) (landmarks: Landmarks) : CellRect voption =
+    match landmarks.Named.TryGetValue name with
     | true, r -> ValueSome r
     | false, _ -> ValueNone
+
+  /// Returns every rectangle recorded under a tag, most recent first.
+  /// Build-time/occasional queries; the per-cell hot path is `Flow.isTag`.
+  let taggedRects (tag: string) (landmarks: Landmarks) : CellRect list =
+    match landmarks.Tagged.TryGetValue tag with
+    | true, rects -> rects
+    | false, _ -> []
+
+  /// Per-cell walking query: is cell (x, y) covered by an element tagged
+  /// `tag` (or marked with it in the tiles via `Flow.scanTiles`)? Out of
+  /// range cells are never tagged. One array read, no allocation.
+  let isTag (tag: string) (x: int) (y: int) (landmarks: Landmarks) : bool =
+    if x < 0 || y < 0 || x >= landmarks.Width || y >= landmarks.Height then
+      false
+    else
+      match landmarks.Cells.TryGetValue tag with
+      | true, cells -> cells.[x + y * landmarks.Width]
+      | false, _ -> false
+
+  /// A non-painting landmark: records `tags` over the element's whole
+  /// rectangle. Equivalent to a tagless `Stamp.box`, so it lays out like any
+  /// other child (fixed footprint in a grid area, `expand` in a row, ...).
+  let region (tags: string list) (w: int) (h: int) : Stamp<'T> =
+    Stamp.tagged tags (Stamp.box w h [])

@@ -8,6 +8,8 @@
 
 - **Core:** coordinate-free box styles for the flow DSL. `Flow.fill`, `border`, `rect`, `corners`, `checker`, `noise`, `texture`, `replace`, `weather`, and `clumps` paint the whole area of the element they are applied to, so leaf elements become `Stamp.box w h [ styles ]` with the size stated once and no x/y anywhere. `Flow.canvas` is the context-sized box (it paints whatever area its container assigns — grid areas stretch it, zero footprint always means "stretch this axis"), `Flow.group` is a sized box with layered children, and `Flow.strip` docks a full-length bar of a given thickness to one edge. `Flow.grid` placements honor a fixed child footprint and stretch zero-footprint children over the area, and `Flow.row`/`column` cross-stretch children that declare no cross size, matching CSS defaults.
 
+- **Core:** landmark tags for the flow DSL. `Stamp.tagged [ "safe-zone" ]` groups an element's resolved rectangle under opaque string tags (additive, many elements per tag, many tags per element), `Flow.region [ "no-build" ] w h` is the non-painting extent version, and every tagged rectangle rasterizes into a per-tag bit grid. `Flow.isTag "no-build" x y` then answers "is this cell tagged" in one array read for walking-style queries, and `Flow.taggedRects` returns the group's rectangles. `Flow.scanTiles` derives cell tags from the painted tiles through a game-supplied extraction function, so irregular regions (noise-carved woods, scattered props) support the same queries while the engine never interprets the tags. `MountResult` is now `Landmarks`, carrying named positions, tag groups, and the cell grids.
+
 
 ## [5.1.0] - 2026-09-05
 
