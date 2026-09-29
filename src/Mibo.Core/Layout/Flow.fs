@@ -14,6 +14,11 @@ type Positions = Dictionary<string, CellRect>
 /// while a mount runs; ad-hoc paints pass ValueNone.
 type StampPaint<'T> = GridSection2D<'T> -> Positions voption -> unit
 
+/// A box style: paints the whole area of the element it is applied to,
+/// relative to that area. Box styles never take coordinates; they combine in
+/// `Stamp.box` and `Flow.canvas` (`Flow.fill`, `Flow.border`, `Flow.noise`, ...).
+type BoxStyle<'T> = GridSection2D<'T> -> unit
+
 /// Alignment of children relative to the container. Used on the cross axis
 /// (`FlowOpts.Align`) and the main axis (`FlowOpts.Justify`). `Stretch`
 /// behaves as `Start` when used as `Justify`.
@@ -161,6 +166,18 @@ module internal FlowImpl =
   let inline private overlaps (a: CellRect) (b: CellRect) : bool =
     a.X < b.X + b.W && a.Y < b.Y + b.H && a.X + a.W > b.X && a.Y + a.H > b.Y
 
+  let recordPosition
+    (registry: Positions voption)
+    (name: string voption)
+    (r: CellRect)
+    : unit =
+    match registry with
+    | ValueSome dict ->
+      match name with
+      | ValueSome n -> dict.[n] <- r
+      | ValueNone -> ()
+    | ValueNone -> ()
+
   /// Paints a child into `r`, skipping it when it lies fully outside the
   /// parent. The child section keeps the child's own origin, so stamps paint
   /// exactly where they are placed; ops that respect section bounds
@@ -172,12 +189,7 @@ module internal FlowImpl =
     (stamp: Stamp<'T>)
     : unit =
     if r.W > 0 && r.H > 0 && overlaps r (rectOf parent) then
-      match registry with
-      | ValueSome dict ->
-        match stamp.Name with
-        | ValueSome n -> dict.[n] <- r
-        | ValueNone -> ()
-      | ValueNone -> ()
+      recordPosition registry stamp.Name r
 
       let bounds = rectOf parent
       let w = min r.W (bounds.X + bounds.W - r.X)
@@ -217,6 +229,15 @@ module Stamp =
     (paint: GridSection2D<'T> -> GridSection2D<'T>)
     : Stamp<'T> =
     create w h (fun s -> paint s |> ignore)
+
+  /// A sized box painted by a list of box styles (`Flow.fill`, `Flow.border`,
+  /// `Flow.noise`, ...). The size is stated once, here; styles and containers
+  /// never need coordinates. For a context-sized box (grid areas, docked
+  /// rectangles, expanded slots) use `Flow.canvas`.
+  let box (w: int) (h: int) (styles: BoxStyle<'T> list) : Stamp<'T> =
+    create w h (fun s ->
+      for style in styles do
+        style s)
 
   /// Empty element that paints nothing.
   let empty() : Stamp<'T> = create 0 0 ignore
@@ -540,9 +561,12 @@ module Flow =
                 for i in 0 .. n - 1 do
                   let c = line.[i]
 
+                  // Like CSS align-items: stretch, children without a cross
+                  // size of their own stretch over the line.
                   let cSize =
                     match opts.Align with
                     | Stretch -> lineLen
+                    | _ when crossOf c = 0 -> lineLen
                     | _ -> crossOf c
 
                   let withinOff =
@@ -585,6 +609,79 @@ module Flow =
   /// swapped.
   let column (opts: FlowOpts) (children: Stamp<'T> seq) : Stamp<'T> =
     linearStamp false opts (Array.ofSeq children)
+
+  // ── Box styles ─────────────────────────────────────────────────────────
+  // Box styles paint the full area of the element they are applied to. They
+  // never take coordinates: combine them in `Stamp.box` or `Flow.canvas`,
+  // and let containers decide where the box lands.
+
+  /// Fills the whole box with one content.
+  let fill(content: 'T) : BoxStyle<'T> =
+    fun s -> Layout.fill 0 0 s.Width s.Height content s |> ignore
+
+  /// Outlines the box with one content.
+  let border(content: 'T) : BoxStyle<'T> =
+    fun s -> Layout.border 0 0 s.Width s.Height content s |> ignore
+
+  /// Fills the box, then outlines it.
+  let rect (borderContent: 'T) (fillContent: 'T) : BoxStyle<'T> =
+    fun s ->
+      Layout.rect 0 0 s.Width s.Height borderContent fillContent s |> ignore
+
+  /// Puts one content on the four corners of the box.
+  let corners(content: 'T) : BoxStyle<'T> =
+    fun s -> Layout.corners 0 0 s.Width s.Height content s |> ignore
+
+  /// Checkerboards the box between two contents.
+  let checker (odd: 'T) (even: 'T) : BoxStyle<'T> =
+    fun s -> Layout.checker odd even s |> ignore
+
+  /// Scatters `count` cells of one content over the box (seeded).
+  let noise (count: int) (seed: int) (content: 'T) : BoxStyle<'T> =
+    fun s -> Layout.scatter count seed content s |> ignore
+
+  /// Generates the box cell by cell; the callback receives local coordinates
+  /// (x across the box, y down the box).
+  let texture(generator: int -> int -> 'T) : BoxStyle<'T> =
+    fun s -> Layout.generate 0 0 s.Width s.Height generator s |> ignore
+
+  /// Replaces every occurrence of one content with another, box-wide.
+  let replace (oldContent: 'T) (newContent: 'T) : BoxStyle<'T> =
+    fun s -> Layout.replace oldContent newContent s |> ignore
+
+  /// Replaces content box-wide with a probability (seeded) — weathering.
+  let weather
+    (oldContent: 'T)
+    (newContent: 'T)
+    (probability: float32)
+    (seed: int)
+    : BoxStyle<'T> =
+    fun s ->
+      Layout.replaceScatter oldContent newContent probability seed s |> ignore
+
+  /// Stamps a small paint pipeline `count` times at random spots in the box
+  /// (seeded) — rock clusters, puddles, rubble.
+  let clumps
+    (count: int)
+    (seed: int)
+    (paint: GridSection2D<'T> -> GridSection2D<'T>)
+    : BoxStyle<'T> =
+    fun s -> Layout.scatterStamp count seed paint s |> ignore
+
+  /// A context-sized box of styles: paints whatever area its container
+  /// assigns to it — a grid area, an overlay layer, a docked rectangle, an
+  /// expanded slot. It has no intrinsic footprint; a zero dimension always
+  /// means "stretch on that axis".
+  let canvas(styles: BoxStyle<'T> list) : Stamp<'T> = {
+    W = 0
+    H = 0
+    Expand = 0
+    Name = ValueNone
+    Paint =
+      fun s _ ->
+        for style in styles do
+          style s
+  }
 
   let private resolveTracks (total: int) (tracks: Track[]) (gap: int) : int[] =
     let n = tracks.Length
@@ -747,14 +844,19 @@ module Flow =
           for (name, stamp) in placements do
             match areas.TryGetValue name with
             | true, struct (c0, r0, cs, rs) ->
-              let x = assigned.X + colOff.[c0]
-              let y = assigned.Y + rowOff.[r0]
-              let w = spanSize colSizes c0 cs gap
-              let h = spanSize rowSizes r0 rs gap
+              let ax = assigned.X + colOff.[c0]
+              let ay = assigned.Y + rowOff.[r0]
+              let aw = spanSize colSizes c0 cs gap
+              let ah = spanSize rowSizes r0 rs gap
+              // A zero footprint dimension stretches over the area (canvas,
+              // strips); a fixed dimension keeps its size, anchored to the
+              // area start.
+              let w = if stamp.W = 0 then aw else min stamp.W aw
+              let h = if stamp.H = 0 then ah else min stamp.H ah
 
               FlowImpl.paintChild
                 s
-                { X = x; Y = y; W = w; H = h }
+                { X = ax; Y = ay; W = w; H = h }
                 registry
                 stamp
             | false, _ -> ()
@@ -787,7 +889,8 @@ module Flow =
   /// footprint). The anchor comes from `flags` (`Dock.Top ||| Dock.CenterX`
   /// and so on); `inset` distances the element from the chosen edges.
   /// `StretchX`/`StretchY` span the container minus twice the inset. Pair
-  /// with `overlay` to place docks over a base layout.
+  /// with `overlay` to place docks over a base layout. Name the stamp you
+  /// pass in to report its docked rectangle.
   let docked (flags: Dock) (inset: int) (stamp: Stamp<'T>) : Stamp<'T> = {
     W = 0
     H = 0
@@ -805,6 +908,33 @@ module Flow =
 
         FlowImpl.paintChild s r registry stamp
   }
+
+  /// A full-length strip docked to one edge (`Dock.Top`, `Dock.Bottom`,
+  /// `Dock.Left` or `Dock.Right`) with the given thickness in cells:
+  /// `strip Dock.Bottom 1 [ fill Sand ]` is a full-width, one-cell-tall bar
+  /// on the bottom edge. Occupies no flow space; pair with `overlay`.
+  let strip
+    (side: Dock)
+    (thickness: int)
+    (styles: BoxStyle<'T> list)
+    : Stamp<'T> =
+    let t = max 0 thickness
+
+    let flags, w, h =
+      if side &&& Dock.Top <> Dock.None then
+        (Dock.StretchX ||| Dock.Top), 0, t
+      elif side &&& Dock.Bottom <> Dock.None then
+        (Dock.StretchX ||| Dock.Bottom), 0, t
+      elif side &&& Dock.Right <> Dock.None then
+        (Dock.StretchY ||| Dock.Right), t, 0
+      elif side &&& Dock.Left <> Dock.None then
+        (Dock.StretchY ||| Dock.Left), t, 0
+      else
+        invalidArg
+          "side"
+          "strip needs exactly one edge flag (Top, Bottom, Left or Right)"
+
+    docked flags 0 (Stamp.box w h styles)
 
   /// Stacks children over the full area of the container, later children
   /// paint over earlier ones. The footprint is the largest child. Pair with
@@ -830,6 +960,35 @@ module Flow =
             for c in arr do
               FlowImpl.paintChild s r registry c
       }
+
+  /// A fixed-size group that lays its children out over its own area with
+  /// overlay rules: each child paints into the group's box and later children
+  /// paint on top. The size is stated once, here; `canvas` children fill the
+  /// box and `docked` children anchor within it.
+  let group (w: int) (h: int) (children: Stamp<'T> list) : Stamp<'T> =
+    let w = max 0 w
+    let h = max 0 h
+    let arr = Array.ofList children
+
+    {
+      W = w
+      H = h
+      Expand = 0
+      Name = ValueNone
+      Paint =
+        fun s registry ->
+          let bounds = FlowImpl.rectOf s
+
+          let r = {
+            X = bounds.X
+            Y = bounds.Y
+            W = min w bounds.W
+            H = min h bounds.H
+          }
+
+          for c in arr do
+            FlowImpl.paintChild s r registry c
+    }
 
   /// Paints a stamp with its top-left at the section origin and returns the
   /// section, for use in existing `Layout.*` pipelines. Records no positions.

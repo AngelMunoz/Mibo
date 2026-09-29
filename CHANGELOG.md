@@ -6,6 +6,9 @@
 
 - **Core:** a prototype flow layout DSL for 2D level authoring (`Mibo.Layout.Flow`). Elements (`Stamp`) declare their footprint in cells and compose by arithmetic (`Stamp.beside`, `above`, `overlay`, `inset`, `offset`, `repeat`), so containers compute their own size and authors stop hand-counting offsets. `Flow.row`/`column` lay children out with gaps, cross-axis alignment, main-axis justification, wrapping, and flex-style `expand` shares; `Flow.grid` ports CSS grid to cells with `Fixed`/`Weight`/`Percent` tracks and grid-area template strings configured through a labeled `GridOpts` record; `Flow.dock` pins elements to container edges with flag combinations, and `Flow.docked`/`Flow.overlay` compose docked layers over a base layout. Any existing stamp pipeline joins the flow model through `Stamp.sized`, and everything still paints through the unchanged `Layout.*` primitives. `Flow.run` lays a stamp out over the grid and returns the grid together with the resolved rectangle of every `Stamp.named` element, so levels can drive entity spawns from the same document that paints the tiles.
 
+- **Core:** coordinate-free box styles for the flow DSL. `Flow.fill`, `border`, `rect`, `corners`, `checker`, `noise`, `texture`, `replace`, `weather`, and `clumps` paint the whole area of the element they are applied to, so leaf elements become `Stamp.box w h [ styles ]` with the size stated once and no x/y anywhere. `Flow.canvas` is the context-sized box (it paints whatever area its container assigns — grid areas stretch it, zero footprint always means "stretch this axis"), `Flow.group` is a sized box with layered children, and `Flow.strip` docks a full-length bar of a given thickness to one edge. `Flow.grid` placements honor a fixed child footprint and stretch zero-footprint children over the area, and `Flow.row`/`column` cross-stretch children that declare no cross size, matching CSS defaults.
+
+
 ## [5.1.0] - 2026-09-05
 
 ### Added

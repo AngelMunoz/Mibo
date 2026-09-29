@@ -10,8 +10,7 @@ let private mkGrid w h : CellGrid2D<int> =
 let private tile w h content : Stamp<int> =
   Stamp.sized w h (fun s -> s |> Layout.fill 0 0 w h content)
 
-let private fillTile content : Stamp<int> =
-  Stamp.sized 1 1 (fun s -> s |> Layout.fill 0 0 s.Width s.Height content)
+let private fillTile content : Stamp<int> = Flow.canvas [ Flow.fill content ]
 
 let private expectCell
   (g: CellGrid2D<int>)
@@ -385,7 +384,11 @@ let tests =
         let _ =
           g
           |> Layout.run(
-            Flow.dock (Dock.StretchX ||| Dock.Bottom) 1 (fillTile 5)
+            Flow.dock
+              (Dock.StretchX ||| Dock.Bottom)
+              1
+              (Stamp.sized 1 1 (fun s ->
+                s |> Layout.fill 0 0 s.Width s.Height 5))
           )
 
         expectCell g 0 4 ValueNone "left inset"
@@ -464,26 +467,34 @@ let harbourTests =
     testCase "a noisy harbour built from stamps, grid areas, and docks"
     <| fun _ ->
       // A fountain: pool with lantern posts at the corners.
-      let fountain =
-        Stamp.sized 5 5 (fun s ->
-          s |> Layout.fill 0 0 5 5 Water |> Layout.corners 0 0 5 5 Torch)
+      let fountain = Stamp.box 5 5 [ Flow.fill Water; Flow.corners Torch ]
 
       // A cobble plaza with weathered stones and the fountain at its heart.
+      // The group states the size once; the fountain just gets centered.
       let plaza =
-        Stamp.overlay
-          (Stamp.sized 30 20 (fun s ->
-            s
-            |> Layout.fill 0 0 30 20 Path
-            |> Layout.border 0 0 30 20 Grass
-            |> Layout.scatter 24 7 Rock))
-          (Stamp.offset 12 7 (Stamp.named "fountain" fountain))
+        Flow.group 30 20 [
+          Flow.canvas [
+            Flow.fill Path
+            Flow.border Grass
+            Flow.noise 24 7 Rock
+          ]
+          Flow.docked
+            (Dock.CenterX ||| Dock.CenterY)
+            0
+            (Stamp.named "fountain" fountain)
+        ]
 
-      // A market stall: awning over crates of goods.
+      // A market stall: awning over crates of goods, signed center-front.
       let stall goods =
         Stamp.above
-          (Stamp.sized 4 1 (fun s -> s |> Layout.fill 0 0 4 1 Stall))
-          (Stamp.sized 4 2 (fun s ->
-            s |> Layout.fill 0 0 4 2 Crate |> Layout.set 1 0 goods))
+          (Stamp.box 4 1 [ Flow.fill Stall ])
+          (Flow.group 4 2 [
+            Flow.canvas [ Flow.fill Crate ]
+            Flow.docked
+              (Dock.CenterX ||| Dock.Top)
+              0
+              (Stamp.box 1 1 [ Flow.fill goods ])
+          ])
 
       // The market: stalls wrap onto new rows when the area runs out.
       let market =
@@ -492,34 +503,32 @@ let harbourTests =
             FlowOpts.Default with
                 Gap = 1
                 Wrap = true
-                Align = End
           }
           [ stall Fish; stall Fruit; stall Fish; stall Fruit ]
 
       // Woods: seeded tree noise, weathered into clearings, rock clusters,
-      // fallen stumps, and one chest in a hidden glade.
+      // fallen stumps, and one chest somewhere in the undergrowth.
       let woods =
-        Stamp.sized 18 30 (fun s ->
-          s
-          |> Layout.generate 0 0 18 30 (fun x y ->
+        Stamp.box 18 30 [
+          Flow.texture(fun x y ->
             if (x * 7 + y * 13) % 4 = 0 then Tree else Grass)
-          |> Layout.replaceScatter Tree Grass 0.3f 11
-          |> Layout.scatterStamp 4 5 (fun c ->
-            c |> Layout.circle 1 1 1 true Rock)
-          |> Layout.scatter 6 9 Stump
-          |> Layout.setIfEmpty 9 15 Chest)
+          Flow.weather Tree Grass 0.3f 11
+          Flow.clumps 4 5 (fun c -> c |> Layout.circle 1 1 1 true Rock)
+          Flow.noise 6 9 Stump
+          Flow.noise 1 15 Chest
+        ]
 
-      // Docks: piers reaching into water, lanterns at the pier heads.
+      // Docks: water with piers reaching in, lanterns at the pier heads.
+      let pier planks =
+        Stamp.above
+          (Stamp.box 1 1 [ Flow.fill Lamp ])
+          (Stamp.box 1 planks [ Flow.fill Path ])
+
       let docks =
-        Stamp.sized 34 10 (fun s ->
-          s
-          |> Layout.fill 0 0 34 10 Water
-          |> Layout.repeatY 4 0 6 Path
-          |> Layout.repeatY 14 0 8 Path
-          |> Layout.repeatY 26 0 6 Path
-          |> Layout.set 4 5 Lamp
-          |> Layout.set 14 7 Lamp
-          |> Layout.set 26 5 Lamp)
+        Flow.group 34 10 [
+          Flow.canvas [ Flow.fill Water ]
+          Flow.row { FlowOpts.Default with Gap = 9 } [ pier 5; pier 7; pier 5 ]
+        ]
 
       // The map: structure by layout, noise by stamps.
       let harbour =
@@ -550,12 +559,11 @@ let harbourTests =
           Flow.overlay [
             Stamp.expand harbour
 
-            Stamp.sized 12 3 (fun b -> b |> Layout.fill 0 0 12 3 Wall)
+            Stamp.box 12 3 [ Flow.fill Wall ]
             |> Flow.docked (Dock.Top ||| Dock.CenterX) 0
 
-            Stamp.named
-              "gate"
-              (Stamp.sized 60 1 (fun q -> q |> Layout.fill 0 0 60 1 Sand))
+            // zero footprint width = stretch over the container
+            Stamp.named "gate" (Stamp.box 0 1 [ Flow.fill Sand ])
             |> Flow.docked (Dock.StretchX ||| Dock.Bottom) 0
           ]
         )
@@ -574,7 +582,7 @@ let harbourTests =
       Expect.equal
         (Flow.tryPosition "fountain" placed)
         (ValueSome { X = 12; Y = 7; W = 5; H = 5 })
-        "fountain inside the plaza"
+        "fountain centered in the plaza"
 
       expect 30 43 (ValueSome Spawn) "spawn read back from the gate"
 
@@ -583,12 +591,103 @@ let harbourTests =
 
       expect 2 2 (ValueSome Path) "plaza cobble inside the fringe"
 
-      expect
-        41
-        0
-        (ValueSome Stall)
-        "market awning (wrapped lines align per line)"
+      expect 41 0 (ValueSome Stall) "market awning"
 
-      expect 4 30 (ValueSome Path) "pier planks"
-      expect 4 36 (ValueSome Water) "docks water at the pier line"
+      expect 0 28 (ValueSome Lamp) "pier head lantern"
+      expect 0 30 (ValueSome Path) "pier planks"
+      expect 4 37 (ValueSome Water) "docks water past the piers"
+  ]
+
+[<Tests>]
+let styleTests =
+  testList "styles" [
+    testCase "box paints its style list over its own area"
+    <| fun _ ->
+      let stamp = Stamp.box 3 3 [ Flow.fill 1; Flow.border 2 ]
+      let g, _ = runInto 3 3 stamp
+
+      expectCell g 0 0 (ValueSome 2) "border corner"
+      expectCell g 1 1 (ValueSome 1) "fill interior"
+
+    testCase "canvas stretches in rows by default"
+    <| fun _ ->
+      let stamp =
+        Flow.row FlowOpts.Default [
+          tile 2 1 1
+          Stamp.expand(Flow.canvas [ Flow.fill 2 ])
+        ]
+
+      let g, _ = runInto 6 3 stamp
+
+      expectCell g 0 0 (ValueSome 1) "fixed child"
+      expectCell g 2 0 (ValueSome 2) "canvas fills the rest of the row"
+      expectCell g 5 2 (ValueSome 2) "canvas stretches across, too"
+
+    testCase "canvas stretches over a grid area"
+    <| fun _ ->
+      let stamp =
+        Flow.grid {
+          Cols = [ Fixed 4 ]
+          Rows = [ Fixed 2 ]
+          Gap = 0
+          Areas = [ "a" ]
+          Places = [ "a", Flow.canvas [ Flow.fill 7 ] ]
+        }
+
+      let g, _ = runInto 4 2 stamp
+
+      expectCell g 0 0 (ValueSome 7) "canvas fills the area"
+      expectCell g 3 1 (ValueSome 7) "canvas fills the area"
+
+    testCase "fixed boxes keep their size in a grid area"
+    <| fun _ ->
+      let stamp =
+        Flow.grid {
+          Cols = [ Fixed 4 ]
+          Rows = [ Fixed 4 ]
+          Gap = 0
+          Areas = [ "a" ]
+          Places = [ "a", Stamp.box 2 1 [ Flow.fill 5 ] ]
+        }
+
+      let g, _ = runInto 4 4 stamp
+
+      expectCell g 1 0 (ValueSome 5) "box keeps its width"
+      expectCell g 2 0 ValueNone "no stretch past the box"
+
+    testCase "strip docks a full-length bar"
+    <| fun _ ->
+      let stamp = Flow.overlay [ Flow.strip Dock.Bottom 1 [ Flow.fill 9 ] ]
+      let g, _ = runInto 5 4 stamp
+
+      expectCell g 0 3 (ValueSome 9) "strip start"
+      expectCell g 4 3 (ValueSome 9) "strip end"
+      expectCell g 2 2 ValueNone "above the strip"
+
+    testCase "group sizes the canvas and anchors children"
+    <| fun _ ->
+      let stamp =
+        Flow.group 4 2 [
+          Flow.canvas [ Flow.fill 1 ]
+          Flow.docked
+            (Dock.CenterX ||| Dock.CenterY)
+            0
+            (Stamp.box 2 2 [ Flow.fill 2 ])
+        ]
+
+      let g, _ = runInto 10 10 stamp
+
+      expectCell g 0 0 (ValueSome 1) "canvas fills the group"
+      expectCell g 3 1 (ValueSome 1) "canvas fills the group"
+      expectCell g 1 0 (ValueSome 2) "centered child start"
+      expectCell g 2 1 (ValueSome 2) "centered child end"
+      expectCell g 4 0 ValueNone "group does not stretch"
+
+    testCase "weather replaces box-wide with a probability"
+    <| fun _ ->
+      let stamp = Stamp.box 2 1 [ Flow.fill 1; Flow.weather 1 2 1.0f 3 ]
+      let g, _ = runInto 4 1 stamp
+
+      expectCell g 0 0 (ValueSome 2) "weathered"
+      expectCell g 1 0 (ValueSome 2) "weathered"
   ]
