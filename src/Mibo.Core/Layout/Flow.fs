@@ -14,7 +14,8 @@ type CellRect = { X: int; Y: int; W: int; H: int }
 type Landmarks = {
   Width: int
   Height: int
-  /// Resolved rectangle of every `Stamp.named` element (unique, last wins).
+  /// Resolved rectangle of every `Stamp.named` element (unique; a duplicate
+  /// name throws).
   Named: Dictionary<string, CellRect>
   /// Rectangles grouped by tag, one entry per `Stamp.tagged` element.
   Tagged: Dictionary<string, CellRect list>
@@ -80,7 +81,8 @@ type Track =
 
 /// Edge anchoring flags for `Flow.dock`. Combine with `|||`, for example
 /// `Dock.Top ||| Dock.CenterX`. When opposite edges are set the top/left edge
-/// wins; `Stretch` wins over the edge flags of its axis.
+/// wins; `Stretch` wins over the edge flags of its axis. A zero footprint
+/// dimension stretches on its axis, with or without the `Stretch` flag.
 [<Flags>]
 type Dock =
   | None = 0
@@ -155,7 +157,8 @@ module internal FlowImpl =
   }
 
   /// Resolves the docked rectangle for `footprint` inside `bounds` with the
-  /// given anchor flags and inset.
+  /// given anchor flags and inset. A zero footprint dimension stretches over
+  /// its axis; `StretchX`/`StretchY` also stretch a nonzero footprint.
   let dockRect
     (flags: Dock)
     (inset: int)
@@ -164,8 +167,12 @@ module internal FlowImpl =
     : CellRect =
     let ins = max 0 inset
 
+    let stretchX = (flags &&& Dock.StretchX <> Dock.None) || footprint.W = 0
+
+    let stretchY = (flags &&& Dock.StretchY <> Dock.None) || footprint.H = 0
+
     let x =
-      if flags &&& Dock.StretchX <> Dock.None then
+      if stretchX then
         ins
       elif flags &&& Dock.Right <> Dock.None then
         bounds.W - footprint.W - ins
@@ -175,7 +182,7 @@ module internal FlowImpl =
         ins
 
     let y =
-      if flags &&& Dock.StretchY <> Dock.None then
+      if stretchY then
         ins
       elif flags &&& Dock.Bottom <> Dock.None then
         bounds.H - footprint.H - ins
@@ -184,17 +191,8 @@ module internal FlowImpl =
       else
         ins
 
-    let w =
-      if flags &&& Dock.StretchX <> Dock.None then
-        bounds.W - 2 * ins
-      else
-        footprint.W
-
-    let h =
-      if flags &&& Dock.StretchY <> Dock.None then
-        bounds.H - 2 * ins
-      else
-        footprint.H
+    let w = if stretchX then bounds.W - 2 * ins else footprint.W
+    let h = if stretchY then bounds.H - 2 * ins else footprint.H
 
     {
       X = bounds.X + x
@@ -206,9 +204,9 @@ module internal FlowImpl =
   let inline private overlaps (a: CellRect) (b: CellRect) : bool =
     a.X < b.X + b.W && a.Y < b.Y + b.H && a.X + a.W > b.X && a.Y + a.H > b.Y
 
-  /// Records one placed element under its name (unique, last wins) and under
-  /// each of its tags (additive), rasterizing the rectangle into the per-tag
-  /// cell bit grids.
+  /// Records one placed element under its name (unique; a duplicate name
+  /// throws) and under each of its tags (additive), rasterizing the
+  /// rectangle into the per-tag cell bit grids.
   let recordLandmarks
     (registry: Landmarks voption)
     (stamp: Stamp<'T>)
@@ -218,7 +216,13 @@ module internal FlowImpl =
     | ValueNone -> ()
     | ValueSome landmarks ->
       match stamp.Name with
-      | ValueSome n -> landmarks.Named.[n] <- r
+      | ValueSome n ->
+        match landmarks.Named.TryGetValue n with
+        | true, _ ->
+          invalidArg
+            "stamp"
+            ("duplicate element name '" + n + "': names must be unique")
+        | false, _ -> landmarks.Named.[n] <- r
       | ValueNone -> ()
 
       if not stamp.Tags.IsEmpty then
@@ -277,6 +281,28 @@ module internal FlowImpl =
 
         stamp.Paint child registry
 
+  /// Rejects an element that asks for main-axis expansion in a container
+  /// that ignores it: the request fails at construction instead of
+  /// silently doing nothing.
+  let checkNoExpand
+    (container: string)
+    (arg: string)
+    (stamp: Stamp<'T>)
+    : unit =
+    if stamp.Expand > 0 then
+      invalidArg
+        arg
+        (container
+         + " ignores Expand; expanded elements only work as row/column children")
+
+  let checkNoExpandAll
+    (container: string)
+    (arg: string)
+    (stamps: Stamp<'T> seq)
+    : unit =
+    for c in stamps do
+      checkNoExpand container arg c
+
 [<RequireQualifiedAccess>]
 module Stamp =
   /// Creates a leaf element with a fixed cell footprint.
@@ -314,7 +340,8 @@ module Stamp =
   /// Empty element that paints nothing.
   let empty() : Stamp<'T> = create 0 0 ignore
 
-  /// Names an element so `Flow.run` reports its resolved rectangle.
+  /// Names an element so `Flow.run` reports its resolved rectangle. Names
+  /// must be unique: a duplicate name throws at build time.
   let named (name: string) (stamp: Stamp<'T>) : Stamp<'T> = {
     stamp with
         Name = ValueSome name
@@ -331,6 +358,9 @@ module Stamp =
 
   /// Marks an element to share the leftover main-axis space of its container
   /// with weight 1. Expanded elements split the leftover space by weight.
+  /// Only `Flow.row` and `Flow.column` act on `Expand`; other containers
+  /// throw when a direct child carries it. Combinators (`beside`, `above`,
+  /// ...) drop it on their wrapper.
   let expand(stamp: Stamp<'T>) : Stamp<'T> = {
     stamp with
         Expand = max 1 stamp.Expand
@@ -633,8 +663,11 @@ module Flow =
                   lineCross <- max lineCross (crossOf line.[i])
 
                 // Wrapped lines are as tall as their tallest child; a single
-                // line spans the whole container.
-                let lineLen = if opts.Wrap then lineCross else crossLen
+                // line spans the whole container. A wrapped line without a
+                // cross-sized child has no height of its own, so it spans
+                // the container like a single line does.
+                let lineLen =
+                  if opts.Wrap && lineCross > 0 then lineCross else crossLen
 
                 let extent = Array.sum sizes + gap * (n - 1)
 
@@ -777,7 +810,7 @@ module Flow =
 
   /// Marks an element to share the leftover main-axis space of its container
   /// (flex-grow). Alias for `Stamp.expand`, so level documents can stay on
-  /// `Flow.*`.
+  /// `Flow.*`. Only `row`/`column` honor it; other containers reject it.
   let expand(stamp: Stamp<'T>) : Stamp<'T> = Stamp.expand stamp
 
   let private resolveTracks (total: int) (tracks: Track[]) (gap: int) : int[] =
@@ -902,11 +935,13 @@ module Flow =
             areas.[name] <- struct (nc0, nr0, nc1 - nc0, nr1 - nr0)
           | false, _ -> areas.[name] <- struct (c, r, 1, 1)
 
-    for (name, _) in opts.Places do
+    for (name, stamp) in opts.Places do
       if not(areas.ContainsKey name) then
         invalidArg
           "Places"
           ("area '" + name + "' is not defined in the grid template")
+
+      FlowImpl.checkNoExpand ("Flow.grid area '" + name + "'") "Places" stamp
 
     let placements = Array.ofList opts.Places
 
@@ -963,13 +998,16 @@ module Flow =
   /// Paints a stamp into a docked rectangle of `section`. The anchor comes
   /// from `flags` (`Dock.Top ||| Dock.CenterX` and so on); `inset` distances
   /// the element from the chosen edges. `StretchX`/`StretchY` span the
-  /// section minus twice the inset. Returns `section` for pipeline chaining.
+  /// section minus twice the inset, and a zero footprint dimension stretches
+  /// on its axis without them. Returns `section` for pipeline chaining.
   let dock
     (flags: Dock)
     (inset: int)
     (stamp: Stamp<'T>)
     (section: GridSection2D<'T>)
     : GridSection2D<'T> =
+    FlowImpl.checkNoExpand "Flow.dock" "stamp" stamp
+
     let r =
       FlowImpl.dockRect flags inset (FlowImpl.rectOf section) {
         X = 0
@@ -986,27 +1024,31 @@ module Flow =
   /// of whatever container it mounts into and occupies no flow space (zero
   /// footprint). The anchor comes from `flags` (`Dock.Top ||| Dock.CenterX`
   /// and so on); `inset` distances the element from the chosen edges.
-  /// `StretchX`/`StretchY` span the container minus twice the inset. Pair
-  /// with `overlay` to place docks over a base layout. Name the stamp you
-  /// pass in to report its docked rectangle.
-  let docked (flags: Dock) (inset: int) (stamp: Stamp<'T>) : Stamp<'T> = {
-    W = 0
-    H = 0
-    Expand = 0
-    Name = ValueNone
-    Tags = []
-    Paint =
-      fun s registry ->
-        let r =
-          FlowImpl.dockRect flags inset (FlowImpl.rectOf s) {
-            X = 0
-            Y = 0
-            W = stamp.W
-            H = stamp.H
-          }
+  /// `StretchX`/`StretchY` span the container minus twice the inset, and a
+  /// zero footprint dimension of the wrapped stamp stretches on its axis
+  /// without them. Pair with `overlay` to place docks over a base layout.
+  /// Name the stamp you pass in to report its docked rectangle.
+  let docked (flags: Dock) (inset: int) (stamp: Stamp<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Flow.docked" "stamp" stamp
 
-        FlowImpl.paintChild s r registry stamp
-  }
+    {
+      W = 0
+      H = 0
+      Expand = 0
+      Name = ValueNone
+      Tags = []
+      Paint =
+        fun s registry ->
+          let r =
+            FlowImpl.dockRect flags inset (FlowImpl.rectOf s) {
+              X = 0
+              Y = 0
+              W = stamp.W
+              H = stamp.H
+            }
+
+          FlowImpl.paintChild s r registry stamp
+    }
 
   /// A full-length strip docked to one edge (`Dock.Top`, `Dock.Bottom`,
   /// `Dock.Left` or `Dock.Right`) with the given thickness in cells:
@@ -1042,6 +1084,7 @@ module Flow =
   /// `grid`/`row`/`column` instead.
   let overlay(children: Stamp<'T> seq) : Stamp<'T> =
     let arr = Array.ofSeq children
+    FlowImpl.checkNoExpandAll "Flow.overlay" "children" arr
 
     if arr.Length = 0 then
       Stamp.empty()
@@ -1073,6 +1116,7 @@ module Flow =
     let w = max 0 w
     let h = max 0 h
     let arr = Array.ofList children
+    FlowImpl.checkNoExpandAll "Flow.group" "children" arr
 
     {
       W = w
@@ -1101,6 +1145,8 @@ module Flow =
     (stamp: Stamp<'T>)
     (section: GridSection2D<'T>)
     : GridSection2D<'T> =
+    FlowImpl.checkNoExpand "Flow.paint" "stamp" stamp
+
     stamp.Paint section ValueNone
     section
 
@@ -1113,6 +1159,8 @@ module Flow =
     (stamp: Stamp<'T>)
     (grid: CellGrid2D<'T>)
     : struct (CellGrid2D<'T> * Landmarks) =
+    FlowImpl.checkNoExpand "Flow.run" "stamp" stamp
+
     let landmarks: Landmarks = {
       Width = grid.Width
       Height = grid.Height

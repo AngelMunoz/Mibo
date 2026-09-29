@@ -6,7 +6,7 @@ open Mibo.Layout
 
 // Frostfall Keep — a full-surface example. It exercises the whole flow DSL:
 // box styles, canvas, group, strip, overlay, docked, grid areas and tracks,
-// expand, props, regions, named elements, landmark tags, scanTiles, and the
+// props, regions, named elements, landmark tags, scanTiles, and the
 // walking query. Read it top to bottom like a document: vocabulary first,
 // then the level, then build and query.
 
@@ -115,7 +115,7 @@ let keep =
 
 let frostfallKeep =
   Flow.overlay [
-    Flow.expand keep
+    keep
     Flow.strip Dock.Top 2 [ Flow.rect Wall Snow ] // the ramparts
     Flow.strip Dock.Bottom 1 [ Flow.fill Water ] // the moat
 

@@ -181,6 +181,24 @@ let tests =
         expectCell g 4 0 ValueNone "no room on line 1"
         expectCell g 0 1 (ValueSome 3) "wrapped child on line 2"
 
+      testCase "a wrapped line of zero-cross children stretches"
+      <| fun _ ->
+        let stamp =
+          Flow.row
+            {
+              FlowOpts.Default with
+                  Wrap = true
+                  Gap = 1
+            }
+            [ Stamp.box 2 0 [ Flow.fill 1 ]; Stamp.box 2 0 [ Flow.fill 2 ] ]
+
+        let g, _ = runInto 5 3 stamp
+
+        expectCell g 0 0 (ValueSome 1) "first child start"
+        expectCell g 1 2 (ValueSome 1) "first child spans the height"
+        expectCell g 3 0 (ValueSome 2) "second child start"
+        expectCell g 4 2 (ValueSome 2) "second child spans the height"
+
       testCase "justify pushes children to the end"
       <| fun _ ->
         let stamp =
@@ -211,6 +229,49 @@ let tests =
 
         expectCell g 5 0 (ValueSome 2) "clamped at container edge"
         expectCell g 6 0 ValueNone "beyond the container"
+    ]
+
+    testList "expand containers" [
+      testCase "overlay rejects expand children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Flow.overlay [ Stamp.expand(fillTile 1) ] |> ignore)
+          "overlay ignores Expand"
+
+      testCase "group rejects expand children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Flow.group 4 4 [ Stamp.expand(fillTile 1) ] |> ignore)
+          "group ignores Expand"
+
+      testCase "grid rejects expand places"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [ Fixed 4 ]
+              Rows = [ Fixed 4 ]
+              Gap = 0
+              Areas = [ "a" ]
+              Places = [ "a", Stamp.expand(tile 1 1 1) ]
+            }
+            |> ignore)
+          "grid ignores Expand"
+
+      testCase "docked rejects an expand stamp"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Stamp.expand(fillTile 1)
+            |> Flow.docked (Dock.CenterX ||| Dock.CenterY) 0
+            |> ignore)
+          "docked ignores Expand"
+
+      testCase "run rejects an expand root"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> runInto 5 5 (Stamp.expand(Stamp.empty())) |> ignore)
+          "run ignores Expand"
     ]
 
     testList "grid" [
@@ -395,6 +456,32 @@ let tests =
         expectCell g 1 4 (ValueSome 5) "stretch start"
         expectCell g 8 4 (ValueSome 5) "stretch end"
         expectCell g 9 4 ValueNone "right inset"
+
+      testCase "zero footprint stretches without the stretch flags"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Stamp.box 0 1 [ Flow.fill 7 ] |> Flow.docked Dock.Bottom 0
+          ]
+
+        let g, _ = runInto 6 4 stamp
+
+        expectCell g 0 3 (ValueSome 7) "stretched across the bottom row"
+        expectCell g 5 3 (ValueSome 7) "stretched across the bottom row"
+        expectCell g 0 2 ValueNone "above the docked row"
+
+      testCase "a docked canvas fills the container"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Flow.canvas [ Flow.fill 7 ]
+            |> Flow.docked (Dock.CenterX ||| Dock.CenterY) 0
+          ]
+
+        let g, _ = runInto 4 3 stamp
+
+        expectCell g 0 0 (ValueSome 7) "full bleed start"
+        expectCell g 3 2 (ValueSome 7) "full bleed end"
     ]
 
     testList "mount" [
@@ -557,14 +644,14 @@ let harbourTests =
         g
         |> Flow.run(
           Flow.overlay [
-            Stamp.expand harbour
+            harbour
 
             Stamp.box 12 3 [ Flow.fill Wall ]
             |> Flow.docked (Dock.Top ||| Dock.CenterX) 0
 
             // zero footprint width = stretch over the container
             Stamp.named "gate" (Stamp.box 0 1 [ Flow.fill Sand ])
-            |> Flow.docked (Dock.StretchX ||| Dock.Bottom) 0
+            |> Flow.docked Dock.Bottom 0
           ]
         )
 
@@ -785,6 +872,20 @@ let landmarkTests =
         "tile 1 is not dangerous"
 
       Expect.isFalse (Flow.isTag "safe" 4 0 scanned) "empty cell has no tags"
+
+    testCase "duplicate names throw"
+    <| fun _ ->
+      Expect.throwsT<System.ArgumentException>
+        (fun () ->
+          runInto
+            10
+            1
+            (Flow.row FlowOpts.Default [
+              Stamp.named "dup" (tile 1 1 1)
+              Stamp.named "dup" (tile 1 1 2)
+            ])
+          |> ignore)
+        "duplicate element name"
 
     testCase "tagged and named compose with docking"
     <| fun _ ->
