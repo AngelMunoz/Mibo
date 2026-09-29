@@ -39,6 +39,25 @@ let private mountInto
 
   g, result
 
+/// Tile vocabulary for the harbour example map.
+type Tile =
+  | Grass
+  | Path
+  | Water
+  | Sand
+  | Wall
+  | Tree
+  | Rock
+  | Stump
+  | Crate
+  | Stall
+  | Lamp
+  | Torch
+  | Fish
+  | Fruit
+  | Chest
+  | Spawn
+
 [<Tests>]
 let tests =
   testList "Flow" [
@@ -381,4 +400,148 @@ let tests =
 
         expectCell g 0 0 (ValueSome 1) "painted"
     ]
+  ]
+
+[<Tests>]
+let harbourTests =
+  testList "creative map: old harbour" [
+    testCase "a noisy harbour built from stamps, grid areas, and docks"
+    <| fun _ ->
+      // A fountain: pool with lantern posts at the corners.
+      let fountain =
+        Stamp.sized 5 5 (fun s ->
+          s |> Layout.fill 0 0 5 5 Water |> Layout.corners 0 0 5 5 Torch)
+
+      // A cobble plaza with weathered stones and the fountain at its heart.
+      let plaza =
+        Stamp.overlay
+          (Stamp.sized 30 20 (fun s ->
+            s
+            |> Layout.fill 0 0 30 20 Path
+            |> Layout.border 0 0 30 20 Grass
+            |> Layout.scatter 24 7 Rock))
+          (Stamp.offset 12 7 (Stamp.named "fountain" fountain))
+
+      // A market stall: awning over crates of goods.
+      let stall goods =
+        Stamp.above
+          (Stamp.sized 4 1 (fun s -> s |> Layout.fill 0 0 4 1 Stall))
+          (Stamp.sized 4 2 (fun s ->
+            s |> Layout.fill 0 0 4 2 Crate |> Layout.set 1 0 goods))
+
+      // The market: stalls wrap onto new rows when the area runs out.
+      let market =
+        Flow.row
+          {
+            FlowOpts.Default with
+                Gap = 1
+                Wrap = true
+                Align = End
+          }
+          [ stall Fish; stall Fruit; stall Fish; stall Fruit ]
+
+      // Woods: seeded tree noise, weathered into clearings, rock clusters,
+      // fallen stumps, and one chest in a hidden glade.
+      let woods =
+        Stamp.sized 18 30 (fun s ->
+          s
+          |> Layout.generate 0 0 18 30 (fun x y ->
+            if (x * 7 + y * 13) % 4 = 0 then Tree else Grass)
+          |> Layout.replaceScatter Tree Grass 0.3f 11
+          |> Layout.scatterStamp 4 5 (fun c ->
+            c |> Layout.circle 1 1 1 true Rock)
+          |> Layout.scatter 6 9 Stump
+          |> Layout.setIfEmpty 9 15 Chest)
+
+      // Docks: piers reaching into water, lanterns at the pier heads.
+      let docks =
+        Stamp.sized 34 10 (fun s ->
+          s
+          |> Layout.fill 0 0 34 10 Water
+          |> Layout.repeatY 4 0 6 Path
+          |> Layout.repeatY 14 0 8 Path
+          |> Layout.repeatY 26 0 6 Path
+          |> Layout.set 4 5 Lamp
+          |> Layout.set 14 7 Lamp
+          |> Layout.set 26 5 Lamp)
+
+      // The map: structure by layout, noise by stamps.
+      let harbour =
+        Flow.grid
+          [ Weight 2f; Weight 1f ]
+          [ Fixed 10; Weight 1f; Weight 1f ]
+          1
+          [ "plaza market"; "plaza woods"; "docks woods" ]
+          (fun area ->
+            area "plaza" plaza
+            area "market" market
+            area "woods" woods
+            area "docks" docks)
+
+      let g: CellGrid2D<Tile> =
+        CellGrid2D.create 60 44 (Vector2(1f, 1f)) Vector2.Zero
+
+      let expect x y (expected: Tile voption) message =
+        Expect.equal (CellGrid2D.get x y g) expected message
+
+      let mutable placed = { Positions = null }
+
+      g
+      |> Layout.run(fun s ->
+        // A banner pinned top-center over everything.
+        let banner = Stamp.sized 12 3 (fun b -> b |> Layout.fill 0 0 12 3 Wall)
+
+        let _ = s |> Flow.dock (Dock.Top ||| Dock.CenterX) 0 banner
+
+        // The harbour fills the level; a sand gate strip closes the bottom.
+        placed <-
+          Flow.mount
+            (Flow.column
+              {
+                FlowOpts.Default with
+                    Gap = 1
+                    Align = Stretch
+              }
+              [
+                Stamp.expand harbour
+                Stamp.named
+                  "gate"
+                  (Stamp.sized 60 1 (fun q -> q |> Layout.fill 0 0 60 1 Sand))
+              ])
+            s
+
+        s)
+      |> ignore
+
+      // The layout decided where things are; read the answer back.
+      Expect.equal
+        (Flow.tryPosition "gate" placed)
+        (ValueSome { X = 0; Y = 43; W = 60; H = 1 })
+        "gate strip at the bottom edge"
+
+      // Spawn the player at the middle of the gate strip.
+      match Flow.tryPosition "gate" placed with
+      | ValueSome gate -> CellGrid2D.set (gate.X + gate.W / 2) gate.Y Spawn g
+      | ValueNone -> ()
+
+      Expect.equal
+        (Flow.tryPosition "fountain" placed)
+        (ValueSome { X = 12; Y = 7; W = 5; H = 5 })
+        "fountain inside the plaza"
+
+      expect 30 43 (ValueSome Spawn) "spawn read back from the gate"
+
+      expect 12 7 (ValueSome Torch) "fountain lantern post"
+      expect 14 9 (ValueSome Water) "fountain pool"
+
+      expect 2 2 (ValueSome Path) "plaza cobble inside the fringe"
+
+      expect
+        41
+        0
+        (ValueSome Stall)
+        "market awning (wrapped lines align per line)"
+
+      expect 4 30 (ValueSome Path) "pier planks"
+      expect 4 36 (ValueSome Water) "docks water at the pier line"
   ]

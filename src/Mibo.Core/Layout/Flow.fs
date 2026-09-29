@@ -310,7 +310,8 @@ module Stamp =
   let inset (n: int) (stamp: Stamp<'T>) : Stamp<'T> = insetEx n n n n stamp
 
   /// Shifts the paint position of `stamp` by a signed offset. The footprint
-  /// grows to cover both the original and the shifted area.
+  /// grows to cover both the original and the shifted area. Negative offsets
+  /// shift within the enlarged footprint and clamp at the container edge.
   let offset (dx: int) (dy: int) (stamp: Stamp<'T>) : Stamp<'T> =
     let x0 = min 0 dx
     let y0 = min 0 dy
@@ -329,8 +330,8 @@ module Stamp =
           FlowImpl.paintChild
             s
             {
-              X = s.OffsetX - x0
-              Y = s.OffsetY - y0
+              X = s.OffsetX + dx - x0
+              Y = s.OffsetY + dy - y0
               W = stamp.W
               H = stamp.H
             }
@@ -615,6 +616,25 @@ module Flow =
           System.StringSplitOptions.RemoveEmptyEntries
         ))
       |> Seq.toArray
+
+    for line in cells do
+      if line.Length > colArr.Length then
+        invalidArg
+          "template"
+          ("grid template row has "
+           + string line.Length
+           + " columns but the grid defines "
+           + string colArr.Length
+           + " column tracks")
+
+    if cells.Length > rowArr.Length then
+      invalidArg
+        "template"
+        ("grid template has "
+         + string cells.Length
+         + " rows but the grid defines "
+         + string rowArr.Length
+         + " row tracks")
 
     // Bounding boxes of named areas, in track units.
     let areas = Dictionary<string, struct (int * int * int * int)>()
