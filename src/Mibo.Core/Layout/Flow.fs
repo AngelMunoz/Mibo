@@ -772,6 +772,14 @@ module Flow =
           style s
   }
 
+  /// A single-cell prop: one content, one cell. The workhorse of clutter.
+  let prop(content: 'T) : Stamp<'T> = Stamp.box 1 1 [ fill content ]
+
+  /// Marks an element to share the leftover main-axis space of its container
+  /// (flex-grow). Alias for `Stamp.expand`, so level documents can stay on
+  /// `Flow.*`.
+  let expand(stamp: Stamp<'T>) : Stamp<'T> = Stamp.expand stamp
+
   let private resolveTracks (total: int) (tracks: Track[]) (gap: int) : int[] =
     let n = tracks.Length
     let sizes = Array.zeroCreate<int> n
@@ -1028,8 +1036,10 @@ module Flow =
     docked flags 0 (Stamp.box w h styles)
 
   /// Stacks children over the full area of the container, later children
-  /// paint over earlier ones. The footprint is the largest child. Pair with
-  /// `docked` for full-bleed layers over a base layout.
+  /// paint over earlier ones. The footprint is the largest child. Layers are
+  /// full-bleed: every child paints into the whole assigned area, so size a
+  /// child with `docked`, or place fixed-footprint children through
+  /// `grid`/`row`/`column` instead.
   let overlay(children: Stamp<'T> seq) : Stamp<'T> =
     let arr = Array.ofSeq children
 
@@ -1055,7 +1065,9 @@ module Flow =
 
   /// A fixed-size group that lays its children out over its own area with
   /// overlay rules: each child paints into the group's box and later children
-  /// paint on top. The size is stated once, here; `canvas` children fill the
+  /// paint on top. Children are layers (full-bleed), so give a child a
+  /// specific rectangle with `docked`. The size is stated once, here;
+  /// `canvas` children fill the
   /// box and `docked` children anchor within it.
   let group (w: int) (h: int) (children: Stamp<'T> list) : Stamp<'T> =
     let w = max 0 w
@@ -1129,6 +1141,20 @@ module Flow =
     stamp.Paint section (ValueSome landmarks)
     struct (grid, landmarks)
 
+  /// `run` and `Landmarks.scanTiles` in one call: lays `stamp` out over the
+  /// grid, then derives the per-cell tag bit grids from the painted tiles
+  /// through `extract` (x, y, content -> tags). Use it when tiles carry
+  /// meaning the simulation should query:
+  ///
+  /// `let struct (level, marks) = grid |> Flow.build tileTags levelBody`
+  let build
+    (extract: int -> int -> 'T -> string seq)
+    (stamp: Stamp<'T>)
+    (grid: CellGrid2D<'T>)
+    : struct (CellGrid2D<'T> * Landmarks) =
+    let struct (grid, landmarks) = run stamp grid
+    struct (grid, Landmarks.scanTiles extract grid landmarks)
+
   /// Looks up the resolved rectangle of a named element.
   let tryPosition (name: string) (landmarks: Landmarks) : CellRect voption =
     match landmarks.Named.TryGetValue name with
@@ -1156,5 +1182,7 @@ module Flow =
   /// A non-painting landmark: records `tags` over the element's whole
   /// rectangle. Equivalent to a tagless `Stamp.box`, so it lays out like any
   /// other child (fixed footprint in a grid area, `expand` in a row, ...).
+  /// Place it through containers that honor footprints (grid areas,
+  /// row/column); inside `overlay`/`group` layers, dock it.
   let region (tags: string list) (w: int) (h: int) : Stamp<'T> =
     Stamp.tagged tags (Stamp.box w h [])

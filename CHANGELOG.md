@@ -10,6 +10,8 @@
 
 - **Core:** landmark tags for the flow DSL. `Stamp.tagged [ "safe-zone" ]` groups an element's resolved rectangle under opaque string tags (additive, many elements per tag, many tags per element), `Flow.region [ "no-build" ] w h` is the non-painting extent version, and every tagged rectangle rasterizes into a per-tag bit grid. `Flow.isTag "no-build" x y` then answers "is this cell tagged" in one array read for walking-style queries, and `Flow.taggedRects` returns the group's rectangles. `Flow.scanTiles` derives cell tags from the painted tiles through a game-supplied extraction function, so irregular regions (noise-carved woods, scattered props) support the same queries while the engine never interprets the tags. `MountResult` is now `Landmarks`, carrying named positions, tag groups, and the cell grids.
 
+- **Core:** authoring sugars for the flow DSL. `Flow.prop` is a single-cell prop, `Flow.expand` keeps level documents on `Flow.*` (alias of `Stamp.expand`), and `Flow.build` lays a level out and derives its cell-tag bit grids in one call instead of `run` plus `scanTiles`. Layer containers document their full-bleed contract: children paint into the whole assigned area, so sized children go through `docked` and footprint-honoring containers (`grid` areas, `row`/`column`).
+
 
 ## [5.1.0] - 2026-09-05
 
