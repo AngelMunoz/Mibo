@@ -81,8 +81,24 @@ type FlowOpts = {
     Wrap = false
   }
 
-/// Result of `Flow.mount`: the resolved rectangle of every named element.
+/// Result of `Flow.run`: the resolved rectangle of every named element.
 type MountResult = { Positions: Positions }
+
+/// Options and content for `Flow.grid`: track sizes, the area template, the
+/// gap between tracks, and the stamps placed into named areas. Area names
+/// must appear in `Areas`; every name in `Places` must match a template area.
+type GridOpts<'T> = {
+  /// Column tracks; `Fixed` tracks count toward the intrinsic footprint.
+  Cols: Track list
+  /// Row tracks; `Fixed` tracks count toward the intrinsic footprint.
+  Rows: Track list
+  /// Empty cells between tracks.
+  Gap: int
+  /// Grid-area template strings (`"main main side"`; `.` is an empty cell).
+  Areas: string list
+  /// Stamps placed into named template areas.
+  Places: (string * Stamp<'T>) list
+}
 
 module internal FlowImpl =
 
@@ -92,6 +108,55 @@ module internal FlowImpl =
     W = s.Width
     H = s.Height
   }
+
+  /// Resolves the docked rectangle for `footprint` inside `bounds` with the
+  /// given anchor flags and inset.
+  let dockRect
+    (flags: Dock)
+    (inset: int)
+    (bounds: CellRect)
+    (footprint: CellRect)
+    : CellRect =
+    let ins = max 0 inset
+
+    let x =
+      if flags &&& Dock.StretchX <> Dock.None then
+        ins
+      elif flags &&& Dock.Right <> Dock.None then
+        bounds.W - footprint.W - ins
+      elif flags &&& Dock.CenterX <> Dock.None then
+        (bounds.W - footprint.W) / 2
+      else
+        ins
+
+    let y =
+      if flags &&& Dock.StretchY <> Dock.None then
+        ins
+      elif flags &&& Dock.Bottom <> Dock.None then
+        bounds.H - footprint.H - ins
+      elif flags &&& Dock.CenterY <> Dock.None then
+        (bounds.H - footprint.H) / 2
+      else
+        ins
+
+    let w =
+      if flags &&& Dock.StretchX <> Dock.None then
+        bounds.W - 2 * ins
+      else
+        footprint.W
+
+    let h =
+      if flags &&& Dock.StretchY <> Dock.None then
+        bounds.H - 2 * ins
+      else
+        footprint.H
+
+    {
+      X = bounds.X + x
+      Y = bounds.Y + y
+      W = max 0 w
+      H = max 0 h
+    }
 
   let inline private overlaps (a: CellRect) (b: CellRect) : bool =
     a.X < b.X + b.W && a.Y < b.Y + b.H && a.X + a.W > b.X && a.Y + a.H > b.Y
@@ -156,7 +221,7 @@ module Stamp =
   /// Empty element that paints nothing.
   let empty() : Stamp<'T> = create 0 0 ignore
 
-  /// Names an element so `Flow.mount` reports its resolved rectangle.
+  /// Names an element so `Flow.run` reports its resolved rectangle.
   let named (name: string) (stamp: Stamp<'T>) : Stamp<'T> = {
     stamp with
         Name = ValueSome name
@@ -247,8 +312,8 @@ module Stamp =
             bottom
     }
 
-  /// Draws both elements at the same origin, `second` on top. Size is the
-  /// larger of the two footprints.
+  /// Draws both elements over the full area of the container, `second` on
+  /// top. Size is the larger of the two footprints.
   let overlay (first: Stamp<'T>) (second: Stamp<'T>) : Stamp<'T> =
     let w = max first.W second.W
     let h = max first.H second.H
@@ -260,15 +325,8 @@ module Stamp =
       Name = ValueNone
       Paint =
         fun s registry ->
-          let r = {
-            X = s.OffsetX
-            Y = s.OffsetY
-            W = w
-            H = h
-          }
-
-          FlowImpl.paintChild s r registry first
-          FlowImpl.paintChild s r registry second
+          FlowImpl.paintChild s (FlowImpl.rectOf s) registry first
+          FlowImpl.paintChild s (FlowImpl.rectOf s) registry second
     }
 
   /// Shrinks the paint area of `stamp` by explicit amounts per side.
@@ -590,26 +648,21 @@ module Flow =
   /// A CSS-grid-like container. Tracks size the columns and rows: `Fixed`
   /// tracks count toward the intrinsic footprint, `Weight` tracks share the
   /// leftover length of the assigned area, `Percent` tracks take a fraction
-  /// of it. `template` uses CSS grid-area strings (`"main main side"` spans
-  /// columns, `.` is an empty cell). `fill` places stamps into named areas:
+  /// of it. `Areas` uses CSS grid-area strings (`"main main side"` spans
+  /// columns, `.` is an empty cell). Every place in `Places` must name an
+  /// area from the template:
   ///
-  /// `grid [ Fixed 20; Weight 1f ] [ Fixed 6 ] 1 [ "map side" ] (fun place -> place "map" dungeon)`
-  let grid
-    (cols: Track seq)
-    (rows: Track seq)
-    (gap: int)
-    (template: string seq)
-    (fill: (string -> Stamp<'T> -> unit) -> unit)
-    : Stamp<'T> =
-    let colArr = Array.ofSeq cols
-    let rowArr = Array.ofSeq rows
-    let gap = max 0 gap
+  /// `grid { Cols = [ Fixed 20; Weight 1f ]; Rows = [ Fixed 6 ]; Gap = 1; Areas = [ "map side" ]; Places = [ "map", dungeon ] }`
+  let grid(opts: GridOpts<'T>) : Stamp<'T> =
+    let colArr = Array.ofList opts.Cols
+    let rowArr = Array.ofList opts.Rows
+    let gap = max 0 opts.Gap
 
     if colArr.Length = 0 || rowArr.Length = 0 then
-      invalidArg "cols" "grid needs at least one column track and one row track"
+      invalidArg "Cols" "grid needs at least one column track and one row track"
 
     let cells =
-      template
+      opts.Areas
       |> Seq.map(fun line ->
         line.Split(
           [| ' '; '\t' |],
@@ -620,7 +673,7 @@ module Flow =
     for line in cells do
       if line.Length > colArr.Length then
         invalidArg
-          "template"
+          "Areas"
           ("grid template row has "
            + string line.Length
            + " columns but the grid defines "
@@ -629,7 +682,7 @@ module Flow =
 
     if cells.Length > rowArr.Length then
       invalidArg
-        "template"
+        "Areas"
         ("grid template has "
          + string cells.Length
          + " rows but the grid defines "
@@ -655,15 +708,13 @@ module Flow =
             areas.[name] <- struct (nc0, nr0, nc1 - nc0, nr1 - nr0)
           | false, _ -> areas.[name] <- struct (c, r, 1, 1)
 
-    let placements = ResizeArray<string * Stamp<'T>>()
-
-    fill(fun name stamp ->
+    for (name, _) in opts.Places do
       if not(areas.ContainsKey name) then
         invalidArg
-          "fill"
+          "Places"
           ("area '" + name + "' is not defined in the grid template")
 
-      placements.Add(name, stamp))
+    let placements = Array.ofList opts.Places
 
     let wFixed =
       colArr
@@ -719,53 +770,66 @@ module Flow =
     (stamp: Stamp<'T>)
     (section: GridSection2D<'T>)
     : GridSection2D<'T> =
-    let r = FlowImpl.rectOf section
-    let ins = max 0 inset
-
-    let x =
-      if flags &&& Dock.StretchX <> Dock.None then
-        ins
-      elif flags &&& Dock.Right <> Dock.None then
-        r.W - stamp.W - ins
-      elif flags &&& Dock.CenterX <> Dock.None then
-        (r.W - stamp.W) / 2
-      else
-        ins
-
-    let y =
-      if flags &&& Dock.StretchY <> Dock.None then
-        ins
-      elif flags &&& Dock.Bottom <> Dock.None then
-        r.H - stamp.H - ins
-      elif flags &&& Dock.CenterY <> Dock.None then
-        (r.H - stamp.H) / 2
-      else
-        ins
-
-    let w =
-      if flags &&& Dock.StretchX <> Dock.None then
-        r.W - 2 * ins
-      else
-        stamp.W
-
-    let h =
-      if flags &&& Dock.StretchY <> Dock.None then
-        r.H - 2 * ins
-      else
-        stamp.H
-
-    FlowImpl.paintChild
-      section
-      {
-        X = r.X + x
-        Y = r.Y + y
-        W = max 0 w
-        H = max 0 h
+    let r =
+      FlowImpl.dockRect flags inset (FlowImpl.rectOf section) {
+        X = 0
+        Y = 0
+        W = stamp.W
+        H = stamp.H
       }
-      ValueNone
-      stamp
+
+    FlowImpl.paintChild section r ValueNone stamp
 
     section
+
+  /// A docked element for composition: paints `stamp` into a docked rectangle
+  /// of whatever container it mounts into and occupies no flow space (zero
+  /// footprint). The anchor comes from `flags` (`Dock.Top ||| Dock.CenterX`
+  /// and so on); `inset` distances the element from the chosen edges.
+  /// `StretchX`/`StretchY` span the container minus twice the inset. Pair
+  /// with `overlay` to place docks over a base layout.
+  let docked (flags: Dock) (inset: int) (stamp: Stamp<'T>) : Stamp<'T> = {
+    W = 0
+    H = 0
+    Expand = 0
+    Name = ValueNone
+    Paint =
+      fun s registry ->
+        let r =
+          FlowImpl.dockRect flags inset (FlowImpl.rectOf s) {
+            X = 0
+            Y = 0
+            W = stamp.W
+            H = stamp.H
+          }
+
+        FlowImpl.paintChild s r registry stamp
+  }
+
+  /// Stacks children over the full area of the container, later children
+  /// paint over earlier ones. The footprint is the largest child. Pair with
+  /// `docked` for full-bleed layers over a base layout.
+  let overlay(children: Stamp<'T> seq) : Stamp<'T> =
+    let arr = Array.ofSeq children
+
+    if arr.Length = 0 then
+      Stamp.empty()
+    else
+      let w = arr |> Array.map(fun c -> c.W) |> Array.max
+      let h = arr |> Array.map(fun c -> c.H) |> Array.max
+
+      {
+        W = w
+        H = h
+        Expand = 0
+        Name = ValueNone
+        Paint =
+          fun s registry ->
+            let r = FlowImpl.rectOf s
+
+            for c in arr do
+              FlowImpl.paintChild s r registry c
+      }
 
   /// Paints a stamp with its top-left at the section origin and returns the
   /// section, for use in existing `Layout.*` pipelines. Records no positions.
@@ -776,17 +840,36 @@ module Flow =
     stamp.Paint section ValueNone
     section
 
-  /// Lays a stamp out inside `section` and reports the resolved rectangle of
-  /// every named element it contains.
-  let mount (stamp: Stamp<'T>) (section: GridSection2D<'T>) : MountResult =
+  /// Lays a stamp out over the whole grid and returns the grid together with
+  /// the resolved rectangles of every named element it contains:
+  ///
+  /// `let struct (level, placed) = grid |> Flow.run levelBody`
+  let run
+    (stamp: Stamp<'T>)
+    (grid: CellGrid2D<'T>)
+    : struct (CellGrid2D<'T> * MountResult) =
     let positions = Positions()
 
     match stamp.Name with
-    | ValueSome n -> positions.[n] <- FlowImpl.rectOf section
+    | ValueSome n ->
+      positions.[n] <- {
+        X = 0
+        Y = 0
+        W = grid.Width
+        H = grid.Height
+      }
     | ValueNone -> ()
 
+    let section: GridSection2D<'T> = {
+      BackingGrid = grid
+      OffsetX = 0
+      OffsetY = 0
+      Width = grid.Width
+      Height = grid.Height
+    }
+
     stamp.Paint section (ValueSome positions)
-    { Positions = positions }
+    struct (grid, { Positions = positions })
 
   /// Looks up the resolved rectangle of a named element.
   let tryPosition (name: string) (result: MountResult) : CellRect voption =

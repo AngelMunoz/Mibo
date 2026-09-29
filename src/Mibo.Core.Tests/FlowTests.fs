@@ -22,22 +22,14 @@ let private expectCell
   =
   Expect.equal (CellGrid2D.get x y g) expected message
 
-let private mountInto
+let private runInto
   (w: int)
   (h: int)
   (stamp: Stamp<int>)
   : CellGrid2D<int> * MountResult =
   let g = mkGrid w h
-
-  let mutable result = { Positions = null }
-
-  g
-  |> Layout.run(fun s ->
-    result <- Flow.mount stamp s
-    s)
-  |> ignore
-
-  g, result
+  let struct (g, placed) = g |> Flow.run stamp
+  g, placed
 
 /// Tile vocabulary for the harbour example map.
 type Tile =
@@ -98,7 +90,7 @@ let tests =
       testCase "sized wraps a section pipeline"
       <| fun _ ->
         let stamp = Stamp.sized 4 3 (fun s -> s |> Layout.border 0 0 4 3 7)
-        let g, _ = mountInto 6 5 stamp
+        let g, _ = runInto 6 5 stamp
 
         expectCell g 0 0 (ValueSome 7) "border corner"
         expectCell g 3 2 (ValueSome 7) "border corner"
@@ -120,7 +112,7 @@ let tests =
         let stamp =
           Flow.row { FlowOpts.Default with Gap = 2 } [ tile 3 1 1; tile 3 1 2 ]
 
-        let g, _ = mountInto 20 1 stamp
+        let g, _ = runInto 20 1 stamp
 
         expectCell g 0 0 (ValueSome 1) "first child start"
         expectCell g 2 0 (ValueSome 1) "first child end"
@@ -134,7 +126,7 @@ let tests =
         let stamp =
           Flow.row FlowOpts.Default [ tile 1 1 1; Stamp.expand(fillTile 2) ]
 
-        let g, _ = mountInto 10 1 stamp
+        let g, _ = runInto 10 1 stamp
 
         expectCell g 0 0 (ValueSome 1) "fixed child"
         expectCell g 1 0 (ValueSome 2) "expanded child start"
@@ -148,7 +140,7 @@ let tests =
             Stamp.expandWeight 3 (fillTile 2)
           ]
 
-        let g, _ = mountInto 8 1 stamp
+        let g, _ = runInto 8 1 stamp
 
         expectCell g 1 0 (ValueSome 1) "weight 1 ends at 1/4"
         expectCell g 2 0 (ValueSome 2) "weight 3 starts at 1/4"
@@ -165,7 +157,7 @@ let tests =
             }
             [ tile 2 1 1; tile 2 2 2 ]
 
-        let g, _ = mountInto 10 5 stamp
+        let g, _ = runInto 10 5 stamp
 
         expectCell g 4 0 (ValueSome 1) "centered tile start"
         expectCell g 5 0 (ValueSome 1) "centered tile end"
@@ -183,7 +175,7 @@ let tests =
             tile 2 1 3
           ]
 
-        let g, _ = mountInto 5 3 stamp
+        let g, _ = runInto 5 3 stamp
 
         expectCell g 0 0 (ValueSome 1) "line 1 child 1"
         expectCell g 2 0 (ValueSome 2) "line 1 child 2"
@@ -195,7 +187,7 @@ let tests =
         let stamp =
           Flow.row { FlowOpts.Default with Justify = End } [ tile 3 1 1 ]
 
-        let g, _ = mountInto 10 1 stamp
+        let g, _ = runInto 10 1 stamp
 
         expectCell g 6 0 ValueNone "before children"
         expectCell g 7 0 (ValueSome 1) "justified start"
@@ -216,7 +208,7 @@ let tests =
         let stamp =
           Flow.row FlowOpts.Default [ tile 3 1 1; Stamp.expand(fillTile 2) ]
 
-        let _ = Flow.mount stamp section
+        let _ = Flow.paint stamp section
 
         expectCell g 5 0 (ValueSome 2) "clamped at container edge"
         expectCell g 6 0 ValueNone "beyond the container"
@@ -226,16 +218,15 @@ let tests =
       testCase "fixed tracks and template areas"
       <| fun _ ->
         let stamp =
-          Flow.grid
-            [ Fixed 4; Fixed 6 ]
-            [ Fixed 2; Fixed 3 ]
-            1
-            [ "a a"; "b ." ]
-            (fun place ->
-              place "a" (fillTile 1)
-              place "b" (fillTile 2))
+          Flow.grid {
+            Cols = [ Fixed 4; Fixed 6 ]
+            Rows = [ Fixed 2; Fixed 3 ]
+            Gap = 1
+            Areas = [ "a a"; "b ." ]
+            Places = [ "a", fillTile 1; "b", fillTile 2 ]
+          }
 
-        let g, _ = mountInto 12 7 stamp
+        let g, _ = runInto 12 7 stamp
 
         expectCell g 0 0 (ValueSome 1) "area a start"
         expectCell g 10 0 (ValueSome 1) "area a spans both columns"
@@ -249,17 +240,15 @@ let tests =
       testCase "weight tracks share the leftover width"
       <| fun _ ->
         let stamp =
-          Flow.grid
-            [ Fixed 2; Weight 1f; Weight 3f ]
-            [ Fixed 4 ]
-            0
-            [ "s m b" ]
-            (fun place ->
-              place "s" (fillTile 1)
-              place "m" (fillTile 2)
-              place "b" (fillTile 3))
+          Flow.grid {
+            Cols = [ Fixed 2; Weight 1f; Weight 3f ]
+            Rows = [ Fixed 4 ]
+            Gap = 0
+            Areas = [ "s m b" ]
+            Places = [ "s", fillTile 1; "m", fillTile 2; "b", fillTile 3 ]
+          }
 
-        let g, _ = mountInto 10 4 stamp
+        let g, _ = runInto 10 4 stamp
 
         expectCell g 1 0 (ValueSome 1) "fixed column"
         expectCell g 2 0 (ValueSome 2) "weight 1 column"
@@ -270,16 +259,15 @@ let tests =
       testCase "percent tracks take a fraction of the container"
       <| fun _ ->
         let stamp =
-          Flow.grid
-            [ Percent 0.5f; Fixed 2 ]
-            [ Fixed 1 ]
-            0
-            [ "a b" ]
-            (fun place ->
-              place "a" (fillTile 1)
-              place "b" (fillTile 2))
+          Flow.grid {
+            Cols = [ Percent 0.5f; Fixed 2 ]
+            Rows = [ Fixed 1 ]
+            Gap = 0
+            Areas = [ "a b" ]
+            Places = [ "a", fillTile 1; "b", fillTile 2 ]
+          }
 
-        let g, _ = mountInto 10 1 stamp
+        let g, _ = runInto 10 1 stamp
 
         expectCell g 4 0 (ValueSome 1) "percent column end"
         expectCell g 5 0 (ValueSome 2) "fixed column start"
@@ -289,22 +277,86 @@ let tests =
       <| fun _ ->
         Expect.throwsT<System.ArgumentException>
           (fun () ->
-            Flow.grid [ Fixed 1 ] [ Fixed 1 ] 0 [ "a" ] (fun place ->
-              place "z" (tile 1 1 1))
+            Flow.grid {
+              Cols = [ Fixed 1 ]
+              Rows = [ Fixed 1 ]
+              Gap = 0
+              Areas = [ "a" ]
+              Places = [ "z", tile 1 1 1 ]
+            }
             |> ignore)
           "unknown area"
 
       testCase "empty tracks throw"
       <| fun _ ->
         Expect.throwsT<System.ArgumentException>
-          (fun () -> Flow.grid [] [ Fixed 1 ] 0 [ "a" ] (fun _ -> ()) |> ignore)
+          (fun () ->
+            Flow.grid {
+              Cols = []
+              Rows = [ Fixed 1 ]
+              Gap = 0
+              Areas = [ "a" ]
+              Places = []
+            }
+            |> ignore)
           "no column tracks"
+
+      testCase "template wider than the tracks throws"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [ Fixed 1 ]
+              Rows = [ Fixed 1 ]
+              Gap = 0
+              Areas = [ "a b" ]
+              Places = []
+            }
+            |> ignore)
+          "template column overflow"
+    ]
+
+    testList "layers" [
+      testCase "overlay stacks full-bleed children, later on top"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            fillTile 1
+            Stamp.sized 1 1 (fun s -> s |> Layout.set 0 0 2)
+          ]
+
+        let g, _ = runInto 3 1 stamp
+
+        expectCell g 0 0 (ValueSome 2) "later child paints on top"
+        expectCell g 1 0 (ValueSome 1) "earlier child shows elsewhere"
+        expectCell g 2 0 (ValueSome 1) "base fills the whole area"
+
+      testCase
+        "docked elements anchor inside the container and report positions"
+      <| fun _ ->
+        let gate =
+          Stamp.named
+            "gate"
+            (Stamp.sized 4 1 (fun s -> s |> Layout.fill 0 0 s.Width s.Height 7))
+          |> Flow.docked (Dock.StretchX ||| Dock.Bottom) 0
+
+        let stamp = Flow.overlay [ gate ]
+
+        let g, placed = runInto 10 6 stamp
+
+        expectCell g 0 5 (ValueSome 7) "stretched across the bottom row"
+        expectCell g 9 5 (ValueSome 7) "stretched across the bottom row"
+
+        Expect.equal
+          (Flow.tryPosition "gate" placed)
+          (ValueSome { X = 0; Y = 5; W = 10; H = 1 })
+          "gate reports the docked rectangle"
     ]
 
     testList "dock" [
       testCase "top right corner with inset"
       <| fun _ ->
-        let g, _ = mountInto 10 6 (Stamp.empty())
+        let g, _ = runInto 10 6 (Stamp.empty())
 
         let _ =
           g |> Layout.run(Flow.dock (Dock.Top ||| Dock.Right) 1 (tile 2 1 9))
@@ -315,7 +367,7 @@ let tests =
 
       testCase "center of the section"
       <| fun _ ->
-        let g, _ = mountInto 10 6 (Stamp.empty())
+        let g, _ = runInto 10 6 (Stamp.empty())
 
         let _ =
           g
@@ -328,7 +380,7 @@ let tests =
 
       testCase "stretch spans the section minus insets"
       <| fun _ ->
-        let g, _ = mountInto 10 6 (Stamp.empty())
+        let g, _ = runInto 10 6 (Stamp.empty())
 
         let _ =
           g
@@ -351,7 +403,7 @@ let tests =
             Stamp.named "right" (tile 3 1 2)
           ]
 
-        let _, result = mountInto 20 1 stamp
+        let _, result = runInto 20 1 stamp
 
         Expect.equal
           (Flow.tryPosition "left" result)
@@ -374,11 +426,15 @@ let tests =
           Flow.column FlowOpts.Default [ Stamp.named "dot" (tile 1 1 1) ]
 
         let stamp =
-          Flow.grid [ Fixed 4 ] [ Fixed 4 ] 0 [ "a" ] (fun place ->
-            place "a" inner
-            place "a" (Stamp.named "area" (Stamp.empty())))
+          Flow.grid {
+            Cols = [ Fixed 4 ]
+            Rows = [ Fixed 4 ]
+            Gap = 0
+            Areas = [ "a" ]
+            Places = [ "a", inner; "a", Stamp.named "area" (Stamp.empty()) ]
+          }
 
-        let g, result = mountInto 4 4 stamp
+        let g, result = runInto 4 4 stamp
 
         Expect.equal
           (Flow.tryPosition "dot" result)
@@ -467,16 +523,18 @@ let harbourTests =
 
       // The map: structure by layout, noise by stamps.
       let harbour =
-        Flow.grid
-          [ Weight 2f; Weight 1f ]
-          [ Fixed 10; Weight 1f; Weight 1f ]
-          1
-          [ "plaza market"; "plaza woods"; "docks woods" ]
-          (fun area ->
-            area "plaza" plaza
-            area "market" market
-            area "woods" woods
-            area "docks" docks)
+        Flow.grid {
+          Cols = [ Weight 2f; Weight 1f ]
+          Rows = [ Fixed 10; Weight 1f; Weight 1f ]
+          Gap = 1
+          Areas = [ "plaza market"; "plaza woods"; "docks woods" ]
+          Places = [
+            "plaza", plaza
+            "market", market
+            "woods", woods
+            "docks", docks
+          ]
+        }
 
       let g: CellGrid2D<Tile> =
         CellGrid2D.create 60 44 (Vector2(1f, 1f)) Vector2.Zero
@@ -484,34 +542,23 @@ let harbourTests =
       let expect x y (expected: Tile voption) message =
         Expect.equal (CellGrid2D.get x y g) expected message
 
-      let mutable placed = { Positions = null }
+      // The banner floats over the map, the gate strip closes the bottom
+      // edge, and the harbour fills what is left. One expression, one pipe.
+      let struct (_, placed) =
+        g
+        |> Flow.run(
+          Flow.overlay [
+            Stamp.expand harbour
 
-      g
-      |> Layout.run(fun s ->
-        // A banner pinned top-center over everything.
-        let banner = Stamp.sized 12 3 (fun b -> b |> Layout.fill 0 0 12 3 Wall)
+            Stamp.sized 12 3 (fun b -> b |> Layout.fill 0 0 12 3 Wall)
+            |> Flow.docked (Dock.Top ||| Dock.CenterX) 0
 
-        let _ = s |> Flow.dock (Dock.Top ||| Dock.CenterX) 0 banner
-
-        // The harbour fills the level; a sand gate strip closes the bottom.
-        placed <-
-          Flow.mount
-            (Flow.column
-              {
-                FlowOpts.Default with
-                    Gap = 1
-                    Align = Stretch
-              }
-              [
-                Stamp.expand harbour
-                Stamp.named
-                  "gate"
-                  (Stamp.sized 60 1 (fun q -> q |> Layout.fill 0 0 60 1 Sand))
-              ])
-            s
-
-        s)
-      |> ignore
+            Stamp.named
+              "gate"
+              (Stamp.sized 60 1 (fun q -> q |> Layout.fill 0 0 60 1 Sand))
+            |> Flow.docked (Dock.StretchX ||| Dock.Bottom) 0
+          ]
+        )
 
       // The layout decided where things are; read the answer back.
       Expect.equal
