@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Core:** a prototype flow layout DSL for 2D level authoring (`Mibo.Layout.Flow`). Elements (`Stamp`) declare their footprint in cells and compose by arithmetic (`Stamp.beside`, `above`, `overlay`, `inset`, `offset`, `repeat`), so containers compute their own size and authors stop hand-counting offsets. `Flow.row`/`column` lay children out with gaps, cross-axis alignment, main-axis justification, wrapping, and flex-style `expand` shares; `Flow.grid` ports CSS grid to cells with `Fixed`/`Weight`/`Percent` tracks and grid-area template strings; `Flow.dock` pins elements to container edges with flag combinations. Any existing stamp pipeline joins the flow model through `Stamp.sized`, and everything still paints through the unchanged `Layout.*` primitives. `Flow.mount` also reports the resolved rectangle of every `Stamp.named` element, so levels can drive entity spawns from the same document that paints the tiles.
+
 ## [5.1.0] - 2026-09-05
 
 ### Added
