@@ -593,6 +593,11 @@ module Stamp =
 /// recording all run when the level builds (`Flow.run`/`Flow.build`), never
 /// per frame. Build once, then keep per-frame queries on `Flow.isTag`, or
 /// hoist the lookup with `Flow.tryTagGrid`.
+///
+/// Hex grids author identically: build the grid with
+/// `CellGrid2D.createHex` and run the same document. Authoring is
+/// cell-space, so geometry affects world positions and spatial queries
+/// only; reported rectangles are offset-space bounding boxes.
 [<RequireQualifiedAccess>]
 module Flow =
   let private linearStamp
@@ -832,6 +837,94 @@ module Flow =
     (generator: int -> int -> 'T)
     : BoxStyle<'T> =
     fun s -> Layout.scatterBy count seed generator s |> ignore
+
+  /// Paints one cell at local coordinates (x across, y down) — the
+  /// content atom.
+  let cell (x: int) (y: int) (content: 'T) : BoxStyle<'T> =
+    fun s -> Layout.set x y content s |> ignore
+
+  /// Paints a horizontal run of `count` cells from the box origin —
+  /// `background-repeat: repeat-x`.
+  let repeatX (count: int) (content: 'T) : BoxStyle<'T> =
+    fun s -> Layout.repeatX 0 0 count content s |> ignore
+
+  /// Paints a vertical run of `count` cells from the box origin —
+  /// `background-repeat: repeat-y`.
+  let repeatY (count: int) (content: 'T) : BoxStyle<'T> =
+    fun s -> Layout.repeatY 0 0 count content s |> ignore
+
+  /// Paints a Bresenham line between two local points — roads, pipes,
+  /// fences.
+  let line
+    (x1: int)
+    (y1: int)
+    (x2: int)
+    (y2: int)
+    (content: 'T)
+    : BoxStyle<'T> =
+    fun s -> Layout.line x1 y1 x2 y2 content s |> ignore
+
+  /// Paints a midpoint-circle around a local center; `filled` spans the
+  /// interior. Circle semantics are pixel-space; hex-true rings come from
+  /// `Hex2DSpatial.ring`.
+  let circle
+    (cx: int)
+    (cy: int)
+    (radius: int)
+    (filled: bool)
+    (content: 'T)
+    : BoxStyle<'T> =
+    fun s -> Layout.circle cx cy radius filled content s |> ignore
+
+  /// Paints a polygon from local vertices — `clip-path: polygon()`.
+  /// `filled` spans the interior.
+  let polygon
+    (points: (int * int) list)
+    (filled: bool)
+    (content: 'T)
+    : BoxStyle<'T> =
+    fun s ->
+      let verts =
+        points |> Array.ofList |> Array.map(fun (x, y) -> struct (x, y))
+
+      Layout.polygon verts filled content s |> ignore
+
+  /// Scatters `count` cells along the box border (seeded) — a weathered
+  /// edge, crumbling ramparts, asteroid fringes.
+  let scatterBorder (count: int) (seed: int) (content: 'T) : BoxStyle<'T> =
+    fun s ->
+      Layout.scatterBorder 0 0 s.Width s.Height count seed content s |> ignore
+
+  /// Scatters `count` cells along a line between two local points
+  /// (seeded) — a broken road, a dotted route.
+  let scatterLine
+    (x1: int)
+    (y1: int)
+    (x2: int)
+    (y2: int)
+    (count: int)
+    (seed: int)
+    (content: 'T)
+    : BoxStyle<'T> =
+    fun s -> Layout.scatterLine x1 y1 x2 y2 count seed content s |> ignore
+
+  /// Paints alternating cells along the box border.
+  let checkerBorder (odd: 'T) (even: 'T) : BoxStyle<'T> =
+    fun s -> Layout.checkerBorder 0 0 s.Width s.Height odd even s |> ignore
+
+  /// Erases the whole box.
+  let clear() : BoxStyle<'T> =
+    fun s -> Layout.clear 0 0 s.Width s.Height s |> ignore
+
+  /// Sets one cell only when it is still empty — the `:empty` selector.
+  /// Later styles still paint over it.
+  let setIfEmpty (x: int) (y: int) (content: 'T) : BoxStyle<'T> =
+    fun s -> Layout.setIfEmpty x y content s |> ignore
+
+  /// Rewrites the existing cells of the box through `mapping` — a derive
+  /// pass after other styles.
+  let map(mapping: 'T -> 'T) : BoxStyle<'T> =
+    fun s -> Layout.map 0 0 s.Width s.Height mapping s |> ignore
 
   /// A context-sized box of styles: paints whatever area its container
   /// assigns to it — a grid area, an overlay layer, a docked rectangle, an

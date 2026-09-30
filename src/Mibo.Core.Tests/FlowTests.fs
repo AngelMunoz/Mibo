@@ -1009,3 +1009,194 @@ let landmarkTests =
 
       Expect.isFalse (Flow.isTag "exit" 3 2 placed) "one above is not the gate"
   ]
+
+[<Tests>]
+let hexTests =
+  testList "Flow hex" [
+    testCase "a grid-template document runs over hex storage"
+    <| fun _ ->
+      let doc =
+        Flow.grid {
+          Cols = [ Fixed 4; Fixed 6 ]
+          Rows = [ Fixed 2; Fixed 2 ]
+          Gap = 0
+          Areas = [ "shore woods"; "shore woods" ]
+          Places = [
+            "shore", Stamp.named "shore" (fillTile 1)
+            "woods", fillTile 2
+          ]
+        }
+
+      let g =
+        CellGrid2D.createHex CellGeometry.PointyTopHex 32f 10 4 Vector2.Zero
+
+      let struct (g, placed) = g |> Flow.run doc
+
+      expectCell g 0 0 (ValueSome 1) "shore area start"
+      expectCell g 3 1 (ValueSome 1) "shore area end"
+      expectCell g 4 0 (ValueSome 2) "woods area start"
+      expectCell g 9 3 (ValueSome 2) "woods area end"
+
+      Expect.equal
+        (Flow.tryPosition "shore" placed)
+        (ValueSome { X = 0; Y = 0; W = 4; H = 4 })
+        "offset-space rect over hex storage"
+
+    testCase "named and tagged landmarks work on hex storage"
+    <| fun _ ->
+      let depot =
+        Stamp.tagged [ "depot" ] (Stamp.box 2 2 [ Flow.fill 3 ])
+        |> Stamp.named "depot"
+        |> Flow.docked (Dock.Bottom ||| Dock.Right) 0
+
+      let g = CellGrid2D.createHex CellGeometry.FlatTopHex 32f 6 4 Vector2.Zero
+
+      let struct (g, placed) = g |> Flow.run(Flow.overlay [ depot ])
+
+      expectCell g 4 2 (ValueSome 3) "depot paints at the bottom right"
+
+      Expect.equal
+        (Flow.tryPosition "depot" placed)
+        (ValueSome { X = 4; Y = 2; W = 2; H = 2 })
+        "docked rect on hex storage"
+
+      Expect.isTrue
+        (Flow.isTag "depot" 5 3 placed)
+        "tag bit grid indexes hex storage"
+
+      Expect.isFalse (Flow.isTag "depot" 3 3 placed) "outside the depot"
+
+    testCase "scanTiles derives tags from hex tiles"
+    <| fun _ ->
+      let doc = Flow.overlay [ Flow.canvas [ Flow.fill 9 ] ]
+
+      let g =
+        CellGrid2D.createHex CellGeometry.PointyTopHex 32f 3 2 Vector2.Zero
+
+      let struct (g, placed) = g |> Flow.run doc
+
+      let marks =
+        Landmarks.scanTiles
+          (fun _ _ t -> if t = 9 then [ "all" ] else [])
+          g
+          placed
+
+      Expect.isTrue (Flow.isTag "all" 0 0 marks) "first cell tagged"
+      Expect.isTrue (Flow.isTag "all" 2 1 marks) "last cell tagged"
+  ]
+
+[<Tests>]
+let cellOpTests =
+  testList "Flow cell ops" [
+    testCase "cell paints one cell"
+    <| fun _ ->
+      let g, _ = runInto 3 1 (Stamp.box 3 1 [ Flow.cell 1 0 5 ])
+
+      expectCell g 0 0 ValueNone "left of the cell"
+      expectCell g 1 0 (ValueSome 5) "the cell"
+      expectCell g 2 0 ValueNone "right of the cell"
+
+    testCase "repeatX paints a horizontal run"
+    <| fun _ ->
+      let g, _ = runInto 4 1 (Stamp.box 4 1 [ Flow.repeatX 3 7 ])
+
+      expectCell g 0 0 (ValueSome 7) "run start"
+      expectCell g 2 0 (ValueSome 7) "run end"
+      expectCell g 3 0 ValueNone "past the run"
+
+    testCase "repeatY paints a vertical run"
+    <| fun _ ->
+      let g, _ = runInto 1 4 (Stamp.box 1 4 [ Flow.repeatY 3 7 ])
+
+      expectCell g 0 0 (ValueSome 7) "run start"
+      expectCell g 0 2 (ValueSome 7) "run end"
+      expectCell g 0 3 ValueNone "past the run"
+
+    testCase "line paints a Bresenham diagonal"
+    <| fun _ ->
+      let g, _ = runInto 5 5 (Stamp.box 5 5 [ Flow.line 0 0 4 4 9 ])
+
+      expectCell g 0 0 (ValueSome 9) "start"
+      expectCell g 2 2 (ValueSome 9) "middle"
+      expectCell g 4 4 (ValueSome 9) "end"
+      expectCell g 0 4 ValueNone "off the line"
+
+    testCase "circle paints an outline or a disc"
+    <| fun _ ->
+      let outline, _ = runInto 7 7 (Stamp.box 7 7 [ Flow.circle 3 3 3 false 4 ])
+      let disc, _ = runInto 7 7 (Stamp.box 7 7 [ Flow.circle 3 3 3 true 4 ])
+
+      expectCell outline 3 0 (ValueSome 4) "top of the ring"
+      expectCell outline 3 3 ValueNone "hollow center"
+      expectCell disc 3 3 (ValueSome 4) "filled center"
+
+    testCase "polygon paints a filled rectangle"
+    <| fun _ ->
+      let g, _ =
+        runInto
+          4
+          3
+          (Stamp.box 4 3 [
+            Flow.polygon [ (0, 0); (3, 0); (3, 2); (0, 2) ] true 6
+          ])
+
+      expectCell g 0 0 (ValueSome 6) "corner"
+      expectCell g 3 1 (ValueSome 6) "right edge"
+      expectCell g 1 1 (ValueSome 6) "interior"
+
+    testCase "scatterBorder scatters up to count border cells"
+    <| fun _ ->
+      let g, _ = runInto 4 4 (Stamp.box 4 4 [ Flow.scatterBorder 3 11 2 ])
+
+      let mutable filled = 0
+      CellGrid2D.iter (fun _ _ _ -> filled <- filled + 1) g
+      Expect.isGreaterThan filled 0 "at least one scattered cell"
+      Expect.isLessThanOrEqual filled 3 "at most count scattered cells"
+
+    testCase "scatterLine scatters up to count line cells"
+    <| fun _ ->
+      let g, _ = runInto 5 1 (Stamp.box 5 1 [ Flow.scatterLine 0 0 4 0 2 7 3 ])
+
+      let mutable filled = 0
+      CellGrid2D.iter (fun _ _ _ -> filled <- filled + 1) g
+      Expect.isGreaterThan filled 0 "at least one scattered cell"
+      Expect.isLessThanOrEqual filled 2 "at most count scattered cells"
+
+    testCase "checkerBorder alternates the border only"
+    <| fun _ ->
+      let g, _ = runInto 4 4 (Stamp.box 4 4 [ Flow.checkerBorder 1 2 ])
+
+      expectCell g 0 0 (ValueSome 1) "odd border cell"
+      expectCell g 1 0 (ValueSome 2) "even border cell"
+      expectCell g 1 1 ValueNone "interior stays empty"
+
+    testCase "clear erases the box"
+    <| fun _ ->
+      let g, _ = runInto 3 2 (Stamp.box 3 2 [ Flow.fill 5; Flow.clear() ])
+
+      expectCell g 0 0 ValueNone "erased"
+      expectCell g 2 1 ValueNone "erased"
+
+    testCase "setIfEmpty respects occupied cells"
+    <| fun _ ->
+      let g, _ =
+        runInto
+          2
+          1
+          (Stamp.box 2 1 [
+            Flow.cell 0 0 1
+            Flow.setIfEmpty 0 0 8
+            Flow.setIfEmpty 1 0 8
+          ])
+
+      expectCell g 0 0 (ValueSome 1) "occupied cell keeps its content"
+      expectCell g 1 0 (ValueSome 8) "empty cell takes the content"
+
+    testCase "map rewrites existing cells"
+    <| fun _ ->
+      let g, _ =
+        runInto 2 2 (Stamp.box 2 2 [ Flow.fill 3; Flow.map(fun v -> v * 10) ])
+
+      expectCell g 0 0 (ValueSome 30) "mapped"
+      expectCell g 1 1 (ValueSome 30) "mapped"
+  ]
