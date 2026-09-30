@@ -2570,3 +2570,85 @@ let tests =
                       $"Hex triangle ({a},{b})->({c},{d})->({e},{f})"
     ]
   ]
+
+[<Tests>]
+let geometryGuardTests =
+  testList "grid geometry guards" [
+    testCase "Grid2DSpatial rejects hex grids"
+    <| fun _ ->
+      let grid: CellGrid2D<int> =
+        CellGrid2D.createHex CellGeometry.FlatTopHex 32f 4 4 Vector2.Zero
+
+      Expect.throwsT<System.ArgumentException>
+        (fun () -> Grid2DSpatial.neighbors4 1 1 grid |> ignore)
+        "neighbors4 rejects hex grids"
+
+      Expect.throwsT<System.ArgumentException>
+        (fun () ->
+          Grid2DSpatial.findPath
+            0
+            0
+            3
+            3
+            (fun _ _ -> true)
+            (fun _ _ _ _ -> 1f)
+            grid
+          |> ignore)
+        "findPath rejects hex grids"
+
+    testCase "Hex2DSpatial rejects square grids"
+    <| fun _ ->
+      let grid: CellGrid2D<int> =
+        CellGrid2D.create 4 4 (Vector2(32f, 32f)) Vector2.Zero
+
+      Expect.throwsT<System.ArgumentException>
+        (fun () -> Hex2DSpatial.distance 0 0 1 1 grid |> ignore)
+        "distance rejects square grids"
+
+      Expect.throwsT<System.ArgumentException>
+        (fun () ->
+          Hex2DSpatial.findPath
+            0
+            0
+            3
+            3
+            (fun _ _ -> true)
+            (fun _ _ _ _ -> 1f)
+            grid
+          |> ignore)
+        "findPath rejects square grids"
+
+    testCase "hex findPath matches the retired HexGrid golden path"
+    <| fun _ ->
+      let grid: CellGrid2D<int> =
+        CellGrid2D.createHex CellGeometry.FlatTopHex 32f 6 5 Vector2.Zero
+
+      CellGrid2D.set 2 1 1 grid
+      CellGrid2D.set 2 2 1 grid
+      CellGrid2D.set 2 3 1 grid
+
+      let path =
+        Hex2DSpatial.findPath
+          0
+          0
+          5
+          4
+          (fun c r -> CellGrid2D.get c r grid <> ValueSome 1)
+          (fun _ _ _ _ -> 1f)
+          grid
+
+      Expect.equal
+        path
+        (ValueSome [|
+          struct (0, 0)
+          struct (1, 0)
+          struct (1, 1)
+          struct (1, 2)
+          struct (1, 3)
+          struct (2, 4)
+          struct (3, 4)
+          struct (4, 4)
+          struct (5, 4)
+        |])
+        "the golden path around the obstacle column"
+  ]

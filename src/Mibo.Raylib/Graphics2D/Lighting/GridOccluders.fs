@@ -33,6 +33,11 @@ module GridOccluders =
     (edges: Edge)
     (grid: CellGrid2D<'T>)
     : Occluder2D[] =
+    if grid.Geometry <> CellGeometry.Square then
+      invalidArg
+        "grid"
+        "fromCellGrid extrudes square cell edges; hex cells have no axis-aligned edges"
+
     let occluders = ResizeArray<Occluder2D>()
     let cellW = grid.CellSize.X
     let cellH = grid.CellSize.Y

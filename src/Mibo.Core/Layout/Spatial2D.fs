@@ -10,6 +10,12 @@ module Grid2DSpatial =
 
   let inline internal toIndex x y w = x + y * w
 
+  let inline private requireSquare(grid: CellGrid2D<'T>) =
+    if grid.Geometry <> CellGeometry.Square then
+      invalidArg
+        "grid"
+        "Grid2DSpatial queries square grids; build the grid with CellGrid2D.create or query hex grids with Hex2DSpatial"
+
   /// Internal helpers for A* pathfinding. Not intended for direct use.
   module Internal =
 
@@ -101,6 +107,7 @@ module Grid2DSpatial =
 
   /// Returns the 4 cardinal (N/S/E/W) neighbors of (x, y), filtered to grid bounds.
   let inline neighbors4 x y (grid: CellGrid2D<'T>) : struct (int * int)[] =
+    requireSquare grid
     let struct (w, h) = struct (grid.Width, grid.Height)
     let mutable n = 0
 
@@ -139,6 +146,7 @@ module Grid2DSpatial =
 
   /// Returns the 8 surrounding neighbors (cardinal + diagonal), filtered to grid bounds.
   let inline neighbors8 x y (grid: CellGrid2D<'T>) : struct (int * int)[] =
+    requireSquare grid
     let struct (w, h) = struct (grid.Width, grid.Height)
     let mutable n = 0
 
@@ -183,6 +191,7 @@ module Grid2DSpatial =
     (worldPos: Vector2)
     (grid: CellGrid2D<'T>)
     : struct (int * int) voption =
+    requireSquare grid
     let fx = (worldPos.X - grid.Origin.X) / grid.CellSize.X
     let fy = (worldPos.Y - grid.Origin.Y) / grid.CellSize.Y
     let cx = int(floor fx)
@@ -196,6 +205,8 @@ module Grid2DSpatial =
   /// Returns all grid cells within Chebyshev distance `range` of (x, y).
   /// Includes the origin cell when range >= 0.
   let inline inRange x y range (grid: CellGrid2D<'T>) : struct (int * int)[] =
+    requireSquare grid
+
     if range < 0 then
       Array.empty
     else
@@ -233,6 +244,7 @@ module Grid2DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> bool)
     (grid: CellGrid2D<'T>)
     : bool =
+    requireSquare grid
     let struct (w, h) = struct (grid.Width, grid.Height)
     let dx = abs(x2 - x1)
     let dy = -abs(y2 - y1)
@@ -272,6 +284,7 @@ module Grid2DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> bool)
     (grid: CellGrid2D<'T>)
     : struct (int * int)[] =
+    requireSquare grid
     let struct (w, h) = struct (grid.Width, grid.Height)
     let scratch = ArrayPool.Shared.Rent(max (abs(x2 - x1)) (abs(y2 - y1)) + 1)
 
@@ -323,6 +336,7 @@ module Grid2DSpatial =
     ([<InlineIfLambda>] predicate: int -> int -> bool)
     (grid: CellGrid2D<'T>)
     : struct (int * int)[] =
+    requireSquare grid
     let struct (w, h) = struct (grid.Width, grid.Height)
 
     if w = 0 || h = 0 then
@@ -403,6 +417,7 @@ module Grid2DSpatial =
     ([<InlineIfLambda>] costFn: int -> int -> int -> int -> float32)
     (grid: CellGrid2D<'T>)
     : struct (int * int)[] voption =
+    requireSquare grid
     let struct (w, h) = struct (grid.Width, grid.Height)
 
     if
@@ -588,6 +603,12 @@ module Hex2DSpatial =
 
   let inline private sizeOf(grid: CellGrid2D<'T>) : float32 =
     CellGrid2D.hexSize grid
+
+  let inline private requireHex(grid: CellGrid2D<'T>) =
+    if grid.Geometry = CellGeometry.Square then
+      invalidArg
+        "grid"
+        "Hex2DSpatial queries hex grids; build the grid with CellGrid2D.createHex or query square grids with Grid2DSpatial"
 
   /// Internal helpers for hex spatial operations. Not intended for direct use.
   module Internal =
@@ -856,6 +877,7 @@ module Hex2DSpatial =
 
   /// Returns the 6 hex neighbors of (col, row), filtered to grid bounds.
   let inline neighbors col row (grid: HexGrid<'T>) : struct (int * int)[] =
+    requireHex grid
     let struct (w, h) = struct (grid.Width, grid.Height)
     let mutable n = 0
 
@@ -873,6 +895,7 @@ module Hex2DSpatial =
 
   /// Hex distance using cube coordinates.
   let inline distance c1 r1 c2 r2 (grid: HexGrid<'T>) : int =
+    requireHex grid
     let struct (q1, r1c, s1) = offsetToCube c1 r1 (orientationOf grid)
     let struct (q2, r2c, s2) = offsetToCube c2 r2 (orientationOf grid)
     (abs(q1 - q2) + abs(r1c - r2c) + abs(s1 - s2)) / 2
@@ -883,6 +906,7 @@ module Hex2DSpatial =
     (worldPos: Vector2)
     (grid: HexGrid<'T>)
     : struct (int * int) voption =
+    requireHex grid
     let hexW = grid.CellSize.X
     let hexH = grid.CellSize.Y
 
@@ -919,6 +943,8 @@ module Hex2DSpatial =
 
   /// Returns all hex cells within `range` hex steps of (col, row).
   let inline inRange col row range (grid: HexGrid<'T>) : struct (int * int)[] =
+    requireHex grid
+
     if range < 0 then
       Array.empty
     else
@@ -939,6 +965,8 @@ module Hex2DSpatial =
 
   /// Returns all hex cells exactly `radius` hex steps from (col, row).
   let inline ring col row radius (grid: HexGrid<'T>) : struct (int * int)[] =
+    requireHex grid
+
     if radius < 0 then
       Array.empty
     elif radius = 0 then
@@ -965,6 +993,8 @@ module Hex2DSpatial =
   /// Returns all hex cells within `radius` hex steps, in spiral order
   /// (center first, then ring 1, ring 2, ...).
   let inline spiral col row radius (grid: HexGrid<'T>) : struct (int * int)[] =
+    requireHex grid
+
     if radius < 0 then
       Array.empty
     else
@@ -996,6 +1026,7 @@ module Hex2DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> bool)
     (grid: HexGrid<'T>)
     : bool =
+    requireHex grid
     let struct (w, h) = struct (grid.Width, grid.Height)
     let struct (q1, r1c, s1) = offsetToCube c1 r1 (orientationOf grid)
     let struct (q2, r2c, s2) = offsetToCube c2 r2 (orientationOf grid)
@@ -1035,6 +1066,7 @@ module Hex2DSpatial =
     ([<InlineIfLambda>] isBlocked: int -> int -> bool)
     (grid: HexGrid<'T>)
     : struct (int * int)[] =
+    requireHex grid
     let struct (w, h) = struct (grid.Width, grid.Height)
     let struct (q1, r1c, s1) = offsetToCube c1 r1 (orientationOf grid)
     let struct (q2, r2c, s2) = offsetToCube c2 r2 (orientationOf grid)
@@ -1081,6 +1113,7 @@ module Hex2DSpatial =
     ([<InlineIfLambda>] predicate: int -> int -> bool)
     (grid: HexGrid<'T>)
     : struct (int * int)[] =
+    requireHex grid
     let struct (w, h) = struct (grid.Width, grid.Height)
 
     if w = 0 || h = 0 then
@@ -1129,6 +1162,7 @@ module Hex2DSpatial =
     ([<InlineIfLambda>] costFn: int -> int -> int -> int -> float32)
     (grid: HexGrid<'T>)
     : struct (int * int)[] voption =
+    requireHex grid
     let struct (w, h) = struct (grid.Width, grid.Height)
 
     if
