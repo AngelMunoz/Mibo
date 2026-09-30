@@ -1,3 +1,4 @@
+#nowarn "44"
 namespace Mibo.Layout3D
 
 open CellGrid3D

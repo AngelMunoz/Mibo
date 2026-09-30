@@ -388,6 +388,29 @@ let tests =
         expectCell g 5 0 (ValueSome 2) "fixed column start"
         expectCell g 6 0 (ValueSome 2) "fixed column end"
 
+      testCase "percent tracks clamp at the container length"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Percent 2f |]
+            Rows = [| Fixed 1 |]
+            Gap = 0
+            Areas = [| "a" |]
+            Places = [|
+              struct ("a", Stamp.named "a" (Flow.canvas [ Flow.fill 7 ]))
+            |]
+          }
+
+        let g, placed = runInto 6 1 stamp
+
+        expectCell g 0 0 (ValueSome 7) "clamp start"
+        expectCell g 5 0 (ValueSome 7) "clamp end"
+
+        Expect.equal
+          (Flow.tryPosition "a" placed)
+          (ValueSome { X = 0; Y = 0; W = 6; H = 1 })
+          "the reported rect stays inside the container"
+
       testCase "unknown area name throws"
       <| fun _ ->
         Expect.throwsT<System.ArgumentException>

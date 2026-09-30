@@ -1,3 +1,4 @@
+#nowarn "44"
 namespace Mibo.Layout3D
 
 open System.Buffers
@@ -6,6 +7,7 @@ open System.Numerics
 open System.Runtime.InteropServices
 open Mibo.Elmish
 open Mibo.Elmish.Graphics3D
+open Mibo.Layout
 
 /// <summary>
 /// Contextual object for instanced cell grid rendering.
@@ -81,6 +83,111 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
       ArrayPool<Matrix4x4>.Shared.Return arr
 
     snapshotPool.Clear()
+
+  member private _.ClearGroups() =
+    for KeyValueV(_, struct (transforms, _)) in storage do
+      transforms.Clear()
+
+  /// <summary>
+  /// Adds one cell of a 2D footprint grid as an instance: the transform
+  /// function receives the column's base world position — the footprint
+  /// position lifted to <c>y = 0</c> — so games scale the unit block by
+  /// the column's height there.
+  /// </summary>
+  member private _.AddCell (grid: CellGrid2D<'T>) x y content =
+    let footprint = CellGrid2D.getWorldPos x y grid
+    let basePos = Vector3(footprint.X, 0f, footprint.Y)
+    let key = getKey content
+    let transform = getTransform basePos content
+
+    match Dictionary.tryGetValue key storage with
+    | ValueSome struct (transforms, _) -> transforms.Add transform
+    | ValueNone ->
+      let list = ResizeArray<_>()
+      list.Add transform
+      storage[key] <- struct (list, content)
+
+  /// <summary>
+  /// Fills the context from every populated cell of a 2D footprint grid —
+  /// square or hex — and emits the instanced draws, one per key. This is
+  /// the heightmap replacement for the retired whole-volume renderers.
+  /// </summary>
+  member this.RenderInstanced(buffer: RenderBuffer3D, grid: CellGrid2D<'T>) =
+    this.ClearGroups()
+
+    CellGrid2D.iter (fun x y content -> this.AddCell grid x y content) grid
+
+    this.EmitInstanced(buffer)
+
+  /// <summary>
+  /// Like <c>RenderInstanced</c> but restricted to a world-space window
+  /// (left/top/right/bottom in world units). Hex grids cull with an
+  /// orientation-aware window. This is the heightmap replacement for the
+  /// retired volume-culled renderers.
+  /// </summary>
+  member this.RenderWindowInstanced
+    (
+      buffer: RenderBuffer3D,
+      left: int,
+      top: int,
+      right: int,
+      bottom: int,
+      grid: CellGrid2D<'T>
+    ) =
+    this.ClearGroups()
+
+    CellGrid2D.iterVisible
+      left
+      top
+      right
+      bottom
+      (fun x y content -> this.AddCell grid x y content)
+      grid
+
+    this.EmitInstanced(buffer)
+
+  /// <summary>
+  /// <c>RenderInstanced</c> wrapping each key's draws in a
+  /// <c>BeginEffect</c>/<c>EndEffect</c> scope when
+  /// <paramref name="shaderForKey"/> returns <c>ValueSome</c>.
+  /// </summary>
+  member this.RenderInstancedWithEffect
+    (
+      buffer: RenderBuffer3D,
+      grid: CellGrid2D<'T>,
+      shaderForKey: 'K -> Raylib_cs.Shader voption
+    ) =
+    this.ClearGroups()
+
+    CellGrid2D.iter (fun x y content -> this.AddCell grid x y content) grid
+
+    this.EmitInstancedWithEffect(buffer, shaderForKey)
+
+  /// <summary>
+  /// <c>RenderWindowInstanced</c> with per-key effect scoping, like
+  /// <c>RenderInstancedWithEffect</c>.
+  /// </summary>
+  member this.RenderWindowInstancedWithEffect
+    (
+      buffer: RenderBuffer3D,
+      left: int,
+      top: int,
+      right: int,
+      bottom: int,
+      grid: CellGrid2D<'T>,
+      shaderForKey: 'K -> Raylib_cs.Shader voption
+    ) =
+    this.ClearGroups()
+
+    CellGrid2D.iterVisible
+      left
+      top
+      right
+      bottom
+      (fun x y content -> this.AddCell grid x y content)
+      grid
+
+    this.EmitInstancedWithEffect(buffer, shaderForKey)
 
   member internal this.EmitInstanced(buffer: RenderBuffer3D) =
     let groups = this.Storage
@@ -509,6 +616,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality> with
 
   /// <summary>Emit instanced draw commands for every occupied cell of <paramref name="grid"/>,
   /// shaded by the default PBR instanced path.</summary>
+  [<System.Obsolete("Render a CellGrid2D footprint grid instead: RenderInstanced and RenderWindowInstanced")>]
   member ctx.RenderCellGridInstanced(buffer, grid: CellGrid3D<'T>) =
     CellGridRenderer3D.renderInstanced ctx grid buffer
 
@@ -516,6 +624,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality> with
   /// grouping cells by <paramref name="shaderForKey"/>: cells whose key maps to a shader are
   /// shaded by it (when it opts into instancing), keys mapped to ValueNone keep the default PBR
   /// instanced path. See docs/graphics3d/instancing.md.</summary>
+  [<System.Obsolete("Render a CellGrid2D footprint grid instead: RenderInstanced and RenderWindowInstanced")>]
   member ctx.RenderCellGridInstanced
     (buffer, grid: CellGrid3D<'T>, shaderForKey: 'K -> Raylib_cs.Shader voption)
     =
@@ -523,6 +632,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality> with
 
   /// <summary>Emit instanced draw commands for the occupied cells of <paramref name="grid"/>
   /// inside <paramref name="bounds"/>, shaded by the default PBR instanced path.</summary>
+  [<System.Obsolete("Render a CellGrid2D footprint grid instead: RenderInstanced and RenderWindowInstanced")>]
   member ctx.RenderCellGridVolumeInstanced
     (buffer, bounds: BoundingBox, grid: CellGrid3D<'T>)
     =
@@ -532,6 +642,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality> with
   /// inside <paramref name="bounds"/>, grouping cells by <paramref name="shaderForKey"/>:
   /// cells whose key maps to a shader are shaded by it (when it opts into instancing), keys
   /// mapped to ValueNone keep the default PBR instanced path. See docs/graphics3d/instancing.md.</summary>
+  [<System.Obsolete("Render a CellGrid2D footprint grid instead: RenderInstanced and RenderWindowInstanced")>]
   member ctx.RenderCellGridVolumeInstanced
     (
       buffer,
@@ -548,6 +659,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality> with
 
   /// <summary>Emit instanced draw commands for every occupied cell of the hex
   /// <paramref name="grid"/>, shaded by the default PBR instanced path.</summary>
+  [<System.Obsolete("Render a CellGrid2D footprint grid instead: RenderInstanced and RenderWindowInstanced")>]
   member ctx.RenderHexGridInstanced(buffer, grid: HexGrid3D<'T>) =
     HexGrid3DRenderer.renderInstanced ctx grid buffer
 
@@ -555,6 +667,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality> with
   /// <paramref name="grid"/>, grouping cells by <paramref name="shaderForKey"/>: cells whose key
   /// maps to a shader are shaded by it (when it opts into instancing), keys mapped to ValueNone
   /// keep the default PBR instanced path. See docs/graphics3d/instancing.md.</summary>
+  [<System.Obsolete("Render a CellGrid2D footprint grid instead: RenderInstanced and RenderWindowInstanced")>]
   member ctx.RenderHexGridInstanced
     (buffer, grid: HexGrid3D<'T>, shaderForKey: 'K -> Raylib_cs.Shader voption)
     =
@@ -563,6 +676,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality> with
   /// <summary>Emit instanced draw commands for the occupied cells of the hex
   /// <paramref name="grid"/> inside <paramref name="bounds"/>, shaded by the default PBR
   /// instanced path.</summary>
+  [<System.Obsolete("Render a CellGrid2D footprint grid instead: RenderInstanced and RenderWindowInstanced")>]
   member ctx.RenderHexGridVolumeInstanced
     (buffer, bounds: BoundingBox, grid: HexGrid3D<'T>)
     =
@@ -573,6 +687,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality> with
   /// <paramref name="shaderForKey"/>: cells whose key maps to a shader are shaded by it (when
   /// it opts into instancing), keys mapped to ValueNone keep the default PBR instanced path.
   /// See docs/graphics3d/instancing.md.</summary>
+  [<System.Obsolete("Render a CellGrid2D footprint grid instead: RenderInstanced and RenderWindowInstanced")>]
   member ctx.RenderHexGridVolumeInstanced
     (
       buffer,

@@ -11,7 +11,7 @@ The Layout engine provides a tile-based level design system for 2D games. It liv
 
 > **Author with [Flow](flow.html) first.** Flow wraps this engine with the CSS-style authoring DSL — grid template areas, flexbox rows and columns, docks, and landmark queries. The `Layout` pipelines documented here remain fully supported as the pixel-perfect escape hatch: every Flow style is a `Layout` pipeline underneath, and `Stamp.sized` wraps any of these pipelines as a Flow element. Reach for raw `Layout` when you want exact index math and manual section surgery. The `LayeredGrid2D` helper is obsolete — a layered grid is a dictionary of grids, and game code can own the dictionary.
 
-> **`Vector2` namespace (MonoGame).** The Core layout APIs (`CellGrid2D`, `LayeredGrid2D`, and the 3D variants) always take `System.Numerics.Vector2`. MonoGame projects `open Microsoft.Xna.Framework`, so a bare `Vector2(...)` resolves to XNA's vector type and the Core layout calls fail to compile (`FS0193`). Qualify those calls explicitly:
+> **`Vector2` namespace (MonoGame).** The Core layout API (`CellGrid2D`, square or hex) always takes `System.Numerics.Vector2`. MonoGame projects `open Microsoft.Xna.Framework`, so a bare `Vector2(...)` resolves to XNA's vector type and the Core layout calls fail to compile (`FS0193`). Qualify those calls explicitly:
 > ```fsharp
 > let grid =
 >     CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
@@ -184,19 +184,36 @@ Layout.setIfEmpty x y content section  // Conditional set
 
 ## Layered Composition
 
-For multi-layer content (background, foreground, decorations), use `LayeredGrid2D`. This manages a collection of grids sharing the same dimensions, keyed by an integer index (usually representing depth).
+`LayeredGrid2D` is obsolete — a layered grid is a dictionary of grids, and
+game code can own the dictionary. For multi-layer content (background,
+foreground, decorations), keep a `Dictionary<int, CellGrid2D<'T>>` keyed by
+a layer index (usually representing depth):
 
 ```fsharp
-let level =
-    LayeredGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
-    |> LayeredLayout.layer 0 (fun section ->
-        // Layer 0: Ground/Collision
-        section |> Layout.fill 0 45 100 5 GroundTile
-    )
-    |> LayeredLayout.layer 1 (fun section ->
-        // Layer 1: Foliage
-        section |> Layout.scatter 50 42 GrassDecoration
-    )
+let layers = Dictionary<int, CellGrid2D<Tile>>()
+
+let layer index paint =
+    let grid =
+        match Dictionary.tryGetValue index layers with
+        | ValueSome grid -> grid
+        | ValueNone ->
+            let grid =
+                CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
+
+            layers.[index] <- grid
+            grid
+
+    Layout.run paint grid
+
+layer 0 (fun section ->
+    // Layer 0: Ground/Collision
+    section |> Layout.fill 0 45 100 5 GroundTile
+) |> ignore
+
+layer 1 (fun section ->
+    // Layer 1: Foliage
+    section |> Layout.scatter 50 42 GrassDecoration
+) |> ignore
 ```
 
 ### Rendering Layers
@@ -205,7 +222,7 @@ When rendering a layered grid, you don't need to manually sort the layers. Inste
 
 ```fsharp
 // Render each layer into the buffer
-for KeyValue(layerIndex, layerGrid) in level.Layers do
+for KeyValueV(layerIndex, layerGrid) in layers do
     let drawTile x y tile =
         let pos = CellGrid2D.getWorldPos x y layerGrid
         // submit the draw command for tile at pos, tagged with layerIndex

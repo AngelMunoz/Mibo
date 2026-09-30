@@ -30,6 +30,7 @@ open Mibo
 open Mibo.Animation
 open Mibo.Elmish.Graphics2D
 open Mibo.Elmish.Graphics3D
+open Mibo.Layout
 open Mibo.Layout3D
 
 /// <summary>Rectangle witnesses (fills, outlines, rounded, gradients).</summary>
@@ -1504,6 +1505,88 @@ type Draw =
   //     draws in one scope; ValueNone falls through to the default PBR path
   //     (whole-grid shading: fun _ -> ValueSome shader).
   // ──────────────────────────────────────────────
+
+  /// <summary>Renders a 2D footprint grid (square or hex) instanced: one
+  /// instance per populated cell, one draw per key. The context's transform
+  /// function receives each column's base world position — the footprint
+  /// position lifted to <c>y = 0</c> — so games scale the unit block by the
+  /// column's height there.</summary>
+  [<Extension>]
+  static member inline renderFootprintInstanced<'Ctx, 'Buf, 'T
+    when 'Ctx: (member RenderInstanced: 'Buf * CellGrid2D<'T> -> unit)>
+    (buffer: 'Buf, ctx: 'Ctx, grid: CellGrid2D<'T>)
+    : 'Buf =
+    ctx.RenderInstanced(buffer, grid)
+    buffer
+
+  /// <summary>Like <c>renderFootprintInstanced</c>, wrapping each key's draws
+  /// in an effect scope when <paramref name="shaderForKey"/> returns
+  /// <c>ValueSome</c>; <c>ValueNone</c> keeps the default PBR instanced
+  /// path.</summary>
+  [<Extension>]
+  static member inline renderFootprintInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
+    when 'Ctx: (member RenderInstanced:
+      'Buf * CellGrid2D<'T> * ('Key -> 'S ValueOption) -> unit)
+    and 'Key: equality>
+    (
+      buffer: 'Buf,
+      ctx: 'Ctx,
+      grid: CellGrid2D<'T>,
+      [<InlineIfLambda>] shaderForKey: 'Key -> 'S ValueOption
+    ) : 'Buf =
+    ctx.RenderInstanced(buffer, grid, shaderForKey)
+    buffer
+
+  /// <summary>Like <c>renderFootprintInstanced</c> but restricted to a
+  /// world-space window (<paramref name="left"/>, <paramref name="top"/>,
+  /// <paramref name="right"/>, <paramref name="bottom"/> in world units);
+  /// hex grids cull with an orientation-aware window. The heightmap
+  /// replacement for the retired volume-culled grid renderers.</summary>
+  [<Extension>]
+  static member inline renderFootprintWindowInstanced<'Ctx, 'Buf, 'T
+    when 'Ctx: (member RenderWindowInstanced:
+      'Buf * int * int * int * int * CellGrid2D<'T> -> unit)>
+    (
+      buffer: 'Buf,
+      ctx: 'Ctx,
+      left: int,
+      top: int,
+      right: int,
+      bottom: int,
+      grid: CellGrid2D<'T>
+    ) : 'Buf =
+    ctx.RenderWindowInstanced(buffer, left, top, right, bottom, grid)
+    buffer
+
+  /// <summary>Like <c>renderFootprintWindowInstanced</c>, with per-key effect
+  /// scoping through <paramref name="shaderForKey"/>.</summary>
+  [<Extension>]
+  static member inline renderFootprintWindowInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
+    when 'Ctx: (member RenderWindowInstancedWithEffect:
+      'Buf * int * int * int * int * CellGrid2D<'T> * ('Key -> 'S ValueOption) ->
+        unit)
+    and 'Key: equality>
+    (
+      buffer: 'Buf,
+      ctx: 'Ctx,
+      left: int,
+      top: int,
+      right: int,
+      bottom: int,
+      grid: CellGrid2D<'T>,
+      [<InlineIfLambda>] shaderForKey: 'Key -> 'S ValueOption
+    ) : 'Buf =
+    ctx.RenderWindowInstancedWithEffect(
+      buffer,
+      left,
+      top,
+      right,
+      bottom,
+      grid,
+      shaderForKey
+    )
+
+    buffer
 
   /// <summary>Renders a cell grid instanced. If the context was built with the
   /// per-sub-mesh shader overload, each <c>ValueSome</c> sub-mesh is shaded by

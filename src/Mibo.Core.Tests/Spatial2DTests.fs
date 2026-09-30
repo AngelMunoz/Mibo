@@ -1,5 +1,7 @@
 module Mibo.Core.Tests.Spatial2D
 
+#nowarn "44"
+
 open Expecto
 open System.Numerics
 open Mibo.Layout

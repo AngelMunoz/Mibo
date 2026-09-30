@@ -34,8 +34,8 @@ the type it resolves to depends on which namespace is open.
 
 ### `Mibo.Core` always speaks `System.Numerics`
 
-`Mibo.Core`'s layout engines (`CellGrid2D`, `LayeredGrid2D`, `CellGrid3D`, hex
-variants), spatial indices, input-delta types, and 3D light records
+`Mibo.Core`'s layout engine (`CellGrid2D`, square or hex geometry), spatial
+indices, input-delta types, and 3D light records
 (`AmbientLight3D`/`DirectionalLight3D`/…) take `System.Numerics.Vector2`/
 `Vector3` on **both** backends. They are backend-agnostic and reference no
 graphics type.

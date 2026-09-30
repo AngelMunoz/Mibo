@@ -1,9 +1,12 @@
 module Mibo.Raylib.Tests.Layout3D
 
+#nowarn "44"
+
 open Expecto
 open System
 open System.Numerics
 open Raylib_cs
+open Mibo.Layout
 open Mibo.Layout3D
 open Mibo.Elmish.Graphics3D
 open Mibo.Elmish.Graphics
@@ -56,6 +59,13 @@ let private ctxFromTriples triples =
 let private singleCellGrid value =
   CellGrid3D.create 1 1 1 (Vector3(1f, 1f, 1f)) Vector3.Zero
   |> Layout3D.run(fun s -> s |> Layout3D.set 0 0 0 value)
+
+let private twoCellFootprintGrid left right =
+  let grid = CellGrid2D.create 8 1 (Vector2(16f, 16f)) Vector2.Zero
+
+  CellGrid2D.set 0 0 left grid
+  CellGrid2D.set 7 0 right grid
+  grid
 
 [<Tests>]
 let tests =
@@ -1083,6 +1093,41 @@ let tests =
 
         Expect.equal buf.Count 2 "two sub-meshes → two draws"
         Expect.equal (cmdSequence buf) [| "draw"; "draw" |] "no effect scope"
+
+      testCase "RenderInstanced draws a 2D footprint grid, one draw per key"
+      <| fun _ ->
+        use buf = new RenderBuffer3D()
+        let ctx = ctxFromPairs 1
+        let grid = twoCellFootprintGrid 0 7
+
+        ctx.RenderInstanced(buf, grid)
+
+        Expect.equal buf.Count 2 "two keys → two draws"
+        Expect.equal (cmdSequence buf) [| "draw"; "draw" |] "no effect scope"
+
+      testCase "RenderWindowInstanced culls to the world-space window"
+      <| fun _ ->
+        use buf = new RenderBuffer3D()
+        let ctx = ctxFromPairs 1
+        let grid = twoCellFootprintGrid 0 7
+
+        ctx.RenderWindowInstanced(buf, 0, 0, 100, 100, grid)
+        Expect.equal buf.Count 1 "the far column is outside the window"
+
+        ctx.RenderWindowInstanced(buf, 0, 0, 200, 200, grid)
+        Expect.equal buf.Count 3 "both keys after the wide window re-renders"
+
+      testCase
+        "Draw.renderFootprintWindowInstanced routes through the SRTP witness"
+      <| fun _ ->
+        use buf = new RenderBuffer3D()
+        let ctx = ctxFromPairs 1
+        let grid = twoCellFootprintGrid 0 7
+
+        Draw.renderFootprintWindowInstanced(buf, ctx, 0, 0, 100, 100, grid)
+        |> ignore
+
+        Expect.equal buf.Count 1 "the DSL call renders the windowed grid"
 
       testCase "legacy ctor + renderInstanced unchanged (regression)"
       <| fun _ ->

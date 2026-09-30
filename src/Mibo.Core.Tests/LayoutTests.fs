@@ -1,5 +1,7 @@
 module Mibo.Core.Tests.Layout
 
+#nowarn "44"
+
 open Expecto
 open System.Numerics
 open Mibo.Layout

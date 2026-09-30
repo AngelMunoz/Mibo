@@ -1,3 +1,4 @@
+#nowarn "44"
 namespace Mibo.Layout3D
 
 [<System.Obsolete("Author 3D as a 2D grid with per-column height")>]

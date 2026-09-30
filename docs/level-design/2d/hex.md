@@ -59,7 +59,7 @@ let board = CellGrid2D.createHex {
   Orientation = HexOrientation.FlatTop
   Width = 12
   Height = 10
-  Size = 48f
+  Radius = 48f
   Origin = Vector2.Zero
 }
 ```

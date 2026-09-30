@@ -2,6 +2,7 @@ namespace Mibo.Layout
 
 open System
 open System.Collections.Generic
+open Mibo.Elmish
 
 /// Resolved rectangle of a placed element, in grid cells.
 [<Struct>]
@@ -42,18 +43,16 @@ module Landmarks =
     : Landmarks =
     for y in 0 .. landmarks.Height - 1 do
       for x in 0 .. landmarks.Width - 1 do
-        match CellGrid2D.get x y grid with
-        | ValueNone -> ()
-        | ValueSome tile ->
+        CellGrid2D.get x y grid
+        |> ValueOption.iter(fun tile ->
           for tag in extract x y tile do
-            match landmarks.Cells.TryGetValue tag with
-            | true, cells -> cells.[x + y * landmarks.Width] <- true
-            | false, _ ->
-              let cells =
-                Array.create (landmarks.Width * landmarks.Height) false
+            let cells =
+              Dictionary.tryGetValue tag landmarks.Cells
+              |> ValueOption.defaultWith(fun () ->
+                Array.create (landmarks.Width * landmarks.Height) false)
 
-              cells.[x + y * landmarks.Width] <- true
-              landmarks.Cells.[tag] <- cells
+            cells.[x + y * landmarks.Width] <- true
+            landmarks.Cells.[tag] <- cells)
 
     landmarks
 
@@ -265,18 +264,16 @@ module internal FlowImpl =
     (stamp: Stamp<'T>)
     (r: CellRect)
     : unit =
-    match registry with
-    | ValueNone -> ()
-    | ValueSome landmarks ->
-      match stamp.Name with
-      | ValueSome n ->
-        match landmarks.Named.TryGetValue n with
-        | true, _ ->
+    registry
+    |> ValueOption.iter(fun landmarks ->
+      stamp.Name
+      |> ValueOption.iter(fun n ->
+        if landmarks.Named.ContainsKey n then
           invalidArg
             "stamp"
             ("duplicate element name '" + n + "': names must be unique")
-        | false, _ -> landmarks.Named.[n] <- r
-      | ValueNone -> ()
+
+        landmarks.Named.[n] <- r)
 
       if not stamp.Tags.IsEmpty then
         let x1 = max 0 r.X
@@ -286,25 +283,21 @@ module internal FlowImpl =
 
         for tag in stamp.Tags do
           let existing =
-            match landmarks.Tagged.TryGetValue tag with
-            | true, rects -> rects
-            | false, _ -> [||]
+            Dictionary.tryGetValue tag landmarks.Tagged
+            |> ValueOption.defaultValue [||]
 
           landmarks.Tagged.[tag] <- Array.append [| r |] existing
 
-          match landmarks.Cells.TryGetValue tag with
-          | true, cells ->
-            for y in y1 .. y2 - 1 do
-              for x in x1 .. x2 - 1 do
-                cells.[x + y * landmarks.Width] <- true
-          | false, _ ->
-            let cells = Array.create (landmarks.Width * landmarks.Height) false
+          let cells =
+            Dictionary.tryGetValue tag landmarks.Cells
+            |> ValueOption.defaultWith(fun () ->
+              Array.create (landmarks.Width * landmarks.Height) false)
 
-            for y in y1 .. y2 - 1 do
-              for x in x1 .. x2 - 1 do
-                cells.[x + y * landmarks.Width] <- true
+          for y in y1 .. y2 - 1 do
+            for x in x1 .. x2 - 1 do
+              cells.[x + y * landmarks.Width] <- true
 
-            landmarks.Cells.[tag] <- cells
+          landmarks.Cells.[tag] <- cells)
 
   /// Paints a child into `r`, skipping it when it lies fully outside the
   /// parent. The child section keeps the child's own origin, so stamps paint
@@ -1088,7 +1081,9 @@ module Flow =
         sizes.[i] <- v
         fixedSum <- fixedSum + v
       | Percent f ->
-        let v = max 0 (int(float32 total * f))
+        // A fraction over 1 clamps to the container length; unclamped, it
+        // would push later tracks and reported rectangles past the area.
+        let v = max 0 (min total (int(float32 total * f)))
         sizes.[i] <- v
         pctSum <- pctSum + v
       | Weight w -> weightTotal <- weightTotal + max 0f w
@@ -1184,16 +1179,17 @@ module Flow =
         let name = cells.[r].[c]
 
         if name <> "." then
-          match areas.TryGetValue name with
-          | true, struct (c0, r0, cs, rs) ->
-            let c1 = c0 + cs
-            let r1 = r0 + rs
-            let nc0 = min c0 c
-            let nc1 = max c1 (c + 1)
-            let nr0 = min r0 r
-            let nr1 = max r1 (r + 1)
-            areas.[name] <- struct (nc0, nr0, nc1 - nc0, nr1 - nr0)
-          | false, _ -> areas.[name] <- struct (c, r, 1, 1)
+          areas.[name] <-
+            Dictionary.tryGetValue name areas
+            |> ValueOption.map(fun struct (c0, r0, cs, rs) ->
+              let c1 = c0 + cs
+              let r1 = r0 + rs
+              let nc0 = min c0 c
+              let nc1 = max c1 (c + 1)
+              let nr0 = min r0 r
+              let nr1 = max r1 (r + 1)
+              struct (nc0, nr0, nc1 - nc0, nr1 - nr0))
+            |> ValueOption.defaultValue(struct (c, r, 1, 1))
 
     for struct (name, stamp) in opts.Places do
       if not(areas.ContainsKey name) then
@@ -1235,8 +1231,8 @@ module Flow =
           let rowOff = prefixOffsets rowSizes gap
 
           for struct (name, stamp) in placements do
-            match areas.TryGetValue name with
-            | true, struct (c0, r0, cs, rs) ->
+            Dictionary.tryGetValue name areas
+            |> ValueOption.iter(fun struct (c0, r0, cs, rs) ->
               let ax = assigned.X + colOff.[c0]
               let ay = assigned.Y + rowOff.[r0]
               let aw = spanSize colSizes c0 cs gap
@@ -1251,8 +1247,7 @@ module Flow =
                 s
                 { X = ax; Y = ay; W = w; H = h }
                 registry
-                stamp
-            | false, _ -> ()
+                stamp)
     }
 
   /// Paints the spec's `Stamp` into a docked rectangle of `section`. The
@@ -1469,26 +1464,23 @@ module Flow =
     struct (grid, Landmarks.scanTiles extract grid landmarks)
 
   /// Looks up the resolved rectangle of a named element.
-  let tryPosition (name: string) (landmarks: Landmarks) : CellRect voption =
-    match landmarks.Named.TryGetValue name with
-    | true, r -> ValueSome r
-    | false, _ -> ValueNone
+  let inline tryPosition
+    (name: string)
+    (landmarks: Landmarks)
+    : CellRect voption =
+    Dictionary.tryGetValue name landmarks.Named
 
   /// Returns every rectangle recorded under a tag, most recent first.
   /// Build-time/occasional queries; the per-cell hot path is `Flow.isTag`.
-  let taggedRects (tag: string) (landmarks: Landmarks) : CellRect[] =
-    match landmarks.Tagged.TryGetValue tag with
-    | true, rects -> rects
-    | false, _ -> [||]
+  let inline taggedRects (tag: string) (landmarks: Landmarks) : CellRect[] =
+    Dictionary.tryGetValue tag landmarks.Tagged |> ValueOption.defaultValue [||]
 
   /// The raw per-cell bit grid of `tag` (`x + y * landmarks.Width`), for hot
   /// loops: hoist the lookup out of the loop and read the array per cell.
   /// `ValueNone` when no cell carries the tag. Out of range indices are
   /// never tagged, so bounds checks stay with the caller.
-  let tryTagGrid (tag: string) (landmarks: Landmarks) : bool[] voption =
-    match landmarks.Cells.TryGetValue tag with
-    | true, cells -> ValueSome cells
-    | false, _ -> ValueNone
+  let inline tryTagGrid (tag: string) (landmarks: Landmarks) : bool[] voption =
+    Dictionary.tryGetValue tag landmarks.Cells
 
   /// Per-cell walking query: is the cell covered by an element tagged
   /// `tag` (or marked with it in the tiles via `Flow.scanTiles`)? Out of
@@ -1504,9 +1496,9 @@ module Flow =
     then
       false
     else
-      match landmarks.Cells.TryGetValue tag with
-      | true, cells -> cells.[at.X + at.Y * landmarks.Width]
-      | false, _ -> false
+      match Dictionary.tryGetValue tag landmarks.Cells with
+      | ValueSome cells -> cells.[at.X + at.Y * landmarks.Width]
+      | ValueNone -> false
 
   /// A non-painting landmark: records `tags` over the element's whole
   /// rectangle. Equivalent to a tagless `Stamp.box`, so it lays out like any

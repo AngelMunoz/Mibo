@@ -251,7 +251,7 @@ The piped modules keep working in this release, but they will be removed. The fl
 | `buffer \|> Draw3D.addPointLight light` | `buffer.addPointLight light` |
 | `buffer \|> Draw3D.enableShadows` | `buffer.enableShadows()` |
 | `buffer \|> Draw3D.beginCamera cam \|> ... \|> Draw3D.endCamera` | `buffer.beginCamera(cam) .... .endCamera()` |
-| `CellGridRenderer3D.renderInstanced ctx grid buffer` | `buffer.renderCellGridInstanced(ctx, grid)` |
+| `ctx.RenderInstanced(buffer, grid)` over a 2D footprint grid | `buffer.renderFootprintInstanced(ctx, grid)` |
 | `... \|> Draw.drop` | `.... .drop()` (or chain into the next view) |
 
 Notes for migrating:

@@ -175,7 +175,7 @@ let tests =
           (Vector2(74f, 52f))
           "(2,1)"
 
-      testCase "iterVisible rejects hex grids"
+      testCase "iterVisible culls hex grids per orientation"
       <| fun _ ->
         let grid: CellGrid2D<int> =
           CellGrid2D.createHex {
@@ -186,8 +186,36 @@ let tests =
             Origin = Vector2.Zero
           }
 
-        Expect.throwsT<System.ArgumentException>
-          (fun () -> CellGrid2D.iterVisible 0 0 100 100 (fun _ _ _ -> ()) grid)
-          "hex grids need hex-aware culling"
+        CellGrid2D.set 0 0 1 grid
+        CellGrid2D.set 3 2 2 grid
+
+        let mutable seen: (int * int * int) list = []
+
+        CellGrid2D.iterVisible
+          0
+          0
+          200
+          200
+          (fun x y c -> seen <- (x, y, c) :: seen)
+          grid
+
+        Expect.hasLength seen 2 "the big window finds both cells"
+        Expect.isTrue (seen |> List.contains(0, 0, 1)) "the corner cell"
+        Expect.isTrue (seen |> List.contains(3, 2, 2)) "the far cell"
+
+        let mutable visited = 0
+
+        CellGrid2D.iterVisible
+          0
+          0
+          66
+          66
+          (fun _ _ _ -> visited <- visited + 1)
+          grid
+
+        Expect.isGreaterThan
+          visited
+          0
+          "the small window still reaches the corner cell"
     ]
   ]
