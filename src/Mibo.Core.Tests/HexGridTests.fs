@@ -20,14 +20,17 @@ let tests =
           (Vector2(32f * sqrt 3f, 64f))
           "hex bounding box"
 
-        Expect.equal grid.Geometry CellGeometry.PointyTopHex "Geometry"
+        Expect.equal
+          grid.Geometry
+          (CellGeometry.Hex HexOrientation.PointyTop)
+          "Geometry"
 
         Expect.equal
           (CellGrid2D.hexOrientation grid)
           HexOrientation.PointyTop
           "orientation"
 
-        Expect.equal (CellGrid2D.hexSize grid) 32f "hex size"
+        Expect.equal (CellGrid2D.hexRadius grid) 32f "hex radius"
 
         for col in 0..9 do
           for row in 0..4 do

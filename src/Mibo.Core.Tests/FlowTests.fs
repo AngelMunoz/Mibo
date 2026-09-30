@@ -249,11 +249,11 @@ let tests =
         Expect.throwsT<System.ArgumentException>
           (fun () ->
             Flow.grid {
-              Cols = [ Fixed 4 ]
-              Rows = [ Fixed 4 ]
+              Cols = [| Fixed 4 |]
+              Rows = [| Fixed 4 |]
               Gap = 0
-              Areas = [ "a" ]
-              Places = [ "a", Stamp.expand(tile 1 1 1) ]
+              Areas = [| "a" |]
+              Places = [| struct ("a", Stamp.expand(tile 1 1 1)) |]
             }
             |> ignore)
           "grid ignores Expand"
@@ -262,8 +262,11 @@ let tests =
       <| fun _ ->
         Expect.throwsT<System.ArgumentException>
           (fun () ->
-            Stamp.expand(fillTile 1)
-            |> Flow.docked (Dock.CenterX ||| Dock.CenterY) 0
+            Flow.docked {
+              Anchor = Dock.CenterX ||| Dock.CenterY
+              Inset = 0
+              Stamp = Stamp.expand(fillTile 1)
+            }
             |> ignore)
           "docked ignores Expand"
 
@@ -327,11 +330,11 @@ let tests =
       <| fun _ ->
         let stamp =
           Flow.grid {
-            Cols = [ Fixed 4; Fixed 6 ]
-            Rows = [ Fixed 2; Fixed 3 ]
+            Cols = [| Fixed 4; Fixed 6 |]
+            Rows = [| Fixed 2; Fixed 3 |]
             Gap = 1
-            Areas = [ "a a"; "b ." ]
-            Places = [ "a", fillTile 1; "b", fillTile 2 ]
+            Areas = [| "a a"; "b ." |]
+            Places = [| struct ("a", fillTile 1); struct ("b", fillTile 2) |]
           }
 
         let g, _ = runInto 12 7 stamp
@@ -349,11 +352,15 @@ let tests =
       <| fun _ ->
         let stamp =
           Flow.grid {
-            Cols = [ Fixed 2; Weight 1f; Weight 3f ]
-            Rows = [ Fixed 4 ]
+            Cols = [| Fixed 2; Weight 1f; Weight 3f |]
+            Rows = [| Fixed 4 |]
             Gap = 0
-            Areas = [ "s m b" ]
-            Places = [ "s", fillTile 1; "m", fillTile 2; "b", fillTile 3 ]
+            Areas = [| "s m b" |]
+            Places = [|
+              struct ("s", fillTile 1)
+              struct ("m", fillTile 2)
+              struct ("b", fillTile 3)
+            |]
           }
 
         let g, _ = runInto 10 4 stamp
@@ -368,11 +375,11 @@ let tests =
       <| fun _ ->
         let stamp =
           Flow.grid {
-            Cols = [ Percent 0.5f; Fixed 2 ]
-            Rows = [ Fixed 1 ]
+            Cols = [| Percent 0.5f; Fixed 2 |]
+            Rows = [| Fixed 1 |]
             Gap = 0
-            Areas = [ "a b" ]
-            Places = [ "a", fillTile 1; "b", fillTile 2 ]
+            Areas = [| "a b" |]
+            Places = [| struct ("a", fillTile 1); struct ("b", fillTile 2) |]
           }
 
         let g, _ = runInto 10 1 stamp
@@ -386,11 +393,11 @@ let tests =
         Expect.throwsT<System.ArgumentException>
           (fun () ->
             Flow.grid {
-              Cols = [ Fixed 1 ]
-              Rows = [ Fixed 1 ]
+              Cols = [| Fixed 1 |]
+              Rows = [| Fixed 1 |]
               Gap = 0
-              Areas = [ "a" ]
-              Places = [ "z", tile 1 1 1 ]
+              Areas = [| "a" |]
+              Places = [| struct ("z", tile 1 1 1) |]
             }
             |> ignore)
           "unknown area"
@@ -400,11 +407,11 @@ let tests =
         Expect.throwsT<System.ArgumentException>
           (fun () ->
             Flow.grid {
-              Cols = []
-              Rows = [ Fixed 1 ]
+              Cols = [||]
+              Rows = [| Fixed 1 |]
               Gap = 0
-              Areas = [ "a" ]
-              Places = []
+              Areas = [| "a" |]
+              Places = [||]
             }
             |> ignore)
           "no column tracks"
@@ -414,11 +421,11 @@ let tests =
         Expect.throwsT<System.ArgumentException>
           (fun () ->
             Flow.grid {
-              Cols = [ Fixed 1 ]
-              Rows = [ Fixed 1 ]
+              Cols = [| Fixed 1 |]
+              Rows = [| Fixed 1 |]
               Gap = 0
-              Areas = [ "a b" ]
-              Places = []
+              Areas = [| "a b" |]
+              Places = [||]
             }
             |> ignore)
           "template column overflow"
@@ -443,10 +450,15 @@ let tests =
         "docked elements anchor inside the container and report positions"
       <| fun _ ->
         let gate =
-          Stamp.named
-            "gate"
-            (Stamp.sized 4 1 (fun s -> s |> Layout.fill 0 0 s.Width s.Height 7))
-          |> Flow.docked (Dock.StretchX ||| Dock.Bottom) 0
+          Flow.docked {
+            Anchor = Dock.StretchX ||| Dock.Bottom
+            Inset = 0
+            Stamp =
+              Stamp.named
+                "gate"
+                (Stamp.sized 4 1 (fun s ->
+                  s |> Layout.fill 0 0 s.Width s.Height 7))
+          }
 
         let stamp = Flow.overlay [ gate ]
 
@@ -467,7 +479,14 @@ let tests =
         let g, _ = runInto 10 6 (Stamp.empty())
 
         let _ =
-          g |> Layout.run(Flow.dock (Dock.Top ||| Dock.Right) 1 (tile 2 1 9))
+          g
+          |> Layout.run(
+            Flow.dock {
+              Anchor = Dock.Top ||| Dock.Right
+              Inset = 1
+              Stamp = tile 2 1 9
+            }
+          )
 
         expectCell g 7 1 (ValueSome 9) "docked start"
         expectCell g 8 1 (ValueSome 9) "docked end"
@@ -480,7 +499,11 @@ let tests =
         let _ =
           g
           |> Layout.run(
-            Flow.dock (Dock.CenterX ||| Dock.CenterY) 0 (tile 2 1 9)
+            Flow.dock {
+              Anchor = Dock.CenterX ||| Dock.CenterY
+              Inset = 0
+              Stamp = tile 2 1 9
+            }
           )
 
         expectCell g 4 2 (ValueSome 9) "centered"
@@ -493,11 +516,13 @@ let tests =
         let _ =
           g
           |> Layout.run(
-            Flow.dock
-              (Dock.StretchX ||| Dock.Bottom)
-              1
-              (Stamp.sized 1 1 (fun s ->
-                s |> Layout.fill 0 0 s.Width s.Height 5))
+            Flow.dock {
+              Anchor = Dock.StretchX ||| Dock.Bottom
+              Inset = 1
+              Stamp =
+                Stamp.sized 1 1 (fun s ->
+                  s |> Layout.fill 0 0 s.Width s.Height 5)
+            }
           )
 
         expectCell g 0 4 ValueNone "left inset"
@@ -509,7 +534,11 @@ let tests =
       <| fun _ ->
         let stamp =
           Flow.overlay [
-            Stamp.box 0 1 [ Flow.fill 7 ] |> Flow.docked Dock.Bottom 0
+            Flow.docked {
+              Anchor = Dock.Bottom
+              Inset = 0
+              Stamp = Stamp.box 0 1 [ Flow.fill 7 ]
+            }
           ]
 
         let g, _ = runInto 6 4 stamp
@@ -522,8 +551,11 @@ let tests =
       <| fun _ ->
         let stamp =
           Flow.overlay [
-            Flow.canvas [ Flow.fill 7 ]
-            |> Flow.docked (Dock.CenterX ||| Dock.CenterY) 0
+            Flow.docked {
+              Anchor = Dock.CenterX ||| Dock.CenterY
+              Inset = 0
+              Stamp = Flow.canvas [ Flow.fill 7 ]
+            }
           ]
 
         let g, _ = runInto 4 3 stamp
@@ -565,11 +597,14 @@ let tests =
 
         let stamp =
           Flow.grid {
-            Cols = [ Fixed 4 ]
-            Rows = [ Fixed 4 ]
+            Cols = [| Fixed 4 |]
+            Rows = [| Fixed 4 |]
             Gap = 0
-            Areas = [ "a" ]
-            Places = [ "a", inner; "a", Stamp.named "area" (Stamp.empty()) ]
+            Areas = [| "a" |]
+            Places = [|
+              struct ("a", inner)
+              struct ("a", Stamp.named "area" (Stamp.empty()))
+            |]
           }
 
         let g, result = runInto 4 4 stamp
@@ -611,12 +646,13 @@ let harbourTests =
           Flow.canvas [
             Flow.fill Path
             Flow.border Grass
-            Flow.noise 24 7 Rock
+            Flow.noise { Count = 24; Seed = 7 } Rock
           ]
-          Flow.docked
-            (Dock.CenterX ||| Dock.CenterY)
-            0
-            (Stamp.named "fountain" fountain)
+          Flow.docked {
+            Anchor = Dock.CenterX ||| Dock.CenterY
+            Inset = 0
+            Stamp = Stamp.named "fountain" fountain
+          }
         ]
 
       // A market stall: awning over crates of goods, signed center-front.
@@ -625,10 +661,11 @@ let harbourTests =
           (Stamp.box 4 1 [ Flow.fill Stall ])
           (Flow.group 4 2 [
             Flow.canvas [ Flow.fill Crate ]
-            Flow.docked
-              (Dock.CenterX ||| Dock.Top)
-              0
-              (Stamp.box 1 1 [ Flow.fill goods ])
+            Flow.docked {
+              Anchor = Dock.CenterX ||| Dock.Top
+              Inset = 0
+              Stamp = Stamp.box 1 1 [ Flow.fill goods ]
+            }
           ])
 
       // The market: stalls wrap onto new rows when the area runs out.
@@ -647,10 +684,11 @@ let harbourTests =
         Stamp.box 18 30 [
           Flow.texture(fun x y ->
             if (x * 7 + y * 13) % 4 = 0 then Tree else Grass)
-          Flow.weather Tree Grass 0.3f 11
-          Flow.clumps 4 5 (fun c -> c |> Layout.circle 1 1 1 true Rock)
-          Flow.noise 6 9 Stump
-          Flow.noise 1 15 Chest
+          Flow.weather { Probability = 0.3f; Seed = 11 } Tree Grass
+          Flow.clumps { Count = 4; Seed = 5 } (fun c ->
+            c |> Layout.circle 1 1 1 true Rock)
+          Flow.noise { Count = 6; Seed = 9 } Stump
+          Flow.noise { Count = 1; Seed = 15 } Chest
         ]
 
       // Docks: water with piers reaching in, lanterns at the pier heads.
@@ -668,16 +706,16 @@ let harbourTests =
       // The map: structure by layout, noise by stamps.
       let harbour =
         Flow.grid {
-          Cols = [ Weight 2f; Weight 1f ]
-          Rows = [ Fixed 10; Weight 1f; Weight 1f ]
+          Cols = [| Weight 2f; Weight 1f |]
+          Rows = [| Fixed 10; Weight 1f; Weight 1f |]
           Gap = 1
-          Areas = [ "plaza market"; "plaza woods"; "docks woods" ]
-          Places = [
-            "plaza", Stamp.tagged [ "safe-zone" ] plaza
-            "market", market
-            "woods", woods
-            "docks", docks
-          ]
+          Areas = [| "plaza market"; "plaza woods"; "docks woods" |]
+          Places = [|
+            struct ("plaza", Stamp.tagged [ "safe-zone" ] plaza)
+            struct ("market", market)
+            struct ("woods", woods)
+            struct ("docks", docks)
+          |]
         }
 
       let g: CellGrid2D<Tile> =
@@ -694,12 +732,18 @@ let harbourTests =
           Flow.overlay [
             harbour
 
-            Stamp.box 12 3 [ Flow.fill Wall ]
-            |> Flow.docked (Dock.Top ||| Dock.CenterX) 0
+            Flow.docked {
+              Anchor = Dock.Top ||| Dock.CenterX
+              Inset = 0
+              Stamp = Stamp.box 12 3 [ Flow.fill Wall ]
+            }
 
             // zero footprint width = stretch over the container
-            Stamp.named "gate" (Stamp.box 0 1 [ Flow.fill Sand ])
-            |> Flow.docked Dock.Bottom 0
+            Flow.docked {
+              Anchor = Dock.Bottom
+              Inset = 0
+              Stamp = Stamp.named "gate" (Stamp.box 0 1 [ Flow.fill Sand ])
+            }
           ]
         )
 
@@ -762,11 +806,11 @@ let styleTests =
     <| fun _ ->
       let stamp =
         Flow.grid {
-          Cols = [ Fixed 4 ]
-          Rows = [ Fixed 2 ]
+          Cols = [| Fixed 4 |]
+          Rows = [| Fixed 2 |]
           Gap = 0
-          Areas = [ "a" ]
-          Places = [ "a", Flow.canvas [ Flow.fill 7 ] ]
+          Areas = [| "a" |]
+          Places = [| struct ("a", Flow.canvas [ Flow.fill 7 ]) |]
         }
 
       let g, _ = runInto 4 2 stamp
@@ -778,11 +822,11 @@ let styleTests =
     <| fun _ ->
       let stamp =
         Flow.grid {
-          Cols = [ Fixed 4 ]
-          Rows = [ Fixed 4 ]
+          Cols = [| Fixed 4 |]
+          Rows = [| Fixed 4 |]
           Gap = 0
-          Areas = [ "a" ]
-          Places = [ "a", Stamp.box 2 1 [ Flow.fill 5 ] ]
+          Areas = [| "a" |]
+          Places = [| struct ("a", Stamp.box 2 1 [ Flow.fill 5 ]) |]
         }
 
       let g, _ = runInto 4 4 stamp
@@ -804,10 +848,11 @@ let styleTests =
       let stamp =
         Flow.group 4 2 [
           Flow.canvas [ Flow.fill 1 ]
-          Flow.docked
-            (Dock.CenterX ||| Dock.CenterY)
-            0
-            (Stamp.box 2 2 [ Flow.fill 2 ])
+          Flow.docked {
+            Anchor = Dock.CenterX ||| Dock.CenterY
+            Inset = 0
+            Stamp = Stamp.box 2 2 [ Flow.fill 2 ]
+          }
         ]
 
       let g, _ = runInto 10 10 stamp
@@ -820,7 +865,12 @@ let styleTests =
 
     testCase "weather replaces box-wide with a probability"
     <| fun _ ->
-      let stamp = Stamp.box 2 1 [ Flow.fill 1; Flow.weather 1 2 1.0f 3 ]
+      let stamp =
+        Stamp.box 2 1 [
+          Flow.fill 1
+          Flow.weather { Probability = 1.0f; Seed = 3 } 1 2
+        ]
+
       let g, _ = runInto 4 1 stamp
 
       expectCell g 0 0 (ValueSome 2) "weathered"
@@ -828,7 +878,11 @@ let styleTests =
 
     testCase "noiseBy generates the scattered cells"
     <| fun _ ->
-      let stamp = Stamp.box 4 1 [ Flow.noiseBy 2 1 (fun x _ -> x * 10 + 1) ]
+      let stamp =
+        Stamp.box 4 1 [
+          Flow.noiseBy { Count = 2; Seed = 1 } (fun x _ -> x * 10 + 1)
+        ]
+
       let g, _ = runInto 4 1 stamp
 
       expectCell g 0 0 (ValueSome 1) "generated at x 0"
@@ -855,37 +909,50 @@ let landmarkTests =
 
       Expect.equal
         (Flow.taggedRects "danger" placed)
-        [ { X = 4; Y = 0; W = 2; H = 1 } ]
+        [| { X = 4; Y = 0; W = 2; H = 1 } |]
         "danger rect, most recent first"
 
-      Expect.equal (Flow.taggedRects "nothing" placed) [] "unknown tag"
+      Expect.equal (Flow.taggedRects "nothing" placed) [||] "unknown tag"
 
     testCase "tagged cells answer walking queries"
     <| fun _ ->
       let stamp =
         Flow.grid {
-          Cols = [ Fixed 3; Fixed 3 ]
-          Rows = [ Fixed 4 ]
+          Cols = [| Fixed 3; Fixed 3 |]
+          Rows = [| Fixed 4 |]
           Gap = 0
-          Areas = [ "zone rest" ]
-          Places = [
-            "zone", Flow.region [ "no-build" ] 0 0
-            "rest", Flow.canvas [ Flow.fill 9 ]
-          ]
+          Areas = [| "zone rest" |]
+          Places = [|
+            struct ("zone", Flow.region [ "no-build" ] 0 0)
+            struct ("rest", Flow.canvas [ Flow.fill 9 ])
+          |]
         }
 
       let g, placed = runInto 6 4 stamp
 
-      Expect.isTrue (Flow.isTag "no-build" 0 0 placed) "inside the region"
-      Expect.isTrue (Flow.isTag "no-build" 2 1 placed) "region corner"
-      Expect.isFalse (Flow.isTag "no-build" 3 1 placed) "outside the region"
-      Expect.isFalse (Flow.isTag "no-build" 5 3 placed) "far outside"
+      Expect.isTrue
+        (Flow.isTag "no-build" { X = 0; Y = 0 } placed)
+        "inside the region"
+
+      Expect.isTrue
+        (Flow.isTag "no-build" { X = 2; Y = 1 } placed)
+        "region corner"
 
       Expect.isFalse
-        (Flow.isTag "no-build" -1 0 placed)
+        (Flow.isTag "no-build" { X = 3; Y = 1 } placed)
+        "outside the region"
+
+      Expect.isFalse
+        (Flow.isTag "no-build" { X = 5; Y = 3 } placed)
+        "far outside"
+
+      Expect.isFalse
+        (Flow.isTag "no-build" { X = -1; Y = 0 } placed)
         "out of range is never tagged"
 
-      Expect.isFalse (Flow.isTag "unknown" 0 0 placed) "unknown tag"
+      Expect.isFalse
+        (Flow.isTag "unknown" { X = 0; Y = 0 } placed)
+        "unknown tag"
 
       expectCell g 3 1 (ValueSome 9) "the neighbor area paints normally"
 
@@ -893,20 +960,22 @@ let landmarkTests =
     <| fun _ ->
       let stamp =
         Flow.grid {
-          Cols = [ Fixed 4 ]
-          Rows = [ Fixed 4 ]
+          Cols = [| Fixed 4 |]
+          Rows = [| Fixed 4 |]
           Gap = 0
-          Areas = [ "a" ]
-          Places = [ "a", Flow.region [ "arena" ] 0 0 ]
+          Areas = [| "a" |]
+          Places = [| struct ("a", Flow.region [ "arena" ] 0 0) |]
         }
 
       let _, placed = runInto 4 4 stamp
 
-      Expect.isTrue (Flow.isTag "arena" 3 3 placed) "stretched over the area"
+      Expect.isTrue
+        (Flow.isTag "arena" { X = 3; Y = 3 } placed)
+        "stretched over the area"
 
       Expect.equal
         (Flow.taggedRects "arena" placed)
-        [ { X = 0; Y = 0; W = 4; H = 4 } ]
+        [| { X = 0; Y = 0; W = 4; H = 4 } |]
         "region rect covers the area"
 
     testCase "scanTiles derives cell tags from the painted tiles"
@@ -920,16 +989,29 @@ let landmarkTests =
 
       let scanned = placed |> Landmarks.scanTiles tileTags g
 
-      Expect.isTrue (Flow.isTag "safe" 0 0 scanned) "tile 1 is safe"
-      Expect.isTrue (Flow.isTag "safe" 1 0 scanned) "tile 1 is safe"
-      Expect.isTrue (Flow.isTag "dangerous" 2 0 scanned) "tile 2 is dangerous"
-      Expect.isTrue (Flow.isTag "dangerous" 3 0 scanned) "tile 2 is dangerous"
+      Expect.isTrue
+        (Flow.isTag "safe" { X = 0; Y = 0 } scanned)
+        "tile 1 is safe"
+
+      Expect.isTrue
+        (Flow.isTag "safe" { X = 1; Y = 0 } scanned)
+        "tile 1 is safe"
+
+      Expect.isTrue
+        (Flow.isTag "dangerous" { X = 2; Y = 0 } scanned)
+        "tile 2 is dangerous"
+
+      Expect.isTrue
+        (Flow.isTag "dangerous" { X = 3; Y = 0 } scanned)
+        "tile 2 is dangerous"
 
       Expect.isFalse
-        (Flow.isTag "dangerous" 0 0 scanned)
+        (Flow.isTag "dangerous" { X = 0; Y = 0 } scanned)
         "tile 1 is not dangerous"
 
-      Expect.isFalse (Flow.isTag "safe" 4 0 scanned) "empty cell has no tags"
+      Expect.isFalse
+        (Flow.isTag "safe" { X = 4; Y = 0 } scanned)
+        "empty cell has no tags"
 
     testCase "duplicate names throw"
     <| fun _ ->
@@ -949,9 +1031,13 @@ let landmarkTests =
     <| fun _ ->
       let stamp =
         Flow.overlay [
-          Stamp.tagged [ "exit" ] (Stamp.box 20 2 [ Flow.fill 7 ])
-          |> Stamp.named "gate"
-          |> Flow.docked (Dock.Bottom ||| Dock.CenterX) 0
+          Flow.docked {
+            Anchor = Dock.Bottom ||| Dock.CenterX
+            Inset = 0
+            Stamp =
+              Stamp.tagged [ "exit" ] (Stamp.box 20 2 [ Flow.fill 7 ])
+              |> Stamp.named "gate"
+          }
         ]
 
       let g, placed = runInto 10 4 stamp
@@ -966,7 +1052,7 @@ let landmarkTests =
 
       Expect.equal
         (Flow.taggedRects "exit" placed)
-        [ { X = 0; Y = 2; W = 10; H = 2 } ]
+        [| { X = 0; Y = 2; W = 10; H = 2 } |]
         "tagged rect clips too"
 
     testCase "tryTagGrid hands out the raw bit grid"
@@ -985,8 +1071,12 @@ let landmarkTests =
     testCase "tagged and named compose with docking"
     <| fun _ ->
       let gate =
-        Stamp.tagged [ "exit"; "no-build" ] (Stamp.box 0 1 [ Flow.fill 7 ])
-        |> Flow.docked (Dock.StretchX ||| Dock.Bottom) 0
+        Flow.docked {
+          Anchor = Dock.StretchX ||| Dock.Bottom
+          Inset = 0
+          Stamp =
+            Stamp.tagged [ "exit"; "no-build" ] (Stamp.box 0 1 [ Flow.fill 7 ])
+        }
 
       let stamp = Flow.overlay [ gate ]
       let g, placed = runInto 6 4 stamp
@@ -1000,14 +1090,16 @@ let landmarkTests =
 
       Expect.equal
         (Flow.taggedRects "exit" placed)
-        [ { X = 0; Y = 3; W = 6; H = 1 } ]
+        [| { X = 0; Y = 3; W = 6; H = 1 } |]
         "tagged with the docked rectangle"
 
       Expect.isTrue
-        (Flow.isTag "exit" 3 3 placed)
+        (Flow.isTag "exit" { X = 3; Y = 3 } placed)
         "walkable query on the docked rect"
 
-      Expect.isFalse (Flow.isTag "exit" 3 2 placed) "one above is not the gate"
+      Expect.isFalse
+        (Flow.isTag "exit" { X = 3; Y = 2 } placed)
+        "one above is not the gate"
   ]
 
 [<Tests>]
@@ -1017,18 +1109,24 @@ let hexTests =
     <| fun _ ->
       let doc =
         Flow.grid {
-          Cols = [ Fixed 4; Fixed 6 ]
-          Rows = [ Fixed 2; Fixed 2 ]
+          Cols = [| Fixed 4; Fixed 6 |]
+          Rows = [| Fixed 2; Fixed 2 |]
           Gap = 0
-          Areas = [ "shore woods"; "shore woods" ]
-          Places = [
-            "shore", Stamp.named "shore" (fillTile 1)
-            "woods", fillTile 2
-          ]
+          Areas = [| "shore woods"; "shore woods" |]
+          Places = [|
+            struct ("shore", Stamp.named "shore" (fillTile 1))
+            struct ("woods", fillTile 2)
+          |]
         }
 
       let g =
-        CellGrid2D.createHex CellGeometry.PointyTopHex 32f 10 4 Vector2.Zero
+        CellGrid2D.createHex {
+          Orientation = HexOrientation.PointyTop
+          Width = 10
+          Height = 4
+          Radius = 32f
+          Origin = Vector2.Zero
+        }
 
       let struct (g, placed) = g |> Flow.run doc
 
@@ -1045,11 +1143,22 @@ let hexTests =
     testCase "named and tagged landmarks work on hex storage"
     <| fun _ ->
       let depot =
-        Stamp.tagged [ "depot" ] (Stamp.box 2 2 [ Flow.fill 3 ])
-        |> Stamp.named "depot"
-        |> Flow.docked (Dock.Bottom ||| Dock.Right) 0
+        Flow.docked {
+          Anchor = Dock.Bottom ||| Dock.Right
+          Inset = 0
+          Stamp =
+            Stamp.tagged [ "depot" ] (Stamp.box 2 2 [ Flow.fill 3 ])
+            |> Stamp.named "depot"
+        }
 
-      let g = CellGrid2D.createHex CellGeometry.FlatTopHex 32f 6 4 Vector2.Zero
+      let g =
+        CellGrid2D.createHex {
+          Orientation = HexOrientation.FlatTop
+          Width = 6
+          Height = 4
+          Radius = 32f
+          Origin = Vector2.Zero
+        }
 
       let struct (g, placed) = g |> Flow.run(Flow.overlay [ depot ])
 
@@ -1061,17 +1170,25 @@ let hexTests =
         "docked rect on hex storage"
 
       Expect.isTrue
-        (Flow.isTag "depot" 5 3 placed)
+        (Flow.isTag "depot" { X = 5; Y = 3 } placed)
         "tag bit grid indexes hex storage"
 
-      Expect.isFalse (Flow.isTag "depot" 3 3 placed) "outside the depot"
+      Expect.isFalse
+        (Flow.isTag "depot" { X = 3; Y = 3 } placed)
+        "outside the depot"
 
     testCase "scanTiles derives tags from hex tiles"
     <| fun _ ->
       let doc = Flow.overlay [ Flow.canvas [ Flow.fill 9 ] ]
 
       let g =
-        CellGrid2D.createHex CellGeometry.PointyTopHex 32f 3 2 Vector2.Zero
+        CellGrid2D.createHex {
+          Orientation = HexOrientation.PointyTop
+          Width = 3
+          Height = 2
+          Radius = 32f
+          Origin = Vector2.Zero
+        }
 
       let struct (g, placed) = g |> Flow.run doc
 
@@ -1081,8 +1198,11 @@ let hexTests =
           g
           placed
 
-      Expect.isTrue (Flow.isTag "all" 0 0 marks) "first cell tagged"
-      Expect.isTrue (Flow.isTag "all" 2 1 marks) "last cell tagged"
+      Expect.isTrue
+        (Flow.isTag "all" { X = 0; Y = 0 } marks)
+        "first cell tagged"
+
+      Expect.isTrue (Flow.isTag "all" { X = 2; Y = 1 } marks) "last cell tagged"
   ]
 
 [<Tests>]
@@ -1090,7 +1210,7 @@ let cellOpTests =
   testList "Flow cell ops" [
     testCase "cell paints one cell"
     <| fun _ ->
-      let g, _ = runInto 3 1 (Stamp.box 3 1 [ Flow.cell 1 0 5 ])
+      let g, _ = runInto 3 1 (Stamp.box 3 1 [ Flow.cell { X = 1; Y = 0 } 5 ])
 
       expectCell g 0 0 ValueNone "left of the cell"
       expectCell g 1 0 (ValueSome 5) "the cell"
@@ -1114,7 +1234,11 @@ let cellOpTests =
 
     testCase "line paints a Bresenham diagonal"
     <| fun _ ->
-      let g, _ = runInto 5 5 (Stamp.box 5 5 [ Flow.line 0 0 4 4 9 ])
+      let g, _ =
+        runInto
+          5
+          5
+          (Stamp.box 5 5 [ Flow.line { X = 0; Y = 0 } { X = 4; Y = 4 } 9 ])
 
       expectCell g 0 0 (ValueSome 9) "start"
       expectCell g 2 2 (ValueSome 9) "middle"
@@ -1123,8 +1247,33 @@ let cellOpTests =
 
     testCase "circle paints an outline or a disc"
     <| fun _ ->
-      let outline, _ = runInto 7 7 (Stamp.box 7 7 [ Flow.circle 3 3 3 false 4 ])
-      let disc, _ = runInto 7 7 (Stamp.box 7 7 [ Flow.circle 3 3 3 true 4 ])
+      let outline, _ =
+        runInto
+          7
+          7
+          (Stamp.box 7 7 [
+            Flow.circle
+              {
+                Center = { X = 3; Y = 3 }
+                Radius = 3
+                Filled = false
+              }
+              4
+          ])
+
+      let disc, _ =
+        runInto
+          7
+          7
+          (Stamp.box 7 7 [
+            Flow.circle
+              {
+                Center = { X = 3; Y = 3 }
+                Radius = 3
+                Filled = true
+              }
+              4
+          ])
 
       expectCell outline 3 0 (ValueSome 4) "top of the ring"
       expectCell outline 3 3 ValueNone "hollow center"
@@ -1137,7 +1286,10 @@ let cellOpTests =
           4
           3
           (Stamp.box 4 3 [
-            Flow.polygon [ (0, 0); (3, 0); (3, 2); (0, 2) ] true 6
+            Flow.polygon
+              [| struct (0, 0); struct (3, 0); struct (3, 2); struct (0, 2) |]
+              true
+              6
           ])
 
       expectCell g 0 0 (ValueSome 6) "corner"
@@ -1146,7 +1298,11 @@ let cellOpTests =
 
     testCase "scatterBorder scatters up to count border cells"
     <| fun _ ->
-      let g, _ = runInto 4 4 (Stamp.box 4 4 [ Flow.scatterBorder 3 11 2 ])
+      let g, _ =
+        runInto
+          4
+          4
+          (Stamp.box 4 4 [ Flow.scatterBorder { Count = 3; Seed = 11 } 2 ])
 
       let mutable filled = 0
       CellGrid2D.iter (fun _ _ _ -> filled <- filled + 1) g
@@ -1155,7 +1311,20 @@ let cellOpTests =
 
     testCase "scatterLine scatters up to count line cells"
     <| fun _ ->
-      let g, _ = runInto 5 1 (Stamp.box 5 1 [ Flow.scatterLine 0 0 4 0 2 7 3 ])
+      let g, _ =
+        runInto
+          5
+          1
+          (Stamp.box 5 1 [
+            Flow.scatterLine
+              {
+                From = { X = 0; Y = 0 }
+                To = { X = 4; Y = 0 }
+                Count = 2
+                Seed = 7
+              }
+              3
+          ])
 
       let mutable filled = 0
       CellGrid2D.iter (fun _ _ _ -> filled <- filled + 1) g
@@ -1184,9 +1353,9 @@ let cellOpTests =
           2
           1
           (Stamp.box 2 1 [
-            Flow.cell 0 0 1
-            Flow.setIfEmpty 0 0 8
-            Flow.setIfEmpty 1 0 8
+            Flow.cell { X = 0; Y = 0 } 1
+            Flow.setIfEmpty { X = 0; Y = 0 } 8
+            Flow.setIfEmpty { X = 1; Y = 0 } 8
           ])
 
       expectCell g 0 0 (ValueSome 1) "occupied cell keeps its content"

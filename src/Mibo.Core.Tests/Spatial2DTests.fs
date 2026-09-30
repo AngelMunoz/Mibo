@@ -2577,7 +2577,13 @@ let geometryGuardTests =
     testCase "Grid2DSpatial rejects hex grids"
     <| fun _ ->
       let grid: CellGrid2D<int> =
-        CellGrid2D.createHex CellGeometry.FlatTopHex 32f 4 4 Vector2.Zero
+        CellGrid2D.createHex {
+          Orientation = HexOrientation.FlatTop
+          Width = 4
+          Height = 4
+          Radius = 32f
+          Origin = Vector2.Zero
+        }
 
       Expect.throwsT<System.ArgumentException>
         (fun () -> Grid2DSpatial.neighbors4 1 1 grid |> ignore)
@@ -2621,7 +2627,13 @@ let geometryGuardTests =
     testCase "hex findPath matches the retired HexGrid golden path"
     <| fun _ ->
       let grid: CellGrid2D<int> =
-        CellGrid2D.createHex CellGeometry.FlatTopHex 32f 6 5 Vector2.Zero
+        CellGrid2D.createHex {
+          Orientation = HexOrientation.FlatTop
+          Width = 6
+          Height = 5
+          Radius = 32f
+          Origin = Vector2.Zero
+        }
 
       CellGrid2D.set 2 1 1 grid
       CellGrid2D.set 2 2 1 grid

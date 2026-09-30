@@ -11,7 +11,9 @@ module Grid2DSpatial =
   let inline internal toIndex x y w = x + y * w
 
   let inline private requireSquare(grid: CellGrid2D<'T>) =
-    if grid.Geometry <> CellGeometry.Square then
+    match grid.Geometry with
+    | CellGeometry.Square -> ()
+    | CellGeometry.Hex _ ->
       invalidArg
         "grid"
         "Grid2DSpatial queries square grids; build the grid with CellGrid2D.create or query hex grids with Hex2DSpatial"
@@ -602,10 +604,12 @@ module Hex2DSpatial =
     CellGrid2D.hexOrientation grid
 
   let inline private sizeOf(grid: CellGrid2D<'T>) : float32 =
-    CellGrid2D.hexSize grid
+    CellGrid2D.hexRadius grid
 
   let inline private requireHex(grid: CellGrid2D<'T>) =
-    if grid.Geometry = CellGeometry.Square then
+    match grid.Geometry with
+    | CellGeometry.Hex _ -> ()
+    | CellGeometry.Square ->
       invalidArg
         "grid"
         "Hex2DSpatial queries hex grids; build the grid with CellGrid2D.createHex or query square grids with Grid2DSpatial"

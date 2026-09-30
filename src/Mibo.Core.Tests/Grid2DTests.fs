@@ -13,16 +13,22 @@ let tests =
       testCase "stores the hex bounding box and geometry"
       <| fun _ ->
         let grid: CellGrid2D<int> =
-          CellGrid2D.createHex
-            CellGeometry.PointyTopHex
-            32f
-            4
-            3
-            (Vector2(10f, 20f))
+          CellGrid2D.createHex {
+            Orientation = HexOrientation.PointyTop
+            Width = 4
+            Height = 3
+            Radius = 32f
+            Origin = Vector2(10f, 20f)
+          }
 
         Expect.equal grid.Width 4 "width"
         Expect.equal grid.Height 3 "height"
-        Expect.equal grid.Geometry CellGeometry.PointyTopHex "geometry"
+
+        Expect.equal
+          grid.Geometry
+          (CellGeometry.Hex HexOrientation.PointyTop)
+          "geometry"
+
         Expect.equal grid.CellSize (Vector2(32f * sqrt 3f, 64f)) "bounding box"
 
         Expect.equal
@@ -30,7 +36,7 @@ let tests =
           HexOrientation.PointyTop
           "orientation"
 
-        Expect.equal (CellGrid2D.hexSize grid) 32f "size round trip"
+        Expect.equal (CellGrid2D.hexRadius grid) 32f "radius round trip"
 
         for i = 0 to grid.Cells.Length - 1 do
           Expect.equal grid.Cells.[i] ValueNone "cells start empty"
@@ -38,7 +44,13 @@ let tests =
       testCase "flat top bounding box"
       <| fun _ ->
         let grid: CellGrid2D<int> =
-          CellGrid2D.createHex CellGeometry.FlatTopHex 32f 4 3 Vector2.Zero
+          CellGrid2D.createHex {
+            Orientation = HexOrientation.FlatTop
+            Width = 4
+            Height = 3
+            Radius = 32f
+            Origin = Vector2.Zero
+          }
 
         Expect.equal grid.CellSize (Vector2(64f, 32f * sqrt 3f)) "bounding box"
 
@@ -46,14 +58,6 @@ let tests =
           (CellGrid2D.hexOrientation grid)
           HexOrientation.FlatTop
           "orientation"
-
-      testCase "rejects square geometry"
-      <| fun _ ->
-        Expect.throwsT<System.ArgumentException>
-          (fun () ->
-            CellGrid2D.createHex CellGeometry.Square 32f 4 3 Vector2.Zero
-            |> ignore)
-          "square is not a hex geometry"
 
       testCase "hex accessors reject square grids"
       <| fun _ ->
@@ -65,7 +69,7 @@ let tests =
           "no orientation on square"
 
         Expect.throwsT<System.ArgumentException>
-          (fun () -> CellGrid2D.hexSize grid |> ignore)
+          (fun () -> CellGrid2D.hexRadius grid |> ignore)
           "no size on square"
     ]
 
@@ -73,12 +77,13 @@ let tests =
       testCase "pointy top matches the retired HexGrid math"
       <| fun _ ->
         let grid: CellGrid2D<int> =
-          CellGrid2D.createHex
-            CellGeometry.PointyTopHex
-            32f
-            4
-            3
-            (Vector2(10f, 20f))
+          CellGrid2D.createHex {
+            Orientation = HexOrientation.PointyTop
+            Width = 4
+            Height = 3
+            Radius = 32f
+            Origin = Vector2(10f, 20f)
+          }
 
         Expect.equal
           (CellGrid2D.getWorldPos 0 0 grid)
@@ -113,12 +118,13 @@ let tests =
       testCase "flat top matches the retired HexGrid math"
       <| fun _ ->
         let grid: CellGrid2D<int> =
-          CellGrid2D.createHex
-            CellGeometry.FlatTopHex
-            32f
-            4
-            3
-            (Vector2(10f, 20f))
+          CellGrid2D.createHex {
+            Orientation = HexOrientation.FlatTop
+            Width = 4
+            Height = 3
+            Radius = 32f
+            Origin = Vector2(10f, 20f)
+          }
 
         Expect.equal
           (CellGrid2D.getWorldPos 0 0 grid)
@@ -172,7 +178,13 @@ let tests =
       testCase "iterVisible rejects hex grids"
       <| fun _ ->
         let grid: CellGrid2D<int> =
-          CellGrid2D.createHex CellGeometry.FlatTopHex 32f 4 3 Vector2.Zero
+          CellGrid2D.createHex {
+            Orientation = HexOrientation.FlatTop
+            Width = 4
+            Height = 3
+            Radius = 32f
+            Origin = Vector2.Zero
+          }
 
         Expect.throwsT<System.ArgumentException>
           (fun () -> CellGrid2D.iterVisible 0 0 100 100 (fun _ _ _ -> ()) grid)

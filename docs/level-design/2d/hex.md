@@ -46,13 +46,25 @@ Hexes come in two rotations. The choice affects both visuals and coordinate math
 open Mibo.Layout
 
 // Strategy map with pointy-top hexes
-let grid = CellGrid2D.createHex CellGeometry.PointyTopHex 32f 20 15 Vector2.Zero
+let grid = CellGrid2D.createHex {
+  Orientation = HexOrientation.PointyTop
+  Width = 20
+  Height = 15
+  Radius = 32f
+  Origin = Vector2.Zero
+}
 
 // Isometric board with flat-top hexes
-let board = CellGrid2D.createHex CellGeometry.FlatTopHex 48f 12 10 Vector2.Zero
+let board = CellGrid2D.createHex {
+  Orientation = HexOrientation.FlatTop
+  Width = 12
+  Height = 10
+  Size = 48f
+  Origin = Vector2.Zero
+}
 ```
 
-The `size` parameter is the radius of the hex (center to corner). A `size` of 32f gives you hexes roughly 56px wide (pointy) or 64px wide (flat). `CellSize` stores the hex's bounding box; `CellGrid2D.hexOrientation` and `CellGrid2D.hexSize` read the hex parameters back.
+The `Radius` field is the radius of the hex (center to corner). A radius of 32f gives you hexes roughly 56px wide (pointy) or 64px wide (flat). `CellSize` stores the hex's bounding box; `CellGrid2D.hexOrientation` and `CellGrid2D.hexRadius` read the hex parameters back.
 
 ## Coordinate System
 
@@ -77,7 +89,13 @@ Odd rows (pointy-top) or odd columns (flat-top) are shifted by half a hex width.
 open Mibo.Layout
 open System.Numerics
 
-let grid = CellGrid2D.createHex CellGeometry.PointyTopHex 32f 20 15 Vector2.Zero
+let grid = CellGrid2D.createHex {
+  Orientation = HexOrientation.PointyTop
+  Width = 20
+  Height = 15
+  Radius = 32f
+  Origin = Vector2.Zero
+}
 
 // Place content
 CellGrid2D.set 5 3 myTile grid
@@ -133,18 +151,24 @@ Author hex levels with the [Flow DSL](flow.html) — the same document vocabular
 ```fsharp
 let kingdom =
   Flow.grid {
-    Cols = [ Fixed 10; Weight 1f; Fixed 10 ]
-    Rows = [ Fixed 8; Weight 1f; Fixed 8 ]
+    Cols = [| Fixed 10; Weight 1f; Fixed 10 |]
+    Rows = [| Fixed 8; Weight 1f; Fixed 8 |]
     Gap = 0
-    Areas = [ "plains plains hills"; "plains plains hills" ]
-    Places = [
-      "plains", Flow.canvas [ Flow.fill GrassTile; Flow.noise 25 7 ForestTile ]
-      "hills", Stamp.tagged [ "no-build" ] (Flow.canvas [ Flow.fill RockTile ])
-    ]
+    Areas = [| "plains plains hills"; "plains plains hills" |]
+    Places = [|
+      struct ("plains", Flow.canvas [ Flow.fill GrassTile; Flow.noise { Count = 25; Seed = 7 } ForestTile ])
+      struct ("hills", Stamp.tagged [ "no-build" ] (Flow.canvas [ Flow.fill RockTile ]))
+    |]
   }
 
 let struct (grid, marks) =
-  CellGrid2D.createHex CellGeometry.PointyTopHex 32f 30 20 Vector2.Zero
+  CellGrid2D.createHex {
+  Orientation = HexOrientation.PointyTop
+  Width = 30
+  Height = 20
+  Radius = 32f
+  Origin = Vector2.Zero
+}
   |> Flow.run (Flow.overlay [ kingdom ])
 ```
 
@@ -155,7 +179,13 @@ The `HexLayout` module (sections, per-op painting) is obsolete. It still compile
 ```fsharp
 // obsolete surface, kept for reference
 let grid =
-    CellGrid2D.createHex CellGeometry.PointyTopHex 32f 30 20 Vector2.Zero
+    CellGrid2D.createHex {
+  Orientation = HexOrientation.PointyTop
+  Width = 30
+  Height = 20
+  Radius = 32f
+  Origin = Vector2.Zero
+}
     |> HexLayout.run (fun section ->
         section
         |> HexLayout.fill 0 0 30 20 GrassTile

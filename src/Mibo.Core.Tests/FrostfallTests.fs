@@ -42,25 +42,32 @@ module Vocabulary =
   /// flanking the entrance, the king's chest dead center.
   let greatHall =
     Flow.group 40 24 [
-      Flow.canvas [ Flow.rect Wall Stone; Flow.noise 30 11 Barrel ]
+      Flow.canvas [
+        Flow.rect Wall Stone
+        Flow.noise { Count = 30; Seed = 11 } Barrel
+      ]
 
-      Flow.docked
-        (Dock.Bottom ||| Dock.StretchX)
-        1
-        (Flow.row
-          {
-            FlowOpts.Default with
-                Gap = 4
-                Justify = Center
-          }
-          [ prop Brazier; prop Brazier ])
+      Flow.docked {
+        Anchor = Dock.Bottom ||| Dock.StretchX
+        Inset = 1
+        Stamp =
+          Flow.row
+            {
+              FlowOpts.Default with
+                  Gap = 4
+                  Justify = Center
+            }
+            [ prop Brazier; prop Brazier ]
+      }
 
-      Flow.docked
-        (Dock.CenterX ||| Dock.CenterY)
-        0
-        (Stamp.named
-          "king-chest"
-          (Stamp.tagged [ "loot"; "quest" ] (prop Chest)))
+      Flow.docked {
+        Anchor = Dock.CenterX ||| Dock.CenterY
+        Inset = 0
+        Stamp =
+          Stamp.named
+            "king-chest"
+            (Stamp.tagged [ "loot"; "quest" ] (prop Chest))
+      }
     ]
 
   /// The frozen lair: ice floor, rubble drifts, a warded arena circle.
@@ -68,16 +75,19 @@ module Vocabulary =
     Flow.group 26 18 [
       Flow.canvas [
         Flow.fill Ice
-        Flow.clumps 6 3 (fun c -> c |> Layout.circle 2 2 3 true Rubble)
+        Flow.clumps { Count = 6; Seed = 3 } (fun c ->
+          c |> Layout.circle 2 2 3 true Rubble)
       ]
-      Flow.docked
-        (Dock.CenterX ||| Dock.CenterY)
-        0
-        (Flow.region [ "boss-arena" ] 12 12)
-      Flow.docked
-        (Dock.CenterX ||| Dock.CenterY)
-        0
-        (Stamp.named "boss-spawn" (prop Ember))
+      Flow.docked {
+        Anchor = Dock.CenterX ||| Dock.CenterY
+        Inset = 0
+        Stamp = Flow.region [ "boss-arena" ] 12 12
+      }
+      Flow.docked {
+        Anchor = Dock.CenterX ||| Dock.CenterY
+        Inset = 0
+        Stamp = Stamp.named "boss-spawn" (prop Ember)
+      }
     ]
 
   /// The frozen forest: snow underfoot, pine rows, icy patches, rocks.
@@ -86,8 +96,8 @@ module Vocabulary =
       Flow.canvas [
         Flow.fill Snow
         Flow.texture(fun x y -> if (x * 5 + y * 3) % 7 = 0 then Pine else Snow)
-        Flow.noise 40 9 Rock
-        Flow.weather Snow Ice 0.2f 5
+        Flow.noise { Count = 40; Seed = 9 } Rock
+        Flow.weather { Probability = 0.2f; Seed = 5 } Snow Ice
       ]
       Flow.row
         {
@@ -102,15 +112,15 @@ module Vocabulary =
 
 let keep =
   Flow.grid {
-    Cols = [ Fixed 40; Weight 1f ]
-    Rows = [ Weight 1f; Weight 1f ]
+    Cols = [| Fixed 40; Weight 1f |]
+    Rows = [| Weight 1f; Weight 1f |]
     Gap = 1
-    Areas = [ "hall  forest"; "lair  forest" ]
-    Places = [
-      "hall", Stamp.tagged [ "safe-zone" ] Vocabulary.greatHall
-      "lair", Stamp.tagged [ "danger-zone" ] Vocabulary.lair
-      "forest", Vocabulary.forest
-    ]
+    Areas = [| "hall  forest"; "lair  forest" |]
+    Places = [|
+      struct ("hall", Stamp.tagged [ "safe-zone" ] Vocabulary.greatHall)
+      struct ("lair", Stamp.tagged [ "danger-zone" ] Vocabulary.lair)
+      struct ("forest", Vocabulary.forest)
+    |]
   }
 
 let frostfallKeep =
@@ -119,10 +129,14 @@ let frostfallKeep =
     Flow.strip Dock.Top 2 [ Flow.rect Wall Snow ] // the ramparts
     Flow.strip Dock.Bottom 1 [ Flow.fill Water ] // the moat
 
-    Stamp.named
-      "keep-entrance"
-      (Stamp.tagged [ "entrance" ] (Stamp.box 6 1 [ Flow.fill Door ]))
-    |> Flow.docked (Dock.Bottom ||| Dock.CenterX) 1
+    Flow.docked {
+      Anchor = Dock.Bottom ||| Dock.CenterX
+      Inset = 1
+      Stamp =
+        Stamp.named
+          "keep-entrance"
+          (Stamp.tagged [ "entrance" ] (Stamp.box 6 1 [ Flow.fill Door ]))
+    }
   ]
 
 // ── 3. Build, derive, query ────────────────────────────────────────────────
@@ -140,7 +154,8 @@ let tileTags _ _ tile : string seq =
 let struct (level, landmarks) = grid |> Flow.build tileTags frostfallKeep
 
 // the walking query, per move attempt
-let canStand (x: int) (y: int) : bool = not(Flow.isTag "solid" x y landmarks)
+let canStand (x: int) (y: int) : bool =
+  not(Flow.isTag "solid" { X = x; Y = y } landmarks)
 
 // anchors and groups
 let center(r: CellRect) = struct (r.X + r.W / 2, r.Y + r.H / 2)
@@ -165,23 +180,30 @@ let frostfall =
 
       Expect.equal
         lootRects
-        [ { X = 19; Y = 11; W = 1; H = 1 } ]
+        [| { X = 19; Y = 11; W = 1; H = 1 } |]
         "king chest centered in the hall"
 
       Expect.isTrue
-        (Flow.isTag "boss-arena" 13 31 landmarks)
+        (Flow.isTag "boss-arena" { X = 13; Y = 31 } landmarks)
         "inside the warded circle"
 
       Expect.isFalse
-        (Flow.isTag "boss-arena" 1 26 landmarks)
+        (Flow.isTag "boss-arena" { X = 1; Y = 26 } landmarks)
         "outside the circle"
 
-      Expect.isTrue (Flow.isTag "safe-zone" 20 12 landmarks) "hall is safe"
+      Expect.isTrue
+        (Flow.isTag "safe-zone" { X = 20; Y = 12 } landmarks)
+        "hall is safe"
 
       Expect.isTrue
-        (Flow.isTag "danger-zone" 5 30 landmarks)
+        (Flow.isTag "danger-zone" { X = 5; Y = 30 } landmarks)
         "lair is dangerous"
 
-      Expect.isTrue (Flow.isTag "slippery" 5 30 landmarks) "lair ice floor"
-      Expect.isTrue (Flow.isTag "entrance" 40 48 landmarks) "the keep door"
+      Expect.isTrue
+        (Flow.isTag "slippery" { X = 5; Y = 30 } landmarks)
+        "lair ice floor"
+
+      Expect.isTrue
+        (Flow.isTag "entrance" { X = 40; Y = 48 } landmarks)
+        "the keep door"
   ]

@@ -12,10 +12,22 @@ type HexOrientation =
 /// and rows in the same rectangular array as squares, so cell storage and
 /// layout authoring are identical; only world positions and spatial
 /// queries differ.
+[<Struct>]
 type CellGeometry =
-  | Square = 0
-  | PointyTopHex = 1
-  | FlatTopHex = 2
+  | Square
+  | Hex of orientation: HexOrientation
+
+/// Hex construction parameters for `CellGrid2D.createHex`: the cell
+/// orientation, the extents in cells, the hex radius (center to corner),
+/// and the world-space origin.
+[<Struct>]
+type HexSpec = {
+  Orientation: HexOrientation
+  Width: int
+  Height: int
+  Radius: float32
+  Origin: Vector2
+}
 
 /// A 2D grid of optional cells. Square by default; `CellGrid2D.createHex`
 /// builds the hex variant over the same storage.
@@ -56,47 +68,36 @@ module CellGrid2D =
       Cells = Array.create (width * height) ValueNone
     }
 
-  /// Creates a hex grid: hexagons of the given radius stored as offset
-  /// columns and rows. `geometry` must be `PointyTopHex` or `FlatTopHex`;
-  /// `CellSize` holds the hexagon's bounding box.
-  let createHex
-    (geometry: CellGeometry)
-    (size: float32)
-    width
-    height
-    (origin: Vector2)
-    : CellGrid2D<'T> =
-    let orientation =
-      match geometry with
-      | CellGeometry.PointyTopHex -> HexOrientation.PointyTop
-      | CellGeometry.FlatTopHex -> HexOrientation.FlatTop
-      | _ ->
-        invalidArg "geometry" "hex geometry must be PointyTopHex or FlatTopHex"
-
-    let struct (hexW, hexH) = hexDimensions size orientation
+  /// Creates a hex grid: hexagons of the spec's `Radius` (center to corner)
+  /// stored as offset columns and rows. `CellSize` holds the hexagon's
+  /// bounding box.
+  let createHex(spec: HexSpec) : CellGrid2D<'T> =
+    let struct (hexW, hexH) = hexDimensions spec.Radius spec.Orientation
 
     {
-      Origin = origin
+      Origin = spec.Origin
       CellSize = Vector2(hexW, hexH)
-      Geometry = geometry
-      Width = width
-      Height = height
-      Cells = Array.create (width * height) ValueNone
+      Geometry = CellGeometry.Hex spec.Orientation
+      Width = spec.Width
+      Height = spec.Height
+      Cells = Array.create (spec.Width * spec.Height) ValueNone
     }
 
   /// The hex orientation of a hex-geometry grid. Throws for square grids.
   let hexOrientation(grid: CellGrid2D<'T>) : HexOrientation =
     match grid.Geometry with
-    | CellGeometry.PointyTopHex -> HexOrientation.PointyTop
-    | CellGeometry.FlatTopHex -> HexOrientation.FlatTop
-    | _ -> invalidArg "grid" "a square grid carries no hex orientation"
+    | CellGeometry.Hex orientation -> orientation
+    | CellGeometry.Square ->
+      invalidArg "grid" "a square grid carries no hex orientation"
 
-  /// The hex radius of a hex-geometry grid. Throws for square grids.
-  let hexSize(grid: CellGrid2D<'T>) : float32 =
+  /// The hex radius (center to corner) of a hex-geometry grid. Throws for
+  /// square grids.
+  let hexRadius(grid: CellGrid2D<'T>) : float32 =
     match grid.Geometry with
-    | CellGeometry.PointyTopHex -> grid.CellSize.Y / 2f
-    | CellGeometry.FlatTopHex -> grid.CellSize.X / 2f
-    | _ -> invalidArg "grid" "a square grid carries no hex size"
+    | CellGeometry.Hex PointyTop -> grid.CellSize.Y / 2f
+    | CellGeometry.Hex FlatTop -> grid.CellSize.X / 2f
+    | CellGeometry.Square ->
+      invalidArg "grid" "a square grid carries no hex size"
 
   let inline set x y (content: 'T) (grid: CellGrid2D<'T>) : unit =
     if x >= 0 && x < grid.Width && y >= 0 && y < grid.Height then
@@ -124,28 +125,24 @@ module CellGrid2D =
         grid.Origin.X + float32 x * grid.CellSize.X,
         grid.Origin.Y + float32 y * grid.CellSize.Y
       )
-    | geometry ->
+    | CellGeometry.Hex PointyTop ->
       let hexW = grid.CellSize.X
       let hexH = grid.CellSize.Y
 
-      match geometry with
-      | CellGeometry.PointyTopHex ->
-        let px =
-          grid.Origin.X
-          + float32 x * hexW
-          + (if y % 2 = 1 then hexW / 2f else 0f)
+      let px =
+        grid.Origin.X + float32 x * hexW + (if y % 2 = 1 then hexW / 2f else 0f)
 
-        let py = grid.Origin.Y + float32 y * hexH * 0.75f
-        Vector2(px + hexW / 2f, py + hexH / 2f)
-      | _ ->
-        let px = grid.Origin.X + float32 x * hexW * 0.75f
+      let py = grid.Origin.Y + float32 y * hexH * 0.75f
+      Vector2(px + hexW / 2f, py + hexH / 2f)
+    | CellGeometry.Hex FlatTop ->
+      let hexW = grid.CellSize.X
+      let hexH = grid.CellSize.Y
+      let px = grid.Origin.X + float32 x * hexW * 0.75f
 
-        let py =
-          grid.Origin.Y
-          + float32 y * hexH
-          + (if x % 2 = 1 then hexH / 2f else 0f)
+      let py =
+        grid.Origin.Y + float32 y * hexH + (if x % 2 = 1 then hexH / 2f else 0f)
 
-        Vector2(px + hexW / 2f, py + hexH / 2f)
+      Vector2(px + hexW / 2f, py + hexH / 2f)
 
   let inline iter
     ([<InlineIfLambda>] action: int -> int -> 'T -> unit)
@@ -172,7 +169,9 @@ module CellGrid2D =
     ([<InlineIfLambda>] action: int -> int -> 'T -> unit)
     (grid: CellGrid2D<'T>)
     : unit =
-    if grid.Geometry <> CellGeometry.Square then
+    match grid.Geometry with
+    | CellGeometry.Square -> ()
+    | CellGeometry.Hex _ ->
       invalidArg
         "grid"
         "iterVisible culls square grids; hex grids need hex-aware culling"

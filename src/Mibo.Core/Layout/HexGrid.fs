@@ -20,12 +20,13 @@ module HexGrid =
     (origin: Vector2)
     (orientation: HexOrientation)
     : HexGrid<'T> =
-    let geometry =
-      match orientation with
-      | PointyTop -> CellGeometry.PointyTopHex
-      | FlatTop -> CellGeometry.FlatTopHex
-
-    CellGrid2D.createHex geometry size width height origin
+    CellGrid2D.createHex {
+      Orientation = orientation
+      Width = width
+      Height = height
+      Radius = size
+      Origin = origin
+    }
 
   let inline set col row (content: 'T) (grid: HexGrid<'T>) : unit =
     CellGrid2D.set col row content grid

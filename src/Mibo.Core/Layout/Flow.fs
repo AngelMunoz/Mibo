@@ -7,6 +7,11 @@ open System.Collections.Generic
 [<Struct>]
 type CellRect = { X: int; Y: int; W: int; H: int }
 
+/// A cell coordinate: x across, y down. The named pair the paint styles
+/// take where bare x/y ints could be transposed.
+[<Struct>]
+type CellPoint = { X: int; Y: int }
+
 /// Landmarks collected while a level lays out: named element rectangles,
 /// tag groups of rectangles, and per-cell tag bit grids for fast walking
 /// queries. Tags are opaque strings; the engine stores and queries them,
@@ -17,8 +22,9 @@ type Landmarks = {
   /// Resolved rectangle of every `Stamp.named` element (unique; a duplicate
   /// name throws).
   Named: Dictionary<string, CellRect>
-  /// Rectangles grouped by tag, one entry per `Stamp.tagged` element.
-  Tagged: Dictionary<string, CellRect list>
+  /// Rectangles grouped by tag, one entry per `Stamp.tagged` element,
+  /// most recent first.
+  Tagged: Dictionary<string, CellRect[]>
   /// One flat bit grid per tag (`x + y * Width`); filled by tagged areas and
   /// by `Flow.scanTiles`.
   Cells: Dictionary<string, bool[]>
@@ -136,15 +142,62 @@ type FlowOpts = {
 /// must appear in `Areas`; every name in `Places` must match a template area.
 type GridOpts<'T> = {
   /// Column tracks; `Fixed` tracks count toward the intrinsic footprint.
-  Cols: Track list
+  Cols: Track[]
   /// Row tracks; `Fixed` tracks count toward the intrinsic footprint.
-  Rows: Track list
+  Rows: Track[]
   /// Empty cells between tracks.
   Gap: int
   /// Grid-area template strings (`"main main side"`; `.` is an empty cell).
-  Areas: string list
+  Areas: string[]
   /// Stamps placed into named template areas.
-  Places: (string * Stamp<'T>) list
+  Places: struct (string * Stamp<'T>)[]
+}
+
+/// A midpoint circle spec: the center, the radius, and whether the
+/// interior spans.
+[<Struct>]
+type CircleSpec = {
+  Center: CellPoint
+  Radius: int
+  Filled: bool
+}
+
+/// A seeded scatter spec: how many cells to pick, and the generator seed.
+[<Struct>]
+type ScatterSpec = { Count: int; Seed: int }
+
+/// A scattered-line spec: the segment to scatter along, how many cells to
+/// pick, and the generator seed.
+[<Struct>]
+type ScatterLineSpec = {
+  From: CellPoint
+  To: CellPoint
+  Count: int
+  Seed: int
+}
+
+/// A probabilistic rewrite spec: the chance any matching cell changes, and
+/// the generator seed.
+[<Struct>]
+type WeatherSpec = { Probability: float32; Seed: int }
+
+/// Per-side inset amounts, in cells.
+[<Struct>]
+type InsetSpec = {
+  Left: int
+  Top: int
+  Right: int
+  Bottom: int
+}
+
+/// A dock spec: where the element anchors (`Anchor`, combining `Dock`
+/// values with `|||`, for example `Dock.Top ||| Dock.CenterX`), the inset
+/// from the chosen edges in cells, and the element to dock.
+[<Struct>]
+type DockSpec<'T> = {
+  Anchor: Dock
+  Inset: int
+  Stamp: Stamp<'T>
 }
 
 module internal FlowImpl =
@@ -235,9 +288,9 @@ module internal FlowImpl =
           let existing =
             match landmarks.Tagged.TryGetValue tag with
             | true, rects -> rects
-            | false, _ -> []
+            | false, _ -> [||]
 
-          landmarks.Tagged.[tag] <- r :: existing
+          landmarks.Tagged.[tag] <- Array.append [| r |] existing
 
           match landmarks.Cells.TryGetValue tag with
           | true, cells ->
@@ -483,20 +536,14 @@ module Stamp =
           FlowImpl.paintChild s (FlowImpl.rectOf s) registry second
     }
 
-  /// Shrinks the paint area of `stamp` by explicit amounts per side.
-  let insetEx
-    (left: int)
-    (top: int)
-    (right: int)
-    (bottom: int)
-    (stamp: Stamp<'T>)
-    : Stamp<'T> =
+  /// Shrinks the paint area of `stamp` by explicit per-side amounts.
+  let insetEx (inset: InsetSpec) (stamp: Stamp<'T>) : Stamp<'T> =
     FlowImpl.checkNoExpand "Stamp.insetEx" "stamp" stamp
 
-    let l = max 0 left
-    let t = max 0 top
-    let r = max 0 right
-    let b = max 0 bottom
+    let l = max 0 inset.Left
+    let t = max 0 inset.Top
+    let r = max 0 inset.Right
+    let b = max 0 inset.Bottom
     let w = stamp.W + l + r
     let h = stamp.H + t + b
 
@@ -524,7 +571,15 @@ module Stamp =
   /// the footprint to `stamp + 2n`. The gutter stays empty.
   let inset (n: int) (stamp: Stamp<'T>) : Stamp<'T> =
     FlowImpl.checkNoExpand "Stamp.inset" "stamp" stamp
-    insetEx n n n n stamp
+
+    insetEx
+      {
+        Left = n
+        Top = n
+        Right = n
+        Bottom = n
+      }
+      stamp
 
   /// Shifts the paint position of `stamp` by a signed offset. The footprint
   /// grows to cover both the original and the shifted area. Negative offsets
@@ -773,158 +828,226 @@ module Flow =
   // and let containers decide where the box lands.
 
   /// Fills the whole box with one content.
-  let fill(content: 'T) : BoxStyle<'T> =
-    fun s -> Layout.fill 0 0 s.Width s.Height content s |> ignore
+  let inline fill (content: 'T) (section: GridSection2D<'T>) : unit =
+    Layout.fill 0 0 section.Width section.Height content section |> ignore
 
   /// Outlines the box with one content.
-  let border(content: 'T) : BoxStyle<'T> =
-    fun s -> Layout.border 0 0 s.Width s.Height content s |> ignore
+  let inline border (content: 'T) (section: GridSection2D<'T>) : unit =
+    Layout.border 0 0 section.Width section.Height content section |> ignore
 
   /// Fills the box, then outlines it.
-  let rect (borderContent: 'T) (fillContent: 'T) : BoxStyle<'T> =
-    fun s ->
-      Layout.rect 0 0 s.Width s.Height borderContent fillContent s |> ignore
+  let inline rect
+    (borderContent: 'T)
+    (fillContent: 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.rect
+      0
+      0
+      section.Width
+      section.Height
+      borderContent
+      fillContent
+      section
+    |> ignore
 
   /// Puts one content on the four corners of the box.
-  let corners(content: 'T) : BoxStyle<'T> =
-    fun s -> Layout.corners 0 0 s.Width s.Height content s |> ignore
+  let inline corners (content: 'T) (section: GridSection2D<'T>) : unit =
+    Layout.corners 0 0 section.Width section.Height content section |> ignore
 
   /// Checkerboards the box between two contents.
-  let checker (odd: 'T) (even: 'T) : BoxStyle<'T> =
-    fun s -> Layout.checker odd even s |> ignore
+  let inline checker (odd: 'T) (even: 'T) (section: GridSection2D<'T>) : unit =
+    Layout.checker odd even section |> ignore
 
-  /// Scatters `count` cells of one content over the box (seeded).
-  let noise (count: int) (seed: int) (content: 'T) : BoxStyle<'T> =
-    fun s -> Layout.scatter count seed content s |> ignore
+  /// Scatters the spec's `Count` cells of one content over the box
+  /// (seeded).
+  let inline noise
+    (spec: ScatterSpec)
+    (content: 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.scatter spec.Count spec.Seed content section |> ignore
 
   /// Generates the box cell by cell; the callback receives local coordinates
   /// (x across the box, y down the box).
-  let texture(generator: int -> int -> 'T) : BoxStyle<'T> =
-    fun s -> Layout.generate 0 0 s.Width s.Height generator s |> ignore
+  let inline texture
+    (generator: int -> int -> 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.generate 0 0 section.Width section.Height generator section |> ignore
 
   /// Replaces every occurrence of one content with another, box-wide.
-  let replace (oldContent: 'T) (newContent: 'T) : BoxStyle<'T> =
-    fun s -> Layout.replace oldContent newContent s |> ignore
-
-  /// Replaces content box-wide with a probability (seeded) — weathering.
-  let weather
+  let inline replace
     (oldContent: 'T)
     (newContent: 'T)
-    (probability: float32)
-    (seed: int)
-    : BoxStyle<'T> =
-    fun s ->
-      Layout.replaceScatter oldContent newContent probability seed s |> ignore
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.replace oldContent newContent section |> ignore
 
-  /// Stamps a small paint pipeline `count` times at random spots in the box
-  /// (seeded) — rock clusters, puddles, rubble. The pipeline receives a
-  /// section whose offset is the chosen cell and whose extent runs to the
-  /// box's bottom-right corner, so paint relative to the section origin.
-  let clumps
-    (count: int)
-    (seed: int)
+  /// Replaces content box-wide with the spec's `Probability` (seeded) —
+  /// weathering.
+  let inline weather
+    (spec: WeatherSpec)
+    (oldContent: 'T)
+    (newContent: 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.replaceScatter
+      oldContent
+      newContent
+      spec.Probability
+      spec.Seed
+      section
+    |> ignore
+
+  /// Stamps a small paint pipeline the spec's `Count` times at random spots
+  /// in the box (seeded) — rock clusters, puddles, rubble. The pipeline
+  /// receives a section whose offset is the chosen cell and whose extent
+  /// runs to the box's bottom-right corner, so paint relative to the
+  /// section origin.
+  let inline clumps
+    (spec: ScatterSpec)
     (paint: GridSection2D<'T> -> GridSection2D<'T>)
-    : BoxStyle<'T> =
-    fun s -> Layout.scatterStamp count seed paint s |> ignore
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.scatterStamp spec.Count spec.Seed paint section |> ignore
 
-  /// Scatters `count` cells of generated content over the box (seeded); the
-  /// callback receives the cell coordinates (x across the box, y down the
-  /// box) and returns the content. The sparse counterpart of `texture` —
-  /// prop variety picked per scattered cell.
-  let noiseBy
-    (count: int)
-    (seed: int)
+  /// Scatters the spec's `Count` cells of generated content over the box
+  /// (seeded); the callback receives the cell coordinates (x across the
+  /// box, y down the box) and returns the content. The sparse counterpart
+  /// of `texture` — prop variety picked per scattered cell.
+  let inline noiseBy
+    (spec: ScatterSpec)
     (generator: int -> int -> 'T)
-    : BoxStyle<'T> =
-    fun s -> Layout.scatterBy count seed generator s |> ignore
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.scatterBy spec.Count spec.Seed generator section |> ignore
 
-  /// Paints one cell at local coordinates (x across, y down) — the
-  /// content atom.
-  let cell (x: int) (y: int) (content: 'T) : BoxStyle<'T> =
-    fun s -> Layout.set x y content s |> ignore
+  /// Paints one cell at a local coordinate — the content atom.
+  let inline cell
+    (at: CellPoint)
+    (content: 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.set at.X at.Y content section |> ignore
 
   /// Paints a horizontal run of `count` cells from the box origin —
   /// `background-repeat: repeat-x`.
-  let repeatX (count: int) (content: 'T) : BoxStyle<'T> =
-    fun s -> Layout.repeatX 0 0 count content s |> ignore
+  let inline repeatX
+    (count: int)
+    (content: 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.repeatX 0 0 count content section |> ignore
 
   /// Paints a vertical run of `count` cells from the box origin —
   /// `background-repeat: repeat-y`.
-  let repeatY (count: int) (content: 'T) : BoxStyle<'T> =
-    fun s -> Layout.repeatY 0 0 count content s |> ignore
+  let inline repeatY
+    (count: int)
+    (content: 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.repeatY 0 0 count content section |> ignore
 
   /// Paints a Bresenham line between two local points — roads, pipes,
   /// fences.
-  let line
-    (x1: int)
-    (y1: int)
-    (x2: int)
-    (y2: int)
+  let inline line
+    (start: CellPoint)
+    (finish: CellPoint)
     (content: 'T)
-    : BoxStyle<'T> =
-    fun s -> Layout.line x1 y1 x2 y2 content s |> ignore
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.line start.X start.Y finish.X finish.Y content section |> ignore
 
-  /// Paints a midpoint-circle around a local center; `filled` spans the
-  /// interior. Circle semantics are pixel-space; hex-true rings come from
+  /// Paints a midpoint circle from the spec; `Filled` spans the interior.
+  /// Circle semantics are pixel-space; hex-true rings come from
   /// `Hex2DSpatial.ring`.
-  let circle
-    (cx: int)
-    (cy: int)
-    (radius: int)
-    (filled: bool)
+  let inline circle
+    (spec: CircleSpec)
     (content: 'T)
-    : BoxStyle<'T> =
-    fun s -> Layout.circle cx cy radius filled content s |> ignore
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.circle
+      spec.Center.X
+      spec.Center.Y
+      spec.Radius
+      spec.Filled
+      content
+      section
+    |> ignore
 
   /// Paints a polygon from local vertices — `clip-path: polygon()`.
   /// `filled` spans the interior.
-  let polygon
-    (points: (int * int) list)
+  let inline polygon
+    (points: struct (int * int)[])
     (filled: bool)
     (content: 'T)
-    : BoxStyle<'T> =
-    fun s ->
-      let verts =
-        points |> Array.ofList |> Array.map(fun (x, y) -> struct (x, y))
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.polygon points filled content section |> ignore
 
-      Layout.polygon verts filled content s |> ignore
-
-  /// Scatters `count` cells along the box border (seeded) — a weathered
-  /// edge, crumbling ramparts, asteroid fringes.
-  let scatterBorder (count: int) (seed: int) (content: 'T) : BoxStyle<'T> =
-    fun s ->
-      Layout.scatterBorder 0 0 s.Width s.Height count seed content s |> ignore
-
-  /// Scatters `count` cells along a line between two local points
-  /// (seeded) — a broken road, a dotted route.
-  let scatterLine
-    (x1: int)
-    (y1: int)
-    (x2: int)
-    (y2: int)
-    (count: int)
-    (seed: int)
+  /// Scatters the spec's `Count` cells along the box border (seeded) — a
+  /// weathered edge, crumbling ramparts, asteroid fringes.
+  let inline scatterBorder
+    (spec: ScatterSpec)
     (content: 'T)
-    : BoxStyle<'T> =
-    fun s -> Layout.scatterLine x1 y1 x2 y2 count seed content s |> ignore
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.scatterBorder
+      0
+      0
+      section.Width
+      section.Height
+      spec.Count
+      spec.Seed
+      content
+      section
+    |> ignore
+
+  /// Scatters the spec's `Count` cells along the line between its `From`
+  /// and `To` points (seeded) — a broken road, a dotted route.
+  let inline scatterLine
+    (spec: ScatterLineSpec)
+    (content: 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.scatterLine
+      spec.From.X
+      spec.From.Y
+      spec.To.X
+      spec.To.Y
+      spec.Count
+      spec.Seed
+      content
+      section
+    |> ignore
 
   /// Paints alternating cells along the box border.
-  let checkerBorder (odd: 'T) (even: 'T) : BoxStyle<'T> =
-    fun s -> Layout.checkerBorder 0 0 s.Width s.Height odd even s |> ignore
+  let inline checkerBorder
+    (odd: 'T)
+    (even: 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.checkerBorder 0 0 section.Width section.Height odd even section
+    |> ignore
 
   /// Erases the whole box.
-  let clear() : BoxStyle<'T> =
-    fun s -> Layout.clear 0 0 s.Width s.Height s |> ignore
+  let inline clear () (section: GridSection2D<'T>) : unit =
+    Layout.clear 0 0 section.Width section.Height section |> ignore
 
   /// Sets one cell only when it is still empty — the `:empty` selector.
   /// Later styles still paint over it.
-  let setIfEmpty (x: int) (y: int) (content: 'T) : BoxStyle<'T> =
-    fun s -> Layout.setIfEmpty x y content s |> ignore
+  let inline setIfEmpty
+    (at: CellPoint)
+    (content: 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.setIfEmpty at.X at.Y content section |> ignore
 
   /// Rewrites the existing cells of the box through `mapping` — a derive
   /// pass after other styles.
-  let map(mapping: 'T -> 'T) : BoxStyle<'T> =
-    fun s -> Layout.map 0 0 s.Width s.Height mapping s |> ignore
+  let inline map (mapping: 'T -> 'T) (section: GridSection2D<'T>) : unit =
+    Layout.map 0 0 section.Width section.Height mapping section |> ignore
 
   /// A context-sized box of styles: paints whatever area its container
   /// assigns to it — a grid area, an overlay layer, a docked rectangle, an
@@ -1017,10 +1140,10 @@ module Flow =
   /// columns, `.` is an empty cell). Every place in `Places` must name an
   /// area from the template:
   ///
-  /// `grid { Cols = [ Fixed 20; Weight 1f ]; Rows = [ Fixed 6 ]; Gap = 1; Areas = [ "map side" ]; Places = [ "map", dungeon ] }`
+  /// `grid { Cols = [| Fixed 20; Weight 1f |]; Rows = [| Fixed 6 |]; Gap = 1; Areas = [| "map side" |]; Places = [| struct ("map", dungeon) |] }`
   let grid(opts: GridOpts<'T>) : Stamp<'T> =
-    let colArr = Array.ofList opts.Cols
-    let rowArr = Array.ofList opts.Rows
+    let colArr = opts.Cols
+    let rowArr = opts.Rows
     let gap = max 0 opts.Gap
 
     if colArr.Length = 0 || rowArr.Length = 0 then
@@ -1028,12 +1151,11 @@ module Flow =
 
     let cells =
       opts.Areas
-      |> Seq.map(fun line ->
+      |> Array.map(fun line ->
         line.Split(
           [| ' '; '\t' |],
           System.StringSplitOptions.RemoveEmptyEntries
         ))
-      |> Seq.toArray
 
     for line in cells do
       if line.Length > colArr.Length then
@@ -1073,7 +1195,7 @@ module Flow =
             areas.[name] <- struct (nc0, nr0, nc1 - nc0, nr1 - nr0)
           | false, _ -> areas.[name] <- struct (c, r, 1, 1)
 
-    for (name, stamp) in opts.Places do
+    for struct (name, stamp) in opts.Places do
       if not(areas.ContainsKey name) then
         invalidArg
           "Places"
@@ -1081,7 +1203,7 @@ module Flow =
 
       FlowImpl.checkNoExpand ("Flow.grid area '" + name + "'") "Places" stamp
 
-    let placements = Array.ofList opts.Places
+    let placements = opts.Places
 
     let wFixed =
       colArr
@@ -1112,7 +1234,7 @@ module Flow =
           let colOff = prefixOffsets colSizes gap
           let rowOff = prefixOffsets rowSizes gap
 
-          for (name, stamp) in placements do
+          for struct (name, stamp) in placements do
             match areas.TryGetValue name with
             | true, struct (c0, r0, cs, rs) ->
               let ax = assigned.X + colOff.[c0]
@@ -1133,43 +1255,42 @@ module Flow =
             | false, _ -> ()
     }
 
-  /// Paints a stamp into a docked rectangle of `section`. The anchor comes
-  /// from `flags` (`Dock.Top ||| Dock.CenterX` and so on); `inset` distances
-  /// the element from the chosen edges. `StretchX`/`StretchY` span the
-  /// section minus twice the inset, and a zero footprint dimension stretches
-  /// on its axis without them. Returns `section` for pipeline chaining.
-  /// Records no positions; `Flow.docked` is the level-document form that
-  /// reports its rectangle.
+  /// Paints the spec's `Stamp` into a docked rectangle of `section`. The
+  /// spec's `Anchor` says where (`Dock.Top ||| Dock.CenterX` and so on);
+  /// `Inset` distances the element from the chosen edges.
+  /// `StretchX`/`StretchY` span the section minus twice the inset, and a
+  /// zero footprint dimension stretches on its axis without them. Returns
+  /// `section` for pipeline chaining. Records no positions; `Flow.docked`
+  /// is the level-document form that reports its rectangle.
   let dock
-    (flags: Dock)
-    (inset: int)
-    (stamp: Stamp<'T>)
+    (spec: DockSpec<'T>)
     (section: GridSection2D<'T>)
     : GridSection2D<'T> =
-    FlowImpl.checkNoExpand "Flow.dock" "stamp" stamp
+    FlowImpl.checkNoExpand "Flow.dock" "Stamp" spec.Stamp
 
     let r =
-      FlowImpl.dockRect flags inset (FlowImpl.rectOf section) {
+      FlowImpl.dockRect spec.Anchor spec.Inset (FlowImpl.rectOf section) {
         X = 0
         Y = 0
-        W = stamp.W
-        H = stamp.H
+        W = spec.Stamp.W
+        H = spec.Stamp.H
       }
 
-    FlowImpl.paintChild section r ValueNone stamp
+    FlowImpl.paintChild section r ValueNone spec.Stamp
 
     section
 
-  /// A docked element for composition: paints `stamp` into a docked rectangle
-  /// of whatever container it mounts into and occupies no flow space (zero
-  /// footprint). The anchor comes from `flags` (`Dock.Top ||| Dock.CenterX`
-  /// and so on); `inset` distances the element from the chosen edges.
-  /// `StretchX`/`StretchY` span the container minus twice the inset, and a
-  /// zero footprint dimension of the wrapped stamp stretches on its axis
-  /// without them. Pair with `overlay` to place docks over a base layout.
-  /// Name the stamp you pass in to report its docked rectangle.
-  let docked (flags: Dock) (inset: int) (stamp: Stamp<'T>) : Stamp<'T> =
-    FlowImpl.checkNoExpand "Flow.docked" "stamp" stamp
+  /// A docked element for composition: paints the spec's `Stamp` into a
+  /// docked rectangle of whatever container it mounts into and occupies no
+  /// flow space (zero footprint). The spec's `Anchor` says where
+  /// (`Dock.Top ||| Dock.CenterX` and so on); `Inset` distances the element
+  /// from the chosen edges. `StretchX`/`StretchY` span the container minus
+  /// twice the inset, and a zero footprint dimension of the wrapped stamp
+  /// stretches on its axis without them. Pair with `overlay` to place docks
+  /// over a base layout. Name the stamped element to report its docked
+  /// rectangle.
+  let docked(spec: DockSpec<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Flow.docked" "Stamp" spec.Stamp
 
     {
       W = 0
@@ -1180,14 +1301,14 @@ module Flow =
       Paint =
         fun s registry ->
           let r =
-            FlowImpl.dockRect flags inset (FlowImpl.rectOf s) {
+            FlowImpl.dockRect spec.Anchor spec.Inset (FlowImpl.rectOf s) {
               X = 0
               Y = 0
-              W = stamp.W
-              H = stamp.H
+              W = spec.Stamp.W
+              H = spec.Stamp.H
             }
 
-          FlowImpl.paintChild s r registry stamp
+          FlowImpl.paintChild s r registry spec.Stamp
     }
 
   /// A full-length strip docked to one edge (`Dock.Top`, `Dock.Bottom`,
@@ -1215,7 +1336,11 @@ module Flow =
           "side"
           "strip needs exactly one edge flag (Top, Bottom, Left or Right)"
 
-    docked flags 0 (Stamp.box w h styles)
+    docked {
+      Anchor = flags
+      Inset = 0
+      Stamp = Stamp.box w h styles
+    }
 
   /// Stacks children over the full area of the container, later children
   /// paint over earlier ones. The footprint is the largest child. Layers are
@@ -1351,10 +1476,10 @@ module Flow =
 
   /// Returns every rectangle recorded under a tag, most recent first.
   /// Build-time/occasional queries; the per-cell hot path is `Flow.isTag`.
-  let taggedRects (tag: string) (landmarks: Landmarks) : CellRect list =
+  let taggedRects (tag: string) (landmarks: Landmarks) : CellRect[] =
     match landmarks.Tagged.TryGetValue tag with
     | true, rects -> rects
-    | false, _ -> []
+    | false, _ -> [||]
 
   /// The raw per-cell bit grid of `tag` (`x + y * landmarks.Width`), for hot
   /// loops: hoist the lookup out of the loop and read the array per cell.
@@ -1365,17 +1490,22 @@ module Flow =
     | true, cells -> ValueSome cells
     | false, _ -> ValueNone
 
-  /// Per-cell walking query: is cell (x, y) covered by an element tagged
+  /// Per-cell walking query: is the cell covered by an element tagged
   /// `tag` (or marked with it in the tiles via `Flow.scanTiles`)? Out of
   /// range cells are never tagged. One dictionary lookup and one array
-  /// read, no allocation; hoist the lookup with `Flow.tryTagGrid` in tight
-  /// loops.
-  let isTag (tag: string) (x: int) (y: int) (landmarks: Landmarks) : bool =
-    if x < 0 || y < 0 || x >= landmarks.Width || y >= landmarks.Height then
+  /// read, no allocation — `CellPoint` is a struct; hoist the lookup with
+  /// `Flow.tryTagGrid` in tight loops.
+  let isTag (tag: string) (at: CellPoint) (landmarks: Landmarks) : bool =
+    if
+      at.X < 0
+      || at.Y < 0
+      || at.X >= landmarks.Width
+      || at.Y >= landmarks.Height
+    then
       false
     else
       match landmarks.Cells.TryGetValue tag with
-      | true, cells -> cells.[x + y * landmarks.Width]
+      | true, cells -> cells.[at.X + at.Y * landmarks.Width]
       | false, _ -> false
 
   /// A non-painting landmark: records `tags` over the element's whole

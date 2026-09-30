@@ -41,17 +41,13 @@ module LayeredHexGrid =
       struct (existing, grid)
     else
       let newGrid =
-        let geometry =
-          match grid.Orientation with
-          | PointyTop -> CellGeometry.PointyTopHex
-          | FlatTop -> CellGeometry.FlatTopHex
-
-        CellGrid2D.createHex
-          geometry
-          grid.Size
-          grid.Width
-          grid.Height
-          grid.Origin
+        CellGrid2D.createHex {
+          Orientation = grid.Orientation
+          Width = grid.Width
+          Height = grid.Height
+          Radius = grid.Size
+          Origin = grid.Origin
+        }
 
       grid.Layers.Add(index, newGrid)
       struct (newGrid, grid)

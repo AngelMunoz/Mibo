@@ -26,7 +26,7 @@ open Mibo.Layout
 let struct (grid, marks) = gridValue |> Flow.run myDocument
 
 // per frame, no allocation
-if Flow.isTag "no-build" x y marks then ...
+if Flow.isTag "no-build" { X = x; Y = y } marks then ...
 ```
 
 Hoist the dictionary lookup in tight loops with `Flow.tryTagGrid`.
@@ -38,20 +38,20 @@ Grid template areas read like CSS `grid-template-areas`. Each zone becomes a nam
 ```fsharp
 let harbour =
   Flow.grid {
-    Cols = [ Fixed 12; Weight 1f; Fixed 8 ]
-    Rows = [ Fixed 6; Weight 1f; Fixed 4 ]
+    Cols = [| Fixed 12; Weight 1f; Fixed 8 |]
+    Rows = [| Fixed 6; Weight 1f; Fixed 4 |]
     Gap = 0
-    Areas = [
+    Areas = [|
       "shore shore shore"
       "woods plaza rise"
       "shore shore shore"
-    ]
-    Places = [
-      "shore", Stamp.named "shore" (Flow.canvas [ Flow.fill Sand ])
-      "woods", Stamp.tagged [ "no-build" ] (Flow.canvas [ Flow.noise 40 7 Tree ])
-      "plaza", Flow.canvas [ Flow.fill Path; Flow.border 0 Wall ]
-      "rise", Flow.canvas [ Flow.fill Rock; Flow.scatterBorder 6 3 Rock ]
-    ]
+    |]
+    Places = [|
+      struct ("shore", Stamp.named "shore" (Flow.canvas [ Flow.fill Sand ]))
+      struct ("woods", Stamp.tagged [ "no-build" ] (Flow.canvas [ Flow.noise { Count = 40; Seed = 7 } Tree ]))
+      struct ("plaza", Flow.canvas [ Flow.fill Path; Flow.border 0 Wall ])
+      struct ("rise", Flow.canvas [ Flow.fill Rock; Flow.scatterBorder { Count = 6; Seed = 3 } Rock ])
+    |]
   }
 
 let struct (grid, marks) =
@@ -83,8 +83,11 @@ Only `row` and `column` honor `expand`; every other container and combinator rej
 
 ```fsharp
 let wall =
-  Stamp.box 0 1 [ Flow.fill Wall ]             // zero footprint: stretches over the axis
-  |> Flow.docked (Dock.StretchX ||| Dock.Bottom) 0
+  Flow.docked {
+    Anchor = Dock.StretchX ||| Dock.Bottom
+    Inset = 0
+    Stamp = Stamp.box 0 1 [ Flow.fill Wall ]   // zero footprint: stretches over the axis
+  }
 ```
 
 A zero footprint dimension always means "stretch this axis", with or without the `Stretch` flags.
@@ -96,22 +99,29 @@ A zero footprint dimension always means "stretch this axis", with or without the
 | `Flow.fill c` | `background` | every cell |
 | `Flow.border c` / `Flow.rect b f` / `Flow.corners c` | `border` | edges |
 | `Flow.checker a b` / `Flow.checkerBorder a b` | alternating background | checker pattern |
-| `Flow.noise count seed c` / `Flow.noiseBy count seed gen` | scatter | sparse props |
+| `Flow.noise spec c` / `Flow.noiseBy spec gen` (`ScatterSpec`) | scatter | sparse props |
 | `Flow.texture gen` | `background-image` | generated content per cell |
-| `Flow.clumps count seed paint` | — | small stamp clusters |
-| `Flow.cell x y c` / `Flow.repeatX n c` / `Flow.repeatY n c` | the atom / `repeat-x` / `repeat-y` | runs of cells |
-| `Flow.line` / `Flow.circle` / `Flow.polygon` | `clip-path` shapes | geometric paint |
-| `Flow.scatterBorder` / `Flow.scatterLine` | dashed border | weathered edges |
-| `Flow.replace a b` / `Flow.weather a b p seed` | remap | content rewriting |
-| `Flow.setIfEmpty x y c` | `:empty` | conditional paint |
+| `Flow.clumps spec paint` (`ScatterSpec`) | — | small stamp clusters |
+| `Flow.cell pt c` (`CellPoint`) / `Flow.repeatX n c` / `Flow.repeatY n c` | the atom / `repeat-x` / `repeat-y` | runs of cells |
+| `Flow.line` (two `CellPoint`s) / `Flow.circle` (`CircleSpec`) / `Flow.polygon` | `clip-path` shapes | geometric paint |
+| `Flow.scatterBorder` (`ScatterSpec`) / `Flow.scatterLine` (`ScatterLineSpec`) | dashed border | weathered edges |
+| `Flow.replace a b` / `Flow.weather spec a b` (`WeatherSpec`) | remap | content rewriting |
+| `Flow.setIfEmpty pt c` | `:empty` | conditional paint |
 | `Flow.clear()` | erased region | nothing |
 | `Flow.map f` | derive pass | rewrite existing cells |
+
+Styles that take several settings receive them in a named spec record (`ScatterSpec`, `CircleSpec`, `ScatterLineSpec`, `WeatherSpec`, `InsetSpec`) or a `CellPoint`, so every value is labeled at the call site and coordinates cannot be transposed:
+
+```fsharp
+Flow.clumps { Count = 4; Seed = 5 } (fun c -> c |> Layout.circle 1 1 1 true Rock)
+Flow.scatterLine { From = { X = 0; Y = 0 }; To = { X = 8; Y = 0 }; Count = 3; Seed = 7 } Gravel
+```
 
 ## Landmarks: the semantic layer
 
 - `Stamp.named "spawn"` — one rectangle, unique names, `Flow.tryPosition` reads it.
 - `Stamp.tagged [ "no-build" ]` — many elements per tag, `Flow.taggedRects` lists them.
-- Every tagged rectangle rasterizes into a per-tag bit grid: `Flow.isTag "no-build" x y marks` answers cell queries with one dictionary lookup and one array read.
+- Every tagged rectangle rasterizes into a per-tag bit grid: `Flow.isTag "no-build" { X = x; Y = y } marks` answers cell queries with one dictionary lookup and one array read.
 - `Flow.region` marks an extent without painting.
 - `Landmarks.scanTiles` derives tags from painted tiles for irregular regions (noise-carved woods, scattered props).
 
@@ -123,7 +133,13 @@ Hexagons are a storage configuration, not a separate API. Build the grid with he
 
 ```fsharp
 let struct (grid, marks) =
-  CellGrid2D.createHex CellGeometry.PointyTopHex 32f 24 14 Vector2.Zero
+  CellGrid2D.createHex {
+  Orientation = HexOrientation.PointyTop
+  Width = 24
+  Height = 14
+  Radius = 32f
+  Origin = Vector2.Zero
+}
   |> Flow.run (Flow.overlay [ harbour ])
 ```
 

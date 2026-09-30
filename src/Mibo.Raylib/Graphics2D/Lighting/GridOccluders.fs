@@ -33,7 +33,9 @@ module GridOccluders =
     (edges: Edge)
     (grid: CellGrid2D<'T>)
     : Occluder2D[] =
-    if grid.Geometry <> CellGeometry.Square then
+    match grid.Geometry with
+    | CellGeometry.Square -> ()
+    | CellGeometry.Hex _ ->
       invalidArg
         "grid"
         "fromCellGrid extrudes square cell edges; hex cells have no axis-aligned edges"
