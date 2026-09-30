@@ -14,6 +14,7 @@ jobs:
       contains(github.event.comment.body, ' /opencode') ||
       startsWith(github.event.comment.body, '/opencode')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       id-token: write
       contents: read
@@ -31,5 +32,5 @@ jobs:
           OPENCODE_PERMISSION: '{ "bash": {  "*": "deny", "gh*": "allow", "gh pr review*": "deny", "dotnet*": "allow" }, "external_directory": { "*": "deny" } }'
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode-go/muse-spark-1.2-contributor
+          model: opencode-go/deepseek-v4.1-flash
           variant: high
