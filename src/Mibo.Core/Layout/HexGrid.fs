@@ -2,32 +2,15 @@ namespace Mibo.Layout
 
 open System.Numerics
 
-[<Struct>]
-type HexOrientation =
-  | PointyTop
-  | FlatTop
+/// Hex grids are `CellGrid2D` grids with hex geometry. Author them with
+/// `CellGrid2D.createHex` and the Flow DSL.
+type HexGrid<'T> = CellGrid2D<'T>
 
-[<Struct>]
-type HexGrid<'T> = {
-  Origin: Vector2
-  Size: float32
-  Orientation: HexOrientation
-  Width: int
-  Height: int
-  Cells: 'T voption[]
-}
-
+/// Compatibility surface for code written against the retired hex grid
+/// record. Every function delegates to `CellGrid2D`.
 module HexGrid =
-  let inline private toIndex col row width = col + row * width
 
-  let inline private hexDimensions
-    (size: float32)
-    (orientation: HexOrientation)
-    =
-    match orientation with
-    | PointyTop -> struct (size * sqrt 3f, size * 2f)
-    | FlatTop -> struct (size * 2f, size * sqrt 3f)
-
+  /// Creates a hex grid. Prefer `CellGrid2D.createHex`.
   let create
     width
     height
@@ -35,68 +18,33 @@ module HexGrid =
     (origin: Vector2)
     (orientation: HexOrientation)
     : HexGrid<'T> =
-    {
-      Origin = origin
-      Size = size
-      Orientation = orientation
-      Width = width
-      Height = height
-      Cells = Array.create (width * height) ValueNone
-    }
+    let geometry =
+      match orientation with
+      | PointyTop -> CellGeometry.PointyTopHex
+      | FlatTop -> CellGeometry.FlatTopHex
+
+    CellGrid2D.createHex geometry size width height origin
 
   let inline set col row (content: 'T) (grid: HexGrid<'T>) : unit =
-    if col >= 0 && col < grid.Width && row >= 0 && row < grid.Height then
-      let idx = toIndex col row grid.Width
-      grid.Cells.[idx] <- ValueSome content
+    CellGrid2D.set col row content grid
 
   let inline get col row (grid: HexGrid<'T>) : 'T voption =
-    if col >= 0 && col < grid.Width && row >= 0 && row < grid.Height then
-      let idx = toIndex col row grid.Width
-      grid.Cells.[idx]
-    else
-      ValueNone
+    CellGrid2D.get col row grid
 
   let inline clear col row (grid: HexGrid<'T>) : unit =
-    if col >= 0 && col < grid.Width && row >= 0 && row < grid.Height then
-      let idx = toIndex col row grid.Width
-      grid.Cells.[idx] <- ValueNone
+    CellGrid2D.clear col row grid
 
   let inline getWorldPos col row (grid: HexGrid<'T>) : Vector2 =
-    let struct (hexW, hexH) = hexDimensions grid.Size grid.Orientation
-
-    match grid.Orientation with
-    | PointyTop ->
-      let x =
-        grid.Origin.X
-        + float32 col * hexW
-        + (if row % 2 = 1 then hexW / 2f else 0f)
-
-      let y = grid.Origin.Y + float32 row * hexH * 0.75f
-      Vector2(x + hexW / 2f, y + hexH / 2f)
-    | FlatTop ->
-      let x = grid.Origin.X + float32 col * hexW * 0.75f
-
-      let y =
-        grid.Origin.Y
-        + float32 row * hexH
-        + (if col % 2 = 1 then hexH / 2f else 0f)
-
-      Vector2(x + hexW / 2f, y + hexH / 2f)
+    CellGrid2D.getWorldPos col row grid
 
   let inline iter
     ([<InlineIfLambda>] action: int -> int -> 'T -> unit)
     (grid: HexGrid<'T>)
     : unit =
-    let w = grid.Width
+    CellGrid2D.iter action grid
 
-    for i in 0 .. grid.Cells.Length - 1 do
-      match grid.Cells.[i] with
-      | ValueSome content ->
-        let col = i % w
-        let row = i / w
-        action col row content
-      | ValueNone -> ()
-
+  /// Iterates the cells that intersect a pixel rect, with hex-aware
+  /// culling for both orientations.
   let inline iterVisible
     (left: float32)
     (top: float32)
@@ -105,13 +53,16 @@ module HexGrid =
     ([<InlineIfLambda>] action: int -> int -> 'T -> unit)
     (grid: HexGrid<'T>)
     : unit =
-    let struct (hexW, hexH) = hexDimensions grid.Size grid.Orientation
+    let hexW = grid.CellSize.X
+    let hexH = grid.CellSize.Y
 
     let startCol, endCol, startRow, endRow =
-      match grid.Orientation with
+      match CellGrid2D.hexOrientation grid with
       | PointyTop ->
         let sc = max 0 (int((left - grid.Origin.X) / hexW) - 1)
+
         let ec = min (grid.Width - 1) (int((right - grid.Origin.X) / hexW) + 1)
+
         let sr = max 0 (int((top - grid.Origin.Y) / (hexH * 0.75f)) - 1)
 
         let er =

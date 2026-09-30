@@ -14,8 +14,20 @@ let tests =
 
         Expect.equal grid.Width 10 "Width should be 10"
         Expect.equal grid.Height 5 "Height should be 5"
-        Expect.equal grid.Size 32f "Size should be 32"
-        Expect.equal grid.Orientation HexOrientation.PointyTop "Orientation"
+
+        Expect.equal
+          grid.CellSize
+          (Vector2(32f * sqrt 3f, 64f))
+          "hex bounding box"
+
+        Expect.equal grid.Geometry CellGeometry.PointyTopHex "Geometry"
+
+        Expect.equal
+          (CellGrid2D.hexOrientation grid)
+          HexOrientation.PointyTop
+          "orientation"
+
+        Expect.equal (CellGrid2D.hexSize grid) 32f "hex size"
 
         for col in 0..9 do
           for row in 0..4 do
