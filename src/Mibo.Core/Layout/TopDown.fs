@@ -1,5 +1,6 @@
 namespace Mibo.Layout
 
+[<System.Obsolete("Author levels with the Flow DSL (Mibo.Layout.Flow)")>]
 module TopDown =
 
   [<Struct>]

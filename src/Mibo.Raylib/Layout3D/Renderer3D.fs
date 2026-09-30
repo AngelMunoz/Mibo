@@ -180,6 +180,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
         | ValueSome _ -> buffer.Add(Command3D.EndEffect)
         | ValueNone -> ()
 
+[<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
 module CellGridRenderer3D =
 
   let inline render
@@ -336,6 +337,7 @@ module CellGridRenderer3D =
 
     ctx.EmitInstancedWithEffect(buffer, shaderForKey)
 
+[<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
 module HexGrid3DRenderer =
 
   let inline render

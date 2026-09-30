@@ -4,10 +4,12 @@ open System.Numerics
 
 /// Hex grids are `CellGrid2D` grids with hex geometry. Author them with
 /// `CellGrid2D.createHex` and the Flow DSL.
+[<System.Obsolete("Hex grids are CellGrid2D with hex geometry: build with CellGrid2D.createHex and author with the Flow DSL")>]
 type HexGrid<'T> = CellGrid2D<'T>
 
 /// Compatibility surface for code written against the retired hex grid
 /// record. Every function delegates to `CellGrid2D`.
+[<System.Obsolete("Hex grids are CellGrid2D with hex geometry: build with CellGrid2D.createHex and author with the Flow DSL")>]
 module HexGrid =
 
   /// Creates a hex grid. Prefer `CellGrid2D.createHex`.

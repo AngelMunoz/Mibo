@@ -7,6 +7,7 @@ open System.Numerics
 type BoundingBox = { Min: Vector3; Max: Vector3 }
 
 [<Struct>]
+[<System.Obsolete("Author 3D as a 2D grid with per-column height")>]
 type CellGrid3D<'T> = {
   Origin: Vector3
   CellSize: Vector3
@@ -16,6 +17,7 @@ type CellGrid3D<'T> = {
   Cells: 'T voption[]
 }
 
+[<System.Obsolete("Author 3D as a 2D grid with per-column height")>]
 module CellGrid3D =
   let inline private toIndex x y z width height =
     x + y * width + z * width * height

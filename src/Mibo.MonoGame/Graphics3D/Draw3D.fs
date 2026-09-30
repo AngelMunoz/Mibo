@@ -173,7 +173,8 @@ module Draw3D =
   /// <summary>
   /// Draws static instanced bulk (terrain/props) of an effectless
   /// <see cref="T:Mibo.Elmish.Graphics3D.PrimitiveMesh"/>. Auto-PBR + lights + shadows.
-  /// Used by <c>CellGridRenderer3D</c>/<c>HexGrid3DRenderer</c> after camera culling.
+  /// Historically used by the now-obsolete <c>CellGridRenderer3D</c>/<c>HexGrid3DRenderer</c>
+  /// after camera culling; draw your own instance data with it.
   /// </summary>
   let inline drawInstanced
     (mesh: PrimitiveMesh)

@@ -337,6 +337,7 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
 /// <c>Mibo.Raylib/Layout3D/Renderer3D.fs</c> at the renderer-glue layer; layout logic
 /// is reused from <c>Mibo.Core.Layout3D</c>.
 /// </summary>
+[<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
 module CellGridRenderer3D =
 
   let inline render
@@ -513,6 +514,7 @@ module CellGridRenderer3D =
 /// Hex-grid renderers for the MonoGame backend. Mirrors the cell-grid renderers but for
 /// <see cref="T:Mibo.Layout3D.HexGrid3D"/>; layout logic is reused from <c>Mibo.Core.Layout3D</c>.
 /// </summary>
+[<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
 module HexGrid3DRenderer =
 
   let inline render

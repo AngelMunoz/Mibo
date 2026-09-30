@@ -1509,6 +1509,7 @@ type Draw =
   /// per-sub-mesh shader overload, each <c>ValueSome</c> sub-mesh is shaded by
   /// its own effect; otherwise the default PBR instanced path is used.</summary>
   [<Extension>]
+  [<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
   static member inline renderCellGridInstanced<'Ctx, 'Buf, 'T
     when 'Ctx: (member RenderCellGridInstanced: 'Buf * CellGrid3D<'T> -> unit)>
     (buffer: 'Buf, ctx: 'Ctx, grid: CellGrid3D<'T>)
@@ -1519,6 +1520,7 @@ type Draw =
   /// <summary>Renders a cell grid instanced, wrapping each key's draws in an
   /// effect scope when <paramref name="shaderForKey"/> returns <c>ValueSome</c>.</summary>
   [<Extension>]
+  [<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
   static member inline renderCellGridInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
     when 'Ctx: (member RenderCellGridInstanced:
       'Buf * CellGrid3D<'T> * ('Key -> 'S ValueOption) -> unit)
@@ -1534,6 +1536,7 @@ type Draw =
 
   /// <summary>Like <c>renderCellGridInstanced</c> but restricted to a bounding volume.</summary>
   [<Extension>]
+  [<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
   static member inline renderCellGridVolumeInstanced<'Ctx, 'Buf, 'T
     when 'Ctx: (member RenderCellGridVolumeInstanced:
       'Buf * BoundingBox * CellGrid3D<'T> -> unit)>
@@ -1545,6 +1548,7 @@ type Draw =
   /// <summary>Like <c>renderCellGridInstanced</c> but restricted to a bounding
   /// volume, with per-key effect scoping.</summary>
   [<Extension>]
+  [<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
   static member inline renderCellGridVolumeInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
     when 'Ctx: (member RenderCellGridVolumeInstanced:
       'Buf * BoundingBox * CellGrid3D<'T> * ('Key -> 'S ValueOption) -> unit)
@@ -1562,6 +1566,7 @@ type Draw =
   /// <summary>Renders a hex grid instanced. Per-sub-mesh shader scoping applies
   /// when the context was built with the triple overload.</summary>
   [<Extension>]
+  [<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
   static member inline renderHexGridInstanced<'Ctx, 'Buf, 'T
     when 'Ctx: (member RenderHexGridInstanced: 'Buf * HexGrid3D<'T> -> unit)>
     (buffer: 'Buf, ctx: 'Ctx, grid: HexGrid3D<'T>)
@@ -1572,6 +1577,7 @@ type Draw =
   /// <summary>Renders a hex grid instanced, wrapping each key's draws in an
   /// effect scope when <paramref name="shaderForKey"/> returns <c>ValueSome</c>.</summary>
   [<Extension>]
+  [<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
   static member inline renderHexGridInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
     when 'Ctx: (member RenderHexGridInstanced:
       'Buf * HexGrid3D<'T> * ('Key -> 'S ValueOption) -> unit)
@@ -1587,6 +1593,7 @@ type Draw =
 
   /// <summary>Like <c>renderHexGridInstanced</c> but restricted to a bounding volume.</summary>
   [<Extension>]
+  [<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
   static member inline renderHexGridVolumeInstanced<'Ctx, 'Buf, 'T
     when 'Ctx: (member RenderHexGridVolumeInstanced:
       'Buf * BoundingBox * HexGrid3D<'T> -> unit)>
@@ -1598,6 +1605,7 @@ type Draw =
   /// <summary>Like <c>renderHexGridInstanced</c> but restricted to a bounding
   /// volume, with per-key effect scoping.</summary>
   [<Extension>]
+  [<System.Obsolete("Author 3D as a 2D grid with per-column height; render from your own instance data")>]
   static member inline renderHexGridVolumeInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
     when 'Ctx: (member RenderHexGridVolumeInstanced:
       'Buf * BoundingBox * HexGrid3D<'T> * ('Key -> 'S ValueOption) -> unit)
