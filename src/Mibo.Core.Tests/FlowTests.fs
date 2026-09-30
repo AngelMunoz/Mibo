@@ -274,6 +274,54 @@ let tests =
           "run ignores Expand"
     ]
 
+    testList "expand combinators" [
+      testCase "beside rejects expand children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Stamp.beside (Stamp.expand(fillTile 1)) (fillTile 2) |> ignore)
+          "beside ignores Expand"
+
+      testCase "beside rejects an expanded second child"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Stamp.beside (fillTile 2) (Stamp.expand(fillTile 1)) |> ignore)
+          "beside ignores Expand on the second child"
+
+      testCase "above rejects expand children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Stamp.above (Stamp.expand(fillTile 1)) (fillTile 2) |> ignore)
+          "above ignores Expand"
+
+      testCase "overlay rejects expand children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Stamp.overlay (Stamp.expand(fillTile 1)) (fillTile 2) |> ignore)
+          "overlay ignores Expand"
+
+      testCase "inset rejects an expand stamp"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Stamp.inset 1 (Stamp.expand(fillTile 1)) |> ignore)
+          "inset ignores Expand"
+
+      testCase "offset rejects an expand stamp"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Stamp.offset 1 0 (Stamp.expand(fillTile 1)) |> ignore)
+          "offset ignores Expand"
+
+      testCase "repeat rejects an expand stamp"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Stamp.repeat 2 (Stamp.expand(fillTile 1)) |> ignore)
+          "repeat ignores Expand"
+    ]
+
     testList "grid" [
       testCase "fixed tracks and template areas"
       <| fun _ ->

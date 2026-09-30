@@ -369,7 +369,8 @@ module Stamp =
   /// with weight 1. Expanded elements split the leftover space by weight.
   /// Only `Flow.row` and `Flow.column` act on `Expand`; other containers
   /// throw when a direct child carries it. Combinators (`beside`, `above`,
-  /// ...) drop it on their wrapper.
+  /// `overlay`, `inset`, `offset`, `repeat`) throw when the wrapped element
+  /// carries it; apply `expand` to the composite instead.
   let expand(stamp: Stamp<'T>) : Stamp<'T> = {
     stamp with
         Expand = max 1 stamp.Expand
@@ -384,6 +385,9 @@ module Stamp =
   /// Places `second` right of `first`. Size is the sum of widths and the
   /// larger of the two heights.
   let beside (first: Stamp<'T>) (second: Stamp<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Stamp.beside" "first" first
+    FlowImpl.checkNoExpand "Stamp.beside" "second" second
+
     let w = first.W + second.W
     let h = max first.H second.H
 
@@ -421,6 +425,9 @@ module Stamp =
   /// Stacks `bottom` under `top`. Size is the larger of the two widths and
   /// the sum of heights.
   let above (top: Stamp<'T>) (bottom: Stamp<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Stamp.above" "top" top
+    FlowImpl.checkNoExpand "Stamp.above" "bottom" bottom
+
     let w = max top.W bottom.W
     let h = top.H + bottom.H
 
@@ -458,6 +465,9 @@ module Stamp =
   /// Draws both elements over the full area of the container, `second` on
   /// top. Size is the larger of the two footprints.
   let overlay (first: Stamp<'T>) (second: Stamp<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Stamp.overlay" "first" first
+    FlowImpl.checkNoExpand "Stamp.overlay" "second" second
+
     let w = max first.W second.W
     let h = max first.H second.H
 
@@ -481,6 +491,8 @@ module Stamp =
     (bottom: int)
     (stamp: Stamp<'T>)
     : Stamp<'T> =
+    FlowImpl.checkNoExpand "Stamp.insetEx" "stamp" stamp
+
     let l = max 0 left
     let t = max 0 top
     let r = max 0 right
@@ -510,12 +522,16 @@ module Stamp =
 
   /// Shrinks the paint area of `stamp` by `n` cells on all sides and grows
   /// the footprint to `stamp + 2n`. The gutter stays empty.
-  let inset (n: int) (stamp: Stamp<'T>) : Stamp<'T> = insetEx n n n n stamp
+  let inset (n: int) (stamp: Stamp<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Stamp.inset" "stamp" stamp
+    insetEx n n n n stamp
 
   /// Shifts the paint position of `stamp` by a signed offset. The footprint
   /// grows to cover both the original and the shifted area. Negative offsets
   /// shift within the enlarged footprint and clamp at the container edge.
   let offset (dx: int) (dy: int) (stamp: Stamp<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Stamp.offset" "stamp" stamp
+
     let x0 = min 0 dx
     let y0 = min 0 dy
     let x1 = max dx (dx + stamp.W)
@@ -545,6 +561,8 @@ module Stamp =
 
   /// Repeats `stamp` `count` times, side by side with no gap.
   let repeat (count: int) (stamp: Stamp<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Stamp.repeat" "stamp" stamp
+
     if count <= 0 then
       empty()
     else
@@ -836,7 +854,8 @@ module Flow =
 
   /// Marks an element to share the leftover main-axis space of its container
   /// (flex-grow). Alias for `Stamp.expand`, so level documents can stay on
-  /// `Flow.*`. Only `row`/`column` honor it; other containers reject it.
+  /// `Flow.*`. Only `row`/`column` honor it; containers and combinators
+  /// reject it.
   let expand(stamp: Stamp<'T>) : Stamp<'T> = Stamp.expand stamp
 
   let private resolveTracks (total: int) (tracks: Track[]) (gap: int) : int[] =
@@ -1026,6 +1045,8 @@ module Flow =
   /// the element from the chosen edges. `StretchX`/`StretchY` span the
   /// section minus twice the inset, and a zero footprint dimension stretches
   /// on its axis without them. Returns `section` for pipeline chaining.
+  /// Records no positions; `Flow.docked` is the level-document form that
+  /// reports its rectangle.
   let dock
     (flags: Dock)
     (inset: int)
