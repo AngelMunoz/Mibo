@@ -2,12 +2,14 @@
 title: Hex Grid Layout (2D)
 category: Level Design
 categoryindex: 8
-index: 5
+index: 6
 ---
 
 # Hex Grid Layout (2D)
 
 Hex grids trade the simplicity of rectangles for **equal-distance neighbors** and more natural-looking terrain. If your game needs 6-directional movement, strategy-map aesthetics, or organic-looking levels, hexes are the right tool.
+
+> **Hex is a storage configuration, not a separate API.** Hexes live in `CellGrid2D` with hex geometry (`CellGrid2D.createHex`), the same grid type as squares. Author hex maps with the [Flow DSL](flow.html) — zones, docks, and landmarks work identically; geometry affects world positions and spatial queries only. The `HexGrid` and `HexLayout` modules are obsolete compatibility surfaces: they still compile and delegate to the unified grid, but new code should use `CellGrid2D` directly plus Flow.
 
 ## When to Use Hex vs Rect
 
@@ -44,13 +46,13 @@ Hexes come in two rotations. The choice affects both visuals and coordinate math
 open Mibo.Layout
 
 // Strategy map with pointy-top hexes
-let grid = HexGrid.create 20 15 32f Vector2.Zero PointyTop
+let grid = CellGrid2D.createHex CellGeometry.PointyTopHex 32f 20 15 Vector2.Zero
 
 // Isometric board with flat-top hexes
-let board = HexGrid.create 12 10 48f Vector2.Zero FlatTop
+let board = CellGrid2D.createHex CellGeometry.FlatTopHex 48f 12 10 Vector2.Zero
 ```
 
-The `size` parameter is the radius of the hex (center to corner). A `size` of 32f gives you hexes roughly 56px wide (pointy) or 64px wide (flat).
+The `size` parameter is the radius of the hex (center to corner). A `size` of 32f gives you hexes roughly 56px wide (pointy) or 64px wide (flat). `CellSize` stores the hex's bounding box; `CellGrid2D.hexOrientation` and `CellGrid2D.hexSize` read the hex parameters back.
 
 ## Coordinate System
 
@@ -75,21 +77,21 @@ Odd rows (pointy-top) or odd columns (flat-top) are shifted by half a hex width.
 open Mibo.Layout
 open System.Numerics
 
-let grid = HexGrid.create 20 15 32f Vector2.Zero PointyTop
+let grid = CellGrid2D.createHex CellGeometry.PointyTopHex 32f 20 15 Vector2.Zero
 
 // Place content
-HexGrid.set 5 3 myTile grid
+CellGrid2D.set 5 3 myTile grid
 
 // Read content (returns voption: no heap allocation)
-match HexGrid.get 5 3 grid with
+match CellGrid2D.get 5 3 grid with
 | ValueSome tile -> // handle tile
 | ValueNone -> // empty cell
 
 // Remove content
-HexGrid.clear 5 3 grid
+CellGrid2D.clear 5 3 grid
 
-// Get world position for rendering
-let worldPos = HexGrid.getWorldPos 5 3 grid  // Vector2
+// Get world position for rendering (staggers odd rows for pointy top)
+let worldPos = CellGrid2D.getWorldPos 5 3 grid  // Vector2
 ```
 
 ## Iteration
@@ -98,15 +100,15 @@ let worldPos = HexGrid.getWorldPos 5 3 grid  // Vector2
 
 ```fsharp
 // Process every populated cell
-grid |> HexGrid.iter (fun col row tile ->
-    let pos = HexGrid.getWorldPos col row grid
+grid |> CellGrid2D.iter (fun col row tile ->
+    let pos = CellGrid2D.getWorldPos col row grid
     renderTile pos tile
 )
 ```
 
 ### Visible Only (Frustum Culling)
 
-For large maps, you only want to process cells on screen. `iterVisible` takes screen-space bounds and skips off-screen hexes:
+For large maps, you only want to process cells on screen. Hex-aware culling depends on the orientation, so it stays on the `HexGrid` compatibility surface with float32 screen bounds (the square `CellGrid2D.iterVisible` rejects hex grids):
 
 ```fsharp
 // Screen bounds in world coordinates
@@ -117,22 +119,43 @@ let screenBottom = cameraY + viewportHeight / 2f
 
 grid |> HexGrid.iterVisible screenLeft screenTop screenRight screenBottom
     (fun col row tile ->
-        let pos = HexGrid.getWorldPos col row grid
+        let pos = CellGrid2D.getWorldPos col row grid
         renderTile pos tile
     )
 ```
 
 **Performance note:** For a 100×100 hex grid, `iterVisible` typically processes only 50-200 cells instead of 10,000. Always use it for gameplay rendering.
 
-## The DSL: Building Levels with Stamps
+## The DSL: Authoring with Flow
 
-The `HexLayout` module lets you build levels declaratively. Think of it as painting content onto the grid using composable functions.
-
-### Running the DSL
+Author hex levels with the [Flow DSL](flow.html) — the same document vocabulary as square grids:
 
 ```fsharp
+let kingdom =
+  Flow.grid {
+    Cols = [ Fixed 10; Weight 1f; Fixed 10 ]
+    Rows = [ Fixed 8; Weight 1f; Fixed 8 ]
+    Gap = 0
+    Areas = [ "plains plains hills"; "plains plains hills" ]
+    Places = [
+      "plains", Flow.canvas [ Flow.fill GrassTile; Flow.noise 25 7 ForestTile ]
+      "hills", Stamp.tagged [ "no-build" ] (Flow.canvas [ Flow.fill RockTile ])
+    ]
+  }
+
+let struct (grid, marks) =
+  CellGrid2D.createHex CellGeometry.PointyTopHex 32f 30 20 Vector2.Zero
+  |> Flow.run (Flow.overlay [ kingdom ])
+```
+
+### The retired HexLayout pipelines
+
+The `HexLayout` module (sections, per-op painting) is obsolete. It still compiles and works exactly as before — the square `Layout` ops also run on hex storage for pixel-perfect control — but Flow replaces it for authoring:
+
+```fsharp
+// obsolete surface, kept for reference
 let grid =
-    HexGrid.create 30 20 32f Vector2.Zero PointyTop
+    CellGrid2D.createHex CellGeometry.PointyTopHex 32f 30 20 Vector2.Zero
     |> HexLayout.run (fun section ->
         section
         |> HexLayout.fill 0 0 30 20 GrassTile

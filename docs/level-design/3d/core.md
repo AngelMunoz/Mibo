@@ -2,12 +2,14 @@
 title: 3D Layout Engine
 category: Level Design
 categoryindex: 8
-index: 6
+index: 7
 ---
 
 # 3D Layout Engine
 
 The Layout3D engine provides a voxel-based level design system for 3D games. It lives in `Mibo.Layout3D`.
+
+> **Obsolete family.** The 3D grids (`CellGrid3D`, `Layout3D`, their hex and layered siblings, and the grid renderers) are obsolete. Author 3D levels as a [2D Flow document](../2d/flow.html) with per-column height — the heightmap approach. This page remains as a reference for the retired API.
 
 ## Core Concepts
 

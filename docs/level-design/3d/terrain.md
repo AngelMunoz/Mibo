@@ -2,12 +2,14 @@
 title: Building Outdoor Terrain
 category: Level Design
 categoryindex: 8
-index: 7
+index: 8
 ---
 
 # Building Outdoor Terrain
 
 Outdoor terrain (landscapes, wilderness, open worlds) is defined by natural elevation, paths, and landmarks. The `Terrain` module provides stamps for designing these efficiently.
+
+> **Obsolete module.** `Mibo.Layout3D.Terrain` is obsolete. Author terrain as a [2D Flow document](../2d/flow.html) with per-column height — a plateau is a height-2 region, a ramp is stepped heights. The page remains as a pattern reference.
 
 ## Importing
 

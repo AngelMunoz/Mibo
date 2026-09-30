@@ -9,6 +9,8 @@ index: 1
 
 Mibo provides grid-based layout engines for designing game levels programmatically. The system is content-agnostic and works with any tile/entity type you define.
 
+**Author with [Flow](2d/flow.html).** Flow is the level-authoring DSL: elements compose like HTML, containers distribute space like CSS flexbox and grid, and landmarks report the semantic regions that gameplay reads. The rest of this overview covers the grid storage underneath and the low-level `Layout` pipelines for pixel-perfect control.
+
 ## Core Philosophy
 
 - **Code-first design** - Define levels as pure F# functions, not designer tools
@@ -16,18 +18,19 @@ Mibo provides grid-based layout engines for designing game levels programmatical
 - **Composable primitives** - Build complex structures from reusable "stamps"
 - **Position, not rendering** - Grid handles spatial placement; you handle models and collision
 
-## 2D vs 3D Layout
+## Grid Storage
 
-Mibo provides separate layout engines for 2D and 3D games:
+All 2D maps — square or hex — live in one storage type. Geometry is a configuration, not an API family:
 
-| Feature | 2D Layout | 3D Layout | 2D Hex Layout | 3D Hex Layout |
-|---------|-----------|-----------|---------------|---------------|
-| **Module** | `Mibo.Layout` | `Mibo.Layout3D` | `Mibo.Layout` | `Mibo.Layout3D` |
-| **Dimensions** | X, Y | X, Y, Z | Col, Row | Col, Row, Layer |
-| **Storage** | `CellGrid2D<'T>` | `CellGrid3D<'T>` | `HexGrid<'T>` | `HexGrid3D<'T>` |
-| **Cursor** | `GridSection2D<'T>` | `GridSection3D<'T>` | `HexGridSection<'T>` | `HexGrid3DSection<'T>` |
-| **World Space** | `Vector2` | `Vector3` | `Vector2` | `Vector3` |
-| **Cell Shape** | Rectangle | Box | Hexagon | Hex Column |
+| | Square | Hex |
+|---|---|---|
+| **Storage** | `CellGrid2D<'T>` | `CellGrid2D<'T>` (hex geometry) |
+| **Build** | `CellGrid2D.create` | `CellGrid2D.createHex` |
+| **Cursor** | `GridSection2D<'T>` | `GridSection2D<'T>` |
+| **World Space** | `Vector2` | `Vector2` (staggered rows or columns) |
+| **Spatial queries** | `Grid2DSpatial` | `Hex2DSpatial` |
+
+The 3D grid family is obsolete (`CellGrid3D`, `HexGrid3D`, `Layout3D`, the hex-3D modules, the layered grids, and the grid renderers). Author 3D levels as a 2D grid with per-column height — the heightmap approach: walls become height-2 columns, ramps become stepped heights. `BoundingBox`, the general culling type from `Mibo.Layout3D`, stays.
 
 ## Common Patterns
 
@@ -166,45 +169,19 @@ grid |> CellGrid3D.iter (fun x y z content ->
 
 ## Domain Modules
 
-Mibo includes pre-built stamps for common game types:
+The pre-built stamp libraries are obsolete — their vocabulary is subsumed by Flow styles, and the pages remain as pattern references:
 
-### 2D Games
+- **[Platformer](2d/platformer.html)** - Boxes, platforms, ledges, walls, pillars, stairs, slopes, pits (obsolete: use Flow styles)
+- **[TopDown](2d/topdown.html)** - Rooms, corridors, wall segments, doorways (obsolete: use Flow styles)
+- **[Hex Grid](2d/hex.html)** - Hexagonal tile layouts for strategy and tactics games (rewritten for unified hex storage)
 
-- **[Platformer](2d/platformer.html)** - Boxes, platforms, ledges, walls, pillars, stairs, slopes, pits
-- **[TopDown](2d/topdown.html)** - Rooms, corridors, wall segments, doorways
-- **[Hex Grid](2d/hex.html)** - Hexagonal tile layouts for strategy and tactics games
-
-### 3D Games
-
-- **[Interior](3d/interior.html)** - Rooms, corridors, doorways, stairs, shafts, pillars, windows
-- **[Terrain](3d/terrain.html)** - Ground, plateaus, pits, ramps, paths, heightmaps
-- **[Hex Grid](3d/hex.html)** - Hex column layouts for strategy games with elevation
+The 3D stamp pages ([Interior](3d/interior.html), [Terrain](3d/terrain.html), [3D Hex](3d/hex.html)) cover obsolete modules; author 3D as 2D plus column height.
 
 ## Rendering Integration
 
 ### 3D Grids
 
-Both `CellGrid3D` and `HexGrid3D` have dedicated renderer modules with matching API surfaces,
-available on both backends (raylib and MonoGame):
-
-- `CellGridRenderer3D` / `HexGrid3DRenderer`: Full rendering helpers
-- `render`: Basic iteration with world position conversion
-- `renderVolume`: Frustum-culled rendering
-- `renderWithIndices`: Access to grid coordinates during rendering
-- `renderInstanced`: GPU instancing for many copies of the same mesh
-- `renderVolumeInstanced`: GPU instancing with frustum culling
-
-The instanced renders are also available as fluent buffer members;
-`buffer.renderCellGridInstanced(ctx, grid)` / `buffer.renderHexGridInstanced(ctx, grid)`
-their volume-culled variants are the recommended style for new code
-(see [Draw DSL](../draw-dsl.html)).
-
-> _**NOTE**_: The layout geometry (`CellGrid3D`, `HexGrid3D`, stamps) lives in `Mibo.Core` and
-> is available on every backend. The instanced-draw renderer bridge depends on the backend's
-> native mesh/command types, so it ships per backend (raylib and MonoGame)
-> provide a matching implementation with the same API surface.
-
-See the [3D Layout Engine](3d/core.html) and [3D Hex Grid](3d/hex.html) docs for usage.
+The `CellGridRenderer3D` / `HexGrid3DRenderer` modules and their instanced-draw buffer members are obsolete with the rest of the 3D grid family. Render from your own instance data: the draw surface (`buffer.drawInstanced` and friends) stays — feed it transforms derived from your 2D footprint plus column heights.
 
 ### 2D Grids
 
@@ -225,25 +202,24 @@ Use **2D Layout** for:
 - Isometric games (3D projection, 2D layout)
 - Tile-based puzzle games
 
-Use **3D Layout** for:
-- First-person shooters
+Author **3D as 2D plus column height** for:
+- First-person shooters (2D footprint, per-column height and content kind)
 - Dungeon crawlers
 - Outdoor exploration games
-- Voxel-based games
 
-Use **Hex Layout** (2D or 3D) for:
+Use **Hex geometry** for:
 - Strategy and tactics games
 - Wargames and board game adaptations
 - Games where 6-directional adjacency matters
-- Civilization-style games with elevation (3D hex)
 
 ## Getting Started
 
-- **[2D Layout Engine](2d/core.html)** - Core 2D concepts and DSL
-- **[Platformer Stamps](2d/platformer.html)** - 2D platformer examples
-- **[TopDown Stamps](2d/topdown.html)** - 2D top-down examples
+- **[Flow - Level Authoring](2d/flow.html)** - The authoring DSL; start here
+- **[2D Layout Engine](2d/core.html)** - Grid storage and the pixel-perfect `Layout` pipelines
 - **[Hex Grid Layout (2D)](2d/hex.html)** - Hexagonal 2D layouts with adjacency, pathfinding, and strategy game patterns
-- **[3D Layout Engine](3d/core.html)** - Core 3D concepts and DSL
-- **[Interior Stamps](3d/interior.html)** - 3D interior examples
-- **[Terrain Stamps](3d/terrain.html)** - 3D terrain examples
-- **[Hex Grid Layout (3D)](3d/hex.html)** - Hex column 3D layouts with elevation, instanced rendering, and strategy game patterns
+- **[Platformer Stamps](2d/platformer.html)** - 2D platformer patterns (obsolete surface)
+- **[TopDown Stamps](2d/topdown.html)** - 2D top-down patterns (obsolete surface)
+- **[3D Layout Engine](3d/core.html)** - Obsolete 3D concepts and DSL
+- **[Interior Stamps](3d/interior.html)** - Obsolete 3D interior examples
+- **[Terrain Stamps](3d/terrain.html)** - Obsolete 3D terrain examples
+- **[Hex Grid Layout (3D)](3d/hex.html)** - Obsolete hex column 3D layouts

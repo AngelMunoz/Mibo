@@ -2,12 +2,14 @@
 title: 2D Layout Engine
 category: Level Design
 categoryindex: 8
-index: 2
+index: 3
 ---
 
 # 2D Layout Engine
 
 The Layout engine provides a tile-based level design system for 2D games. It lives in `Mibo.Layout`.
+
+> **Author with [Flow](flow.html) first.** Flow wraps this engine with the CSS-style authoring DSL — grid template areas, flexbox rows and columns, docks, and landmark queries. The `Layout` pipelines documented here remain fully supported as the pixel-perfect escape hatch: every Flow style is a `Layout` pipeline underneath, and `Stamp.sized` wraps any of these pipelines as a Flow element. Reach for raw `Layout` when you want exact index math and manual section surgery. The `LayeredGrid2D` helper is obsolete — a layered grid is a dictionary of grids, and game code can own the dictionary.
 
 > **`Vector2` namespace (MonoGame).** The Core layout APIs (`CellGrid2D`, `LayeredGrid2D`, and the 3D variants) always take `System.Numerics.Vector2`. MonoGame projects `open Microsoft.Xna.Framework`, so a bare `Vector2(...)` resolves to XNA's vector type and the Core layout calls fail to compile (`FS0193`). Qualify those calls explicitly:
 > ```fsharp

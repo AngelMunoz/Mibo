@@ -2,12 +2,14 @@
 title: Building Platformer Levels
 category: Level Design
 categoryindex: 8
-index: 3
+index: 4
 ---
 
 # Building Platformer Levels
 
 Platformer games revolve around spatial challenges: jumps, gaps, vertical traversal, and hazards. The `Platformer` module provides stamps that make designing these challenges quick and composable.
+
+> **Obsolete module.** `Mibo.Layout.Platformer` is obsolete — its vocabulary (boxes, platforms, ledges, stairs) is subsumed by [Flow styles](flow.html). The page remains as a pattern reference.
 
 ## Importing
 

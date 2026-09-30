@@ -12,6 +12,17 @@
 
 - **Core:** authoring sugars for the flow DSL. `Flow.prop` is a single-cell prop, `Flow.expand` keeps level documents on `Flow.*` (alias of `Stamp.expand`), and `Flow.build` lays a level out and derives its cell-tag bit grids in one call instead of `run` plus `scanTiles`. Layer containers document their full-bleed contract: children paint into the whole assigned area, so sized children go through `docked` and footprint-honoring containers (`grid` areas, `row`/`column`). `Flow.expand` acts on `row`/`column` children; containers that cannot expand a child (`overlay`, `group`, `grid`, `dock`, `run`) and the arithmetic combinators (`beside`, `above`, `overlay`, `inset`, `offset`, `repeat`) throw instead of ignoring it — apply `expand` to the composite. `Flow.dock` documents that it records no positions; `Flow.docked` is the form that reports the docked rectangle inside a level document.
 
+- **Core:** hex grids join the unified storage. `CellGrid2D` gains a `Geometry` (`Square`/`PointyTopHex`/`FlatTopHex`) and `CellGrid2D.createHex geometry size width height origin` builds hexagons over the same offset storage as squares, so the Flow DSL, landmarks, and tag bit grids author hex maps identically — geometry affects world positions (`getWorldPos` staggers rows or columns) and spatial queries only. `CellGrid2D.hexOrientation` and `hexSize` read the hex parameters back; both throw for square grids. `Grid2DSpatial` and `Hex2DSpatial` guard every entry point against the wrong geometry, and `GridOccluders.fromCellGrid` (both backends) rejects hex grids because it extrudes axis-aligned square edges.
+
+- **Core:** the complete paint vocabulary for the flow DSL. `Flow.cell` paints one cell, `Flow.repeatX`/`repeatY` paint runs of cells (`background-repeat`), `Flow.line` paints a Bresenham segment, `Flow.circle` and `Flow.polygon` paint shapes (`clip-path`), `Flow.scatterBorder`/`Flow.scatterLine` weather edges and routes, `Flow.checkerBorder` alternates the border, `Flow.clear()` erases the box, `Flow.setIfEmpty` paints only empty cells (the `:empty` selector), and `Flow.map` rewrites the existing cells as a derive pass. The square `Layout` module stays open as the pixel-perfect escape hatch; it keeps only section plumbing that Flow deliberately does not wrap.
+
+### Deprecated
+
+- **Core:** the hex compatibility surface. `HexGrid` is now a type abbreviation over `CellGrid2D` and its module delegates to the unified grid, and `HexLayout`/`HexGridSection` still compile — all marked obsolete in favor of `CellGrid2D.createHex` and the Flow DSL (the square `Layout` ops also run on hex storage for pixel-perfect control). No signature broke: `Hex2DSpatial` keeps its source signatures over the unified grid.
+- **Core:** the 3D grid families. `CellGrid3D`, `Layout3D` (module, section, helpers), `Grid3DSpatial`, `HexGrid3D`, `HexLayout3D`, `Hex3DSpatial`, the layered 3D grids, and the unused stamp libraries (`Platformer`, `TopDown`, `Terrain`, `Interior`) are obsolete — author 3D as a 2D grid with per-column height. `BoundingBox`, the general culling type, stays.
+- **Core:** the layered grids (`LayeredGrid2D`/`LayeredLayout` and the 3D/hex siblings). A layered grid is a dictionary of grids; game code can own the dictionary.
+- **Raylib/MonoGame:** `CellGridRenderer3D`, `HexGrid3DRenderer`, and the `renderCellGrid`/`renderHexGrid` instanced buffer members are obsolete with the 3D grid family. Render from your own instance data; the draw surface itself stays.
+
 ## [5.1.0] - 2026-09-05
 
 ### Added
