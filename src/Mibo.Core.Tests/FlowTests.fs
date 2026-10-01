@@ -932,10 +932,10 @@ let landmarkTests =
 
       Expect.equal
         (Flow.taggedRects "danger" placed)
-        [| { X = 4; Y = 0; W = 2; H = 1 } |]
+        [ { X = 4; Y = 0; W = 2; H = 1 } ]
         "danger rect, most recent first"
 
-      Expect.equal (Flow.taggedRects "nothing" placed) [||] "unknown tag"
+      Expect.equal (Flow.taggedRects "nothing" placed) [] "unknown tag"
 
     testCase "tagged cells answer walking queries"
     <| fun _ ->
@@ -998,7 +998,7 @@ let landmarkTests =
 
       Expect.equal
         (Flow.taggedRects "arena" placed)
-        [| { X = 0; Y = 0; W = 4; H = 4 } |]
+        [ { X = 0; Y = 0; W = 4; H = 4 } ]
         "region rect covers the area"
 
     testCase "scanTiles derives cell tags from the painted tiles"
@@ -1075,7 +1075,7 @@ let landmarkTests =
 
       Expect.equal
         (Flow.taggedRects "exit" placed)
-        [| { X = 0; Y = 2; W = 10; H = 2 } |]
+        [ { X = 0; Y = 2; W = 10; H = 2 } ]
         "tagged rect clips too"
 
     testCase "tryTagGrid hands out the raw bit grid"
@@ -1113,7 +1113,7 @@ let landmarkTests =
 
       Expect.equal
         (Flow.taggedRects "exit" placed)
-        [| { X = 0; Y = 3; W = 6; H = 1 } |]
+        [ { X = 0; Y = 3; W = 6; H = 1 } ]
         "tagged with the docked rectangle"
 
       Expect.isTrue

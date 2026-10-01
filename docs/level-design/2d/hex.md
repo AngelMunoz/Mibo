@@ -126,7 +126,7 @@ grid |> CellGrid2D.iter (fun col row tile ->
 
 ### Visible Only (Frustum Culling)
 
-For large maps, you only want to process cells on screen. Hex-aware culling depends on the orientation, so it stays on the `HexGrid` compatibility surface with float32 screen bounds (the square `CellGrid2D.iterVisible` rejects hex grids):
+For large maps, you only want to process cells on screen. `CellGrid2D.iterVisible` culls hex grids too: the window is orientation-aware (padded one cell on each axis to cover the row/column stagger) and conservative — it may include a hex whose shape misses the rect, but it never drops one that touches it. Bounds are int world coordinates:
 
 ```fsharp
 // Screen bounds in world coordinates
@@ -135,7 +135,8 @@ let screenTop = cameraY - viewportHeight / 2f
 let screenRight = cameraX + viewportWidth / 2f
 let screenBottom = cameraY + viewportHeight / 2f
 
-grid |> HexGrid.iterVisible screenLeft screenTop screenRight screenBottom
+grid
+|> CellGrid2D.iterVisible (int screenLeft) (int screenTop) (int screenRight) (int screenBottom)
     (fun col row tile ->
         let pos = CellGrid2D.getWorldPos col row grid
         renderTile pos tile
@@ -538,8 +539,8 @@ Hex grids don't have a dedicated 2D renderer module because the iteration patter
 
 ```fsharp
 // Basic rendering
-grid |> HexGrid.iter (fun col row tile ->
-    let pos = HexGrid.getWorldPos col row grid
+grid |> CellGrid2D.iter (fun col row tile ->
+    let pos = CellGrid2D.getWorldPos col row grid
     // Draw your sprite/tile at pos
     buffer.Sprite(sprite {
         texture (getTexture tile)
@@ -548,9 +549,10 @@ grid |> HexGrid.iter (fun col row tile ->
 )
 
 // Performance rendering (only visible hexes)
-grid |> HexGrid.iterVisible screenLeft screenTop screenRight screenBottom
+grid
+|> CellGrid2D.iterVisible (int screenLeft) (int screenTop) (int screenRight) (int screenBottom)
     (fun col row tile ->
-        let pos = HexGrid.getWorldPos col row grid
+        let pos = CellGrid2D.getWorldPos col row grid
         buffer.Sprite(sprite {
             texture (getTexture tile)
             at pos.X pos.Y
@@ -615,7 +617,7 @@ let strategyMap =
 - **Struct voption**: No heap allocation per cell
 - **Zero-copy sections**: Sections don't duplicate the grid
 - **Inline lambdas**: DSL functions compile away closures
-- **Use `iterVisible`**: Always cull for gameplay rendering (note it takes float world bounds, unlike `CellGrid2D.iterVisible` which takes ints)
+- **Use `iterVisible`**: Always cull for gameplay rendering; `CellGrid2D.iterVisible` takes int world bounds and handles both square and hex geometries
 - **Use `generate`**: For procedural content, it's faster than individual `set` calls
 
 ## API Reference

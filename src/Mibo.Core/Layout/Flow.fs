@@ -25,7 +25,7 @@ type Landmarks = {
   Named: Dictionary<string, CellRect>
   /// Rectangles grouped by tag, one entry per `Stamp.tagged` element,
   /// most recent first.
-  Tagged: Dictionary<string, CellRect[]>
+  Tagged: Dictionary<string, CellRect list>
   /// One flat bit grid per tag (`x + y * Width`); filled by tagged areas and
   /// by `Flow.scanTiles`.
   Cells: Dictionary<string, bool[]>
@@ -284,9 +284,9 @@ module internal FlowImpl =
         for tag in stamp.Tags do
           let existing =
             Dictionary.tryGetValue tag landmarks.Tagged
-            |> ValueOption.defaultValue [||]
+            |> ValueOption.defaultValue []
 
-          landmarks.Tagged.[tag] <- Array.append [| r |] existing
+          landmarks.Tagged.[tag] <- r :: existing
 
           let cells =
             Dictionary.tryGetValue tag landmarks.Cells
@@ -1472,8 +1472,8 @@ module Flow =
 
   /// Returns every rectangle recorded under a tag, most recent first.
   /// Build-time/occasional queries; the per-cell hot path is `Flow.isTag`.
-  let inline taggedRects (tag: string) (landmarks: Landmarks) : CellRect[] =
-    Dictionary.tryGetValue tag landmarks.Tagged |> ValueOption.defaultValue [||]
+  let inline taggedRects (tag: string) (landmarks: Landmarks) : CellRect list =
+    Dictionary.tryGetValue tag landmarks.Tagged |> ValueOption.defaultValue []
 
   /// The raw per-cell bit grid of `tag` (`x + y * landmarks.Width`), for hot
   /// loops: hoist the lookup out of the loop and read the array per cell.

@@ -180,7 +180,7 @@ let frostfall =
 
       Expect.equal
         lootRects
-        [| { X = 19; Y = 11; W = 1; H = 1 } |]
+        [ { X = 19; Y = 11; W = 1; H = 1 } ]
         "king chest centered in the hall"
 
       Expect.isTrue

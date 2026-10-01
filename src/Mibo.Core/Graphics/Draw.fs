@@ -1,3 +1,4 @@
+#nowarn "44"
 // ─────────────────────────────────────────────────────────────────────────────
 // The fluent Draw DSL — one backend-neutral surface for 2D and 3D.
 //
