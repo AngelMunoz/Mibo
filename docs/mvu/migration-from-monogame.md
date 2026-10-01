@@ -861,6 +861,11 @@ etc. yourself. Drop those `Batch2DConfig.withLitSprite`/`withShader` lines.
 
 These modules moved to `Mibo.Core` with **identical APIs**:
 
+> **Mibo 6 note:** the grid rows below describe v5. In Mibo 6, the 3D
+> grid family, the layered grids, and the stamp libraries are obsolete,
+> and `HexGrid`/`HexLayout` are compatibility aliases over
+> `CellGrid2D`. See [Migrating to Mibo v6](../migration-to-v6.html).
+
 | Module                                                                 | Namespace       | Notes                                                                            |
 | ---------------------------------------------------------------------- | --------------- | -------------------------------------------------------------------------------- |
 | `System` pipeline                                                      | `Mibo.Elmish`   | `start`, `pipeMutable`, `snapshot`, `pipe`, `dispatch`, `dispatchWith`, `finish` |
@@ -868,14 +873,14 @@ These modules moved to `Mibo.Core` with **identical APIs**:
 | `GameTime`, `DispatchMode`, `FixedStepConfig`                          | `Mibo.Elmish`   | Unchanged                                                                        |
 | `GameConfig`                                                           | `Mibo.Elmish`   | Mostly unchanged; `withMinWidth`/`withMinHeight` are new                |
 | `HeadlessProgram` / `HeadlessRunner`                                   | `Mibo.Elmish`   | Unchanged                                                                        |
-| `CellGrid2D`, `HexGrid`, `Layout`, `HexLayout`                         | `Mibo.Layout`   | Unchanged                                                                        |
-| `CellGrid3D`, `HexGrid3D`, `Layout3D`, `HexLayout3D`                   | `Mibo.Layout3D` | Unchanged                                                                        |
+| `CellGrid2D`, `HexGrid`, `Layout`, `HexLayout`                         | `Mibo.Layout`   | `CellGrid2D`/`Layout` unchanged; `HexGrid`/`HexLayout` obsolete compat in v6    |
+| `CellGrid3D`, `HexGrid3D`, `Layout3D`, `HexLayout3D`                   | `Mibo.Layout3D` | Unchanged in v5; obsolete in v6                                                  |
 | `Grid2DSpatial`, `Hex2DSpatial`                                        | `Mibo.Layout`   | Unchanged                                                                        |
-| `Grid3DSpatial`, `Hex3DSpatial`                                        | `Mibo.Layout3D` | Unchanged                                                                        |
-| `LayeredGrid2D`, `LayeredHexGrid`, `LayeredLayout`, `LayeredHexLayout` | `Mibo.Layout`   | Unchanged                                                                        |
-| `LayeredHexGrid3D`, `LayeredHexLayout3D`                               | `Mibo.Layout3D` | Unchanged                                                                        |
-| `Platformer`, `TopDown` stamps                                         | `Mibo.Layout`   | Unchanged                                                                        |
-| `Interior`, `Terrain` stamps                                           | `Mibo.Layout3D` | Unchanged                                                                        |
+| `Grid3DSpatial`, `Hex3DSpatial`                                        | `Mibo.Layout3D` | Unchanged in v5; obsolete in v6                                                  |
+| `LayeredGrid2D`, `LayeredHexGrid`, `LayeredLayout`, `LayeredHexLayout` | `Mibo.Layout`   | Unchanged in v5; obsolete in v6                                                  |
+| `LayeredHexGrid3D`, `LayeredHexLayout3D`                               | `Mibo.Layout3D` | Unchanged in v5; obsolete in v6                                                  |
+| `Platformer`, `TopDown` stamps                                         | `Mibo.Layout`   | Unchanged in v5; obsolete in v6                                                  |
+| `Interior`, `Terrain` stamps                                           | `Mibo.Layout3D` | Unchanged in v5; obsolete in v6                                                  |
 
 ---
 

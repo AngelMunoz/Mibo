@@ -200,13 +200,14 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
 ### Window-culled rendering
 
 `renderFootprintWindowInstanced` only processes cells whose footprint
-intersects a world-space window (`left`/`top`/`right`/`bottom`, in world
-units; hex grids cull with an orientation-aware window). Use it for large
-worlds where you only render nearby chunks:
+intersects a world-space window. The bounds (`left`/`top`/`right`/
+`bottom`) are **`int` world coordinates**, so cast your float camera
+position. Hex grids cull with an orientation-aware window. Use it for
+large worlds where you only render nearby chunks:
 
 ```fsharp
 buffer
-  .renderFootprintWindowInstanced(instancedCtx, cx - 50, cz - 50, cx + 50, cz + 50, model.World)
+  .renderFootprintWindowInstanced(instancedCtx, int cx - 50, int cz - 50, int cx + 50, int cz + 50, model.World)
   .drop()
 ```
 

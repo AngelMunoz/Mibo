@@ -297,7 +297,7 @@ Use them:
 
 ```fsharp
 level
-|> LayeredLayout.layer 0 (fun section ->
+|> Layout.run (fun section ->
     section
     |> Layout.section 0 0 Dungeon.cell
     |> Layout.section 5 1 (Dungeon.corridor 10)
@@ -313,9 +313,12 @@ The key insight: **stamps are functions**. You can store them, pass them around,
 
 ## Domain Modules
 
+> **Obsolete in v6.** The pre-built stamp libraries are retired. Flow
+> styles replace their vocabulary (`Stamp.box` + `Flow.fill` /
+> `Flow.border` and friends). The linked pages remain as pattern
+> references. See [Migrating to Mibo v6](../../migration-to-v6.html).
+
 Mibo includes pre-built stamps for common game types:
 
 - **[Platformer](platformer.html)** - Boxes, platforms, ledges, walls, pillars, stairs, slopes, pits
 - **[TopDown](topdown.html)** - Rooms, corridors, wall segments, doorways
-
-These serve as examples and starting points. Copy and modify them for your game's needs.

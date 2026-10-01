@@ -20,7 +20,7 @@
 
 ### Deprecated
 
-- **Core:** the [migration guide](docs/level-design/migration.md) maps every retired API below to its replacement.
+- **Core:** the [migration guide](docs/migration-to-v6.md) maps every retired API below to its replacement.
 - **Core:** the hex compatibility surface. `HexGrid` is now a type abbreviation over `CellGrid2D` and its module delegates to the unified grid, and `HexLayout`/`HexGridSection` still compile — all marked obsolete in favor of `CellGrid2D.createHex` and the Flow DSL (the square `Layout` ops also run on hex storage for pixel-perfect control). Existing `Hex2DSpatial` code compiles unchanged.
 - **Core:** the 3D grid families. `CellGrid3D`, `Layout3D` (module, section, helpers), `Grid3DSpatial`, `HexGrid3D`, `HexLayout3D`, `Hex3DSpatial`, the layered 3D grids, and the stamp libraries (`Platformer`, `TopDown`, `Terrain`, `Interior`) are obsolete — author 3D as a 2D grid with per-column height. `BoundingBox`, the general culling type, stays.
 - **Core:** the layered grids (`LayeredGrid2D`/`LayeredLayout` and the 3D/hex siblings). A layered grid is a dictionary of grids; game code can own the dictionary.

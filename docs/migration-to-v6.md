@@ -1,33 +1,44 @@
 ---
-title: Migration Guide
-category: Level Design
-categoryindex: 8
-index: 11
+title: Migrating to Mibo v6
+category: Migrating
+categoryindex: 7
+index: 4
 ---
 
-# Migration Guide
+# Migrating to Mibo v6
 
-This release retires four API families: the hex compatibility surface, the
-3D grid family, the layered grids, and the pre-built stamp libraries.
-Nothing breaks compilation today — every retired module carries
-`[<Obsolete>]` and still works — but new code must use the replacements,
-and existing code should migrate while the compat surface still compiles.
+## What v6 is
 
-The one idea behind every migration in this page: **the grid stores a 2D
+v6 puts every grid behind one storage type and one authoring DSL:
+
+- **One grid type.** `CellGrid2D<'T>` stores squares and hexes. Hex is a
+  geometry setting (`CellGrid2D.createHex`), not a separate API.
+- **One authoring model.** The [Flow DSL](level-design/2d/flow.html)
+  authors both geometries: grid template areas, flexbox rows and
+  columns, docks, and landmark queries (named rectangles and tags).
+- **3D becomes a heightmap.** The vertical axis moves into the tile
+  (`{ Kind: BlockKind; Height: int }`). The grid stores the footprint.
+
+Nothing breaks compilation today. Every retired module carries
+`[<Obsolete>]` and still works. You can migrate one level at a time
+while the compat surface still compiles.
+
+One rule covers every migration in this page: **the grid stores a 2D
 footprint, and everything vertical becomes data in the tile.**
 
-- [Hex grids](#hex-grids)
-- [3D grids](#3d-grids)
-- [Layered grids](#layered-grids)
-- [Stamp libraries](#stamp-libraries)
-- [Migration checklist](#migration-checklist)
+## 1. Recompile and read the warnings
 
-## Hex grids
+Build your project. Every FS0044 warning marks a call site that must
+migrate. The obsolete message names the replacement. Nothing else
+changes: the kernel, both runtimes, and both backends keep their
+namespaces and signatures.
 
-Hex grids are `CellGrid2D` with hex geometry — the same storage, the same
-Flow DSL, the same landmarks. Geometry affects two things only: world
-positions (rows or columns stagger) and spatial queries (`Hex2DSpatial`
-replaces `Grid2DSpatial`).
+## 2. Migrate hex grids to `CellGrid2D.createHex`
+
+Hex grids are `CellGrid2D` with hex geometry. Storage, the Flow DSL,
+and landmarks stay the same. Geometry affects two things only: world
+positions (rows or columns stagger) and spatial queries
+(`Hex2DSpatial` replaces `Grid2DSpatial`).
 
 ### Storage
 
@@ -49,8 +60,8 @@ let grid =
 ### Cell access
 
 `set`, `get`, `clear`, `iter`, and `getWorldPos` moved to `CellGrid2D`
-with identical signatures — same arguments, same behavior (the hex
-stagger is applied by the grid's geometry):
+with identical arguments and behavior. The grid's geometry applies the
+hex stagger:
 
 ```fsharp
 // before                          // after
@@ -61,9 +72,10 @@ HexGrid.getWorldPos 5 3 grid       CellGrid2D.getWorldPos 5 3 grid
 
 ### Culling
 
-`CellGrid2D.iterVisible` now culls hex grids too, with an
-orientation-aware window. Note the bounds type change: the retired
-`HexGrid.iterVisible` took `float32` bounds, the unified one takes `int`:
+`CellGrid2D.iterVisible` culls hex grids too, with an
+orientation-aware window. The bounds type changes: the retired
+`HexGrid.iterVisible` took `float32` bounds, the unified one takes
+`int`:
 
 ```fsharp
 // before (float32 bounds)                     // after (int bounds)
@@ -74,8 +86,9 @@ HexGrid.iterVisible l t r b action grid         CellGrid2D.iterVisible
 
 ### Pipelines
 
-`HexLayout` pipelines map one-to-one onto the square `Layout` ops — hex
-storage runs them unchanged — or author with [Flow](2d/flow.html):
+`HexLayout` pipelines map one-to-one onto the square `Layout` ops. Hex
+storage runs them unchanged. You can also author with
+[Flow](level-design/2d/flow.html):
 
 ```fsharp
 // before: HexLayout
@@ -103,7 +116,7 @@ let board =
 
 ### Spatial queries
 
-`Hex2DSpatial` keeps its signatures; its grid parameters are
+`Hex2DSpatial` keeps its signatures. Its grid parameters are
 `CellGrid2D<'T>` now, so it no longer emits deprecation warnings:
 
 ```fsharp
@@ -113,19 +126,19 @@ let ring = Hex2DSpatial.ring 5 3 2 board
 let path = Hex2DSpatial.findPath sc sr gc gr passable (fun _ _ _ _ -> 1f) board
 ```
 
-`Hex2DSpatial.worldToCell`, `neighbors6`, `inRange`, `spiral`, and
+`Hex2DSpatial.worldToCell`, `neighbors`, `inRange`, `spiral`, and
 `floodFill` are unchanged as well.
 
-## 3D grids
+## 3. Migrate 3D levels to footprint plus column height
 
-This is the big one: the entire `Mibo.Layout3D` family is retired —
-`CellGrid3D`, `GridSection3D`, the `Layout3D` DSL, `HexGrid3D` /
-`HexLayout3D`, `Grid3DSpatial` / `Hex3DSpatial`, the layered 3D grids,
-and the 3D grid renderers.
+The entire `Mibo.Layout3D` family is retired: `CellGrid3D`,
+`GridSection3D`, the `Layout3D` DSL, `HexGrid3D` / `HexLayout3D`,
+`Grid3DSpatial` / `Hex3DSpatial`, the layered 3D grids, and the 3D grid
+renderers.
 
 ### The model shift
 
-A `CellGrid3D<'T>` stored one `'T voption` per voxel — the vertical axis
+A `CellGrid3D<'T>` stored one `'T voption` per voxel. The vertical axis
 was an index. The replacement stores one tile per footprint cell, and
 the vertical extent rides **in the tile**:
 
@@ -133,7 +146,7 @@ the vertical extent rides **in the tile**:
 // before: the voxel was the unit
 type Cell = | Floor | Wall | Chest
 
-// after: the column is the unit — kind plus vertical extent
+// after: the column is the unit. Kind plus vertical extent.
 type BlockKind =
   | Floor
   | Wall
@@ -164,7 +177,7 @@ What each old concept becomes:
 | `Layout3D.wallXY` / `wallYZ` | `Flow.border` / `Flow.line` footprints with wall columns |
 | `Layout3D.scatter3D` / `scatterXZ` | `Flow.noise` / `Flow.scatterLine` on the footprint |
 | `Layout3D.generate` | `Flow.texture` (callback decides kind and height per cell) |
-| `Layout3D.sphere` / `cylinder` | No direct equivalent: author the footprint (`Flow.circle`, `Flow.polygon`) and compute `Height` per column |
+| `Layout3D.sphere` / `cylinder` | No direct equivalent. Author the footprint (`Flow.circle`, `Flow.polygon`) and compute `Height` per column. |
 | `Layout3D.checker3D` / planar checkers | `Flow.checker` on the footprint |
 | `CellGrid3D.iterVolume` | `CellGrid2D.iterVisible` (world-space window, hex-aware) |
 | `renderCellGridVolumeInstanced` / `renderHexGridVolumeInstanced` | The [volume-culled instancing pattern](#volume-culled-instanced-rendering) below |
@@ -198,7 +211,7 @@ level
     |> Layout3D.section 15 0 0 Dungeon.intersection)
 ```
 
-After — the same level as one Flow document over height-carrying
+After: the same level as one Flow document over height-carrying
 columns. Rooms are grid areas, corridors are strips, walls are border
 styles, and doors are cleared border cells:
 
@@ -241,8 +254,8 @@ let grid = CellGrid2D.create 20 5 cellSize origin
 let struct (level, marks) = grid |> Flow.run level
 ```
 
-Height shows up where it always mattered — gameplay and rendering —
-never in the layout math.
+Height appears in gameplay and rendering. It never appears in the
+layout math.
 
 ### World positions
 
@@ -300,31 +313,34 @@ grid
 ### Volume-culled instanced rendering
 
 `renderCellGridVolumeInstanced` / `renderHexGridVolumeInstanced` (and
-their `...WithEffect` variants) have direct replacements:
-`InstancedRenderContext` now renders 2D footprint grids itself —
+their `...WithEffect` variants) have direct replacements.
+`InstancedRenderContext` now renders 2D footprint grids itself:
 `RenderInstanced` for the whole grid and `RenderWindowInstanced` for a
 world-space window (hex-aware). The `BoundingBox`'s XZ extent becomes
-the window; the vertical axis is your column heights.
+the window. The vertical axis is your column heights.
+
+The window takes **`int` world coordinates**. The retired volume path
+took `float32` world units, so cast your camera rect when you port:
 
 ```fsharp
-// before — the retired voxel renderer drove the context
+// before: the retired voxel renderer drove the context
 CellGridRenderer3D.renderVolumeInstanced ctx bounds grid buffer
 CellGridRenderer3D.renderVolumeInstancedWithEffect ctx bounds grid shaderForKey buffer
 
-// after — the context renders the footprint grid; the XZ extent of the
-// old BoundingBox becomes the window, in world units
-ctx.RenderWindowInstanced(buffer, left, top, right, bottom, footprintGrid)
+// after: the context renders the footprint grid. The XZ extent of the
+// old BoundingBox becomes the int world-space window.
+ctx.RenderWindowInstanced(buffer, int left, int top, int right, int bottom, footprintGrid)
 ctx.RenderWindowInstancedWithEffect(
-  buffer, left, top, right, bottom, footprintGrid, shaderForKey)
+  buffer, int left, int top, int right, int bottom, footprintGrid, shaderForKey)
 
 // or through the Draw DSL (both backends resolve the witness)
 Draw.renderFootprintInstanced(buffer, ctx, footprintGrid) |> ignore
-Draw.renderFootprintWindowInstanced(buffer, ctx, left, top, right, bottom, footprintGrid)
+Draw.renderFootprintWindowInstanced(buffer, ctx, int left, int top, int right, int bottom, footprintGrid)
 |> ignore
 ```
 
-The only construction change is the transform function: it receives the
-column's **base** world position (the footprint position lifted to
+The only construction change is the transform function. It receives
+the column's **base** world position (the footprint position lifted to
 `y = 0`), and you scale the unit block by the column's height there:
 
 ```fsharp
@@ -341,17 +357,17 @@ let ctx =
     getTransform = columnTransform)
 ```
 
-Everything else behaves as before: `ResetFrameBuffers()` returns the
-pooled snapshots each frame, groups persist between frames so only
-`ResizeArray` growth allocates, and one instanced draw is emitted per
-key. A wall column with `Height = 3` is one instance scaled three cells
-tall — the instance count follows footprint complexity, not volume.
+Everything else behaves as before. `ResetFrameBuffers()` returns the
+pooled snapshots each frame. Groups persist between frames, so only
+`ResizeArray` growth allocates. One instanced draw is emitted per key.
+A wall column with `Height = 3` is one instance scaled three cells
+tall. The instance count follows footprint complexity, not volume.
 
 ### Pathfinding and spatial queries
 
-`Grid3DSpatial.findPath` walked voxels. Walk the footprint instead — a
-step is legal when the destination column is walkable (floor, or a ramp
-whose height difference you accept):
+`Grid3DSpatial.findPath` walked voxels. Walk the footprint instead. A
+step is legal when the destination column is walkable (floor, or a
+ramp whose height difference you accept):
 
 ```fsharp
 // before
@@ -368,12 +384,13 @@ let path = Grid2DSpatial.findPath x1 y1 x2 y2 canEnter (fun _ _ _ _ -> 1f) grid
 ```
 
 Ramps and stairs become footprint tiles with intermediate `Height`
-values; a ramp of `rise 5` is a run of columns with heights `0..5`, and
-your predicate accepts a step when the height difference is 1. The
-retired [Terrain](3d/terrain.html) and [Interior](3d/interior.html)
-stamp pages remain as references for those shapes.
+values. A ramp of `rise 5` is a run of columns with heights `0..5`.
+Your predicate accepts a step when the height difference is 1. The
+retired [Terrain](level-design/3d/terrain.html) and
+[Interior](level-design/3d/interior.html) stamp pages remain as
+references for those shapes.
 
-## Layered grids
+## 4. Replace layered grids with your own dictionary
 
 `LayeredGrid2D` / `LayeredHexGrid` (and the 3D siblings) managed a
 dictionary of grids keyed by layer index. A dictionary of grids is
@@ -405,12 +422,14 @@ layer 1 (fun s -> s |> Layout.fill 2 2 10 8 Structures) |> ignore
 ```
 
 For independent per-cell attributes (terrain under items), prefer one
-grid whose tile is a record — `Tile = { Ground: GroundKind; Prop: PropKind voption }` — over parallel grids; one array walk beats N.
+grid whose tile is a record:
+`Tile = { Ground: GroundKind; Prop: PropKind voption }`. One array
+walk beats N parallel grids.
 
-## Stamp libraries
+## 5. Replace the stamp libraries with Flow styles
 
-The stamp libraries' vocabulary is subsumed by Flow styles. The retired
-pages stay as pattern references.
+Flow styles replace the stamp libraries' vocabulary. The retired pages
+stay as pattern references.
 
 | Retired | Replacement |
 |---|---|
@@ -423,7 +442,7 @@ pages stay as pattern references.
 | `Terrain.ground` / `plateau` / `pit` | `Flow.fill` / `Flow.noise` with height-carrying tiles |
 | `Terrain.ramp` / `path` | Stepped-height `Flow.texture` / `Flow.line` |
 | `Interior.room` / `corridor` | The worked level above |
-| `Interior.stairs` / `shaft` / `pillar` / `window` | Height-carrying tiles; a window is a border cell with a short `Height` |
+| `Interior.stairs` / `shaft` / `pillar` / `window` | Height-carrying tiles. A window is a border cell with a short `Height`. |
 
 A platformer level, before and after:
 
@@ -445,23 +464,23 @@ let level =
   ]
 ```
 
-## Migration checklist
+## 6. Migration checklist
 
-1. Swap `HexGrid.create` for `CellGrid2D.createHex` with a `HexSpec`;
+1. Swap `HexGrid.create` for `CellGrid2D.createHex` with a `HexSpec`.
    `set`/`get`/`clear`/`iter`/`getWorldPos` calls rename to
    `CellGrid2D.*` with the same arguments.
 2. Replace `HexLayout` pipelines with `Layout` over hex storage, or move
    the level into a Flow document.
-3. Give 3D content a `Column`-style tile (`Kind` plus `Height`); rebuild
+3. Give 3D content a `Column`-style tile (`Kind` plus `Height`). Rebuild
    the level as a Flow document over `CellGrid2D`.
 4. Move `getWorldPos` consumers to the footprint-plus-height formula.
 5. Replace renderer calls with your own `iter` + `drawInstanced` loop
-   (scaled unit blocks per column); for the volume-culled instanced
+   (scaled unit blocks per column). For the volume-culled instanced
    renderers, follow [volume-culled instanced
    rendering](#volume-culled-instanced-rendering).
 6. Replace 3D pathfinding with footprint pathfinding over
    `Grid2DSpatial` / `Hex2DSpatial`.
 7. Replace layered grids with a dictionary you own, or fold the layers
    into the tile as fields.
-8. Read [Flow - Level Authoring](2d/flow.html) — hex and 3D-as-heightmap
-   levels now author with the same DSL.
+8. Read [Flow - Level Authoring](level-design/2d/flow.html). Hex and
+   3D-as-heightmap levels now author with the same DSL.

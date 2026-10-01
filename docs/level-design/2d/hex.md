@@ -126,7 +126,7 @@ grid |> CellGrid2D.iter (fun col row tile ->
 
 ### Visible Only (Frustum Culling)
 
-For large maps, you only want to process cells on screen. `CellGrid2D.iterVisible` culls hex grids too: the window is orientation-aware (padded one cell on each axis to cover the row/column stagger) and conservative — it may include a hex whose shape misses the rect, but it never drops one that touches it. Bounds are int world coordinates:
+For large maps, you only want to process cells on screen. `CellGrid2D.iterVisible` culls hex grids too. The window is orientation-aware (padded one cell on each axis to cover the row/column stagger) and conservative: it may include a hex whose shape misses the rect, but it never drops one that touches it. Bounds are int world coordinates:
 
 ```fsharp
 // Screen bounds in world coordinates
@@ -379,6 +379,12 @@ HexLayout.map col row width height (fun tile ->
 
 ## Building Stamps: Reusable Components
 
+> **Moving away from this surface.** This section uses the obsolete
+> `HexLayout` / `HexGridSection` compatibility modules. Build new
+> reusable pieces as Flow `Stamp` values instead; see [build your own
+> vocabulary](flow.html#Pattern-build-your-own-vocabulary). The examples
+> below remain as a reference for existing levels.
+
 A **stamp** is a function `HexGridSection<'T> -> HexGridSection<'T>`. Build your level design vocabulary by creating stamps for common patterns.
 
 ### Simple Stamp
@@ -449,89 +455,85 @@ module Fantasy =
 
 Hex grids shine when adjacency matters. Each hex has exactly 6 neighbors (vs 4 or 8 for rects). This makes pathfinding and movement ranges more natural.
 
-### Getting Neighbors
+`Hex2DSpatial` owns the hex math, and it takes the unified grid:
 
 ```fsharp
-/// Get the 6 neighbor coordinates for a hex
-let neighbors col row =
-    // For pointy-top hexes
-    let isOddRow = row % 2 = 1
-    if isOddRow then
-        [| (col, row - 1); (col + 1, row - 1)
-           (col - 1, row); (col + 1, row)
-           (col, row + 1); (col + 1, row + 1) |]
-    else
-        [| (col - 1, row - 1); (col, row - 1)
-           (col - 1, row); (col + 1, row)
-           (col - 1, row + 1); (col, row + 1) |]
+open Mibo.Layout
 
-/// Check if a hex is walkable
-let isWalkable col row (grid: HexGrid<Tile>) =
-    match HexGrid.get col row grid with
+// walkability reads the grid directly
+let isWalkable col row (grid: CellGrid2D<Tile>) =
+    match CellGrid2D.get col row grid with
     | ValueSome tile -> tile.IsWalkable
     | ValueNone -> false
 
-/// Get walkable neighbors
+// the 6 neighbors of a cell, filtered to grid bounds
 let walkableNeighbors col row grid =
-    neighbors col row
-    |> Array.filter (fun (c, r) -> isWalkable c r grid)
+    Hex2DSpatial.neighbors col row grid
+    |> Array.filter (fun (struct (c, r)) -> isWalkable c r grid)
 ```
 
 ### Movement Range
 
-```fsharp
-open System.Collections.Generic
+`Hex2DSpatial.inRange` returns every cell within N steps. Filter it by
+walkability for movement budgets:
 
-/// Find all hexes within N movement steps
-let movementRange startCol startRow steps (grid: HexGrid<Tile>) =
-    let visited = HashSet<int * int>()
-    let current = Queue<int * int * int>()  // col, row, remaining steps
-    current.Enqueue(startCol, startRow, steps)
-    
-    while current.Count > 0 do
-        let col, row, remaining = current.Dequeue()
-        if remaining >= 0 && not (visited.Contains(col, row)) then
-            visited.Add(col, row)
-            for nc, nr in neighbors col row do
-                if isWalkable nc nr grid then
-                    current.Enqueue(nc, nr, remaining - 1)
-    
-    visited
+```fsharp
+// every walkable cell within 4 steps of the start
+let reachable col row steps grid =
+    Hex2DSpatial.inRange col row steps grid
+    |> Array.filter (fun (struct (c, r)) -> isWalkable c r grid)
 ```
+
+For rule-driven regions (territory, auras, alarm zones), `floodFill`
+walks neighbors while your predicate holds:
+
+```fsharp
+let territory = Hex2DSpatial.floodFill col row (fun x y -> isOwned x y) grid
+```
+
+`findPath`, `spiral`, `ring`, `distance`, and `worldToCell` cover the
+rest of the hex queries; see the API reference.
 
 ## Layered Composition
 
-For games with multiple visual layers (terrain, objects, fog of war), use `LayeredHexGrid`:
+> **Obsolete surface.** `LayeredHexGrid` and `LayeredHexLayout` are
+> retired. A layered grid is a dictionary of grids, and game code can
+> own the dictionary:
 
 ```fsharp
-let level =
-    LayeredHexGrid.create 20 15 32f Vector2.Zero PointyTop
-    |> LayeredHexLayout.layer 0 (fun section ->
-        // Layer 0: Base terrain
-        section
-        |> HexLayout.fill 0 0 20 15 GrassTile
-        |> HexLayout.scatter 30 42 ForestTile
-    )
-    |> LayeredHexLayout.layer 1 (fun section ->
-        // Layer 1: Structures and units
-        section
-        |> HexLayout.set 5 3 CastleTile
-        |> HexLayout.set 10 8 BarracksTile
-        |> HexLayout.set 15 12 FarmTile
-    )
-    |> LayeredHexLayout.layer 2 (fun section ->
-        // Layer 2: Fog of war (initially all hidden)
-        section
-        |> HexLayout.fill 0 0 20 15 FogTile
-    )
+open System.Collections.Generic
+
+let layers = Dictionary<int, CellGrid2D<Tile>>()
+
+let hexLayer index paint =
+    let grid =
+        match Dictionary.tryGetValue index layers with
+        | ValueSome grid -> grid
+        | ValueNone ->
+            let grid =
+                CellGrid2D.createHex {
+                    Orientation = HexOrientation.PointyTop
+                    Width = 20
+                    Height = 15
+                    Radius = 32f
+                    Origin = Vector2.Zero
+                }
+            layers.[index] <- grid
+            grid
+
+    Layout.run paint grid
+
+hexLayer 0 (fun s -> s |> Layout.fill 0 0 20 15 GrassTile) |> ignore
 ```
 
-**Layer usage patterns:**
+**Typical layer split:**
 - Layer 0: Terrain (grass, water, mountains)
 - Layer 1: Structures, resources, units
 - Layer 2: Overlays (fog, highlights, movement range)
 
-Layers are created on-demand; empty layers cost nothing.
+Layers are created on-demand; empty layers cost nothing. When layers
+hold independent attributes of the same cell (terrain under an item),
+prefer one grid with a record tile over parallel grids.
 
 ## Rendering
 
@@ -561,6 +563,11 @@ grid
 ```
 
 ## Complete Example: Strategy Map
+
+> **This example runs on the obsolete compatibility surface.**
+> `HexGrid.create` and every `HexLayout.*` call below emit deprecation
+> warnings. It remains as a porting reference. Author new maps with
+> [Flow](flow.html).
 
 ```fsharp
 type TerrainType =

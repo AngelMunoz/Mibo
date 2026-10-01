@@ -145,7 +145,7 @@ The 3D stamp pages ([Interior](3d/interior.html), [Terrain](3d/terrain.html), [3
 
 ### 3D Grids
 
-The `CellGridRenderer3D` / `HexGrid3DRenderer` modules and their instanced-draw buffer members are obsolete with the rest of the 3D grid family. `InstancedRenderContext` renders footprint grids directly — `RenderInstanced` / `RenderWindowInstanced`, or `buffer.renderFootprintInstanced(...)` in the Draw DSL — scaling each column by its height; see the [migration guide](migration.html).
+The `CellGridRenderer3D` / `HexGrid3DRenderer` modules and their instanced-draw buffer members are obsolete with the rest of the 3D grid family. `InstancedRenderContext` renders footprint grids directly — `RenderInstanced` / `RenderWindowInstanced`, or `buffer.renderFootprintInstanced(...)` in the Draw DSL — scaling each column by its height; see the [v6 migration guide](../../migration-to-v6.html).
 
 ### 2D Grids
 
@@ -179,7 +179,7 @@ Use **Hex geometry** for:
 ## Getting Started
 
 - **[Flow - Level Authoring](2d/flow.html)** - The authoring DSL; start here
-- **[Migration Guide](migration.html)** - Old-to-new mapping for the retired hex, 3D, layered, and stamp APIs
+- **[Migrating to Mibo v6](../../migration-to-v6.html)** - Old-to-new mapping for the retired hex, 3D, layered, and stamp APIs
 - **[2D Layout Engine](2d/core.html)** - Grid storage and the pixel-perfect `Layout` pipelines
 - **[Hex Grid Layout (2D)](2d/hex.html)** - Hexagonal 2D layouts with adjacency, pathfinding, and strategy game patterns
 - **[Platformer Stamps](2d/platformer.html)** - 2D platformer patterns (obsolete surface)
