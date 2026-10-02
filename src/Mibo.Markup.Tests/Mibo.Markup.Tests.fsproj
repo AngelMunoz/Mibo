@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <Compile Include="XmlTests.fs" />
+    <Compile Include="KdlTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 
