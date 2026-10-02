@@ -26,35 +26,46 @@ Two rules keep the format honest:
 ## The node tree is the contract
 
 Every front-end produces the same `Node` tree: a kind, positional args,
-named properties, children, and a character offset for error messages.
-The resolver (`Doc.resolve`) never sees the text format — XML today,
-KDL in the next release of this stack — and errors always carry a line
-and column:
+named properties, and children. The resolver (`Doc.resolve`) never sees
+the text format. The two front-ends differ in one channel: KDL spells
+scalars as positional arguments (`map 36 20`), XML spells them as
+attributes (`map w="36" h="20"`), and the resolver reads every scalar by
+name so both resolve identically:
 
 ```fsharp
 open Mibo.Markup
 
-match Xml.parse src with
-| Error e -> printfn "%s" e          // "12:5: unknown element 'plaza'"
+match Kdl.parse src with
+| Error e -> printfn "%s" e          // "unknown element 'plaza' (12:5)"
 | Ok roots -> ...
 ```
 
+KDL documents carry node positions, so resolution errors point at the
+authoring line. XML does not track node positions (the BCL line-info
+surface is not reachable from F# without fragile reference tricks), so
+XML resolution errors name the element; XML parse errors carry the
+parser's own line and position.
+
 ## The XML front-end
 
-Elements are nodes, attributes are properties (typed: int, then float,
-then word), and text-only `<a>` children carry positional arguments.
-Comments are free:
+XML the way XML means it: elements are nodes and children, attributes
+are the scalar channel. Comments are free, and the BCL parser does all
+the parsing:
 
 ```xml
-<map>
-  <a>36</a><a>20</a>
+<map w="36" h="20">
   <!-- the meadow -->
-  <field><a>grass</a></field>
+  <field><fill cell="grass" /></field>
   <plot x="1" y="1" w="5" h="5" pack="scatter" seed="13">
-    <a>boulder</a><a>boulder</a><a>boulder</a>
+    <boulder /><boulder /><boulder />
   </plot>
 </map>
 ```
+
+An attribute value types as int, then finite float, then word (`x="1"`
+is a number, `cell="grass"` is a word, `f="NaN"` stays a word — the
+resolver never computes with non-finite floats). An `element`
+definition names itself with the `name` attribute.
 
 *The resolver (`Doc`), the game-supplied surface (words, kernels,
 elements), and the Flow emitter (`DocFlow`) land with the rest of this

@@ -4,86 +4,99 @@ open Expecto
 open Mibo.Markup
 
 let private doc =
-  """<map>
-  <a>36</a>
-  <a>20</a>
-  <!-- a full map: field, a scattered plot, one waypoint -->
-  <field fill="grass" />
+  """<map w="36" h="20">
+  <!-- the meadow -->
+  <field><fill cell="grass" /></field>
+  <element name="thicket"><generate kernel="forest" /></element>
   <plot x="1" y="1" w="5" h="5" pack="scatter" seed="13">
-    <a>boulder</a>
-    <a>boulder</a>
-    <a>boulder</a>
+    <boulder /><boulder /><boulder />
   </plot>
-  <set>
-    <a>1</a>
-    <a>2</a>
-    <a>waypoint</a>
-  </set>
 </map>"""
 
 [<Tests>]
 let xmlTests =
   testList "Xml" [
-    testCase "elements, attributes, and a-args map onto the node tree"
+    testCase
+      "elements are nodes, attributes are properties, children are children"
     <| fun _ ->
       match Xml.parse doc with
       | Ok roots ->
         Expect.hasLength roots 1 "one root element"
 
         let map = roots[0]
+
         Expect.equal map.Kind "map" "the tag is the kind"
-        Expect.equal map.Label ValueNone "no label in XML"
+        Expect.equal map.Label ValueNone "no label outside element definitions"
+        Expect.equal (Seq.toList map.Args) [] "XML carries no positional args"
+        Expect.equal map.Position -1 "XML does not track node positions"
 
         Expect.equal
-          (Seq.toList map.Args)
-          [ Number 36; Number 20 ]
-          "a-args carry positionals"
+          (Seq.toList map.Props)
+          [
+            { Name = "w"; Value = Arg.Number 36 }
+            { Name = "h"; Value = Arg.Number 20 }
+          ]
+          "attributes are properties, in document order"
 
-        Expect.hasLength map.Children 3 "comments do not count as children"
+        // comments never appear; children are elements only
+        Expect.hasLength
+          map.Children
+          3
+          "the element definition, field, and plot"
 
         let field = map.Children[0]
         Expect.equal field.Kind "field" "child element"
-        Expect.equal (Seq.toList field.Args) [] "no args"
 
         Expect.equal
-          (Seq.toList field.Props)
-          [ { Name = "fill"; Value = Word "grass" } ]
-          "attributes are props"
+          (Seq.toList field.Children[0].Props)
+          [
+            {
+              Name = "cell"
+              Value = Arg.Word "grass"
+            }
+          ]
+          "statement scalars are properties too"
 
-        let plot = map.Children[1]
+        let element = map.Children[1]
+        Expect.equal element.Kind "element" "template definition node"
+
+        Expect.equal
+          element.Label
+          (ValueSome "thicket")
+          "the name attribute is the label"
+
+        Expect.equal
+          (Seq.toList element.Props)
+          []
+          "the name attribute leaves the properties"
+
+        let plot = map.Children[2]
 
         Expect.equal
           (Seq.toList plot.Props)
           [
-            { Name = "x"; Value = Number 1 }
-            { Name = "y"; Value = Number 1 }
-            { Name = "w"; Value = Number 5 }
-            { Name = "h"; Value = Number 5 }
+            { Name = "x"; Value = Arg.Number 1 }
+            { Name = "y"; Value = Arg.Number 1 }
+            { Name = "w"; Value = Arg.Number 5 }
+            { Name = "h"; Value = Arg.Number 5 }
             {
               Name = "pack"
-              Value = Word "scatter"
+              Value = Arg.Word "scatter"
             }
-            { Name = "seed"; Value = Number 13 }
+            { Name = "seed"; Value = Arg.Number 13 }
           ]
           "attribute typing"
 
-        Expect.equal
-          (Seq.toList plot.Args)
-          [ Word "boulder"; Word "boulder"; Word "boulder" ]
-          "args keep document order"
-
-        let set = map.Children[2]
-
-        Expect.equal
-          (Seq.toList set.Args)
-          [ Number 1; Number 2; Word "waypoint" ]
-          "scalar typing runs over a-args too"
+        Expect.hasLength plot.Children 3 "the scattered elements are children"
 
       | Error e -> failtest $"parse failed: {e}"
 
-    testCase "attribute values type int, then float, then word"
+    testCase "attribute values type int, then finite float, then word"
     <| fun _ ->
-      match Xml.parse """<thing n="7" f="0.45" w="center" neg="-3" />""" with
+      match
+        Xml.parse
+          """<thing n="7" f="0.45" w="center" neg="-3" bad="NaN" worse="Infinity" />"""
+      with
       | Ok roots ->
         let props =
           roots[0].Props |> Seq.map(fun p -> p.Name, p.Value) |> Seq.toList
@@ -91,80 +104,30 @@ let xmlTests =
         Expect.equal
           props
           [
-            "n", Number 7
-            "f", Decimal 0.45
-            "w", Word "center"
-            "neg", Number -3
+            "n", Arg.Number 7
+            "f", Arg.Decimal 0.45
+            "w", Arg.Word "center"
+            "neg", Arg.Number -3
+            // non-finite floats stay words: the resolver never computes
+            // with NaN or Infinity
+            "bad", Arg.Word "NaN"
+            "worse", Arg.Word "Infinity"
           ]
-          "int, decimal, word, negative int"
+          "int, decimal, word, negative int, non-finite stays a word"
 
       | Error e -> failtest $"parse failed: {e}"
 
-    testCase "positions carry to line and column"
-    <| fun _ ->
-      Expect.equal (Markup.where "ab\ncd" 0) "1:1" "start of the first line"
-      Expect.equal (Markup.where "ab\ncd" 2) "1:3" "end of the first line"
-      Expect.equal (Markup.where "ab\ncd" 3) "2:1" "start of the second line"
-
-      match Xml.parse "<level>\n  <thing />\n</level>" with
-      | Ok roots ->
-        let level = roots[0]
-
-        Expect.equal
-          (Markup.where "<level>\n  <thing />\n</level>" level.Position)
-          "1:1"
-          "root position"
-
-        let thing = level.Children[0]
-
-        Expect.equal
-          (Markup.where "<level>\n  <thing />\n</level>" thing.Position)
-          "2:3"
-          "child position"
-
-      | Error e -> failtest $"parse failed: {e}"
-
-    testCase "parse failures fail visibly"
+    testCase "parse failures carry the parser's line and position"
     <| fun _ ->
       match Xml.parse "<map>\n  <broken>\n</map>" with
       | Ok _ -> failtest "malformed XML must not parse"
-      | Error e -> Expect.isGreaterThan e.Length 0 "the error carries a message"
+      | Error e ->
+        Expect.stringContains e "line 2" "the error names the line"
+        Expect.stringContains e "broken" "the error names the element"
 
     testCase "an empty document has no root"
     <| fun _ ->
       match Xml.parse "" with
       | Ok _ -> failtest "empty input must not parse"
       | Error e -> Expect.stringContains e "no root element" "a stable message"
-
-    testCase "a tag spelled inside a comment never captures a position"
-    <| fun _ ->
-      let src =
-        "<map>\n  <!-- <field x=\"1\" /> -->\n  <field x=\"2\" />\n</map>"
-
-      match Xml.parse src with
-      | Ok roots ->
-        let field = roots[0].Children[0]
-
-        Expect.equal
-          (Markup.where src field.Position)
-          "3:3"
-          "the real element's line"
-
-      | Error e -> failtest $"parse failed: {e}"
-
-    testCase "CDATA regions never capture positions either"
-    <| fun _ ->
-      let src =
-        "<map>\n  <![CDATA[ <set 1 2 /> ]]>\n  <set><a>1</a><a>2</a></set>\n</map>"
-
-      match Xml.parse src with
-      | Ok roots ->
-        let set = roots[0].Children[0]
-
-        Expect.equal
-          (Markup.where src set.Position)
-          "3:3"
-          "the real element's line"
-
-      | Error e -> failtest $"parse failed: {e}"
   ]
