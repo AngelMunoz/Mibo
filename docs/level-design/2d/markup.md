@@ -133,7 +133,8 @@ words, not new cases.
 
 **Styles carry layout only.** `w=`/`h=` size, `x=`/`y=` exact placement
 (stack pack only — a flow or scatter child with `x=`/`y=` fails the
-build instead of silently dropping the offsets), `hplace=`/`vplace=`/
+build instead of silently dropping the offsets, and negative values
+clamp to zero, the framework's own `Flow.at` rule), `hplace=`/`vplace=`/
 `place=` alignment, `pack=` (stack, flow, scatter), `pad=`, `gapx=`/
 `gapy=` (the Flow grid takes one gap today, so the two must match),
 `seed=`, and flow placement (`area=`, `col=`, `row=`, `colspan=`,
@@ -161,11 +162,11 @@ and compare cell for cell — the emitter is checked against the
 framework's own painting, not against itself — and the same document
 built in KDL and in XML produces the identical grid. Parse and
 resolution errors carry their document positions (KDL); emitter-stage
-failures name the container and the channel (a gap mismatch, a bad
-slot, an unknown area, a mixed pack). The build returns the painted
-grid only — named and tagged landmarks are a scope cut, so derive
-gameplay regions from the tiles (the `Flow.build` scan) rather than the
-document tree.
+failures name the container, the offending child, and the channel (a
+gap mismatch, a bad slot, an unknown area, a mixed pack). The build
+returns the painted grid only — named and tagged landmarks are a scope
+cut, so derive gameplay regions from the tiles (the `Flow.build` scan)
+rather than the document tree.
 
 ## Live reload
 

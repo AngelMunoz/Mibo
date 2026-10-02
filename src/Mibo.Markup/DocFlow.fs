@@ -121,9 +121,11 @@ module DocFlow =
 
   /// Slot and area children claim their cells first; flow children take
   /// the next free cell scanning row first. Slot spans below one and
-  /// negative col=/row= fail the build instead of clamping.
+  /// negative col=/row= fail the build instead of clamping. `who` is the
+  /// container's name — every failure names it, so a deep document
+  /// points at the offending grid.
   let private assignSlots
-    (areas: string[][], colCount: int, children: Doc.Item<'T>[])
+    (who: string, areas: string[][], colCount: int, children: Doc.Item<'T>[])
     : struct (int * int * int * int)[] =
     let slots = Array.zeroCreate children.Length
     // a claimed flag, not a default-value check: a legitimate
@@ -163,35 +165,37 @@ module DocFlow =
          | ValueSome span ->
            if c.Style.Col.IsSome || c.Style.Row.IsSome then
              failwith
-               $"a flow child places by area= or by col=/row=, not both ('{name}')"
+               $"in the '{who}' grid: a child places by area= or by col=/row=, not both ('{name}')"
 
            claim span
-         | ValueNone -> failwith $"no area named '{name}' in the declared areas")
+         | ValueNone ->
+           failwith
+             $"in the '{who}' grid: no area named '{name}' in the declared areas")
       | ValueNone ->
         (match c.Style.Col, c.Style.Row with
          | ValueSome col, ValueSome row ->
            if col < 0 || row < 0 || cs < 1 || rs < 1 then
              failwith
-               $"slot placement wants non-negative col=/row= and spans of at least one (got col {col}, row {row}, colspan {cs}, rowspan {rs})"
+               $"in the '{who}' grid: slot placement wants non-negative col=/row= and spans of at least one (got col {col}, row {row}, colspan {cs}, rowspan {rs})"
 
            claim struct (col, row, cs, rs)
          | ValueSome col, ValueNone ->
            if col < 0 || cs < 1 || rs < 1 then
              failwith
-               $"slot placement wants non-negative col= and spans of at least one (got col {col}, colspan {cs}, rowspan {rs})"
+               $"in the '{who}' grid: slot placement wants non-negative col= and spans of at least one (got col {col}, colspan {cs}, rowspan {rs})"
 
            claim struct (col, 0, cs, rs)
          | ValueNone, ValueSome row ->
            if row < 0 || cs < 1 || rs < 1 then
              failwith
-               $"slot placement wants non-negative row= and spans of at least one (got row {row}, colspan {cs}, rowspan {rs})"
+               $"in the '{who}' grid: slot placement wants non-negative row= and spans of at least one (got row {row}, colspan {cs}, rowspan {rs})"
 
            claim struct (0, row, cs, rs)
          | ValueNone, ValueNone ->
            // a flow child with a stated span would silently drop it
            if c.Style.Span.IsSome then
              failwith
-               "a flow child takes the next free cell; colspan=/rowspan= needs col= or row=")
+               $"in the '{who}' grid: a flow child takes the next free cell; colspan=/rowspan= needs col= or row=")
 
     for i in 0 .. children.Length - 1 do
       if not claimed[i] then
@@ -214,7 +218,8 @@ module DocFlow =
           r <- r + 1
 
         if not placed then
-          failwith $"child {i + 1} has no free flow cell"
+          failwith
+            $"in the '{who}' grid: the child '{children[i].Name}' has no free flow cell"
 
     slots
 
@@ -302,12 +307,12 @@ module DocFlow =
     let flowGrid(gap: CellSize, inner: CellRect) : Stamp<'T> =
       if gap.W <> gap.H then
         failwith
-          "the Flow grid takes one gap for both axes; gapx= and gapy= differ"
+          $"the '{item.Name}' grid takes one gap for both axes; gapx= and gapy= differ"
 
       let children = item.Children
       let cols = if item.Cols.Length = 0 then [| Weight 1f |] else item.Cols
       let colCount = cols.Length
-      let slots = assignSlots(item.Areas, colCount, children)
+      let slots = assignSlots(item.Name, item.Areas, colCount, children)
       let sizes = children |> Array.map childSize
 
       let mutable rowCount = item.Rows.Length
@@ -404,7 +409,7 @@ module DocFlow =
               for c in item.Children do
                 if c.Style.At.IsSome then
                   failwith
-                    "x= and y= exact placement works in the stack pack; a flow or scatter child places by area, slot, or the pack rule"
+                    $"in the '{item.Name}' container: the child '{c.Name}' uses x= and y= exact placement, which works in the stack pack; a flow or scatter child places by area, slot, or the pack rule"
 
             let gap =
               item.Style.Gap |> ValueOption.defaultValue { W = 0; H = 0 }
@@ -449,7 +454,6 @@ module DocFlow =
           match items with
           | [| root |] ->
             (match Doc.findMapNode roots with
-             | ValueNone -> Error "the document needs a map node"
              | ValueSome n ->
                (match Doc.dimsOf(src, n) with
                 | Error e -> Error e
@@ -463,8 +467,14 @@ module DocFlow =
 
                   let struct (built, _) = grid |> Flow.run(emit root)
 
-                  Ok built))
-          | _ -> Error "the document needs exactly one map container"))
+                  Ok built)
+             // resolve fails the build when no map node exists, so this
+             // arm cannot run; it is a tripwire, not a failure mode
+             | ValueNone ->
+               failwith "unreachable: resolve guarantees a map node")
+          | many ->
+            failwith
+              $"unreachable: resolve returns exactly one root item (got {many.Length})"))
     with e ->
       Error e.Message
 
@@ -472,11 +482,11 @@ module DocFlow =
   /// same grid, pinned by test), resolves, and lays the document out
   /// through the Flow API. Parse and resolution failures carry their
   /// document positions when the front-end tracks them; emitter-stage
-  /// failures — a gap mismatch, a bad slot, a mixed pack channel — name
-  /// the container and the child instead. Error builds nothing. The
-  /// build returns the painted grid; named and tagged landmarks stay a
-  /// scope cut (derive gameplay regions from the tiles, the way
-  /// `Flow.build` does).
+  /// failures — a gap mismatch, a bad slot, an unknown area, a mixed
+  /// pack channel — name the container, and the child when one is at
+  /// fault. Error builds nothing. The build returns the painted grid;
+  /// named and tagged landmarks stay a scope cut (derive gameplay
+  /// regions from the tiles, the way `Flow.build` does).
   let build
     (surface: Doc.Surface<'T>, src: string)
     : Result<CellGrid2D<'T>, string> =

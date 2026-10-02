@@ -427,7 +427,8 @@ let failureTests =
       | Ok _ -> failtest "an unknown area must fail"
       | Error e ->
         Expect.stringContains e "lake" "names the area"
-        Expect.stringContains e "declared areas" "names the container"
+        Expect.stringContains e "declared areas" "names the area template"
+        Expect.stringContains e "'plot'" "names the container"
 
     testCase "a slot past the declared tracks fails the build"
     <| fun _ ->
