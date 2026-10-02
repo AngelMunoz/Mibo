@@ -140,7 +140,7 @@ for when each rung pays off. You can ship a lot of games at Level 2 or 3.
 - Torch/shadow/normal-map lighting (`LightContext2D`) → [2D Lighting](https://angelmunoz.github.io/Mibo/graphics2d/lighting.html)
 - Effects without GC (`Particle2D`, `fadeAndCompact`) → [2D Particles](https://angelmunoz.github.io/Mibo/graphics2d/particles.html) + [Pooled Particles](https://angelmunoz.github.io/Mibo/patterns/pooled-particles.html)
 - HUD/minimap over the game world (multi-renderer, the `noClear` rule) → [Layered Rendering](https://angelmunoz.github.io/Mibo/patterns/layered-rendering.html)
-- Tile levels (`CellGrid2D`, stamps): start at the [Level Design overview](https://angelmunoz.github.io/Mibo/level-design/overview.html), then the [2D Layout Engine](https://angelmunoz.github.io/Mibo/level-design/2d/core.html); genre stamps: [Platformer](https://angelmunoz.github.io/Mibo/level-design/2d/platformer.html), [Top-Down](https://angelmunoz.github.io/Mibo/level-design/2d/topdown.html), [Hex](https://angelmunoz.github.io/Mibo/level-design/2d/hex.html)
+- Tile levels (`CellGrid2D` + Flow): start at the [Level Design overview](https://angelmunoz.github.io/Mibo/level-design/overview.html), then [Flow - Level Authoring](https://angelmunoz.github.io/Mibo/level-design/2d/flow.html); pixel-perfect control: [2D Layout Engine](https://angelmunoz.github.io/Mibo/level-design/2d/core.html); hex maps: [Hex Grid Layout](https://angelmunoz.github.io/Mibo/level-design/2d/hex.html). The Platformer/Top-Down stamp pages are obsolete references; see the [v6 migration guide](https://angelmunoz.github.io/Mibo/migration-to-v6.html)
 - Raw device escape hatch → [Custom Commands](https://angelmunoz.github.io/Mibo/graphics2d/custom-commands.html)
 
 **Performance**

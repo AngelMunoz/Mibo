@@ -210,9 +210,9 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
 
   /// <summary>
   /// Like <c>RenderInstanced</c> but restricted to a world-space window
-  /// (left/top/right/bottom in world units). Hex grids cull with an
-  /// orientation-aware window. This is the heightmap replacement for the
-  /// retired volume-culled renderers.
+  /// (left/top/right/bottom in <c>int</c> world coordinates). Hex grids
+  /// cull with an orientation-aware window. This is the heightmap
+  /// replacement for the retired volume-culled renderers.
   /// </summary>
   member this.RenderWindowInstanced
     (

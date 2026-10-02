@@ -65,13 +65,16 @@ grid
 )
 
 // Iterate only visible cells (culled to viewport). Pass the viewport bounds as
-// left/top/right/bottom pixel coordinates. This is critical for performance in
+// left/top/right/bottom int pixel coordinates. This is critical for performance in
 // large levels, as it avoids processing tiles that aren't on screen.
 grid
-|> CellGrid2D.iterVisible cameraX cameraY (cameraX + viewportWidth) (cameraY + viewportHeight) (fun x y tile ->
-    // render tile at (x, y)
-    ()
-)
+|> CellGrid2D.iterVisible
+    (int cameraX) (int cameraY)
+    (int (cameraX + viewportWidth)) (int (cameraY + viewportHeight))
+    (fun x y tile ->
+        // render tile at (x, y)
+        ()
+    )
 ```
 
 ## GridSection2D - The Cursor

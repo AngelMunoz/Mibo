@@ -247,11 +247,11 @@ let intersection =
     Flow.cell { X = 4; Y = 2 } door
   ]
 
-let level =
+let levelDoc =
   Flow.row FlowOpts.Default [ room; corridor; intersection ]
 
 let grid = CellGrid2D.create 20 5 cellSize origin
-let struct (level, marks) = grid |> Flow.run level
+let struct (level, marks) = grid |> Flow.run levelDoc
 ```
 
 Height appears in gameplay and rendering. It never appears in the

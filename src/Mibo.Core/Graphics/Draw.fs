@@ -1540,9 +1540,10 @@ type Draw =
 
   /// <summary>Like <c>renderFootprintInstanced</c> but restricted to a
   /// world-space window (<paramref name="left"/>, <paramref name="top"/>,
-  /// <paramref name="right"/>, <paramref name="bottom"/> in world units);
-  /// hex grids cull with an orientation-aware window. The heightmap
-  /// replacement for the retired volume-culled grid renderers.</summary>
+  /// <paramref name="right"/>, <paramref name="bottom"/> in <c>int</c> world
+  /// coordinates); hex grids cull with an orientation-aware window. The
+  /// heightmap replacement for the retired volume-culled grid
+  /// renderers.</summary>
   [<Extension>]
   static member inline renderFootprintWindowInstanced<'Ctx, 'Buf, 'T
     when 'Ctx: (member RenderWindowInstanced:
