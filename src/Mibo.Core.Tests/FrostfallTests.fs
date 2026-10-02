@@ -122,9 +122,9 @@ let keep =
     Gap = 1
     Areas = [| "hall  forest"; "lair  forest" |]
     Places = [|
-      struct ("hall", Stamp.tagged [ "safe-zone" ] Vocabulary.greatHall)
-      struct ("lair", Stamp.tagged [ "danger-zone" ] Vocabulary.lair)
-      struct ("forest", Vocabulary.forest)
+      struct (Area "hall", Stamp.tagged [ "safe-zone" ] Vocabulary.greatHall)
+      struct (Area "lair", Stamp.tagged [ "danger-zone" ] Vocabulary.lair)
+      struct (Area "forest", Vocabulary.forest)
     |]
   }
 

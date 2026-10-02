@@ -75,12 +75,16 @@ type Align =
   | End
   | Stretch
 
-/// A single track of a `Flow.grid` template. `Weight` tracks (`fr`) share the
-/// space left after `Fixed` and `Percent` tracks; `Percent` is a fraction of
+/// A single track of a `Flow.grid` template. `Fixed` tracks take literal
+/// cells; `Auto` tracks size to the largest footprint of their span-1
+/// places at construction (a context-sized place reports no footprint, so
+/// it contributes nothing); `Weight` tracks (`fr`) share the space left
+/// after `Fixed`, `Auto` and `Percent` tracks; `Percent` is a fraction of
 /// the assigned container length.
 [<Struct>]
 type Track =
   | Fixed of length: int
+  | Auto
   | Weight of share: float32
   | Percent of fraction: float32
 
@@ -136,20 +140,32 @@ type FlowOpts = {
     Wrap = false
   }
 
+/// Where a `Flow.grid` place mounts: a named template area, or an explicit
+/// cell slot — the column and row track indices it starts at, with spans.
+/// Slots may overlap; paint order is `Places` order, later places on top.
+[<Struct>]
+type Place =
+  | Area of name: string
+  | Slot of col: int * row: int * colspan: int * rowspan: int
+
 /// Options and content for `Flow.grid`: track sizes, the area template, the
-/// gap between tracks, and the stamps placed into named areas. Area names
-/// must appear in `Areas`; every name in `Places` must match a template area.
+/// gap between tracks, and the stamps placed into named areas or explicit
+/// slots. Every area name in `Places` must match a template area; every
+/// slot must fit inside the declared tracks.
 type GridOpts<'T> = {
-  /// Column tracks; `Fixed` tracks count toward the intrinsic footprint.
+  /// Column tracks; `Fixed` and `Auto` tracks count toward the intrinsic
+  /// footprint.
   Cols: Track[]
-  /// Row tracks; `Fixed` tracks count toward the intrinsic footprint.
+  /// Row tracks; `Fixed` and `Auto` tracks count toward the intrinsic
+  /// footprint.
   Rows: Track[]
   /// Empty cells between tracks.
   Gap: int
-  /// Grid-area template strings (`"main main side"`; `.` is an empty cell).
+  /// Grid-area template strings (`"main main side"` spans columns, `.` is
+  /// an empty cell).
   Areas: string[]
-  /// Stamps placed into named template areas.
-  Places: struct (string * Stamp<'T>)[]
+  /// Stamps placed into the grid, by named area or by explicit slot.
+  Places: struct (Place * Stamp<'T>)[]
 }
 
 /// A midpoint circle spec: the center, the radius, and whether the
@@ -1110,6 +1126,9 @@ module Flow =
         sizes.[i] <- v
         pctSum <- pctSum + v
       | Weight w -> weightTotal <- weightTotal + max 0f w
+      // Auto never reaches here: `Flow.grid` resolves it against its
+      // places' footprints before laying out.
+      | Auto -> ()
 
     let free = total - fixedSum - pctSum - gap * (n - 1)
 
@@ -1152,13 +1171,15 @@ module Flow =
     sum + gap * (span - 1)
 
   /// A CSS-grid-like container. Tracks size the columns and rows: `Fixed`
-  /// tracks count toward the intrinsic footprint, `Weight` tracks share the
-  /// leftover length of the assigned area, `Percent` tracks take a fraction
-  /// of it. `Areas` uses CSS grid-area strings (`"main main side"` spans
-  /// columns, `.` is an empty cell). Every place in `Places` must name an
-  /// area from the template:
+  /// tracks take literal cells, `Auto` tracks size to the largest footprint
+  /// of their span-1 places, `Weight` tracks share the leftover length of
+  /// the assigned area, `Percent` tracks take a fraction of it. `Areas`
+  /// uses CSS grid-area strings (`"main main side"` spans columns, `.` is
+  /// an empty cell). Places mount by named template area or by explicit
+  /// slot; slots may overlap, and paint order is `Places` order, later
+  /// places on top:
   ///
-  /// `grid { Cols = [| Fixed 20; Weight 1f |]; Rows = [| Fixed 6 |]; Gap = 1; Areas = [| "map side" |]; Places = [| struct ("map", dungeon) |] }`
+  /// `grid { Cols = [| Fixed 20; Weight 1f |]; Rows = [| Fixed 6 |]; Gap = 1; Areas = [| "map side" |]; Places = [| struct (Area "map", dungeon) |] }`
   let grid(opts: GridOpts<'T>) : Stamp<'T> =
     let colArr = opts.Cols
     let rowArr = opts.Rows
@@ -1214,24 +1235,76 @@ module Flow =
               struct (nc0, nr0, nc1 - nc0, nr1 - nr0))
             |> ValueOption.defaultValue(struct (c, r, 1, 1))
 
-    for struct (name, stamp) in opts.Places do
-      if not(areas.ContainsKey name) then
-        invalidArg
-          "Places"
-          ("area '" + name + "' is not defined in the grid template")
+    // Every place resolves to a track-unit span at construction: a bad
+    // area name or an out-of-grid slot fails here, before anything paints.
+    let spans =
+      opts.Places
+      |> Array.map(fun struct (place, stamp) ->
+        FlowImpl.checkNoExpand "Flow.grid" "Places" stamp
 
-      FlowImpl.checkNoExpand ("Flow.grid area '" + name + "'") "Places" stamp
+        match place with
+        | Place.Area name ->
+          match Dictionary.tryGetValue name areas with
+          | ValueSome span -> span
+          | ValueNone ->
+            invalidArg
+              "Places"
+              ("area '" + name + "' is not defined in the grid template")
+        | Place.Slot(c0, r0, cs, rs) ->
+          let cs = max 1 cs
+          let rs = max 1 rs
+
+          if
+            c0 < 0
+            || r0 < 0
+            || c0 + cs > colArr.Length
+            || r0 + rs > rowArr.Length
+          then
+            invalidArg
+              "Places"
+              $"slot (col {c0}, row {r0}, colspan {cs}, rowspan {rs}) sits outside the grid's {colArr.Length} column and {rowArr.Length} row tracks"
+
+          struct (c0, r0, cs, rs))
+
+    // Auto tracks size to the largest footprint of their span-1 places;
+    // context-sized places report no footprint and contribute nothing.
+    let colAuto = Array.zeroCreate colArr.Length
+    let rowAuto = Array.zeroCreate rowArr.Length
+
+    for i in 0 .. opts.Places.Length - 1 do
+      let struct (_, stamp) = opts.Places.[i]
+      let struct (c0, r0, cs, rs) = spans.[i]
+
+      if cs = 1 && stamp.W > 0 then
+        colAuto.[c0] <- max colAuto.[c0] stamp.W
+
+      if rs = 1 && stamp.H > 0 then
+        rowAuto.[r0] <- max rowAuto.[r0] stamp.H
+
+    let cols =
+      colArr
+      |> Array.mapi(fun i t ->
+        match t with
+        | Auto -> Fixed(max 0 colAuto.[i])
+        | t -> t)
+
+    let rows =
+      rowArr
+      |> Array.mapi(fun i t ->
+        match t with
+        | Auto -> Fixed(max 0 rowAuto.[i])
+        | t -> t)
 
     let placements = opts.Places
 
     let wFixed =
-      colArr
+      cols
       |> Array.sumBy (function
         | Fixed v -> max 0 v
         | _ -> 0)
 
     let hFixed =
-      rowArr
+      rows
       |> Array.sumBy (function
         | Fixed v -> max 0 v
         | _ -> 0)
@@ -1248,29 +1321,29 @@ module Flow =
       Paint =
         fun s registry ->
           let assigned = FlowImpl.rectOf s
-          let colSizes = resolveTracks assigned.W colArr gap
-          let rowSizes = resolveTracks assigned.H rowArr gap
+          let colSizes = resolveTracks assigned.W cols gap
+          let rowSizes = resolveTracks assigned.H rows gap
           let colOff = prefixOffsets colSizes gap
           let rowOff = prefixOffsets rowSizes gap
 
-          for struct (name, stamp) in placements do
-            Dictionary.tryGetValue name areas
-            |> ValueOption.iter(fun struct (c0, r0, cs, rs) ->
-              let ax = assigned.X + colOff.[c0]
-              let ay = assigned.Y + rowOff.[r0]
-              let aw = spanSize colSizes c0 cs gap
-              let ah = spanSize rowSizes r0 rs gap
-              // A zero footprint dimension stretches over the area (canvas,
-              // strips); a fixed dimension keeps its size, anchored to the
-              // area start.
-              let w = if stamp.W = 0 then aw else min stamp.W aw
-              let h = if stamp.H = 0 then ah else min stamp.H ah
+          for i in 0 .. placements.Length - 1 do
+            let struct (_, stamp) = placements.[i]
+            let struct (c0, r0, cs, rs) = spans.[i]
+            let ax = assigned.X + colOff.[c0]
+            let ay = assigned.Y + rowOff.[r0]
+            let aw = spanSize colSizes c0 cs gap
+            let ah = spanSize rowSizes r0 rs gap
+            // A zero footprint dimension stretches over the assigned
+            // tracks (canvas, strips); a fixed dimension keeps its size,
+            // anchored to the track start.
+            let w = if stamp.W = 0 then aw else min stamp.W aw
+            let h = if stamp.H = 0 then ah else min stamp.H ah
 
-              FlowImpl.paintChild
-                s
-                { X = ax; Y = ay; W = w; H = h }
-                registry
-                stamp)
+            FlowImpl.paintChild
+              s
+              { X = ax; Y = ay; W = w; H = h }
+              registry
+              stamp
     }
 
   /// Paints the spec's `Stamp` into a docked rectangle of `section`. The
