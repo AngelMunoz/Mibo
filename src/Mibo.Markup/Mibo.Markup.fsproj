@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="Node.fs" />
     <Compile Include="Xml.fs" />
+    <Compile Include="Kdl.fs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -15,6 +16,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- the KDL front-end's only dependency: MIT, zero dependencies,
+         netstandard2.1 -->
+    <PackageReference Include="KdlSharp" Version="1.1.0" />
     <!-- versions the package from the repo changelog, like every other
          library in the solution -->
     <PackageReference Include="Ionide.KeepAChangelog.Tasks" Version="0.3.3" PrivateAssets="all" />
