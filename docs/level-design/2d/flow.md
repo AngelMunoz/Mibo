@@ -90,7 +90,9 @@ footprint of its span-1 places at construction (`Weight` shares the assigned
 length after `Fixed`/`Auto`/`Percent`, and `Percent` takes a fraction of
 it). A place reports no footprint on a zero axis — `Flow.canvas`, or any
 element sized `0` on one side — so it contributes nothing to an `Auto`
-track on that axis and the track collapses.
+track on that axis and the track collapses. A place that spans several
+tracks shares its footprint over the `Auto` tracks it covers, so a span
+that no single-track place can size still paints its content.
 
 Places can also skip the template entirely: `Slot (col, row, colspan,
 rowspan)` mounts an element at explicit track indices. Slots may overlap;

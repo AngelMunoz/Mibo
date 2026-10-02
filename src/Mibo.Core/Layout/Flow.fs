@@ -78,9 +78,10 @@ type Align =
 /// A single track of a `Flow.grid` template. `Fixed` tracks take literal
 /// cells; `Auto` tracks size to the largest footprint of their span-1
 /// places at construction (a context-sized place reports no footprint, so
-/// it contributes nothing); `Weight` tracks (`fr`) share the space left
-/// after `Fixed`, `Auto` and `Percent` tracks; `Percent` is a fraction of
-/// the assigned container length.
+/// it contributes nothing), and a place that spans several tracks shares
+/// its footprint over the `Auto` tracks it covers; `Weight` tracks (`fr`)
+/// share the space left after `Fixed`, `Auto` and `Percent` tracks;
+/// `Percent` is a fraction of the assigned container length.
 [<Struct>]
 type Track =
   | Fixed of length: int
@@ -1172,8 +1173,9 @@ module Flow =
 
   /// A CSS-grid-like container. Tracks size the columns and rows: `Fixed`
   /// tracks take literal cells, `Auto` tracks size to the largest footprint
-  /// of their span-1 places, `Weight` tracks share the leftover length of
-  /// the assigned area, `Percent` tracks take a fraction of it. `Areas`
+  /// of their span-1 places (a spanning place shares its footprint over the
+  /// `Auto` tracks in its span), `Weight` tracks share the leftover length
+  /// of the assigned area, `Percent` tracks take a fraction of it. `Areas`
   /// uses CSS grid-area strings (`"main main side"` spans columns, `.` is
   /// an empty cell). Places mount by named template area or by explicit
   /// slot; slots may overlap, and paint order is `Places` order, later
@@ -1256,11 +1258,13 @@ module Flow =
               "Places"
               $"slot spans must be positive, got colspan {cs} and rowspan {rs}"
 
+          // `cs > colArr.Length - c0` rather than `c0 + cs > ...`: a
+          // huge c0 would otherwise wrap negative and pass the check
           if
             c0 < 0
             || r0 < 0
-            || c0 + cs > colArr.Length
-            || r0 + rs > rowArr.Length
+            || cs > colArr.Length - c0
+            || rs > rowArr.Length - r0
           then
             invalidArg
               "Places"
@@ -1274,15 +1278,43 @@ module Flow =
     let colAuto = Array.zeroCreate colArr.Length
     let rowAuto = Array.zeroCreate rowArr.Length
 
+    // Shares one spanning place's footprint over the Auto tracks it
+    // covers: without this, a span that no span-1 place can size would
+    // collapse every track in it to zero and the place would paint
+    // nothing at all.
+    let shareOverAuto
+      (tracks: Track[])
+      (auto: int[])
+      (c0: int)
+      (span: int)
+      (size: int)
+      =
+      let mutable autos = 0
+
+      for i in c0 .. c0 + span - 1 do
+        if tracks.[i] = Auto then
+          autos <- autos + 1
+
+      if autos > 0 then
+        let share = (size + autos - 1) / autos
+
+        for i in c0 .. c0 + span - 1 do
+          if tracks.[i] = Auto then
+            auto.[i] <- max auto.[i] share
+
     for i in 0 .. opts.Places.Length - 1 do
       let struct (_, stamp) = opts.Places.[i]
       let struct (c0, r0, cs, rs) = spans.[i]
 
       if cs = 1 && stamp.W > 0 then
         colAuto.[c0] <- max colAuto.[c0] stamp.W
+      elif cs > 1 && stamp.W > 0 then
+        shareOverAuto colArr colAuto c0 cs stamp.W
 
       if rs = 1 && stamp.H > 0 then
         rowAuto.[r0] <- max rowAuto.[r0] stamp.H
+      elif rs > 1 && stamp.H > 0 then
+        shareOverAuto rowArr rowAuto r0 rs stamp.H
 
     // The conversions copy the track arrays; skip them when no Auto
     // track needs resolving.

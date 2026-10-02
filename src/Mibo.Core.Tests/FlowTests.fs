@@ -514,6 +514,36 @@ let tests =
             |> ignore)
           "slot past the last column"
 
+      testCase "a slot index past the int32 range throws"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [| Fixed 2 |]
+              Rows = [| Fixed 2 |]
+              Gap = 0
+              Areas = [||]
+              Places = [|
+                struct (Slot(System.Int32.MaxValue, 0, 1, 1), fillTile 1)
+              |]
+            }
+            |> ignore)
+          "a huge column index must not wrap into a valid slot"
+
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [| Fixed 2 |]
+              Rows = [| Fixed 2 |]
+              Gap = 0
+              Areas = [||]
+              Places = [|
+                struct (Slot(0, 0, System.Int32.MaxValue, 1), fillTile 1)
+              |]
+            }
+            |> ignore)
+          "a huge span must not wrap into a valid slot"
+
       testCase "a slot span below one throws"
       <| fun _ ->
         Expect.throwsT<System.ArgumentException>
@@ -587,6 +617,34 @@ let tests =
         let g, _ = runInto 4 2 stamp
 
         expectCell g 0 0 ValueNone "an auto track with no content collapses"
+
+      testCase "a spanning place sizes the auto tracks it covers"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Auto; Auto |]
+            Rows = [| Auto |]
+            Gap = 0
+            Areas = [||]
+            Places = [|
+              struct (Slot(0, 0, 2, 1), Stamp.named "hall" (tile 4 1 1))
+            |]
+          }
+
+        // the place shares its four cells over both auto columns, so
+        // neither collapses to zero and the place still paints
+        Expect.equal stamp.W 4 "the spanning footprint sizes the tracks"
+
+        let g, placed = runInto 8 1 stamp
+
+        Expect.equal
+          (Flow.tryPosition "hall" placed)
+          (ValueSome { X = 0; Y = 0; W = 4; H = 1 })
+          "the spanning place paints its whole footprint"
+
+        expectCell g 0 0 (ValueSome 1) "the span starts at the first column"
+        expectCell g 3 0 (ValueSome 1) "the span covers the shared width"
+        expectCell g 4 0 ValueNone "nothing paints past the footprint"
 
       testCase "areas and slots share one grid"
       <| fun _ ->
