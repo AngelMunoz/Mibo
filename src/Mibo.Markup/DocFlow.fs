@@ -202,8 +202,10 @@ module DocFlow =
         let mutable placed = false
         let mutable r = 0
 
-        // if every cell up to the deepest claim is taken, the row below
-        // it is free — so that row bounds the scan
+        // every claimed and placed cell sits in a row at or above
+        // `maxRow`, so the row below it is free: that row bounds the
+        // scan, and each placement extends the bound by one row, so flow
+        // children stack up instead of failing on a full first row
         while not placed && r <= maxRow + 1 do
           let mutable c = 0
 
@@ -213,6 +215,7 @@ module DocFlow =
             else
               occupied.Add struct (c, r) |> ignore
               slots[i] <- struct (c, r, 1, 1)
+              maxRow <- max maxRow r
               placed <- true
 
           r <- r + 1
@@ -243,13 +246,16 @@ module DocFlow =
 
   // ── the emit walk ────────────────────────────────────────────
 
-  // One recursive function, no `let rec ... and` chain: the pack
-  // builders are locals of `emit` and the only recursion is `emit`
-  // itself, called once per child inside plain loops. Depth equals the
-  // document's nesting depth — a handful of frames for real documents —
-  // and each call builds a stamp bottom-up, so the walk is a fold over
-  // the item tree, not a traversal that could loop unbounded.
+  // One recursive function: the pack builders are locals of `emit` and
+  // the only recursion is `emit` itself, called once per child inside
+  // plain loops. Depth equals the document's nesting depth — a handful of
+  // frames for real documents — and each call builds a stamp bottom-up,
+  // so the walk is a fold over the item tree.
 
+  /// Emits one item as a Flow stamp: its own body paints its box, then its
+  /// children paint by the container's pack (stack layers, a grid, or
+  /// seeded scatter). The composite is built inside the stamp's paint, so
+  /// an emitted document painted onto a second grid lays out again.
   let rec emit(item: Doc.Item<'T>) : Stamp<'T> =
     // One stack child as a layer: an exact-At child mounts at its
     // origin (a zero axis stretching to the inner far edge), a placed

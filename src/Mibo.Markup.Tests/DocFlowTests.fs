@@ -276,6 +276,56 @@ let goldenTests =
             s |> Layout.fill 0 9 5 3 4 |> ignore // the flow child takes row 4
         )
       )
+
+    testCase "flow children stack onto the next row"
+    <| fun _ ->
+      // three flow children in two columns: the third wraps to row 1
+      // instead of failing once row 0 is full
+      buildGolden(
+        """map 6 4 {
+    generate grass
+    plot w=6 h=4 {
+        cols 1 1
+        plot { fill path }
+        plot { fill block }
+        plot { fill sand }
+    }
+}
+""",
+        "flow wraps",
+        golden(
+          6,
+          4,
+          fun s ->
+            s |> Layout.fill 0 0 6 4 1 |> ignore
+            s |> Layout.fill 0 0 3 2 5 |> ignore // the first free cell
+            s |> Layout.fill 3 0 3 2 7 |> ignore // the second column
+            s |> Layout.fill 0 2 3 2 4 |> ignore // wrapped to the next row
+        )
+      )
+
+    testCase "a flow pack without declared tracks stacks its children"
+    <| fun _ ->
+      // one implicit column, so every child takes its own row
+      buildGolden(
+        """map 4 2 {
+    generate grass
+    plot w=4 h=2 pack=flow {
+        plot { fill path }
+        plot { fill block }
+    }
+}
+""",
+        "flow without tracks",
+        golden(
+          4,
+          2,
+          fun s ->
+            s |> Layout.fill 0 0 4 2 1 |> ignore
+            s |> Layout.fill 0 0 4 1 5 |> ignore
+            s |> Layout.fill 0 1 4 1 7 |> ignore
+        )
+      )
   ]
 
 [<Tests>]
