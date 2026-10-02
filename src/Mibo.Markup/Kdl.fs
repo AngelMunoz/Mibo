@@ -40,6 +40,53 @@ module Kdl =
 
     starts.ToArray()
 
+  /// The int32 value of an integer literal, when the text is one: decimal,
+  /// hex (`0x`), octal (`0o`) or binary (`0b`), with `_` separators. A
+  /// fractional or exponent literal gives `ValueNone` — it is a float. An
+  /// integer past the int32 range also gives `ValueNone`, so it becomes a
+  /// decimal exactly like the XML front-end's typing.
+  let private intOfRaw(raw: string) : int voption =
+    let clean = raw.Replace("_", "")
+
+    let sign, unsigned =
+      if clean.StartsWith "-" then -1, clean.Substring 1
+      elif clean.StartsWith "+" then 1, clean.Substring 1
+      else 1, clean
+
+    let radix, digits =
+      if unsigned.StartsWith "0x" || unsigned.StartsWith "0X" then
+        16, unsigned.Substring 2
+      elif unsigned.StartsWith "0o" || unsigned.StartsWith "0O" then
+        8, unsigned.Substring 2
+      elif unsigned.StartsWith "0b" || unsigned.StartsWith "0B" then
+        2, unsigned.Substring 2
+      else
+        10, unsigned
+
+    if radix = 10 then
+      if digits.IndexOfAny([| '.'; 'e'; 'E' |]) >= 0 then
+        ValueNone
+      else
+        // `clean`, so Int32.MinValue keeps its sign
+        match
+          Int32.TryParse(
+            clean,
+            NumberStyles.Integer,
+            CultureInfo.InvariantCulture
+          )
+        with
+        | true, v -> ValueSome v
+        | _ -> ValueNone
+    else
+      // a hex, octal or binary literal is a whole number; a bad digit or
+      // an overflow is not one we can carry, so it falls back to decimal
+      try
+        ValueSome(sign * Convert.ToInt32(digits, radix))
+      with
+      | :? FormatException -> ValueNone
+      | :? ArgumentException -> ValueNone
+      | :? OverflowException -> ValueNone
+
   let private offsetOf (starts: int[]) (line: int) (col: int) : int =
     if line < 1 || line > starts.Length then
       -1
@@ -75,20 +122,9 @@ module Kdl =
           let dec = reader.NumberValue.GetValueOrDefault()
           reader.Read() |> ignore
 
-          if raw <> null && raw.IndexOfAny([| '.'; 'e'; 'E' |]) >= 0 then
-            Arg.Decimal(float dec)
-          else
-            // an integer past the int32 range becomes a decimal, the
-            // same way the XML front-end types it
-            match
-              Int32.TryParse(
-                raw,
-                NumberStyles.Integer,
-                CultureInfo.InvariantCulture
-              )
-            with
-            | true, v -> Arg.Number v
-            | _ -> Arg.Decimal(float dec)
+          match (if raw = null then ValueNone else intOfRaw raw) with
+          | ValueSome v -> Arg.Number v
+          | ValueNone -> Arg.Decimal(float dec)
         | KdlTokenType.True ->
           reader.Read() |> ignore
           Arg.Word "true"

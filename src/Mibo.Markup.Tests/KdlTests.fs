@@ -154,15 +154,16 @@ let kdlTests =
       // KDL has typed literals XML attributes cannot spell; these pins
       // hold the KDL side steady so the documented divergences stay
       // divergences and not drift
-      match Kdl.parse "thing 0x1F 1_000 1e3 \"36\"" with
+      match Kdl.parse "thing 0x1F 1_000 1e3 0o17 \"36\"" with
       | Error e -> failtest $"parse failed: {e}"
       | Ok roots ->
         Expect.equal
           (Seq.toList roots[0].Args)
           [
-            Arg.Decimal 31.0 // hex
+            Arg.Number 31 // hex is a whole number, usable in an int slot
             Arg.Number 1000 // underscores
             Arg.Decimal 1000.0 // exponent
+            Arg.Number 15 // octal
             Arg.Word "36" // quoted stays a word
           ]
           "hex, underscore, exponent, quoted-number typing"
