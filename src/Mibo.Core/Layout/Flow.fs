@@ -1579,6 +1579,8 @@ module Flow =
   /// it always does. Name the wrapped element to report the stretched
   /// rectangle.
   let stretch(stamp: Stamp<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Flow.stretch" "stamp" stamp
+
     docked {
       Anchor = Dock.StretchX ||| Dock.StretchY
       Inset = InsetSpec.Zero
@@ -1656,10 +1658,12 @@ module Flow =
   /// overlapping an earlier one. The same seed and the same container
   /// build the same level every run. A child that fits nowhere fails the
   /// build naming the child when it is named. The footprint is the
-  /// largest child's, so scatter inside a sized context (`group`, a grid
-  /// area, a docked stretch) to choose the region; a child with a zero
-  /// axis (a context-sized child, or any element sized `0` on one side)
-  /// places as one cell on that axis, and `expand` children throw.
+  /// build naming the child when it is named. The footprint is the
+  /// largest child's, so give it a sized region — a grid area,
+  /// `Flow.stretch` over a `group`, or a stretched dock; a child with a
+  /// zero axis (a context-sized child, or any element sized `0` on one
+  /// side) places as one cell on that axis, and `expand` children
+  /// throw.
   let scatter (seed: int) (children: Stamp<'T> seq) : Stamp<'T> =
     let arr = Array.ofSeq children
     FlowImpl.checkNoExpandAll "Flow.scatter" "children" arr
@@ -1688,10 +1692,10 @@ module Flow =
   /// A fixed-size group that lays its children out over its own area with
   /// overlay rules: each child paints into the group's box and later children
   /// paint on top. Children are full-bleed layers — `canvas`, `docked`,
-  /// `at`, `stretch` — so a sized child throws at construction: it would
-  /// silently paint the whole box. The size is stated once, here; `canvas`
-  /// children fill the box, `docked`/`at` children anchor within it, and
-  /// `stretch` stretches a sized layout over it.
+  /// `at`, `strip`, `stretch` — so a sized child throws at construction:
+  /// it would silently paint the whole box. The size is stated once,
+  /// here; `canvas` children fill the box, `docked`/`at` children anchor
+  /// within it, and `stretch` stretches a sized layout over it.
   let group (w: int) (h: int) (children: Stamp<'T> list) : Stamp<'T> =
     let w = max 0 w
     let h = max 0 h

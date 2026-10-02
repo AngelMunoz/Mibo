@@ -729,6 +729,39 @@ let tests =
         expectCell g 5 3 (ValueSome 7) "stretched to the far corner"
         expectCell g 0 0 (ValueSome 7) "stretched from the origin"
 
+      testCase "stretch mounts a sized layout inside a group"
+      <| fun _ ->
+        // the documented shape for a sized layout inside a sized group
+        let stamp =
+          Flow.group 4 3 [
+            Flow.canvas [ Flow.fill 1 ]
+            Flow.stretch(Stamp.named "patch" (Stamp.box 2 1 [ Flow.fill 7 ]))
+          ]
+
+        let g, placed = runInto 8 6 stamp
+
+        Expect.equal
+          (Flow.tryPosition "patch" placed)
+          (ValueSome { X = 0; Y = 0; W = 4; H = 3 })
+          "the sized layout stretched over the group box"
+
+        expectCell g 3 2 (ValueSome 7) "stretched to the group corner"
+        expectCell g 4 0 ValueNone "the group does not stretch"
+
+      testCase "stretch names itself in the expand error"
+      <| fun _ ->
+        let thrown =
+          try
+            Flow.stretch(Stamp.expand(fillTile 1)) |> ignore
+            None
+          with :? System.ArgumentException as e ->
+            Some e.Message
+
+        match thrown with
+        | Some msg ->
+          Expect.stringContains msg "Flow.stretch" "the error names stretch"
+        | None -> failtest "stretch must reject an expand stamp"
+
       testCase
         "docked elements anchor inside the container and report positions"
       <| fun _ ->

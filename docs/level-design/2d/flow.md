@@ -257,12 +257,13 @@ first-fit in child order. Same seed and same container, same level:
 
 ```fsharp
 // a rock ring around the spawn cave — boulders never overlap
-let rocks = Flow.group 5 5 [ Flow.scatter 13 [ boulder; boulder; boulder ] ]
+let rocks =
+  Flow.group 5 5 [ Flow.stretch (Flow.scatter 13 [ boulder; boulder; boulder ]) ]
 ```
 
-The footprint of a scatter is the largest child's, so mount it inside a
-sized context (`group`, a grid area, a docked stretch) to choose the
-region. Name or tag the children as usual — their scattered rectangles
+The footprint of a scatter is the largest child's, so give it a sized
+region — a grid area, `Flow.stretch` over a `group`, or a stretched
+dock. Name or tag the children as usual — their scattered rectangles
 report through the landmarks, and a child that fits nowhere fails the
 build naming the child when it is named.
 

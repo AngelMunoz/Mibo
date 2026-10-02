@@ -170,7 +170,7 @@ let struct (grid, marks) =
   Radius = 32f
   Origin = Vector2.Zero
 }
-  |> Flow.run (Flow.overlay [ kingdom ])
+  |> Flow.run kingdom
 ```
 
 ### The retired HexLayout pipelines
