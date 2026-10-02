@@ -9,7 +9,7 @@ index: 1
 
 Mibo provides grid-based layout engines for designing game levels programmatically. The system is content-agnostic and works with any tile/entity type you define.
 
-**Author with [Flow](2d/flow.html).** Flow is the level-authoring DSL: elements compose like HTML, containers distribute space like CSS flexbox and grid, and landmarks report the semantic regions that gameplay reads. The rest of this overview covers the grid storage underneath and the low-level `Layout` pipelines for pixel-perfect control.
+**Author with [Flow](2d/flow.html).** Flow is the level-authoring DSL: elements compose like HTML, containers distribute space like CSS flexbox and grid, and landmarks report the semantic regions that gameplay reads. Authors who prefer text documents can write the same levels in [Markup](2d/markup.html) — XML or KDL, resolved and laid out through Flow, with live reload during development. The rest of this overview covers the grid storage underneath and the low-level `Layout` pipelines for pixel-perfect control.
 
 ## Core Philosophy
 

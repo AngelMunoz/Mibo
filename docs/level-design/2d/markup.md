@@ -109,7 +109,6 @@ rules in order, then inline properties:
 
 ```fsharp
 let surface: Doc.Surface<Tile> = ...          // words, kernels, elements
-let struct (grid, landmarks) = ...            // the Flow build, next PR
 
 match Kdl.parse src with
 | Error e -> printfn "%s" e                   // parse errors, positioned
@@ -138,5 +137,31 @@ words, not new cases.
 `row=`, `colspan=`, `rowspan=`). Declared `cols`/`rows` (ratios,
 `fixed n`, `auto`) imply flow packing.
 
-*The Flow emitter (`DocFlow`) lands with the next PR of this stack —
-this page grows with it.*
+## The emitter
+
+`DocFlow.build` is the whole pipeline in one call: parse (KDL), resolve,
+emit to Flow stamps, one `Flow.run`. Every layout channel rides the
+framework's own primitives — exact placement is `Flow.at`, stack
+alignment is `Dock` flags, flow packing is `Flow.grid` with named areas
+and explicit slots, `auto` tracks size from the children's footprints
+inside the grid, and scatter is `Flow.scatter`'s seeded rule:
+
+```fsharp
+match DocFlow.build (surface, src) with
+| Ok grid -> ...          // a CellGrid2D<Tile>, painted and query-ready
+| Error e -> printfn "%s" e
+```
+
+The golden tests hand-lay each layout channel with the raw `Layout` ops
+and compare cell for cell — the emitter is checked against the
+framework's own painting, not against itself.
+
+## Live reload
+
+The point of authored text is editing while the game runs. The loop is
+yours to own (watching APIs differ per platform), and it is small: watch
+the document, debounce ~250 ms so the editor's several save events and
+mid-write locks settle, re-run `DocFlow.build`, and swap the level on
+success — on failure, show the positioned error and keep the last good
+level. Error builds nothing, so a broken document never half-paints a
+running game.
