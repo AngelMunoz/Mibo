@@ -709,6 +709,106 @@ let tests =
           "gate reports the docked rectangle"
     ]
 
+    testList "scatter" [
+      testCase "footprint is the largest child"
+      <| fun _ ->
+        let stamp = Flow.scatter 1 [ tile 2 3 1; tile 4 1 2 ]
+
+        Expect.equal stamp.W 4 "scatter width is the largest child width"
+        Expect.equal stamp.H 3 "scatter height is the largest child height"
+
+      testCase "scatters children inside the container without overlap"
+      <| fun _ ->
+        let stamp =
+          Flow.scatter 7 [
+            Stamp.named "a" (tile 2 2 1)
+            Stamp.named "b" (tile 2 2 2)
+            Stamp.named "c" (tile 2 2 3)
+          ]
+
+        let g, placed = runInto 8 8 stamp
+
+        let disjoint (a: CellRect) (b: CellRect) =
+          a.X >= b.X + b.W
+          || b.X >= a.X + a.W
+          || a.Y >= b.Y + b.H
+          || b.Y >= a.Y + a.H
+
+        let named =
+          [ struct ("a", 1); struct ("b", 2); struct ("c", 3) ]
+          |> List.choose(fun struct (n, content) ->
+            match Flow.tryPosition n placed with
+            | ValueSome r -> Some(n, content, r)
+            | ValueNone -> None)
+
+        Expect.hasLength named 3 "every child reports a rectangle"
+
+        for (n, content, r) in named do
+          Expect.equal r.W 2 $"{n} keeps its footprint"
+          Expect.equal r.H 2 $"{n} keeps its footprint"
+          Expect.isLessThan r.X 7 $"{n} stays inside the container"
+          Expect.isLessThan r.Y 7 $"{n} stays inside the container"
+
+          for x in r.X .. r.X + r.W - 1 do
+            for y in r.Y .. r.Y + r.H - 1 do
+              expectCell g x y (ValueSome content) $"{n} paints its rectangle"
+
+        let rs = named |> List.map(fun (_, _, r) -> r)
+
+        for i in 0 .. rs.Length - 1 do
+          for j in i + 1 .. rs.Length - 1 do
+            Expect.isTrue
+              (disjoint rs.[i] rs.[j])
+              $"scattered rect {i} and rect {j} do not overlap"
+
+      testCase "the same seed builds the same level"
+      <| fun _ ->
+        let build() =
+          Flow.scatter 13 [ tile 2 2 1; tile 2 2 2; tile 2 2 3 ]
+          |> runInto 10 10
+          |> fst
+
+        let a = build()
+        let b = build()
+        let mutable same = true
+
+        CellGrid2D.iter
+          (fun x y v -> same <- same && (ValueSome v = CellGrid2D.get x y b))
+          a
+
+        Expect.isTrue same "rebuilds are identical"
+
+      testCase "a different seed builds a different level"
+      <| fun _ ->
+        let build seed =
+          Flow.scatter seed [ tile 2 2 1; tile 2 2 2; tile 2 2 3 ]
+          |> runInto 10 10
+          |> fst
+
+        let a = build 1
+        let b = build 2
+        let mutable same = true
+
+        CellGrid2D.iter
+          (fun x y v -> same <- same && (ValueSome v = CellGrid2D.get x y b))
+          a
+
+        Expect.isFalse same "seeds 1 and 2 place differently"
+
+      testCase "a child that fits nowhere fails the build"
+      <| fun _ ->
+        Expect.throwsT<System.InvalidOperationException>
+          (fun () ->
+            Flow.scatter 1 [ tile 6 6 1; tile 6 6 2 ] |> runInto 5 5 |> ignore)
+          "a 6x6 child never fits a 5x5 container"
+
+      testCase "expand children throw"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Flow.scatter 1 [ Stamp.expand(fillTile 1) ] |> ignore)
+          "scatter ignores Expand"
+    ]
+
     testList "dock" [
       testCase "top right corner with inset"
       <| fun _ ->

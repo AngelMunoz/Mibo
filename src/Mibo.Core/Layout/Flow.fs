@@ -388,6 +388,75 @@ module internal FlowImpl =
     for c in stamps do
       checkNoExpand container arg c
 
+  /// A deterministic permutation of `0..n-1`: xorshift seeded from `seed`,
+  /// Fisher-Yates over the identity. No BCL RNG, so the sequence cannot
+  /// drift across runtimes.
+  let permutation (seed: int) (n: int) : int[] =
+    let mutable s = uint32 seed * 2654435761u + 2891336453u
+
+    let next() =
+      s <- s ^^^ (s <<< 13)
+      s <- s ^^^ (s >>> 17)
+      s <- s ^^^ (s <<< 5)
+      s
+
+    let order = Array.init n id
+
+    for i in n - 1 .. -1 .. 1 do
+      let j = int(next() % uint32(i + 1))
+      let tmp = order.[i]
+      order.[i] <- order.[j]
+      order.[j] <- tmp
+
+    order
+
+  /// Places sized children at seeded, non-overlapping origins of `bounds`:
+  /// candidate origins are the cells of `bounds` visited in the order of a
+  /// seeded permutation, children place in array order, and each takes the
+  /// first origin where its size fits without overlapping an earlier one.
+  /// A child with no fitting origin fails the build naming the child.
+  let scatterRects
+    (seed: int)
+    (bounds: CellRect)
+    (sizes: struct (int * int)[])
+    : CellRect[] =
+    let origins = permutation seed (bounds.W * bounds.H)
+
+    let placed = ResizeArray<CellRect>()
+    let result = Array.zeroCreate sizes.Length
+
+    for i in 0 .. sizes.Length - 1 do
+      let struct (w0, h0) = sizes.[i]
+      let w = max 1 w0
+      let h = max 1 h0
+      let mutable found = ValueNone
+      let mutable k = 0
+
+      while found.IsNone && k < origins.Length do
+        let cell = origins.[k]
+        let ox = bounds.X + (cell % bounds.W)
+        let oy = bounds.Y + (cell / bounds.W)
+
+        let fits =
+          ox + w <= bounds.X + bounds.W && oy + h <= bounds.Y + bounds.H
+
+        let candidate: CellRect = { X = ox; Y = oy; W = w; H = h }
+
+        if fits && not(placed.Exists(fun r -> overlaps candidate r)) then
+          found <- ValueSome candidate
+
+        k <- k + 1
+
+      match found with
+      | ValueSome rect ->
+        placed.Add rect
+        result.[i] <- rect
+      | ValueNone ->
+        invalidOp
+          $"Flow.scatter: child {i + 1} of {sizes.Length} does not fit the container"
+
+    result
+
 [<RequireQualifiedAccess>]
 module Stamp =
   /// Creates a leaf element with a fixed cell footprint.
@@ -1517,6 +1586,43 @@ module Flow =
 
             for c in arr do
               FlowImpl.paintChild s r registry c
+      }
+
+  /// Scatters sized children over the assigned area at seeded,
+  /// non-overlapping origins — prop clusters, debris fields, spawn rings.
+  /// Candidate origins are the container's cells in the order of a seeded
+  /// permutation; children place in the given order and each takes the
+  /// first origin where its footprint fits without overlapping an earlier
+  /// one. The same seed and the same container build the same level every
+  /// run. A child that fits nowhere fails the build naming the child. The
+  /// footprint is the largest child's, so scatter inside a sized context
+  /// (`group`, a grid area, a docked stretch) to choose the region; a
+  /// context-sized child (zero footprint) places as a single cell, and
+  /// `expand` children throw.
+  let scatter (seed: int) (children: Stamp<'T> seq) : Stamp<'T> =
+    let arr = Array.ofSeq children
+    FlowImpl.checkNoExpandAll "Flow.scatter" "children" arr
+
+    if arr.Length = 0 then
+      Stamp.empty()
+    else
+      let w = arr |> Array.map(fun c -> c.W) |> Array.max
+      let h = arr |> Array.map(fun c -> c.H) |> Array.max
+
+      {
+        W = w
+        H = h
+        Expand = 0
+        Name = ValueNone
+        Tags = []
+        Paint =
+          fun s registry ->
+            let assigned = FlowImpl.rectOf s
+            let sizes = arr |> Array.map(fun c -> struct (c.W, c.H))
+            let rects = FlowImpl.scatterRects seed assigned sizes
+
+            for i in 0 .. arr.Length - 1 do
+              FlowImpl.paintChild s rects.[i] registry arr.[i]
       }
 
   /// A fixed-size group that lays its children out over its own area with
