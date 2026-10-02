@@ -651,9 +651,9 @@ module Stamp =
 
   /// Draws both elements over the full area of the container, `second` on
   /// top. Both elements are full-bleed layers (`canvas`, `docked`, `at`,
-  /// `stretch`), so a sized element throws at construction — it would
-  /// silently paint the whole area. The footprint is zero: the composite
-  /// is context-sized.
+  /// `strip`, `stretch`), so a sized element throws at construction — it
+  /// would silently paint the whole area. The footprint is zero: the
+  /// composite is context-sized.
   let overlay (first: Stamp<'T>) (second: Stamp<'T>) : Stamp<'T> =
     FlowImpl.checkNoExpand "Stamp.overlay" "first" first
     FlowImpl.checkNoExpand "Stamp.overlay" "second" second
