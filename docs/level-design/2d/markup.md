@@ -131,11 +131,14 @@ the framework's `Layout` ops. The union is closed by design: statements
 mean the same thing in every game; games extend through elements and
 words, not new cases.
 
-**Styles carry layout only.** `w=`/`h=` size, `x=`/`y=` exact placement,
-`hplace=`/`vplace=`/`place=` alignment, `pack=` (stack, flow, scatter),
-`pad=`, `gapx=`/`gapy=`, `seed=`, and flow placement (`area=`, `col=`,
-`row=`, `colspan=`, `rowspan=`). Declared `cols`/`rows` (ratios,
-`fixed n`, `auto`) imply flow packing.
+**Styles carry layout only.** `w=`/`h=` size, `x=`/`y=` exact placement
+(stack pack only — a flow or scatter child with `x=`/`y=` fails the
+build instead of silently dropping the offsets), `hplace=`/`vplace=`/
+`place=` alignment, `pack=` (stack, flow, scatter), `pad=`, `gapx=`/
+`gapy=` (the Flow grid takes one gap today, so the two must match),
+`seed=`, and flow placement (`area=`, `col=`, `row=`, `colspan=`,
+`rowspan=` — col, row, and spans below one fail the build). Declared
+`cols`/`rows` (ratios, `fixed n`, `auto`) imply flow packing.
 
 ## The emitter
 
@@ -154,7 +157,11 @@ match DocFlow.build (surface, src) with
 
 The golden tests hand-lay each layout channel with the raw `Layout` ops
 and compare cell for cell — the emitter is checked against the
-framework's own painting, not against itself.
+framework's own painting, not against itself. Parse and resolution
+errors carry their document positions; emitter-stage failures carry the
+container and the child. The build returns the painted grid only —
+named and tagged landmarks are a scope cut, so derive gameplay regions
+from the tiles (the `Flow.build` scan) rather than the document tree.
 
 ## Live reload
 
@@ -162,6 +169,6 @@ The point of authored text is editing while the game runs. The loop is
 yours to own (watching APIs differ per platform), and it is small: watch
 the document, debounce ~250 ms so the editor's several save events and
 mid-write locks settle, re-run `DocFlow.build`, and swap the level on
-success — on failure, show the positioned error and keep the last good
+success — on failure, show the error and keep the last good
 level. Error builds nothing, so a broken document never half-paints a
 running game.

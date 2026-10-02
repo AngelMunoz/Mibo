@@ -248,6 +248,34 @@ let goldenTests =
             s |> Layout.fill 4 5 7 1 5 |> ignore // from (1,2) to the inner far edge
         )
       )
+
+    testCase "a flow child lands past a deep rowspan"
+    <| fun _ ->
+      // both columns claim rows 0..3, so the flow child's first free
+      // cell sits on row 4 — beyond the child count that once bounded
+      // the scan
+      buildGolden(
+        """map 10 12 {
+    generate grass
+    plot w=10 h=12 {
+        cols 1 1
+        plot col=0 row=0 rowspan=4 { fill path }
+        plot col=1 row=0 rowspan=4 { fill block }
+        plot { fill sand }
+    }
+}
+""",
+        "rowspan then flow",
+        golden(
+          10,
+          12,
+          fun s ->
+            s |> Layout.fill 0 0 10 12 1 |> ignore
+            s |> Layout.fill 0 0 5 9 5 |> ignore // rows 0..3, column 0
+            s |> Layout.fill 5 0 5 9 7 |> ignore // rows 0..3, column 1
+            s |> Layout.fill 0 9 5 3 4 |> ignore // the flow child takes row 4
+        )
+      )
   ]
 
 [<Tests>]
@@ -266,32 +294,36 @@ let scatterTests =
         let mutable pines = 0
         let mutable boulders = 0
         let mutable outside = 0
+        let cells = HashSet<struct (int * int)>()
 
         CellGrid2D.iter
           (fun x y v ->
-            if v = 8 then
-              pines <- pines + 1
+            if v = 8 || v = 9 then
+              if v = 8 then
+                pines <- pines + 1
+              else
+                boulders <- boulders + 1
 
-              if x < 2 || x > 9 || y < 2 || y > 5 then
-                outside <- outside + 1
-            elif v = 9 then
-              boulders <- boulders + 1
+              cells.Add struct (x, y) |> ignore
 
               if x < 2 || x > 9 || y < 2 || y > 5 then
                 outside <- outside + 1)
           g
 
-        struct (pines, boulders, outside)
+        struct (pines, boulders, outside, cells.Count)
 
       match build doc, build doc with
       | Ok a, Ok b ->
-        let struct (pines, boulders, outside) = count a
+        let struct (pines, boulders, outside, distinct) = count a
         Expect.equal pines 3 "three pines placed"
         Expect.equal boulders 1 "one boulder placed"
         Expect.equal outside 0 "every placement sits inside the plot"
 
-        // scatter cells never overlap: 4 elements of 1x1 = 4 cells
-        let struct (pines2, boulders2, _) = count b
+        // no two elements share a cell: 4 elements of 1x1 occupy 4
+        // distinct cells
+        Expect.equal distinct 4 "four distinct occupied cells"
+
+        let struct (pines2, boulders2, _, _) = count b
         Expect.equal struct (pines2, boulders2) struct (3, 1) "same counts"
 
         expectGrid a b "scatter"
@@ -315,4 +347,51 @@ let failureTests =
       match build "map {" with
       | Ok _ -> failtest "malformed input must not build"
       | Error e -> Expect.isGreaterThan e.Length 0 "the error carries a message"
+
+    testCase "a zero slot span fails the build"
+    <| fun _ ->
+      match
+        build
+          """map 8 6 {
+    plot w=8 h=6 {
+        cols 1 1
+        plot col=0 row=0 colspan=0 rowspan=1 { fill sand }
+    }
+}
+"""
+      with
+      | Ok _ -> failtest "a zero span must not silently become a flow child"
+      | Error e ->
+        Expect.stringContains e "spans of at least one" "a loud failure"
+
+    testCase "a negative col= fails the build"
+    <| fun _ ->
+      match
+        build
+          """map 8 6 {
+    plot w=8 h=6 {
+        cols 1 1
+        plot col=-1 row=0 { fill sand }
+    }
+}
+"""
+      with
+      | Ok _ -> failtest "a negative col must not clamp to zero"
+      | Error e -> Expect.stringContains e "non-negative" "a loud failure"
+
+    testCase "x= and y= inside a flow pack fail the build"
+    <| fun _ ->
+      match
+        build
+          """map 8 6 {
+    plot w=8 h=6 {
+        cols 1 1
+        plot x=1 y=1 { fill sand }
+    }
+}
+"""
+      with
+      | Ok _ -> failtest "exact placement must not vanish inside flow"
+      | Error e ->
+        Expect.stringContains e "stack pack" "the error names the working pack"
   ]

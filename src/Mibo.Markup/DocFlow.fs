@@ -113,18 +113,26 @@ module DocFlow =
       ValueSome struct (c0, r0, c1 - c0 + 1, r1 - r0 + 1)
 
   /// Slot and area children claim their cells first; flow children take
-  /// the next free cell scanning row first.
+  /// the next free cell scanning row first. Slot spans below one and
+  /// negative col=/row= fail the build instead of clamping.
   let private assignSlots
     (areas: string[][], colCount: int, children: Doc.Item<'T>[])
     : struct (int * int * int * int)[] =
     let slots = Array.zeroCreate children.Length
+    // a claimed flag, not a default-value check: a legitimate
+    // `col=0 row=0 colspan=0 rowspan=0` would otherwise read as
+    // unclaimed and flip the child into the flow pass
+    let claimed = Array.zeroCreate<bool> children.Length
     let occupied = HashSet<struct (int * int)>()
+    let mutable maxRow = -1
 
     for i in 0 .. children.Length - 1 do
       let c = children[i]
 
       let claim struct (sc, sr, scs, srs) =
         slots[i] <- struct (sc, sr, scs, srs)
+        claimed[i] <- true
+        maxRow <- max maxRow (sr + srs - 1)
 
         for dr in 0 .. srs - 1 do
           for dc in 0 .. scs - 1 do
@@ -150,17 +158,33 @@ module DocFlow =
       | ValueNone ->
         (match c.Style.Col, c.Style.Row with
          | ValueSome col, ValueSome row ->
-           claim struct (max 0 col, max 0 row, cs, rs)
-         | ValueSome col, ValueNone -> claim struct (max 0 col, 0, cs, rs)
-         | ValueNone, ValueSome row -> claim struct (0, max 0 row, cs, rs)
+           if col < 0 || row < 0 || cs < 1 || rs < 1 then
+             failwith
+               $"slot placement wants non-negative col=/row= and spans of at least one (got col {col}, row {row}, colspan {cs}, rowspan {rs})"
+
+           claim struct (col, row, cs, rs)
+         | ValueSome col, ValueNone ->
+           if col < 0 || cs < 1 || rs < 1 then
+             failwith
+               $"slot placement wants non-negative col= and spans of at least one (got col {col}, colspan {cs}, rowspan {rs})"
+
+           claim struct (col, 0, cs, rs)
+         | ValueNone, ValueSome row ->
+           if row < 0 || cs < 1 || rs < 1 then
+             failwith
+               $"slot placement wants non-negative row= and spans of at least one (got row {row}, colspan {cs}, rowspan {rs})"
+
+           claim struct (0, row, cs, rs)
          | ValueNone, ValueNone -> ())
 
     for i in 0 .. children.Length - 1 do
-      if slots[i] = Unchecked.defaultof<_> then
+      if not claimed[i] then
         let mutable placed = false
         let mutable r = 0
 
-        while not placed && r <= children.Length do
+        // if every cell up to the deepest claim is taken, the row below
+        // it is free — so that row bounds the scan
+        while not placed && r <= maxRow + 1 do
           let mutable c = 0
 
           while not placed && c < colCount do
@@ -236,16 +260,29 @@ module DocFlow =
 
             let pack = item.Style.Pack |> ValueOption.defaultValue impliedPack
 
+            // x=/y= exact placement is a stack-pack channel; a document
+            // that mixes it into flow or scatter fails the build rather
+            // than silently dropping the offsets
+            if pack <> Doc.Stack then
+              for c in item.Children do
+                if c.Style.At.IsSome then
+                  failwith
+                    "x= and y= exact placement works in the stack pack; a flow or scatter child places by area, slot, or the pack rule"
+
             let gap =
               item.Style.Gap |> ValueOption.defaultValue { W = 0; H = 0 }
 
             let seed = item.Style.Seed |> ValueOption.defaultValue 0
 
+            // the composite is built per paint call: a stamp paints once
+            // per build, so the slot assignment and grid construction
+            // run once with it — re-painting one emitted document on a
+            // second grid re-runs them all
             let composite =
               match pack with
               | Doc.Stack ->
                 Flow.overlay(
-                  item.Children |> Seq.map(fun c -> stackLayer(inner, c))
+                  item.Children |> Array.map(fun c -> stackLayer(inner, c))
                 )
               | Doc.Scatter -> scatterLayers(seed, inner, item.Children)
               | Doc.Flow -> flowGrid(gap, inner, item)
@@ -359,35 +396,39 @@ module DocFlow =
   // ── the map shell ────────────────────────────────────────────
 
   /// Parses, resolves and lays the document out through the Flow API.
-  /// Error builds nothing and carries the same positioned messages as
-  /// `Doc.resolve`.
+  /// Parse and resolution failures carry their document positions (the
+  /// same messages as `Doc.resolve`); emitter-stage failures — a gap
+  /// mismatch, a bad slot, a mixed pack channel — carry the container
+  /// and the child instead. Error builds nothing. The build returns the
+  /// painted grid; named and tagged landmarks stay a scope cut (derive
+  /// gameplay regions from the tiles, the way `Flow.build` does).
   let build
     (surface: Doc.Surface<'T>, src: string)
     : Result<CellGrid2D<'T>, string> =
     try
       Kdl.parse src
       |> Result.bind(fun roots ->
+        // resolve already guarantees one map container and one root item
         Doc.resolve surface src roots
-        |> Result.map(fun items -> struct (roots, items)))
-      |> Result.bind(fun struct (roots, items) ->
-        match items with
-        | [| root |] ->
-          (match Doc.findMapNode roots with
-           | ValueNone -> Error "the document needs a map node"
-           | ValueSome n ->
-             (match Doc.dimsOf(src, n) with
-              | Error e -> Error e
-              | Ok spec ->
-                let grid =
-                  CellGrid2D.create
-                    spec.W
-                    spec.H
-                    (Vector2(1f, 1f))
-                    Vector2.Zero
+        |> Result.bind(fun items ->
+          match items with
+          | [| root |] ->
+            (match Doc.findMapNode roots with
+             | ValueNone -> Error "the document needs a map node"
+             | ValueSome n ->
+               (match Doc.dimsOf(src, n) with
+                | Error e -> Error e
+                | Ok spec ->
+                  let grid =
+                    CellGrid2D.create
+                      spec.W
+                      spec.H
+                      (Vector2(1f, 1f))
+                      Vector2.Zero
 
-                let struct (built, _) = grid |> Flow.run(emit root)
+                  let struct (built, _) = grid |> Flow.run(emit root)
 
-                Ok built))
-        | _ -> Error "the document needs exactly one map container")
+                  Ok built))
+          | _ -> Error "the document needs exactly one map container"))
     with e ->
       Error e.Message
