@@ -1108,9 +1108,20 @@ module Doc =
 
   // ── Entry ────────────────────────────────────────────────────
 
+  /// Locates the document's map container. Its dimensions ride
+  /// positional args (`map 36 20`) or the `w=`/`h=` properties
+  /// (`map w="36" h="20"`).
   let findMapNode(nodes: ImmutableArray<Node>) : Node voption =
+    let isMap(n: Node) =
+      if n.Kind <> "map" then
+        false
+      else
+        n.Args.Length >= 2
+        || (n.Props |> Seq.exists(fun p -> p.Name = "w")
+            && n.Props |> Seq.exists(fun p -> p.Name = "h"))
+
     let rec go(n: Node) : Node voption =
-      if n.Kind = "map" && n.Args.Length >= 2 then
+      if isMap n then
         ValueSome n
       else
         let mutable found = ValueNone
