@@ -498,10 +498,19 @@ module Doc =
               names.Add part
           | ValueSome _ ->
             failed <- ValueSome $"an area row's names want words{at(src, row)}"
-          | ValueNone -> ()
+          | ValueNone ->
+            // a names-less row is an authoring slip, not an empty row:
+            // it would shift every row below it in the template
+            failed <-
+              ValueSome
+                $"an area row needs positional names or a names= property{at(src, row)}"
 
-        if failed.IsNone && names.Count > 0 then
-          rows.Add(names.ToArray())
+        if failed.IsNone then
+          if names.Count = 0 then
+            failed <-
+              ValueSome $"an area row needs at least one name{at(src, row)}"
+          else
+            rows.Add(names.ToArray())
 
     match failed with
     | ValueSome e -> Error e
@@ -662,13 +671,25 @@ module Doc =
       let coords =
         named.ContainsKey "x" || named.ContainsKey "y" || positional.Count = 3
 
-      let hName = if named.ContainsKey "halign" then "halign" else "hplace"
+      // one spelling per axis: the unpicked spelling of a mixed pair
+      // would pass the leftover check unread
+      let mixedSpelling =
+        (named.ContainsKey "halign" && named.ContainsKey "hplace")
+        || (named.ContainsKey "valign" && named.ContainsKey "vplace")
 
-      let vName = if named.ContainsKey "valign" then "valign" else "vplace"
+      let anchored =
+        named.ContainsKey "halign"
+        || named.ContainsKey "hplace"
+        || named.ContainsKey "valign"
+        || named.ContainsKey "vplace"
 
-      let anchored = named.ContainsKey hName || named.ContainsKey vName
-
-      if coords then
+      if mixedSpelling then
+        Error
+          $"'set' takes one spelling per axis: halign/hplace, valign/vplace{at(src, n)}"
+      elif coords && anchored then
+        Error
+          $"'set' places by x= y= coordinates or by alignment, not both{at(src, n)}"
+      elif coords then
         takeInt "x"
         |> Result.bind(fun x ->
           takeInt "y"
@@ -676,17 +697,13 @@ module Doc =
             takeCell "cell"
             |> Result.bind(fun cell ->
               checkedOp
-                [|
-                  "x"
-                  "y"
-                  "cell"
-                  "halign"
-                  "valign"
-                  "hplace"
-                  "vplace"
-                |]
+                [| "x"; "y"; "cell" |]
                 (Op.Set(ValueSome { X = x; Y = y }, Start, Start, cell)))))
       elif anchored then
+        let hName = if named.ContainsKey "halign" then "halign" else "hplace"
+
+        let vName = if named.ContainsKey "valign" then "valign" else "vplace"
+
         takeAlign hName
         |> Result.bind(fun h ->
           takeAlign vName
@@ -694,15 +711,13 @@ module Doc =
             takeCell "cell"
             |> Result.bind(fun cell ->
               checkedOp
-                [| "halign"; "valign"; "hplace"; "vplace"; "cell" |]
+                [| hName; vName; "cell" |]
                 (Op.Set(ValueNone, h, v, cell)))))
       elif positional.Count = 1 then
         // the `set c` anchor form: no coordinates, the aligns default
         takeCell "cell"
         |> Result.bind(fun cell ->
-          checkedOp
-            [| "cell"; "halign"; "valign"; "hplace"; "vplace" |]
-            (Op.Set(ValueNone, Start, Start, cell)))
+          checkedOp [| "cell" |] (Op.Set(ValueNone, Start, Start, cell)))
       else
         Error
           $"'set' wants x= y= coordinates, hplace= vplace= alignment, or a cell to anchor{at(src, n)}"
@@ -1217,59 +1232,78 @@ module Doc =
   /// Reads and validates the map node's dimensions: `w=`/`h=` properties
   /// (the XML channel), positional args (the KDL channel), or one of
   /// each. A named dimension claims its slot, so `map 36 h=20` reads 36
-  /// across and 20 down instead of failing on a mixed document. Leftover
-  /// args, and zero or negative dimensions, fail with a position.
+  /// across and 20 down instead of failing on a mixed document. A
+  /// doubled dimension, leftover args, and zero or negative dimensions
+  /// fail with a position.
   let dimsOf(src: string, n: Node) : Result<CellSize, string> =
     let mutable w = ValueNone
     let mutable h = ValueNone
+    let mutable failed = ValueNone
 
     for p in n.Props do
-      match p.Name with
-      | "w" when w.IsNone -> w <- ValueSome p.Value
-      | "h" when h.IsNone -> h <- ValueSome p.Value
-      | _ -> ()
+      if failed.IsNone then
+        match p.Name with
+        | "w" ->
+          // a doubled dimension is an authoring typo, not a shadowing
+          // rule — statements resolve last-wins, so first-wins silence
+          // here would quietly disagree with every other argument
+          (match w with
+           | ValueNone -> w <- ValueSome p.Value
+           | ValueSome _ ->
+             failed <-
+               ValueSome $"`{n.Kind}` defines 'w' more than once{at(src, n)}")
+        | "h" ->
+          (match h with
+           | ValueNone -> h <- ValueSome p.Value
+           | ValueSome _ ->
+             failed <-
+               ValueSome $"`{n.Kind}` defines 'h' more than once{at(src, n)}")
+        | _ -> ()
 
-    let mutable next = 0
+    match failed with
+    | ValueSome e -> Error e
+    | ValueNone ->
+      let mutable next = 0
 
-    let take() =
+      let take() =
+        if next < n.Args.Length then
+          let a = n.Args[next]
+          next <- next + 1
+          ValueSome a
+        else
+          ValueNone
+
+      if w.IsNone then
+        w <- take()
+
+      if h.IsNone then
+        h <- take()
+
+      let asInt(slot: string, v: Arg voption) =
+        match v with
+        | ValueSome(Number v) -> Ok v
+        | ValueSome(Decimal _) ->
+          Error
+            $"`{n.Kind}` wants a whole number for '{slot}', not a decimal{at(src, n)}"
+        | ValueSome(Word word) ->
+          Error
+            $"`{n.Kind}` wants a whole number for '{slot}', got '{word}'{at(src, n)}"
+        | ValueNone -> Error $"'{n.Kind}' wants '{slot}'{at(src, n)}"
+
       if next < n.Args.Length then
-        let a = n.Args[next]
-        next <- next + 1
-        ValueSome a
+        Error
+          $"'{n.Kind}' has {n.Args.Length - next} extra argument(s){at(src, n)}"
       else
-        ValueNone
-
-    if w.IsNone then
-      w <- take()
-
-    if h.IsNone then
-      h <- take()
-
-    let asInt(slot: string, v: Arg voption) =
-      match v with
-      | ValueSome(Number v) -> Ok v
-      | ValueSome(Decimal _) ->
-        Error
-          $"`{n.Kind}` wants a whole number for '{slot}', not a decimal{at(src, n)}"
-      | ValueSome(Word word) ->
-        Error
-          $"`{n.Kind}` wants a whole number for '{slot}', got '{word}'{at(src, n)}"
-      | ValueNone -> Error $"'{n.Kind}' wants '{slot}'{at(src, n)}"
-
-    if next < n.Args.Length then
-      Error
-        $"'{n.Kind}' has {n.Args.Length - next} extra argument(s){at(src, n)}"
-    else
-      (match asInt("w", w) with
-       | Error e -> Error e
-       | Ok wv ->
-         (match asInt("h", h) with
-          | Error e -> Error e
-          | Ok hv ->
-            if wv > 0 && hv > 0 then
-              Ok { W = wv; H = hv }
-            else
-              Error $"map dimensions must be positive{at(src, n)}"))
+        (match asInt("w", w) with
+         | Error e -> Error e
+         | Ok wv ->
+           (match asInt("h", h) with
+            | Error e -> Error e
+            | Ok hv ->
+              if wv > 0 && hv > 0 then
+                Ok { W = wv; H = hv }
+              else
+                Error $"map dimensions must be positive{at(src, n)}"))
 
   /// Game-declared element bodies never pass through statement
   /// resolution, so their kernel references get checked here: a typo in

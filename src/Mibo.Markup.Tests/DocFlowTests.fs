@@ -493,7 +493,60 @@ let failureTests =
 """
       with
       | Ok _ -> failtest "an out-of-grid slot must fail"
-      | Error e -> Expect.stringContains e "outside" "names the tracks"
+      | Error e ->
+        Expect.stringContains
+          e
+          "runs past the 2 declared cols"
+          "names the tracks"
+
+        Expect.stringContains e "'plot'" "names the container"
+
+    testCase "a col with a span past the declared tracks fails the build"
+    <| fun _ ->
+      // the span rides along: col=1 colspan=2 needs three columns
+      match
+        build
+          """map 8 6 {
+    plot w=8 h=6 {
+        cols 1 1
+        plot col=1 colspan=2 row=0 { fill sand }
+    }
+}
+"""
+      with
+      | Ok _ -> failtest "a span past the grid must fail"
+      | Error e ->
+        Expect.stringContains
+          e
+          "runs past the 2 declared cols"
+          "names the tracks"
+
+        Expect.stringContains e "'plot'" "names the container"
+
+    testCase "an area child with a stated span fails the build"
+    <| fun _ ->
+      // the area fixes the extent; a span next to it would be dropped
+      match
+        build
+          """map 8 6 {
+    plot w=8 h=6 {
+        cols 1 1
+        areas {
+            row names="road woods"
+        }
+        plot area=road colspan=2 { fill sand }
+    }
+}
+"""
+      with
+      | Ok _ -> failtest "an area child with a span must fail"
+      | Error e ->
+        Expect.stringContains
+          e
+          "colspan=/rowspan= needs col= or row="
+          "names the clash"
+
+        Expect.stringContains e "'plot'" "names the container"
 
     testCase "a span on a plain flow child fails the build"
     <| fun _ ->

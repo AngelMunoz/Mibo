@@ -92,7 +92,10 @@ it). A place reports no footprint on a zero axis — `Flow.canvas`, or any
 element sized `0` on one side — so it contributes nothing to an `Auto`
 track on that axis and the track collapses. A place that spans several
 tracks shares its footprint over the `Auto` tracks it covers, so a span
-that no single-track place can size still paints its content.
+that no single-track place can size still paints its content. The shared
+size does not subtract fixed tracks in the same span — a 6-wide place
+over `Fixed 10` and one `Auto` sizes the auto track to 6, so the span
+covers 16 cells of track space in total.
 
 Places can also skip the template entirely: `Slot (col, row, colspan,
 rowspan)` mounts an element at explicit track indices. Slots may overlap;
@@ -265,7 +268,12 @@ The footprint of a scatter is the largest child's, so give it a sized
 region — a grid area, `Flow.stretch` over a `group`, or a stretched
 dock. Name or tag the children as usual — their scattered rectangles
 report through the landmarks, and a child that fits nowhere fails the
-build naming the child when it is named.
+build naming the child when it is named. A child with a zero axis (a
+context-sized child, or any element sized `0` on one side) places as
+one cell on that axis, and a scatter whose children all measure zero on
+an axis keeps a zero footprint on it while the children still place one
+cell wide. An assigned area with no cell at all fails the first child
+with the same does-not-fit error as any crowded region.
 
 One determinism note: `Flow.scatter` runs a fixed xorshift shuffle, so a
 seeded scatter builds the same level on every .NET version. The paint

@@ -223,6 +223,46 @@ let resolveTests =
       | Error e ->
         Expect.stringContains e "'set' wants" "names the accepted forms"
 
+    testCase "a set mixing coordinate and align channels fails loud"
+    <| fun _ ->
+      // the aligns would pass the leftover check and never run
+      match
+        resolveKdl
+          "map 8 6 {\n  plot {\n    set x=1 y=2 hplace=center way\n  }\n}"
+      with
+      | Ok _ -> failtest "a mixed-channel set must fail"
+      | Error e -> Expect.stringContains e "not both" "names the clash"
+
+    testCase "a set with both align spellings fails loud"
+    <| fun _ ->
+      // halign and hplace mean the same thing; the unpicked spelling
+      // would pass unread
+      match
+        resolveKdl
+          "map 8 6 {\n  plot {\n    set halign=start hplace=end way\n  }\n}"
+      with
+      | Ok _ -> failtest "a double-spelled align must fail"
+      | Error e ->
+        Expect.stringContains e "one spelling per axis" "names the rule"
+
+    testCase "a map with a doubled dimension fails the build"
+    <| fun _ ->
+      match resolveKdl "map w=4 w=6 h=4 {\n  plot {}\n}" with
+      | Ok _ -> failtest "the doubled dimension must fail"
+      | Error e ->
+        Expect.stringContains e "defines 'w' more than once" "names the typo"
+        Expect.stringContains e "1:" "carries the line"
+
+    testCase "an area row without names fails the build"
+    <| fun _ ->
+      // a names-less row would shift every row below it in the template
+      match
+        resolveKdl
+          "map 8 6 {\n  grid {\n    cols 1 1\n    areas {\n      row\n      row names=\"road woods\"\n    }\n    plot area=road { fill grass }\n  }\n}"
+      with
+      | Ok _ -> failtest "the names-less area row must fail"
+      | Error e -> Expect.stringContains e "an area row needs" "names the slip"
+
     testCase "a map with extra positional args fails the build"
     <| fun _ ->
       match resolveKdl "map 8 6 9 {\n  plot {}\n}" with
