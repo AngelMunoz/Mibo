@@ -109,7 +109,6 @@ rules in order, then inline properties:
 
 ```fsharp
 let surface: Doc.Surface<Tile> = ...          // words, kernels, elements
-let struct (grid, landmarks) = ...            // the Flow build, next PR
 
 match Kdl.parse src with
 | Error e -> printfn "%s" e                   // parse errors, positioned
@@ -132,11 +131,49 @@ the framework's `Layout` ops. The union is closed by design: statements
 mean the same thing in every game; games extend through elements and
 words, not new cases.
 
-**Styles carry layout only.** `w=`/`h=` size, `x=`/`y=` exact placement,
-`hplace=`/`vplace=`/`place=` alignment, `pack=` (stack, flow, scatter),
-`pad=`, `gapx=`/`gapy=`, `seed=`, and flow placement (`area=`, `col=`,
-`row=`, `colspan=`, `rowspan=`). Declared `cols`/`rows` (ratios,
-`fixed n`, `auto`) imply flow packing.
+**Styles carry layout only.** `w=`/`h=` size, `x=`/`y=` exact placement
+(stack pack only — a flow or scatter child with `x=`/`y=` fails the
+build instead of silently dropping the offsets, and negative values
+clamp to zero, the framework's own `Flow.at` rule), `hplace=`/`vplace=`/
+`place=` alignment, `pack=` (stack, flow, scatter), `pad=`, `gapx=`/
+`gapy=` (the Flow grid takes one gap today, so the two must match),
+`seed=`, and flow placement (`area=`, `col=`, `row=`, `colspan=`,
+`rowspan=` — col, row, and spans below one fail the build). Declared
+`cols`/`rows` (ratios, `fixed n`, `auto`) imply flow packing.
 
-*The Flow emitter (`DocFlow`) lands with the next PR of this stack —
-this page grows with it.*
+## The emitter
+
+`DocFlow.build` (KDL) and `DocFlow.buildXml` (XML) are the whole
+pipeline in one call: parse, resolve, emit to Flow stamps, one
+`Flow.run`. Every layout channel rides the framework's own primitives —
+exact placement is `Flow.at`, stack alignment is `Dock` flags, flow
+packing is `Flow.grid` with named areas and explicit slots, `auto`
+tracks size from the children's footprints inside the grid, and scatter
+is `Flow.scatter`'s seeded rule:
+
+```fsharp
+match DocFlow.build (surface, src) with        // or DocFlow.buildXml
+| Ok grid -> ...          // a CellGrid2D<Tile>, painted and query-ready
+| Error e -> printfn "%s" e
+```
+
+The golden tests hand-lay each layout channel with the raw `Layout` ops
+and compare cell for cell — the emitter is checked against the
+framework's own painting, not against itself — and the same document
+built in KDL and in XML produces the identical grid. Parse and
+resolution errors carry their document positions (KDL); emitter-stage
+failures name the container, the offending child, and the channel (a
+gap mismatch, a bad slot, an unknown area, a mixed pack). The build
+returns the painted grid only — named and tagged landmarks are a scope
+cut, so derive gameplay regions from the tiles (the `Flow.build` scan)
+rather than the document tree.
+
+## Live reload
+
+The point of authored text is editing while the game runs. The loop is
+yours to own (watching APIs differ per platform), and it is small: watch
+the document, debounce ~250 ms so the editor's several save events and
+mid-write locks settle, re-run `DocFlow.build`, and swap the level on
+success — on failure, show the error and keep the last good
+level. Error builds nothing, so a broken document never half-paints a
+running game.

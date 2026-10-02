@@ -11,6 +11,7 @@
     <Compile Include="XmlTests.fs" />
     <Compile Include="KdlTests.fs" />
     <Compile Include="DocTests.fs" />
+    <Compile Include="DocFlowTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 

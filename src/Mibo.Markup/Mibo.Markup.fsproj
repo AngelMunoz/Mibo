@@ -10,6 +10,7 @@
     <Compile Include="Xml.fs" />
     <Compile Include="Kdl.fs" />
     <Compile Include="Doc.fs" />
+    <Compile Include="DocFlow.fs" />
   </ItemGroup>
 
   <ItemGroup>
