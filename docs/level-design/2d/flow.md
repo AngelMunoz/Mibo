@@ -70,7 +70,7 @@ let harbour =
 
 let struct (grid, marks) =
   CellGrid2D.create 24 14 (Vector2(32f, 32f)) Vector2.Zero
-  |> Flow.run (Flow.overlay [ harbour ])
+  |> Flow.run harbour
 ```
 
 What you get:
@@ -158,8 +158,15 @@ goes inside `overlay`, not into a row or column:
 ```fsharp
 // a one-cell wall across the whole bottom edge
 let walled level =
-  Flow.overlay [ level; Flow.strip Dock.Bottom 1 [ Flow.fill Wall ] ]
+  Flow.overlay [ Flow.stretch level; Flow.strip Dock.Bottom 1 [ Flow.fill Wall ] ]
 ```
+
+`overlay` and `group` children are **layers**: `canvas`, `docked`, `at`,
+`strip`, and `stretch`. A sized child throws at construction — a layer
+paints the whole assigned area, so a footprint there is always a mistake.
+Mount a sized layout (a grid with fixed tracks, a sized box) with
+`Flow.stretch`, which stretches it over the container; place an exact
+rectangle with `Flow.at` or `docked`.
 
 ## Pattern: landmarks drive the gameplay
 
@@ -250,12 +257,13 @@ first-fit in child order. Same seed and same container, same level:
 
 ```fsharp
 // a rock ring around the spawn cave — boulders never overlap
-let rocks = Flow.group 5 5 [ Flow.scatter 13 [ boulder; boulder; boulder ] ]
+let rocks =
+  Flow.group 5 5 [ Flow.stretch (Flow.scatter 13 [ boulder; boulder; boulder ]) ]
 ```
 
-The footprint of a scatter is the largest child's, so mount it inside a
-sized context (`group`, a grid area, a docked stretch) to choose the
-region. Name or tag the children as usual — their scattered rectangles
+The footprint of a scatter is the largest child's, so give it a sized
+region — a grid area, `Flow.stretch` over a `group`, or a stretched
+dock. Name or tag the children as usual — their scattered rectangles
 report through the landmarks, and a child that fits nowhere fails the
 build naming the child when it is named.
 
@@ -422,7 +430,7 @@ let struct (grid, marks) =
   Radius = 32f
   Origin = Vector2.Zero
 }
-  |> Flow.run (Flow.overlay [ harbour ])
+  |> Flow.run harbour
 ```
 
 Geometry affects two things only: world positions

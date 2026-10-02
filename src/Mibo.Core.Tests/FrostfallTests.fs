@@ -104,13 +104,15 @@ module Vocabulary =
         Flow.noise { Count = 40; Seed = 9 } Rock
         Flow.weather { Probability = 0.2f; Seed = 5 } Snow Ice
       ]
-      Flow.row
-        {
-          FlowOpts.Default with
-              Gap = 4
-              Wrap = true
-        }
-        [ pine; pine; pine; pine; pine; pine ]
+      Flow.stretch(
+        Flow.row
+          {
+            FlowOpts.Default with
+                Gap = 4
+                Wrap = true
+          }
+          [ pine; pine; pine; pine; pine; pine ]
+      )
     ]
 
 // ── 2. The level document ──────────────────────────────────────────────────
@@ -130,7 +132,7 @@ let keep =
 
 let frostfallKeep =
   Flow.overlay [
-    keep
+    Flow.stretch keep
     Flow.strip Dock.Top 2 [ Flow.rect Wall Snow ] // the ramparts
     Flow.strip Dock.Bottom 1 [ Flow.fill Water ] // the moat
 

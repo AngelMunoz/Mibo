@@ -66,9 +66,11 @@ let tests =
         Expect.equal above.W 3 "above width"
         Expect.equal above.H 3 "above height"
 
-        let overlay = Stamp.overlay a b
-        Expect.equal overlay.W 3 "overlay width"
-        Expect.equal overlay.H 2 "overlay height"
+        // layers are full-bleed, so Stamp.overlay takes zero-footprint
+        // elements and is context-sized
+        let overlay = Stamp.overlay (Stamp.empty()) (Stamp.empty())
+        Expect.equal overlay.W 0 "overlay width"
+        Expect.equal overlay.H 0 "overlay height"
 
         let inset = Stamp.inset 1 (Stamp.create 3 2 ignore)
         Expect.equal inset.W 5 "inset width"
@@ -673,7 +675,7 @@ let tests =
         let stamp =
           Flow.overlay [
             fillTile 1
-            Stamp.sized 1 1 (fun s -> s |> Layout.set 0 0 2)
+            Flow.at 0 0 (Stamp.sized 1 1 (fun s -> s |> Layout.set 0 0 2))
           ]
 
         let g, _ = runInto 3 1 stamp
@@ -681,6 +683,84 @@ let tests =
         expectCell g 0 0 (ValueSome 2) "later child paints on top"
         expectCell g 1 0 (ValueSome 1) "earlier child shows elsewhere"
         expectCell g 2 0 (ValueSome 1) "base fills the whole area"
+
+      testCase "overlay rejects sized children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Flow.overlay [ fillTile 1; tile 2 2 2 ] |> ignore)
+          "overlay ignores footprints"
+
+      testCase "group rejects sized children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Flow.group 4 4 [ fillTile 1; tile 1 1 1 ] |> ignore)
+          "group ignores footprints"
+
+      testCase "Stamp.overlay rejects sized children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Stamp.overlay (tile 1 1 1) (fillTile 2) |> ignore)
+          "Stamp.overlay ignores footprints"
+
+      testCase "overlay is context-sized"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [ fillTile 1; Flow.strip Dock.Bottom 1 [ Flow.fill 2 ] ]
+
+        Expect.equal stamp.W 0 "every legal layer is zero-footprint"
+        Expect.equal stamp.H 0 "every legal layer is zero-footprint"
+
+      testCase "stretch mounts a sized layout as a layer"
+      <| fun _ ->
+        // a sized box paints section-relative styles, so stretch makes it
+        // fill the whole container — the opt-in full-bleed form
+        let stamp =
+          Flow.overlay [
+            Flow.stretch(Stamp.named "base" (Stamp.box 3 2 [ Flow.fill 7 ]))
+          ]
+
+        let g, placed = runInto 6 4 stamp
+
+        Expect.equal
+          (Flow.tryPosition "base" placed)
+          (ValueSome { X = 0; Y = 0; W = 6; H = 4 })
+          "the sized layout stretched over the container"
+
+        expectCell g 5 3 (ValueSome 7) "stretched to the far corner"
+        expectCell g 0 0 (ValueSome 7) "stretched from the origin"
+
+      testCase "stretch mounts a sized layout inside a group"
+      <| fun _ ->
+        // the documented shape for a sized layout inside a sized group
+        let stamp =
+          Flow.group 4 3 [
+            Flow.canvas [ Flow.fill 1 ]
+            Flow.stretch(Stamp.named "patch" (Stamp.box 2 1 [ Flow.fill 7 ]))
+          ]
+
+        let g, placed = runInto 8 6 stamp
+
+        Expect.equal
+          (Flow.tryPosition "patch" placed)
+          (ValueSome { X = 0; Y = 0; W = 4; H = 3 })
+          "the sized layout stretched over the group box"
+
+        expectCell g 3 2 (ValueSome 7) "stretched to the group corner"
+        expectCell g 4 0 ValueNone "the group does not stretch"
+
+      testCase "stretch names itself in the expand error"
+      <| fun _ ->
+        let thrown =
+          try
+            Flow.stretch(Stamp.expand(fillTile 1)) |> ignore
+            None
+          with :? System.ArgumentException as e ->
+            Some e.Message
+
+        match thrown with
+        | Some msg ->
+          Expect.stringContains msg "Flow.stretch" "the error names stretch"
+        | None -> failtest "stretch must reject an expand stamp"
 
       testCase
         "docked elements anchor inside the container and report positions"
@@ -1367,7 +1447,13 @@ let harbourTests =
       let docks =
         Flow.group 34 10 [
           Flow.canvas [ Flow.fill Water ]
-          Flow.row { FlowOpts.Default with Gap = 9 } [ pier 5; pier 7; pier 5 ]
+          Flow.stretch(
+            Flow.row { FlowOpts.Default with Gap = 9 } [
+              pier 5
+              pier 7
+              pier 5
+            ]
+          )
         ]
 
       // The map: structure by layout, noise by stamps.
@@ -1397,7 +1483,7 @@ let harbourTests =
         g
         |> Flow.run(
           Flow.overlay [
-            harbour
+            Flow.stretch harbour
 
             Flow.docked {
               Anchor = Dock.Top ||| Dock.CenterX

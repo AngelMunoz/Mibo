@@ -388,6 +388,24 @@ module internal FlowImpl =
     for c in stamps do
       checkNoExpand container arg c
 
+  /// Rejects a sized element in a layer container: layers are full-bleed,
+  /// so a nonzero footprint would silently stretch over the whole assigned
+  /// area instead of failing. The request fails at construction.
+  let checkLayer (container: string) (arg: string) (stamp: Stamp<'T>) : unit =
+    if stamp.W > 0 || stamp.H > 0 then
+      invalidArg
+        arg
+        (container
+         + " children are full-bleed layers, and a sized child would silently paint the whole area: use a canvas/at/docked/strip/stretch layer, or a footprint-honoring container (row/column/grid)")
+
+  let checkLayerAll
+    (container: string)
+    (arg: string)
+    (stamps: Stamp<'T> seq)
+    : unit =
+    for c in stamps do
+      checkLayer container arg c
+
   /// A deterministic permutation of `0..n-1`: xorshift seeded from `seed`,
   /// Fisher-Yates over the identity. No BCL RNG, so the sequence cannot
   /// drift across runtimes. A zero state would freeze the xorshift, so
@@ -632,17 +650,19 @@ module Stamp =
     }
 
   /// Draws both elements over the full area of the container, `second` on
-  /// top. Size is the larger of the two footprints.
+  /// top. Both elements are full-bleed layers (`canvas`, `docked`, `at`,
+  /// `strip`, `stretch`), so a sized element throws at construction — it
+  /// would silently paint the whole area. The footprint is zero: the
+  /// composite is context-sized.
   let overlay (first: Stamp<'T>) (second: Stamp<'T>) : Stamp<'T> =
     FlowImpl.checkNoExpand "Stamp.overlay" "first" first
     FlowImpl.checkNoExpand "Stamp.overlay" "second" second
-
-    let w = max first.W second.W
-    let h = max first.H second.H
+    FlowImpl.checkLayer "Stamp.overlay" "first" first
+    FlowImpl.checkLayer "Stamp.overlay" "second" second
 
     {
-      W = w
-      H = h
+      W = 0
+      H = 0
       Expand = 0
       Name = ValueNone
       Tags = []
@@ -1552,6 +1572,21 @@ module Flow =
       Stamp = stamp
     }
 
+  /// A layer that stretches its stamp over the whole assigned area of the
+  /// container — the sanctioned way to mount a sized layout as an
+  /// `overlay`/`group` layer. Zero footprint, so it joins any full-bleed
+  /// container; a zero dimension of the wrapped stamp means the same thing
+  /// it always does. Name the wrapped element to report the stretched
+  /// rectangle.
+  let stretch(stamp: Stamp<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Flow.stretch" "stamp" stamp
+
+    docked {
+      Anchor = Dock.StretchX ||| Dock.StretchY
+      Inset = InsetSpec.Zero
+      Stamp = stamp
+    }
+
   /// A full-length strip docked to one edge (`Dock.Top`, `Dock.Bottom`,
   /// `Dock.Left` or `Dock.Right`) with the given thickness in cells:
   /// `strip Dock.Bottom 1 [ fill Sand ]` is a full-width, one-cell-tall bar
@@ -1584,23 +1619,24 @@ module Flow =
     }
 
   /// Stacks children over the full area of the container, later children
-  /// paint over earlier ones. The footprint is the largest child. Layers are
-  /// full-bleed: every child paints into the whole assigned area, so size a
-  /// child with `docked`, or place fixed-footprint children through
-  /// `grid`/`row`/`column` instead.
+  /// paint over earlier ones. Children are full-bleed layers — `canvas`,
+  /// `docked`, `at`, `strip`, `stretch` — so a sized child throws at
+  /// construction: it would silently paint the whole assigned area. Place
+  /// fixed-footprint children with `at`/`docked`, stretch a sized layout
+  /// with `stretch`, or use a footprint-honoring container
+  /// (`grid`/`row`/`column`). Every legal layer is zero-footprint, so the
+  /// composite is context-sized (zero footprint).
   let overlay(children: Stamp<'T> seq) : Stamp<'T> =
     let arr = Array.ofSeq children
     FlowImpl.checkNoExpandAll "Flow.overlay" "children" arr
+    FlowImpl.checkLayerAll "Flow.overlay" "children" arr
 
     if arr.Length = 0 then
       Stamp.empty()
     else
-      let w = arr |> Array.map(fun c -> c.W) |> Array.max
-      let h = arr |> Array.map(fun c -> c.H) |> Array.max
-
       {
-        W = w
-        H = h
+        W = 0
+        H = 0
         Expand = 0
         Name = ValueNone
         Tags = []
@@ -1622,10 +1658,11 @@ module Flow =
   /// overlapping an earlier one. The same seed and the same container
   /// build the same level every run. A child that fits nowhere fails the
   /// build naming the child when it is named. The footprint is the
-  /// largest child's, so scatter inside a sized context (`group`, a grid
-  /// area, a docked stretch) to choose the region; a child with a zero
-  /// axis (a context-sized child, or any element sized `0` on one side)
-  /// places as one cell on that axis, and `expand` children throw.
+  /// largest child's, so give it a sized region — a grid area,
+  /// `Flow.stretch` over a `group`, or a stretched dock; a child with a
+  /// zero axis (a context-sized child, or any element sized `0` on one
+  /// side) places as one cell on that axis, and `expand` children
+  /// throw.
   let scatter (seed: int) (children: Stamp<'T> seq) : Stamp<'T> =
     let arr = Array.ofSeq children
     FlowImpl.checkNoExpandAll "Flow.scatter" "children" arr
@@ -1653,15 +1690,17 @@ module Flow =
 
   /// A fixed-size group that lays its children out over its own area with
   /// overlay rules: each child paints into the group's box and later children
-  /// paint on top. Children are layers (full-bleed), so give a child a
-  /// specific rectangle with `docked`. The size is stated once, here;
-  /// `canvas` children fill the
-  /// box and `docked` children anchor within it.
+  /// paint on top. Children are full-bleed layers — `canvas`, `docked`,
+  /// `at`, `strip`, `stretch` — so a sized child throws at construction:
+  /// it would silently paint the whole box. The size is stated once,
+  /// here; `canvas` children fill the box, `docked`/`at` children anchor
+  /// within it, and `stretch` stretches a sized layout over it.
   let group (w: int) (h: int) (children: Stamp<'T> list) : Stamp<'T> =
     let w = max 0 w
     let h = max 0 h
     let arr = Array.ofList children
     FlowImpl.checkNoExpandAll "Flow.group" "children" arr
+    FlowImpl.checkLayerAll "Flow.group" "children" arr
 
     {
       W = w
