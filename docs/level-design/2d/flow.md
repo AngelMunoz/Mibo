@@ -262,9 +262,9 @@ build naming the child when it is named.
 One determinism note: `Flow.scatter` runs a fixed xorshift shuffle, so a
 seeded scatter builds the same level on every .NET version. The paint
 styles above (`noise`, `clumps`, `scatterBorder`, ...) ride the BCL
-random generator, whose sequence can change between runtimes — trust
-`Flow.scatter` when a level must reproduce byte for byte across .NET
-versions.
+random generator, whose sequence can change between .NET versions —
+trust `Flow.scatter` when a level must reproduce byte for byte across
+.NET versions.
 
 ## Pattern: build your own vocabulary
 

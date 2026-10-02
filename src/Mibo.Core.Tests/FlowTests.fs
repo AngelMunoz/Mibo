@@ -838,6 +838,43 @@ let tests =
           1
           "the zero-footprint child paints exactly one cell"
 
+      testCase "the seed that would freeze the xorshift still shuffles"
+      <| fun _ ->
+        // uint32 seed * 2654435761 + 2891336453 wraps to 0 for exactly
+        // one seed; without the re-mix, next() would always return 0
+        // and the permutation would degenerate into scan order
+        let frozen = -1623893909
+
+        let build() =
+          Flow.scatter frozen [
+            Stamp.named "a" (tile 1 1 1)
+            Stamp.named "b" (tile 1 1 2)
+            Stamp.named "c" (tile 1 1 3)
+          ]
+          |> runInto 6 1
+          |> snd
+
+        let placed = build()
+        let again = build()
+
+        let rect name marks =
+          match Flow.tryPosition name marks with
+          | ValueSome r -> struct (r.X, r.Y)
+          | ValueNone -> struct (-1, -1)
+
+        Expect.equal (rect "a" placed) (rect "a" again) "rebuilds are identical"
+        Expect.equal (rect "b" placed) (rect "b" again) "rebuilds are identical"
+        Expect.equal (rect "c" placed) (rect "c" again) "rebuilds are identical"
+
+        // a frozen shuffle would place the children in scan order:
+        // a at (0,0), b at (1,0), c at (2,0)
+        let scanOrder =
+          struct (0, 0) = rect "a" placed
+          && struct (1, 0) = rect "b" placed
+          && struct (2, 0) = rect "c" placed
+
+        Expect.isFalse scanOrder "the permutation is shuffled, not scan order"
+
       testCase "expand children throw"
       <| fun _ ->
         Expect.throwsT<System.ArgumentException>

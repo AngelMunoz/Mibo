@@ -1620,9 +1620,9 @@ module Flow =
   /// build the same level every run. A child that fits nowhere fails the
   /// build naming the child when it is named. The footprint is the
   /// largest child's, so scatter inside a sized context (`group`, a grid
-  /// area, a docked stretch) to choose the region; a context-sized child
-  /// (zero footprint) places as a single cell, and `expand` children
-  /// throw.
+  /// area, a docked stretch) to choose the region; a child with a zero
+  /// axis (a context-sized child, or any element sized `0` on one side)
+  /// places as one cell on that axis, and `expand` children throw.
   let scatter (seed: int) (children: Stamp<'T> seq) : Stamp<'T> =
     let arr = Array.ofSeq children
     FlowImpl.checkNoExpandAll "Flow.scatter" "children" arr
