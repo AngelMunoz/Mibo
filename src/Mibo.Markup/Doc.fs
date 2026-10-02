@@ -88,7 +88,9 @@ module Doc =
 
   /// One resolvable element of the document tree: the paint body, the
   /// merged style, and the container's declared tracks and area
-  /// template.
+  /// template. Carries a paint closure, so it never takes structural
+  /// equality.
+  [<NoEquality; NoComparison>]
   type Element<'T> = {
     Extent: CellSize voption
     Paint: GridSection2D<'T> -> unit
@@ -96,7 +98,9 @@ module Doc =
 
   /// One resolved item of the document tree. `Name` selects the style
   /// rules; `Element` paints the body; `Cols`, `Rows` and `Areas` are
-  /// the container's declared tracks and area template.
+  /// the container's declared tracks and area template. Carries a paint
+  /// closure, so it never takes structural equality.
+  [<NoEquality; NoComparison>]
   type Item<'T> = {
     Name: string
     Element: Element<'T>
@@ -109,18 +113,66 @@ module Doc =
 
   // ── Positioned failures and argument readers ─────────────────
 
-  let at(src: string, n: Node) : string = Markup.where src n.Position
+  // The positioned half of an error message; XML nodes carry Position
+  // -1 (that front-end tracks no positions), so the message names the
+  // element only.
+  let at(src: string, n: Node) : string = Markup.at src n.Position
 
-  let wantInt(src: string, n: Node, i: int) : Result<int, string> =
-    if i >= n.Args.Length then
-      Error $"'{n.Kind}' takes at least {i + 1} arguments ({at(src, n)})"
-    else
-      match n.Args[i] with
-      | Number v -> Ok v
-      | Decimal _ ->
-        Error $"`{n.Kind}` wants a whole number, not a decimal ({at(src, n)})"
-      | Word w ->
-        Error $"`{n.Kind}` wants a whole number, got '{w}' ({at(src, n)})"
+  /// Reads one whole-number scalar by name first (the XML channel),
+  /// then by positional index (the KDL channel).
+  let wantInt
+    (src: string, n: Node, name: string, i: int)
+    : Result<int, string> =
+    let bad why =
+      Error $"`{n.Kind}` wants a whole number for '{name}', {why}{at(src, n)}"
+
+    let mutable slot = ValueNone
+
+    for p in n.Props do
+      if slot.IsNone && p.Name = name then
+        slot <- ValueSome p.Value
+
+    match slot with
+    | ValueNone ->
+      if i >= 0 && i < n.Args.Length then
+        match n.Args[i] with
+        | Number v -> Ok v
+        | Decimal _ -> bad "not a decimal"
+        | Word w -> bad $"got '{w}'"
+      else
+        Error $"'{n.Kind}' wants '{name}'{at(src, n)}"
+    | ValueSome(Number v) -> Ok v
+    | ValueSome(Decimal _) -> bad "not a decimal"
+    | ValueSome(Word w) -> bad $"got '{w}'"
+
+  /// Reads one word scalar by name first, then by positional index.
+  let wantWord
+    (src: string, n: Node, name: string, i: int)
+    : Result<string, string> =
+    let read(arg: Arg) : string voption =
+      match arg with
+      | Word w -> ValueSome w
+      | Number v -> ValueSome(string v)
+      | Decimal d -> ValueSome(string d)
+
+    let mutable slot = ValueNone
+
+    for p in n.Props do
+      if slot.IsNone && p.Name = name then
+        slot <- ValueSome p.Value
+
+    match slot with
+    | ValueNone ->
+      if i >= 0 && i < n.Args.Length then
+        match read n.Args[i] with
+        | ValueSome w -> Ok w
+        | ValueNone -> Error $"'{n.Kind}' wants '{name}'{at(src, n)}"
+      else
+        Error $"'{n.Kind}' wants '{name}'{at(src, n)}"
+    | ValueSome arg ->
+      match read arg with
+      | ValueSome w -> Ok w
+      | ValueNone -> Error $"'{n.Kind}' wants '{name}'{at(src, n)}"
 
   let axisWord(w: string) : Align voption =
     match w with
@@ -215,7 +267,7 @@ module Doc =
     (src: string, n: Node, s: Style, p: Prop)
     : Result<Style, string> =
     let bad v =
-      Error $"property '{p.Name}' {v} ({at(src, n)})"
+      Error $"property '{p.Name}' {v}{at(src, n)}"
 
     let inline num() =
       match p.Value with
@@ -314,7 +366,7 @@ module Doc =
       })
     | "pad" -> num() |> Result.map(fun v -> { s with Pad = ValueSome v })
     | "seed" -> num() |> Result.map(fun v -> { s with Seed = ValueSome v })
-    | _ -> Error $"unknown property '{p.Name}' ({at(src, n)})"
+    | _ -> Error $"unknown property '{p.Name}'{at(src, n)}"
 
   let styleOfProps
     (src: string, n: Node, baseStyle: Style)
@@ -326,39 +378,77 @@ module Doc =
 
   // ── Track and area directives ────────────────────────────────
 
+  /// One track token: a positive ratio, `auto`, or `fixed n`. Track
+  /// tokens come from positional args (KDL: `cols 1 fixed 3 auto`) or
+  /// from the space-split `v` property (XML: `<cols v="1 fixed 3 auto" />`).
+  let private trackTokens(src: string, n: Node) : Result<Arg[], string> =
+    if n.Args.Length > 0 then
+      Ok(Seq.toArray n.Args)
+    else
+      let mutable slot = ValueNone
+
+      for p in n.Props do
+        if slot.IsNone && (p.Name = "v" || p.Name = "tracks") then
+          slot <- ValueSome p.Value
+
+      match slot with
+      | ValueSome(Word w) ->
+        w.Split([| ' '; '\t' |], StringSplitOptions.RemoveEmptyEntries)
+        |> Array.map(fun t ->
+          match
+            Int32.TryParse(
+              t,
+              Globalization.NumberStyles.Integer,
+              Globalization.CultureInfo.InvariantCulture
+            )
+          with
+          | true, v -> Number v
+          | _ -> Word t)
+        |> Ok
+      | ValueSome _ -> Error $"a track list wants words{at(src, n)}"
+      | ValueNone -> Ok [||]
+
+  /// Resolves a container's declared tracks.
   let tracksOf(src: string, n: Node) : Result<Track[], string> =
-    let tracks = ResizeArray<Track>()
-    let mutable i = 0
-    let mutable failed = ValueNone
+    match trackTokens(src, n) with
+    | Error e -> Error e
+    | Ok tokens ->
+      let tracks = ResizeArray<Track>()
+      let mutable i = 0
+      let mutable failed = ValueNone
 
-    while i < n.Args.Length && failed.IsNone do
-      match n.Args[i] with
-      | Number v when v > 0 ->
-        tracks.Add(Weight(float32 v))
-        i <- i + 1
-      | Number _ ->
-        failed <- ValueSome $"track ratios must be positive ({at(src, n)})"
-      | Word "auto" ->
-        tracks.Add Auto
-        i <- i + 1
-      | Word "fixed" when i + 1 < n.Args.Length ->
-        (match n.Args[i + 1] with
-         | Number v when v > 0 ->
-           tracks.Add(Fixed v)
-           i <- i + 2
-         | _ ->
-           failed <-
-             ValueSome $"a fixed track wants a positive number ({at(src, n)})")
-      | Word w ->
-        failed <-
-          ValueSome
-            $"a track wants a ratio, 'fixed n' or 'auto', got '{w}' ({at(src, n)})"
-      | _ -> failed <- ValueSome $"bad track ({at(src, n)})"
+      while i < tokens.Length && failed.IsNone do
+        match tokens[i] with
+        | Number v when v > 0 ->
+          tracks.Add(Weight(float32 v))
+          i <- i + 1
+        | Number _ ->
+          failed <- ValueSome $"track ratios must be positive{at(src, n)}"
+        | Word "auto" ->
+          tracks.Add Auto
+          i <- i + 1
+        | Word "fixed" when i + 1 < tokens.Length ->
+          (match tokens[i + 1] with
+           | Number v when v > 0 ->
+             tracks.Add(Fixed v)
+             i <- i + 2
+           | _ ->
+             failed <-
+               ValueSome $"a fixed track wants a positive number{at(src, n)}")
+        | Word w ->
+          failed <-
+            ValueSome
+              $"a track wants a ratio, 'fixed n' or 'auto', got '{w}'{at(src, n)}"
+        | _ -> failed <- ValueSome $"bad track{at(src, n)}"
 
-    match failed with
-    | ValueSome e -> Error e
-    | ValueNone -> Ok(tracks.ToArray())
+      match failed with
+      | ValueSome e -> Error e
+      | ValueNone -> Ok(tracks.ToArray())
 
+  /// Resolves an area template's rows. Row names come from a child
+  /// node's positional args (KDL: `areas { r west main } { ... }`) or
+  /// from each row's space-split `names` property (XML:
+  /// `<areas><row names="west main" /><row names="..." /></areas>`).
   let areasOf(src: string, n: Node) : Result<string[][], string> =
     let rows = ResizeArray<string[]>()
     let mutable failed = ValueNone
@@ -367,14 +457,30 @@ module Doc =
       if failed.IsNone then
         let names = ResizeArray<string>()
 
-        for a in row.Args do
-          if failed.IsNone then
-            match a with
-            | Word w -> names.Add w
-            | _ ->
-              failed <- ValueSome $"an area row wants names ({at(src, row)})"
+        if row.Args.Length > 0 then
+          for a in row.Args do
+            if failed.IsNone then
+              (match a with
+               | Word w -> names.Add w
+               | _ ->
+                 failed <- ValueSome $"an area row wants names{at(src, row)}")
+        else
+          let mutable slot = ValueNone
 
-        if failed.IsNone then
+          for p in row.Props do
+            if slot.IsNone && p.Name = "names" then
+              slot <- ValueSome p.Value
+
+          match slot with
+          | ValueSome(Word w) ->
+            for part in
+              w.Split([| ' '; '\t' |], StringSplitOptions.RemoveEmptyEntries) do
+              names.Add part
+          | ValueSome _ ->
+            failed <- ValueSome $"an area row's names want words{at(src, row)}"
+          | ValueNone -> ()
+
+        if failed.IsNone && names.Count > 0 then
           rows.Add(names.ToArray())
 
     match failed with
@@ -418,16 +524,16 @@ module Doc =
           ValueNone
 
     let missing slot =
-      Error $"'{n.Kind}' wants '{slot}' ({at(src, n)})"
+      Error $"'{n.Kind}' wants '{slot}'{at(src, n)}"
 
     let takeInt slot =
       match take slot with
       | ValueSome(Number v) -> Ok v
       | ValueSome(Decimal _) ->
-        Error $"`{n.Kind}` wants a whole number for '{slot}' ({at(src, n)})"
+        Error $"`{n.Kind}` wants a whole number for '{slot}'{at(src, n)}"
       | ValueSome(Word w) ->
         Error
-          $"`{n.Kind}` wants a whole number for '{slot}', got '{w}' ({at(src, n)})"
+          $"`{n.Kind}` wants a whole number for '{slot}', got '{w}'{at(src, n)}"
       | ValueNone -> missing slot
 
     let takeCell slot =
@@ -437,8 +543,8 @@ module Doc =
          | true, cell -> Ok cell
          | false, _ ->
            Error
-             $"`{n.Kind}` wants a cell word for '{slot}', got '{w}' ({at(src, n)})")
-      | _ -> Error $"`{n.Kind}` wants a cell word for '{slot}' ({at(src, n)})"
+             $"`{n.Kind}` wants a cell word for '{slot}', got '{w}'{at(src, n)}")
+      | _ -> Error $"`{n.Kind}` wants a cell word for '{slot}'{at(src, n)}"
 
     let takeKernel slot =
       match take slot with
@@ -446,8 +552,8 @@ module Doc =
         if surface.Kernels.ContainsKey w then
           Ok w
         else
-          Error $"unknown kernel '{w}' ({at(src, n)})"
-      | _ -> Error $"`{n.Kind}` wants a kernel name for '{slot}' ({at(src, n)})"
+          Error $"unknown kernel '{w}'{at(src, n)}"
+      | _ -> Error $"`{n.Kind}` wants a kernel name for '{slot}'{at(src, n)}"
 
     let takeAlign slot =
       match take slot with
@@ -456,8 +562,8 @@ module Doc =
          | ValueSome a -> Ok a
          | ValueNone ->
            Error
-             $"'{n.Kind}' wants an axis word (start, center, end, stretch) for '{slot}', got '{w}' ({at(src, n)})")
-      | _ -> Error $"'{n.Kind}' wants an axis word for '{slot}' ({at(src, n)})"
+             $"'{n.Kind}' wants an axis word (start, center, end, stretch) for '{slot}', got '{w}'{at(src, n)}")
+      | _ -> Error $"'{n.Kind}' wants an axis word for '{slot}'{at(src, n)}"
 
     /// Reads the four rect slots in order; the first failure wins.
     let takeRect() =
@@ -476,8 +582,7 @@ module Doc =
 
     let noLeftovers allowed =
       if positional.Count > 0 then
-        Error
-          $"'{n.Kind}' has {positional.Count} extra argument(s) ({at(src, n)})"
+        Error $"'{n.Kind}' has {positional.Count} extra argument(s){at(src, n)}"
       else
         let extra =
           named.Keys
@@ -485,7 +590,7 @@ module Doc =
           |> Seq.toList
 
         match extra with
-        | k :: _ -> Error $"'{n.Kind}' has no argument '{k}' ({at(src, n)})"
+        | k :: _ -> Error $"'{n.Kind}' has no argument '{k}'{at(src, n)}"
         | [] -> Ok()
 
     let rectOf(x: int, y: int, w: int, h: int) : CellRect = {
@@ -551,7 +656,7 @@ module Doc =
             (Op.Set(ValueSome { X = 0; Y = 0 }, Start, Start, cell)))
       else
         Error
-          $"'set' wants x= y= coordinates or hplace= vplace= alignment, and a cell ({at(src, n)})"
+          $"'set' wants x= y= coordinates or hplace= vplace= alignment, and a cell{at(src, n)}"
 
     let borderStatement() =
       if usesRectArea then
@@ -595,10 +700,11 @@ module Doc =
     | "border" -> borderStatement()
     | "rect" -> rectStatement()
     | "generate" -> generateStatement()
-    | _ -> Error $"unknown statement '{n.Kind}' ({at(src, n)})"
+    | _ -> Error $"unknown statement '{n.Kind}'{at(src, n)}"
 
   // ── The interpreter ──────────────────────────────────────────
 
+  /// Runs one statement's paint into `box`.
   let interpret
     (surface: Surface<'T>, box: GridSection2D<'T>, op: Op<'T>)
     : unit =
@@ -631,14 +737,61 @@ module Doc =
             Layout.generate 0 0 box.Width box.Height k box |> ignore
           | ValueSome r -> Layout.generate r.X r.Y r.W r.H k box |> ignore)
        | false, _ ->
-         failwith
+         // unreachable when validateSurface runs: a tripwire against a
+         // resolver regression, not a user-facing path
+         invalidOp
            $"unknown kernel '{name}' (the resolver must have let a bad name through)")
 
+  /// Derives an element's extent from its body's own geometry: each
+  /// statement contributes its furthest cell, and any box-relative
+  /// statement (a whole-box fill, border, or generate) marks the body
+  /// greedy — its size is whatever the container assigns. Pure
+  /// arithmetic over the `Op` data: no grid, no allocation. This is
+  /// the measurement the emitter path uses; a `ValueNone` result means
+  /// "greedy, stretch".
+  let measureOps(body: Op<'T>[]) : CellSize voption =
+    let mutable maxX = -1
+    let mutable maxY = -1
+    let mutable greedy = false
+
+    for op in body do
+      match op with
+      | Op.Fill _ -> greedy <- true
+      | Op.Rect _ -> greedy <- true
+      | Op.Border(ValueNone, _) -> greedy <- true
+      | Op.Generate(_, ValueNone) -> greedy <- true
+      | Op.Set(ValueNone, _, _, _) -> greedy <- true
+      | Op.FillRect(r, _) ->
+        maxX <- max maxX (r.X + r.W - 1)
+        maxY <- max maxY (r.Y + r.H - 1)
+      | Op.Border(ValueSome r, _) ->
+        maxX <- max maxX (r.X + r.W - 1)
+        maxY <- max maxY (r.Y + r.H - 1)
+      | Op.Generate(_, ValueSome r) ->
+        maxX <- max maxX (r.X + r.W - 1)
+        maxY <- max maxY (r.Y + r.H - 1)
+      | Op.Set(ValueSome p, _, _, _) ->
+        maxX <- max maxX p.X
+        maxY <- max maxY p.Y
+
+    if greedy || maxX < 0 then
+      ValueNone
+    else
+      ValueSome { W = maxX + 1; H = maxY + 1 }
+
   /// The one closure per element: the body as data, interpreted at
-  /// render time. The text produces nothing else that runs.
+  /// render time. The text produces nothing else that runs. The extent
+  /// states a declared size; when none is declared, `measureOps`
+  /// derives it from the body's own geometry (no allocation), so the
+  /// emitter never needs the scratch-grid measure.
   let paintOf
     (surface: Surface<'T>, extent: CellSize voption, body: Op<'T>[])
     : Element<'T> =
+    let extent =
+      match extent with
+      | ValueSome _ -> extent
+      | ValueNone -> measureOps body
+
     {
       Extent = extent
       Paint =
@@ -649,9 +802,12 @@ module Doc =
 
   // ── Measurement ──────────────────────────────────────────────
 
-  /// Scratch-grid run, then a scan for the covered area. `available`
-  /// bounds the scratch grid, so greedy bodies report the available
-  /// size, not an unbounded one.
+  /// Scratch-grid run, then a scan for the covered area — the general
+  /// measurement for bodies the op pass cannot see (game-declared
+  /// elements with custom paint). `available` bounds the scratch grid,
+  /// so greedy bodies report the available size, not an unbounded one.
+  /// The resolver's op-derived extents cover the document path; this
+  /// runs only for `Element<'T>` values a game builds by hand.
   let measure(element: Element<'T>, available: CellSize) : CellSize =
     let w = max 0 available.W
     let h = max 0 available.H
@@ -687,10 +843,13 @@ module Doc =
 
   // ── Repeat expansion ─────────────────────────────────────────
 
-  /// `repeat n` duplicates its children, nested repeats included.
+  /// `repeat n` duplicates its children, nested repeats included. The
+  /// count is read by name (`count=`) or positionally, and a count past
+  /// 100000 fails with its position — an authoring typo must not loop
+  /// until memory stops. Returns an array; every consumer iterates.
   let expandNodes
     (src: string, nodes: ImmutableArray<Node>)
-    : Result<Node list, string> =
+    : Result<Node[], string> =
     let out = ResizeArray<Node>()
     let mutable failed = ValueNone
 
@@ -699,14 +858,16 @@ module Doc =
         for n in nodes do
           if failed.IsNone then
             if n.Kind = "repeat" then
-              (match Seq.toArray n.Args with
-               | [| Number count |] when count >= 0 ->
-                 for _ in 1..count do
-                   go n.Children
-               | _ ->
-                 failed <-
-                   ValueSome
-                     $"repeat takes one non-negative number ({at(src, n)})")
+              (match wantInt(src, n, "count", 0) with
+               | Error e -> failed <- ValueSome e
+               | Ok count ->
+                 if count > 100000 then
+                   failed <-
+                     ValueSome
+                       $"repeat count {count} is past the 100000 cap{at(src, n)}"
+                 else
+                   for _ in 1..count do
+                     go n.Children)
             else
               out.Add n
 
@@ -714,7 +875,7 @@ module Doc =
 
     match failed with
     | ValueSome e -> Error e
-    | ValueNone -> Ok(List.ofSeq out)
+    | ValueNone -> Ok(out.ToArray())
 
   // ── Declarations ─────────────────────────────────────────────
 
@@ -739,11 +900,11 @@ module Doc =
            | ("w" | "h"), _ ->
              failed <-
                ValueSome
-                 $"an element definition's w= and h= want numbers ({at(src, n)})"
+                 $"an element definition's w= and h= want numbers{at(src, n)}"
            | _ ->
              failed <-
                ValueSome
-                 $"an element definition takes w= and h= only ({at(src, n)})")
+                 $"an element definition takes w= and h= only{at(src, n)}")
 
       match w, h with
       | ValueSome w', ValueSome h' -> ValueSome { W = w'; H = h' }
@@ -751,7 +912,7 @@ module Doc =
       | _ ->
         failed <-
           ValueSome
-            $"an element definition needs w= and h= together ({at(src, n)})"
+            $"an element definition needs w= and h= together{at(src, n)}"
 
         ValueNone
 
@@ -775,14 +936,23 @@ module Doc =
                        | Error e -> failed <- ValueSome e)
 
                   if failed.IsNone then
-                    defs[name] <- {
-                      Name = name
-                      Extent = extent
-                      Body = body.ToArray()
-                    })
+                    if defs.ContainsKey name then
+                      failed <-
+                        ValueSome
+                          $"the element '{name}' is defined twice{at(src, n)}"
+                    elif surface.Elements.ContainsKey name then
+                      failed <-
+                        ValueSome
+                          $"the element '{name}' collides with the game's surface element of that name{at(src, n)}"
+                    else
+                      defs[name] <- {
+                        Name = name
+                        Extent = extent
+                        Body = body.ToArray()
+                      })
            | ValueNone ->
              failed <-
-               ValueSome $"an element definition needs a name ({at(src, n)})")
+               ValueSome $"an element definition needs a name{at(src, n)}")
         else
           for c in n.Children do
             go c
@@ -794,8 +964,10 @@ module Doc =
     | ValueSome e -> Error e
     | ValueNone -> Ok defs
 
-  /// Collects `style name ...` rules. Later rules win per property; a
-  /// bad property fails the build with its position.
+  /// Collects `style name ...` rules — the name by word argument (KDL)
+  /// or by the `name` property (XML). Later rules win per property; a
+  /// bad property fails the build with its position. Like the template
+  /// collector, a declaration is a leaf: rules do not nest.
   let collectStyles
     (src: string, roots: ImmutableArray<Node>)
     : Result<Dictionary<string, Style>, string> =
@@ -805,8 +977,9 @@ module Doc =
     let rec go(n: Node) : unit =
       if failed.IsNone then
         if n.Kind = "style" then
-          (match Seq.toArray n.Args with
-           | [| Word name |] ->
+          (match wantWord(src, n, "name", 0) with
+           | Error e -> failed <- ValueSome e
+           | Ok name ->
              (match styleOfProps(src, n, emptyStyle) with
               | Ok patch ->
                 let merged =
@@ -816,13 +989,10 @@ module Doc =
                     patch
 
                 rules[name] <- merged
-              | Error e -> failed <- ValueSome e)
-           | _ ->
-             failed <-
-               ValueSome $"a style rule takes an element name ({at(src, n)})")
-
-        for c in n.Children do
-          go c
+              | Error e -> failed <- ValueSome e))
+        else
+          for c in n.Children do
+            go c
 
     for r in roots do
       go r
@@ -889,7 +1059,7 @@ module Doc =
               if known then
                 itemNodes.Add c
               else
-                failed <- ValueSome $"unknown element '{c.Kind}' ({at(src, c)})"
+                failed <- ValueSome $"unknown element '{c.Kind}'{at(src, c)}"
 
         match failed with
         | ValueSome e -> Error e
@@ -904,6 +1074,8 @@ module Doc =
             declBody <- d.Body
             declExtent <- d.Extent
           else
+            // Unchecked.defaultof feeds the byref out-slot of
+            // TryGetValue; the bool return gates every read of it
             let mutable d = Unchecked.defaultof<ElementDecl<'T>>
 
             if surface.Elements.TryGetValue(name, &d) then
@@ -957,17 +1129,20 @@ module Doc =
 
     root
 
+  /// Reads and validates the map node's dimensions: `w=`/`h=` by name
+  /// (the XML channel) or the first two positional args (the KDL
+  /// channel). Zero and negative dimensions fail with a position.
   let dimsOf(src: string, n: Node) : Result<CellSize, string> =
-    match wantInt(src, n, 0) with
+    match wantInt(src, n, "w", 0) with
     | Error e -> Error e
     | Ok w ->
-      (match wantInt(src, n, 1) with
+      (match wantInt(src, n, "h", 1) with
        | Error e -> Error e
        | Ok h ->
          if w > 0 && h > 0 then
            Ok { W = w; H = h }
          else
-           Error $"map dimensions must be positive ({at(src, n)})")
+           Error $"map dimensions must be positive{at(src, n)}")
 
   /// Game-declared element bodies never pass through statement
   /// resolution, so their kernel references get checked here: a typo in
@@ -992,15 +1167,18 @@ module Doc =
     | None -> Ok()
 
   /// Templates expand, words resolve, style merges. Errors carry line
-  /// and column (`Markup.where` turns each node's offset into them).
+  /// and column when the front-end tracks positions (`Markup.where`
+  /// turns each node's offset into them; XML nodes carry no positions,
+  /// so their errors name the element).
   ///
   /// Cascade: solver defaults, then document `style` rules in order,
-  /// then inline properties. `map` is the root container; `element`
-  /// nodes define templates (name as first argument); `repeat n`
-  /// duplicates its children; `cols`, `rows` and `areas` child nodes
-  /// declare a container's tracks and named areas. Declared
-  /// `cols`/`rows` imply `pack=flow`. `plot` is the built-in anonymous
-  /// container: empty body, exact box.
+  /// then inline properties. `map` is the root container (its `w=`/`h=`
+  /// dimensions are validated here); `element` nodes define templates
+  /// (name as first argument or `name` property); `repeat n` duplicates
+  /// its children; `cols`, `rows` and `areas` child nodes declare a
+  /// container's tracks and named areas. Declared `cols`/`rows` imply
+  /// `pack=flow`. `plot` is the built-in anonymous container: empty
+  /// body, exact box.
   let resolve
     (surface: Surface<'T>)
     (src: string)
@@ -1013,8 +1191,10 @@ module Doc =
         match findMapNode roots with
         | ValueNone -> Error "the document needs a map node"
         | ValueSome mapNode ->
-          resolveContainer(surface, src, templates, styles, "map", mapNode)
-          |> Result.map(fun root -> [| root |])
+          dimsOf(src, mapNode)
+          |> Result.bind(fun _ ->
+            resolveContainer(surface, src, templates, styles, "map", mapNode)
+            |> Result.map(fun root -> [| root |]))
 
     validateSurface surface
     |> Result.bind(fun () -> collectTemplates(surface, src, roots))

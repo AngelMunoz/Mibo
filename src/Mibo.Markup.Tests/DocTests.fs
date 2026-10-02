@@ -237,6 +237,70 @@ let resolveTests =
       | Ok _ -> failtest "a bad property must fail"
       | Error e ->
         Expect.stringContains e "'x' wants a number" "names the property"
+
+    testCase "a repeat past the cap fails the build"
+    <| fun _ ->
+      match resolveKdl "map 4 4 {\n  repeat 2000000000 { grove }\n}" with
+      | Ok _ -> failtest "an unbounded repeat must fail"
+      | Error e ->
+        Expect.stringContains e "cap" "names the cap"
+        Expect.stringContains e "2:" "carries the line"
+
+    testCase "a duplicate template name fails the build"
+    <| fun _ ->
+      match
+        resolveKdl
+          """map 8 6 {
+  element plaza { fill dirt }
+  element plaza { fill grass }
+  plaza x=1 y=1
+}"""
+      with
+      | Ok _ -> failtest "a duplicate template must fail"
+      | Error e -> Expect.stringContains e "defined twice" "names the clash"
+
+    testCase "a template colliding with a surface element fails the build"
+    <| fun _ ->
+      match
+        resolveKdl
+          """map 8 6 {
+  element grove { fill dirt }
+  grove x=1 y=1
+}"""
+      with
+      | Ok _ -> failtest "the surface collision must fail"
+      | Error e -> Expect.stringContains e "collides" "names the clash"
+
+    testCase "tracks and areas read from the v and names properties"
+    <| fun _ ->
+      // the XML channel: no positional args anywhere
+      let doc =
+        "map 10 6 {\n  plot w=10 h=6 {\n    cols v=\"fixed 6 1 1\"\n    areas {\n      row names=\"road woods\"\n      row names=\"road lake\"\n    }\n    plot area=road { fill grass }\n  }\n}\n"
+
+      match Kdl.parse doc with
+      | Error e -> failtest $"parse failed: {e}"
+      | Ok roots ->
+        match Doc.resolve surface doc roots with
+        | Ok [| root |] ->
+          let grid = root.Children[0]
+
+          Expect.equal
+            grid.Cols
+            [| Fixed 6; Weight 1f; Weight 1f |]
+            "tracks from v="
+
+          Expect.equal
+            grid.Areas
+            [| [| "road"; "woods" |]; [| "road"; "lake" |] |]
+            "area rows from names="
+
+          Expect.equal
+            grid.Children[0].Style.Area
+            (ValueSome "road")
+            "the area placement resolves"
+
+        | Error e -> failtest $"resolve failed: {e}"
+        | Ok _ -> failtest "expected exactly one root item"
   ]
 
 [<Tests>]
@@ -273,4 +337,31 @@ let measureTests =
         (Doc.measure(el, { W = 5; H = 4 }))
         { W = 0; H = 0 }
         "nothing painted"
+
+    testCase "measureOps derives extents without a grid"
+    <| fun _ ->
+      // the emitter path: pure arithmetic, no scratch grid
+      Expect.equal
+        (Doc.measureOps [| Doc.Op.FillRect({ X = 1; Y = 1; W = 4; H = 2 }, 1) |])
+        (ValueSome { W = 5; H = 3 })
+        "a bounded body derives its bounds"
+
+      Expect.equal
+        (Doc.measureOps [| Doc.Op.Fill 1 |])
+        ValueNone
+        "a greedy body reports stretch"
+
+      Expect.equal (Doc.measureOps [||]) ValueNone "an empty body stretches"
+
+      Expect.equal
+        (Doc.measureOps [|
+          Doc.Op.Set(ValueSome { X = 2; Y = 1 }, Start, Start, 5)
+        |])
+        (ValueSome { W = 3; H = 2 })
+        "a set at (2,1) bounds to 3x2"
+
+      Expect.equal
+        (Doc.measureOps [| Doc.Op.Border(ValueNone, 1) |])
+        ValueNone
+        "a whole-box border is greedy"
   ]
