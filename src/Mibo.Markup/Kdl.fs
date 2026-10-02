@@ -162,6 +162,14 @@ module Kdl =
             else
               failwith $"'/-' is supported before whole nodes only {here()}"
           | KdlTokenType.String -> builder.Add(parseNode())
+          // the same rejections as value position — one message shape
+          // per token, whatever context it appears in
+          | KdlTokenType.Null ->
+            failwith $"#null is not used in stamp markup {here()}"
+          | KdlTokenType.Infinity ->
+            failwith $"#inf is not used in stamp markup {here()}"
+          | KdlTokenType.NaN ->
+            failwith $"#nan is not used in stamp markup {here()}"
           | t -> failwith $"unexpected token {t}; expected a node {here()}"
 
         builder.ToImmutable()
@@ -224,6 +232,14 @@ module Kdl =
           | KdlTokenType.Slashdash ->
             failwith $"'/-' is supported before whole nodes only {here()}"
           | KdlTokenType.Equals -> failwith $"unexpected '=' {here()}"
+          // the same three rejections as value position — one message
+          // shape per token, whatever context it appears in
+          | KdlTokenType.Null ->
+            failwith $"#null is not used in stamp markup {here()}"
+          | KdlTokenType.Infinity ->
+            failwith $"#inf is not used in stamp markup {here()}"
+          | KdlTokenType.NaN ->
+            failwith $"#nan is not used in stamp markup {here()}"
           | t -> failwith $"unexpected token {t} in node '{kind}' {here()}"
 
         // a template definition carries its name as the first argument

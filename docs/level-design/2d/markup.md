@@ -19,9 +19,9 @@ Two rules keep the format honest:
    box in local coordinates; layout lives in node properties (`x=`, `y=`,
    `w=`, `h=`, `pack=`, ...). Layout edits touch properties only.
 2. **The engine owns statements; the game owns vocabulary.** Every
-   statement (`fill`, `set`, `generate`, `plot`, ...) means the same
-   thing in every game. Cell words, kernels, and element libraries are
-   the game's say — a document stays portable at the statement level.
+   statement (`fill`, `set`, `generate`, ...) means the same thing in
+   every game. Cell words, kernels, and element libraries are the
+   game's say — a document stays portable at the statement level.
 
 ## The node tree is the contract
 
@@ -55,8 +55,8 @@ parser's own line and position.
 XML the way XML means it: elements are nodes and children, attributes
 are the scalar channel. Comments and whitespace are free, and the BCL
 parser does all the parsing. Text is not markup: a non-whitespace text
-node inside an element fails the parse, so a forgotten statement never
-disappears silently:
+node inside an element fails the parse — CDATA counts as text and fails
+the same way — so a forgotten statement never disappears silently:
 
 ```xml
 <map w="36" h="20">
@@ -123,7 +123,9 @@ per-cell *kernels* (`generate forest`), and the game's *element library*
 (`grove`, declared once in F# or as an `element` template in the
 document) — three frozen tables, built once at startup, read per build.
 A document stays portable at the statement level; only the words differ
-per game.
+per game. Two container kinds exist beside the game's own elements:
+`plot` (a plain container) and `grid` (a container that carries the
+`cols`/`rows`/`areas` template).
 
 **Paint is data.** A body resolves to `Op` values — `Fill`, `FillRect`,
 `Set`, `Border`, `Rect`, `Generate` — interpreted at render time through
@@ -135,11 +137,13 @@ words, not new cases.
 (stack pack only — a flow or scatter child with `x=`/`y=` fails the
 build instead of silently dropping the offsets, and negative values
 clamp to zero, the framework's own `Flow.at` rule), `hplace=`/`vplace=`/
-`place=` alignment, `pack=` (stack, flow, scatter), `pad=`, `gapx=`/
-`gapy=` (the Flow grid takes one gap today, so the two must match),
-`seed=`, and flow placement (`area=`, `col=`, `row=`, `colspan=`,
-`rowspan=` — col, row, and spans below one fail the build). Declared
-`cols`/`rows` (ratios, `fixed n`, `auto`) imply flow packing.
+`place=` alignment, `pack=` (stack, flow, scatter), `pad=` (negative
+values clamp to zero), `gapx=`/`gapy=` (the Flow grid takes one gap
+today, so the two must match), `seed=`, and flow placement (`area=`,
+`col=`, `row=`, `colspan=`, `rowspan=` — col, row, and spans below one
+fail the build). Declared `cols`/`rows` (ratios, `fixed n`, `auto`)
+imply flow packing at emit time — the emitter derives the pack from the
+declared tracks.
 
 ## The emitter
 
