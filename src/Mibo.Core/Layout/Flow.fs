@@ -396,7 +396,7 @@ module internal FlowImpl =
       invalidArg
         arg
         (container
-         + " children are full-bleed layers, and a sized child would silently paint the whole area: use a canvas/at/docked/stretch layer, or a footprint-honoring container (row/column/grid)")
+         + " children are full-bleed layers, and a sized child would silently paint the whole area: use a canvas/at/docked/strip/stretch layer, or a footprint-honoring container (row/column/grid)")
 
   let checkLayerAll
     (container: string)
@@ -1657,7 +1657,6 @@ module Flow =
   /// each takes the first origin where its footprint fits without
   /// overlapping an earlier one. The same seed and the same container
   /// build the same level every run. A child that fits nowhere fails the
-  /// build naming the child when it is named. The footprint is the
   /// build naming the child when it is named. The footprint is the
   /// largest child's, so give it a sized region — a grid area,
   /// `Flow.stretch` over a `group`, or a stretched dock; a child with a
