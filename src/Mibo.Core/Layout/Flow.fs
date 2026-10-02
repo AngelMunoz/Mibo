@@ -449,17 +449,20 @@ module internal FlowImpl =
 
         let candidate: CellRect = { X = ox; Y = oy; W = w; H = h }
 
-        // Manual loop, not a List.Exists closure: this is the innermost
-        // scan and a closure capture would allocate per candidate.
-        let mutable clash = false
-        let mutable j = 0
+        // Bounds first: a candidate that leaves the container must not
+        // pay for the overlap scan. Manual loop, not a List.Exists
+        // closure: this is the innermost scan and a closure capture
+        // would allocate per candidate.
+        if fits then
+          let mutable clash = false
+          let mutable j = 0
 
-        while not clash && j < placed.Count do
-          clash <- overlaps candidate placed.[j]
-          j <- j + 1
+          while not clash && j < placed.Count do
+            clash <- overlaps candidate placed.[j]
+            j <- j + 1
 
-        if fits && not clash then
-          found <- ValueSome candidate
+          if not clash then
+            found <- ValueSome candidate
 
         k <- k + 1
 
