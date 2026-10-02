@@ -264,7 +264,7 @@ let tests =
           (fun () ->
             Flow.docked {
               Anchor = Dock.CenterX ||| Dock.CenterY
-              Inset = 0
+              Inset = InsetSpec.Zero
               Stamp = Stamp.expand(fillTile 1)
             }
             |> ignore)
@@ -475,7 +475,7 @@ let tests =
         let gate =
           Flow.docked {
             Anchor = Dock.StretchX ||| Dock.Bottom
-            Inset = 0
+            Inset = InsetSpec.Zero
             Stamp =
               Stamp.named
                 "gate"
@@ -506,7 +506,12 @@ let tests =
           |> Layout.run(
             Flow.dock {
               Anchor = Dock.Top ||| Dock.Right
-              Inset = 1
+              Inset = {
+                Left = 1
+                Top = 1
+                Right = 1
+                Bottom = 1
+              }
               Stamp = tile 2 1 9
             }
           )
@@ -524,7 +529,7 @@ let tests =
           |> Layout.run(
             Flow.dock {
               Anchor = Dock.CenterX ||| Dock.CenterY
-              Inset = 0
+              Inset = InsetSpec.Zero
               Stamp = tile 2 1 9
             }
           )
@@ -541,7 +546,12 @@ let tests =
           |> Layout.run(
             Flow.dock {
               Anchor = Dock.StretchX ||| Dock.Bottom
-              Inset = 1
+              Inset = {
+                Left = 1
+                Top = 1
+                Right = 1
+                Bottom = 1
+              }
               Stamp =
                 Stamp.sized 1 1 (fun s ->
                   s |> Layout.fill 0 0 s.Width s.Height 5)
@@ -559,7 +569,7 @@ let tests =
           Flow.overlay [
             Flow.docked {
               Anchor = Dock.Bottom
-              Inset = 0
+              Inset = InsetSpec.Zero
               Stamp = Stamp.box 0 1 [ Flow.fill 7 ]
             }
           ]
@@ -576,7 +586,7 @@ let tests =
           Flow.overlay [
             Flow.docked {
               Anchor = Dock.CenterX ||| Dock.CenterY
-              Inset = 0
+              Inset = InsetSpec.Zero
               Stamp = Flow.canvas [ Flow.fill 7 ]
             }
           ]
@@ -585,6 +595,254 @@ let tests =
 
         expectCell g 0 0 (ValueSome 7) "full bleed start"
         expectCell g 3 2 (ValueSome 7) "full bleed end"
+    ]
+
+    testList "exact placement" [
+      testCase "per-side insets place the x and y edges apart"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.StretchX ||| Dock.Bottom
+              Inset = {
+                Left = 2
+                Top = 0
+                Right = 1
+                Bottom = 1
+              }
+              Stamp = Stamp.named "hud" (Stamp.box 0 2 [ Flow.fill 9 ])
+            }
+          ]
+
+        let g, placed = runInto 10 8 stamp
+
+        Expect.equal
+          (Flow.tryPosition "hud" placed)
+          (ValueSome { X = 2; Y = 5; W = 7; H = 2 })
+          "stretched between the left and right insets, off the bottom inset"
+
+        expectCell g 2 5 (ValueSome 9) "hud start"
+        expectCell g 8 6 (ValueSome 9) "hud end"
+        expectCell g 1 5 ValueNone "left of the hud"
+
+      testCase "a right-edge anchor honors its own inset"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.Right ||| Dock.Top
+              Inset = {
+                Left = 0
+                Top = 1
+                Right = 3
+                Bottom = 0
+              }
+              Stamp = Stamp.named "sign" (tile 2 2 7)
+            }
+          ]
+
+        let _, placed = runInto 10 8 stamp
+
+        Expect.equal
+          (Flow.tryPosition "sign" placed)
+          (ValueSome { X = 5; Y = 1; W = 2; H = 2 })
+          "3 off the right edge, 1 off the top"
+
+      testCase "at places an element at an exact offset"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            fillTile 1
+            Flow.at 3 5 (Stamp.named "prop" (tile 2 1 7))
+          ]
+
+        let g, placed = runInto 10 10 stamp
+
+        Expect.equal
+          (Flow.tryPosition "prop" placed)
+          (ValueSome { X = 3; Y = 5; W = 2; H = 1 })
+          "exact offset from the container origin"
+
+        expectCell g 3 5 (ValueSome 7) "prop start"
+        expectCell g 4 5 (ValueSome 7) "prop end"
+        expectCell g 5 5 (ValueSome 1) "past the prop"
+
+      testCase "a zero dimension of at stretches to the far edge"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Flow.at 2 1 (Stamp.named "bar" (Stamp.box 0 2 [ Flow.fill 7 ]))
+          ]
+
+        let g, placed = runInto 6 4 stamp
+
+        Expect.equal
+          (Flow.tryPosition "bar" placed)
+          (ValueSome { X = 2; Y = 1; W = 4; H = 2 })
+          "stretches from the origin to the container's right edge"
+
+        expectCell g 5 2 (ValueSome 7) "stretched end"
+        expectCell g 1 1 ValueNone "before the origin"
+
+      testCase "fillRect paints a local sub-rectangle"
+      <| fun _ ->
+        let stamp =
+          Stamp.box 6 4 [
+            Flow.fill 1
+            Flow.fillRect { X = 2; Y = 1; W = 2; H = 2 } 5
+          ]
+
+        let g, _ = runInto 6 4 stamp
+
+        expectCell g 2 1 (ValueSome 5) "sub-rect start"
+        expectCell g 3 2 (ValueSome 5) "sub-rect end"
+        expectCell g 0 0 (ValueSome 1) "outside keeps the base fill"
+        expectCell g 1 1 (ValueSome 1) "left of the sub-rect"
+        expectCell g 4 1 (ValueSome 1) "right of the sub-rect"
+
+      testCase "a negative inset side clamps at zero"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.StretchX ||| Dock.Top
+              Inset = {
+                Left = -4
+                Top = 1
+                Right = 1
+                Bottom = -2
+              }
+              Stamp = Stamp.named "bar" (Stamp.box 0 2 [ Flow.fill 7 ])
+            }
+          ]
+
+        let g, placed = runInto 10 6 stamp
+
+        // the negative Left clamps to 0, the negative Bottom stays unused
+        Expect.equal
+          (Flow.tryPosition "bar" placed)
+          (ValueSome { X = 0; Y = 1; W = 9; H = 2 })
+          "the negative sides clamp at zero"
+
+        expectCell g 0 1 (ValueSome 7) "stretches from the left edge"
+        expectCell g 8 2 (ValueSome 7) "ends before the right inset"
+
+      testCase "a negative at offset clamps at zero"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [ Flow.at -3 -2 (Stamp.named "p" (tile 2 1 7)) ]
+
+        let _, placed = runInto 10 6 stamp
+
+        Expect.equal
+          (Flow.tryPosition "p" placed)
+          (ValueSome { X = 0; Y = 0; W = 2; H = 1 })
+          "negative offsets clamp at the container origin"
+
+      testCase "an inset larger than the container clamps the span to zero"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.StretchX ||| Dock.StretchY
+              Inset = {
+                Left = 4
+                Top = 4
+                Right = 4
+                Bottom = 4
+              }
+              Stamp = Stamp.named "huge" (Stamp.box 0 0 [ Flow.fill 7 ])
+            }
+          ]
+
+        let g, placed = runInto 6 6 stamp
+
+        // the span clamps at zero (never negative), and a zero-size rect
+        // paints and records nothing
+        Expect.equal (Flow.tryPosition "huge" placed) ValueNone "no rectangle"
+        expectCell g 0 0 ValueNone "nothing paints"
+
+      testCase "an element past the container edge clips inside it"
+      <| fun _ ->
+        // a centered element wider than the container starts at a negative
+        // origin: it must clip at the edge, not index outside the grid
+        let centered =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.CenterX ||| Dock.CenterY
+              Inset = InsetSpec.Zero
+              Stamp = Stamp.named "huge" (Stamp.box 14 14 [ Flow.fill 7 ])
+            }
+          ]
+
+        let g, placed = runInto 10 10 centered
+
+        Expect.equal
+          (Flow.tryPosition "huge" placed)
+          (ValueSome { X = 0; Y = 0; W = 10; H = 10 })
+          "the overflowing element clips at the container"
+
+        expectCell g 0 0 (ValueSome 7) "paints from the corner"
+        expectCell g 9 9 (ValueSome 7) "paints to the far corner"
+
+        // a right-docked element whose inset pushes it past the left edge
+        let pushed =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.Right ||| Dock.Top
+              Inset = { InsetSpec.Zero with Right = 8 }
+              Stamp = Stamp.named "bar" (Stamp.box 4 4 [ Flow.fill 3 ])
+            }
+          ]
+
+        let g2, placed2 = runInto 10 10 pushed
+
+        Expect.equal
+          (Flow.tryPosition "bar" placed2)
+          (ValueSome { X = 0; Y = 0; W = 2; H = 4 })
+          "only the part inside the container is reported"
+
+        expectCell g2 0 0 (ValueSome 3) "the visible part paints"
+        expectCell g2 2 0 ValueNone "nothing paints past the visible part"
+        expectCell g2 0 4 ValueNone "nothing paints past the bottom edge"
+
+      testCase "at places inside a grid area like docked"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Fixed 4; Fixed 4 |]
+            Rows = [| Fixed 2 |]
+            Gap = 0
+            Areas = [| "a b" |]
+            Places = [|
+              struct ("a", fillTile 1)
+              struct ("b", Flow.at 1 0 (Stamp.named "prop" (tile 2 1 7)))
+            |]
+          }
+
+        let g, placed = runInto 8 2 stamp
+
+        Expect.equal
+          (Flow.tryPosition "prop" placed)
+          (ValueSome { X = 5; Y = 0; W = 2; H = 1 })
+          "at offsets from the area origin"
+
+        expectCell g 3 0 (ValueSome 1) "area a fills its own tracks"
+        expectCell g 4 0 ValueNone "area b before the prop stays empty"
+        expectCell g 5 0 (ValueSome 7) "the prop paints at the offset"
+
+      testCase "at names itself in the expand error"
+      <| fun _ ->
+        let thrown =
+          try
+            Flow.at 1 1 (Stamp.expand(fillTile 1)) |> ignore
+            None
+          with :? System.ArgumentException as e ->
+            Some e.Message
+
+        match thrown with
+        | Some msg -> Expect.stringContains msg "Flow.at" "the error names at"
+        | None -> failtest "at must reject an expand stamp"
     ]
 
     testList "mount" [
@@ -673,7 +931,7 @@ let harbourTests =
           ]
           Flow.docked {
             Anchor = Dock.CenterX ||| Dock.CenterY
-            Inset = 0
+            Inset = InsetSpec.Zero
             Stamp = Stamp.named "fountain" fountain
           }
         ]
@@ -686,7 +944,7 @@ let harbourTests =
             Flow.canvas [ Flow.fill Crate ]
             Flow.docked {
               Anchor = Dock.CenterX ||| Dock.Top
-              Inset = 0
+              Inset = InsetSpec.Zero
               Stamp = Stamp.box 1 1 [ Flow.fill goods ]
             }
           ])
@@ -757,14 +1015,14 @@ let harbourTests =
 
             Flow.docked {
               Anchor = Dock.Top ||| Dock.CenterX
-              Inset = 0
+              Inset = InsetSpec.Zero
               Stamp = Stamp.box 12 3 [ Flow.fill Wall ]
             }
 
             // zero footprint width = stretch over the container
             Flow.docked {
               Anchor = Dock.Bottom
-              Inset = 0
+              Inset = InsetSpec.Zero
               Stamp = Stamp.named "gate" (Stamp.box 0 1 [ Flow.fill Sand ])
             }
           ]
@@ -873,7 +1131,7 @@ let styleTests =
           Flow.canvas [ Flow.fill 1 ]
           Flow.docked {
             Anchor = Dock.CenterX ||| Dock.CenterY
-            Inset = 0
+            Inset = InsetSpec.Zero
             Stamp = Stamp.box 2 2 [ Flow.fill 2 ]
           }
         ]
@@ -1056,7 +1314,7 @@ let landmarkTests =
         Flow.overlay [
           Flow.docked {
             Anchor = Dock.Bottom ||| Dock.CenterX
-            Inset = 0
+            Inset = InsetSpec.Zero
             Stamp =
               Stamp.tagged [ "exit" ] (Stamp.box 20 2 [ Flow.fill 7 ])
               |> Stamp.named "gate"
@@ -1096,7 +1354,7 @@ let landmarkTests =
       let gate =
         Flow.docked {
           Anchor = Dock.StretchX ||| Dock.Bottom
-          Inset = 0
+          Inset = InsetSpec.Zero
           Stamp =
             Stamp.tagged [ "exit"; "no-build" ] (Stamp.box 0 1 [ Flow.fill 7 ])
         }
@@ -1168,7 +1426,7 @@ let hexTests =
       let depot =
         Flow.docked {
           Anchor = Dock.Bottom ||| Dock.Right
-          Inset = 0
+          Inset = InsetSpec.Zero
           Stamp =
             Stamp.tagged [ "depot" ] (Stamp.box 2 2 [ Flow.fill 3 ])
             |> Stamp.named "depot"
