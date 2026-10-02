@@ -13,12 +13,6 @@ type CellRect = { X: int; Y: int; W: int; H: int }
 [<Struct>]
 type CellPoint = { X: int; Y: int }
 
-/// A cell-space extent: width across, height down. The named pair for
-/// element extents and per-axis lengths, companion to `CellPoint` and
-/// `CellRect`.
-[<Struct>]
-type CellSize = { W: int; H: int }
-
 /// Landmarks collected while a level lays out: named element rectangles,
 /// tag groups of rectangles, and per-cell tag bit grids for fast walking
 /// queries. Tags are opaque strings; the engine stores and queries them,
@@ -1339,8 +1333,11 @@ module Flow =
   /// placement occupies no flow space (zero footprint), so it mounts inside
   /// `overlay` layers and grid areas like `docked` does; a zero dimension of
   /// the wrapped stamp stretches on its axis from that origin to the
-  /// container's far edge. Name the stamped element to report its rectangle.
+  /// container's far edge. Negative offsets clamp at 0. Name the stamped
+  /// element to report its rectangle.
   let at (x: int) (y: int) (stamp: Stamp<'T>) : Stamp<'T> =
+    FlowImpl.checkNoExpand "Flow.at" "stamp" stamp
+
     docked {
       Anchor = Dock.Left ||| Dock.Top
       Inset = {

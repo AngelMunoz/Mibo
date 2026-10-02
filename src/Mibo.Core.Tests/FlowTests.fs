@@ -699,6 +699,106 @@ let tests =
         expectCell g 0 0 (ValueSome 1) "outside keeps the base fill"
         expectCell g 1 1 (ValueSome 1) "left of the sub-rect"
         expectCell g 4 1 (ValueSome 1) "right of the sub-rect"
+
+      testCase "a negative inset side clamps at zero"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.StretchX ||| Dock.Top
+              Inset = {
+                Left = -4
+                Top = 1
+                Right = 1
+                Bottom = -2
+              }
+              Stamp = Stamp.named "bar" (Stamp.box 0 2 [ Flow.fill 7 ])
+            }
+          ]
+
+        let g, placed = runInto 10 6 stamp
+
+        // the negative Left clamps to 0, the negative Bottom stays unused
+        Expect.equal
+          (Flow.tryPosition "bar" placed)
+          (ValueSome { X = 0; Y = 1; W = 9; H = 2 })
+          "the negative sides clamp at zero"
+
+        expectCell g 0 1 (ValueSome 7) "stretches from the left edge"
+        expectCell g 8 2 (ValueSome 7) "ends before the right inset"
+
+      testCase "a negative at offset clamps at zero"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [ Flow.at -3 -2 (Stamp.named "p" (tile 2 1 7)) ]
+
+        let _, placed = runInto 10 6 stamp
+
+        Expect.equal
+          (Flow.tryPosition "p" placed)
+          (ValueSome { X = 0; Y = 0; W = 2; H = 1 })
+          "negative offsets clamp at the container origin"
+
+      testCase "an inset larger than the container clamps the span to zero"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.StretchX ||| Dock.StretchY
+              Inset = {
+                Left = 4
+                Top = 4
+                Right = 4
+                Bottom = 4
+              }
+              Stamp = Stamp.named "huge" (Stamp.box 0 0 [ Flow.fill 7 ])
+            }
+          ]
+
+        let g, placed = runInto 6 6 stamp
+
+        // the span clamps at zero (never negative), and a zero-size rect
+        // paints and records nothing
+        Expect.equal (Flow.tryPosition "huge" placed) ValueNone "no rectangle"
+        expectCell g 0 0 ValueNone "nothing paints"
+
+      testCase "at places inside a grid area like docked"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Fixed 4; Fixed 4 |]
+            Rows = [| Fixed 2 |]
+            Gap = 0
+            Areas = [| "a b" |]
+            Places = [|
+              struct ("a", fillTile 1)
+              struct ("b", Flow.at 1 0 (Stamp.named "prop" (tile 2 1 7)))
+            |]
+          }
+
+        let g, placed = runInto 8 2 stamp
+
+        Expect.equal
+          (Flow.tryPosition "prop" placed)
+          (ValueSome { X = 5; Y = 0; W = 2; H = 1 })
+          "at offsets from the area origin"
+
+        expectCell g 3 0 (ValueSome 1) "area a fills its own tracks"
+        expectCell g 4 0 ValueNone "area b before the prop stays empty"
+        expectCell g 5 0 (ValueSome 7) "the prop paints at the offset"
+
+      testCase "at names itself in the expand error"
+      <| fun _ ->
+        let thrown =
+          try
+            Flow.at 1 1 (Stamp.expand(fillTile 1)) |> ignore
+            None
+          with :? System.ArgumentException as e ->
+            Some e.Message
+
+        match thrown with
+        | Some msg -> Expect.stringContains msg "Flow.at" "the error names at"
+        | None -> failtest "at must reject an expand stamp"
     ]
 
     testList "mount" [

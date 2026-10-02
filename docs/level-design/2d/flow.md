@@ -342,7 +342,7 @@ Pick by the job. Full signatures live in the API reference:
 
 | Job                    | Styles                                                            |
 | ---------------------- | ---------------------------------------------------------------- |
-| Cover an area          | `fill`, `fillRect` (a local sub-rectangle), `texture` (per-cell generator), `checker` |
+| Cover an area          | `fill`, `fillRect rect` (a local sub-rectangle), `texture` (per-cell generator), `checker` |
 | Edges                  | `border`, `rect b f`, `corners`, `checkerBorder`, `scatterBorder` |
 | Sparse props           | `noise`, `noiseBy`, `clumps` (paints small stamps)                |
 | Lines and shapes       | `line`, `circle`, `polygon`, `scatterLine`                        |
