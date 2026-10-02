@@ -42,6 +42,7 @@ Mibo ships as two independent runtime lanes on top of a shared kernel. Pick one 
 | Package | Gives you |
 |---|---|
 | `Mibo.Core` | Runtime-neutral kernel: `GameContext`, `GameTime`, render buffers, input contracts, layout, diagnostics |
+| `Mibo.Markup` | Authored text documents for Flow levels (XML and KDL front-ends, resolver, Flow emitter) |
 | `Mibo.Mvu` | The Elmish/MVU runtime: `Cmd`, `Sub`, `Program`, loops, and headless support |
 | `Mibo.Adaptive` | The dependency-free incremental computation library (`CVal`/`AVal` roots, adaptive sets, maps, and lists) |
 | `Mibo.Adaptive.Mibo` | The Mibo-side adaptive runtime: `AdaptiveProgram`, `AdaptiveHeadless` |

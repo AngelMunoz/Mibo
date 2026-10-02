@@ -111,6 +111,7 @@ jobs:
         run: |
           for p in \
             src/Mibo.Core/Mibo.Core.fsproj \
+            src/Mibo.Markup/Mibo.Markup.fsproj \
             src/Mibo.Mvu/Mibo.Mvu.fsproj \
             src/Mibo.Raylib/Mibo.Raylib.fsproj \
             src/Mibo.Raylib.Mvu/Mibo.Raylib.Mvu.fsproj \
