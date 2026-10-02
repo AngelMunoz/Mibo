@@ -30,7 +30,11 @@ named properties, and children. The resolver (`Doc.resolve`) never sees
 the text format. The two front-ends differ in one channel: KDL spells
 scalars as positional arguments (`map 36 20`), XML spells them as
 attributes (`map w="36" h="20"`), and the resolver reads every scalar by
-name so both resolve identically:
+name so both resolve identically. A document holds exactly one map:
+a stray root node or a second map fails the build instead of being
+dropped. The map takes its two dimensions from either channel, or one of
+each — `map 36 20`, `map w="36" h="20"`, and `map 36 h="20"` all read
+36 across and 20 down:
 
 ```fsharp
 open Mibo.Markup
@@ -96,6 +100,43 @@ typed literals (hex, underscores, quoted numbers) have no XML
 equivalent; XML attributes type by content. Pick the syntax your team
 prefers; a document can migrate between them without touching the game.
 
-*The resolver (`Doc`), the game-supplied surface (words, kernels,
-elements), and the Flow emitter (`DocFlow`) land with the rest of this
-stack — this page grows with them.*
+## The resolver
+
+`Doc.resolve` turns a `Node` tree into an `Item` tree: templates expand,
+words resolve against the game's surface, and layout properties merge
+through the style cascade — solver defaults, then document `style name`
+rules in order, then inline properties:
+
+```fsharp
+let surface: Doc.Surface<Tile> = ...          // words, kernels, elements
+let struct (grid, landmarks) = ...            // the Flow build, next PR
+
+match Kdl.parse src with
+| Error e -> printfn "%s" e                   // parse errors, positioned
+| Ok roots ->
+    match Doc.resolve surface src roots with
+    | Error e -> printfn "%s" e               // resolution errors, positioned
+    | Ok items -> ...                         // the Item tree, ready to emit
+```
+
+**The surface is the game's whole say.** Cell *words* (`fill grass`),
+per-cell *kernels* (`generate forest`), and the game's *element library*
+(`grove`, declared once in F# or as an `element` template in the
+document) — three frozen tables, built once at startup, read per build.
+A document stays portable at the statement level; only the words differ
+per game.
+
+**Paint is data.** A body resolves to `Op` values — `Fill`, `FillRect`,
+`Set`, `Border`, `Rect`, `Generate` — interpreted at render time through
+the framework's `Layout` ops. The union is closed by design: statements
+mean the same thing in every game; games extend through elements and
+words, not new cases.
+
+**Styles carry layout only.** `w=`/`h=` size, `x=`/`y=` exact placement,
+`hplace=`/`vplace=`/`place=` alignment, `pack=` (stack, flow, scatter),
+`pad=`, `gapx=`/`gapy=`, `seed=`, and flow placement (`area=`, `col=`,
+`row=`, `colspan=`, `rowspan=`). Declared `cols`/`rows` (ratios,
+`fixed n`, `auto`) imply flow packing.
+
+*The Flow emitter (`DocFlow`) lands with the next PR of this stack —
+this page grows with it.*
