@@ -120,10 +120,11 @@ module DocFlow =
       ValueSome struct (c0, r0, c1 - c0 + 1, r1 - r0 + 1)
 
   /// Slot and area children claim their cells first; flow children take
-  /// the next free cell scanning row first. Slot spans below one and
-  /// negative col=/row= fail the build instead of clamping. `who` is the
-  /// container's name — every failure names it, so a deep document
-  /// points at the offending grid.
+  /// the next free cell scanning row first. Slot spans below one,
+  /// negative col=/row=, a col past the declared cols, and an area child
+  /// with a stated span fail the build instead of clamping or dropping.
+  /// `who` is the container's name — every failure names it, so a deep
+  /// document points at the offending grid.
   let private assignSlots
     (who: string, areas: string[][], colCount: int, children: Doc.Item<'T>[])
     : struct (int * int * int * int)[] =
@@ -166,6 +167,11 @@ module DocFlow =
            if c.Style.Col.IsSome || c.Style.Row.IsSome then
              failwith
                $"in the '{who}' grid: a child places by area= or by col=/row=, not both ('{name}')"
+           elif c.Style.Span.IsSome then
+             // an area child fills its whole area; a stated span would
+             // be silently discarded
+             failwith
+               $"in the '{who}' grid: an area child fills its whole area; colspan=/rowspan= needs col= or row="
 
            claim span
          | ValueNone ->
@@ -177,12 +183,20 @@ module DocFlow =
            if col < 0 || row < 0 || cs < 1 || rs < 1 then
              failwith
                $"in the '{who}' grid: slot placement wants non-negative col=/row= and spans of at least one (got col {col}, row {row}, colspan {cs}, rowspan {rs})"
+           elif col + cs > colCount then
+             // the emitter owns this check so the failure names the
+             // container; Flow.grid's own throw names only the tracks
+             failwith
+               $"in the '{who}' grid: col {col} with span {cs} runs past the {colCount} declared cols"
 
            claim struct (col, row, cs, rs)
          | ValueSome col, ValueNone ->
            if col < 0 || cs < 1 || rs < 1 then
              failwith
                $"in the '{who}' grid: slot placement wants non-negative col= and spans of at least one (got col {col}, colspan {cs}, rowspan {rs})"
+           elif col + cs > colCount then
+             failwith
+               $"in the '{who}' grid: col {col} with span {cs} runs past the {colCount} declared cols"
 
            claim struct (col, 0, cs, rs)
          | ValueNone, ValueSome row ->
