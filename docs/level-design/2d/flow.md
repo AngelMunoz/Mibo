@@ -61,10 +61,10 @@ let harbour =
       "shore shore shore"
     |]
     Places = [|
-      struct ("shore", Stamp.named "shore" (Flow.canvas [ Flow.fill Sand ]))
-      struct ("woods", Stamp.tagged [ "no-build" ] (Flow.canvas [ Flow.noise { Count = 40; Seed = 7 } Tree ]))
-      struct ("plaza", Flow.canvas [ Flow.fill Path; Flow.border Wall ])
-      struct ("rise", Flow.canvas [ Flow.fill Rock; Flow.scatterBorder { Count = 6; Seed = 3 } Rock ])
+      struct (Area "shore", Stamp.named "shore" (Flow.canvas [ Flow.fill Sand ]))
+      struct (Area "woods", Stamp.tagged [ "no-build" ] (Flow.canvas [ Flow.noise { Count = 40; Seed = 7 } Tree ]))
+      struct (Area "plaza", Flow.canvas [ Flow.fill Path; Flow.border Wall ])
+      struct (Area "rise", Flow.canvas [ Flow.fill Rock; Flow.scatterBorder { Count = 6; Seed = 3 } Rock ])
     |]
   }
 
@@ -82,6 +82,38 @@ What you get:
   styles.
 - The `shore` zone is **named**. `Flow.tryPosition "shore" marks` gives
   you its rectangle for spawn math.
+
+### Track sizes and explicit slots
+
+Beyond `Fixed`, tracks size three ways. `Auto` sizes a track to the largest
+footprint of its span-1 places at construction (`Weight` shares the assigned
+length after `Fixed`/`Auto`/`Percent`, and `Percent` takes a fraction of
+it). A place reports no footprint on a zero axis — `Flow.canvas`, or any
+element sized `0` on one side — so it contributes nothing to an `Auto`
+track on that axis and the track collapses. A place that spans several
+tracks shares its footprint over the `Auto` tracks it covers, so a span
+that no single-track place can size still paints its content.
+
+Places can also skip the template entirely: `Slot (col, row, colspan,
+rowspan)` mounts an element at explicit track indices. Slots may overlap;
+paint order is the `Places` order, later places on top:
+
+```fsharp
+Flow.grid {
+  Cols = [| Fixed 12; Auto |]
+  Rows = [| Fixed 6 |]
+  Gap = 1
+  Areas = [||]
+  Places = [|
+    struct (Slot (0, 0, 1, 1), Flow.canvas [ Flow.fill Path ])   // fixed column
+    struct (Slot (1, 0, 1, 1), sidePanel)   // Auto track sizes to the panel
+  |]
+}
+```
+
+A slot with negative indices, a span below one, or a span past the last
+track throws at construction — the same fail-loud rule as every other
+placement mistake.
 
 ## Pattern: rooms, corridors, doors
 

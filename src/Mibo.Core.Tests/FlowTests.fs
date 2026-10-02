@@ -253,7 +253,7 @@ let tests =
               Rows = [| Fixed 4 |]
               Gap = 0
               Areas = [| "a" |]
-              Places = [| struct ("a", Stamp.expand(tile 1 1 1)) |]
+              Places = [| struct (Area "a", Stamp.expand(tile 1 1 1)) |]
             }
             |> ignore)
           "grid ignores Expand"
@@ -334,7 +334,10 @@ let tests =
             Rows = [| Fixed 2; Fixed 3 |]
             Gap = 1
             Areas = [| "a a"; "b ." |]
-            Places = [| struct ("a", fillTile 1); struct ("b", fillTile 2) |]
+            Places = [|
+              struct (Area "a", fillTile 1)
+              struct (Area "b", fillTile 2)
+            |]
           }
 
         let g, _ = runInto 12 7 stamp
@@ -357,9 +360,9 @@ let tests =
             Gap = 0
             Areas = [| "s m b" |]
             Places = [|
-              struct ("s", fillTile 1)
-              struct ("m", fillTile 2)
-              struct ("b", fillTile 3)
+              struct (Area "s", fillTile 1)
+              struct (Area "m", fillTile 2)
+              struct (Area "b", fillTile 3)
             |]
           }
 
@@ -379,7 +382,10 @@ let tests =
             Rows = [| Fixed 1 |]
             Gap = 0
             Areas = [| "a b" |]
-            Places = [| struct ("a", fillTile 1); struct ("b", fillTile 2) |]
+            Places = [|
+              struct (Area "a", fillTile 1)
+              struct (Area "b", fillTile 2)
+            |]
           }
 
         let g, _ = runInto 10 1 stamp
@@ -397,7 +403,7 @@ let tests =
             Gap = 0
             Areas = [| "a" |]
             Places = [|
-              struct ("a", Stamp.named "a" (Flow.canvas [ Flow.fill 7 ]))
+              struct (Area "a", Stamp.named "a" (Flow.canvas [ Flow.fill 7 ]))
             |]
           }
 
@@ -420,7 +426,7 @@ let tests =
               Rows = [| Fixed 1 |]
               Gap = 0
               Areas = [| "a" |]
-              Places = [| struct ("z", tile 1 1 1) |]
+              Places = [| struct (Area "z", tile 1 1 1) |]
             }
             |> ignore)
           "unknown area"
@@ -452,6 +458,213 @@ let tests =
             }
             |> ignore)
           "template column overflow"
+
+      testCase "slots place children by track indices"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Fixed 4; Fixed 6 |]
+            Rows = [| Fixed 2; Fixed 3 |]
+            Gap = 0
+            Areas = [||]
+            Places = [|
+              struct (Slot(0, 1, 1, 1), fillTile 2)
+              struct (Slot(1, 0, 1, 1), fillTile 1)
+            |]
+          }
+
+        let g, _ = runInto 10 5 stamp
+
+        expectCell g 4 0 (ValueSome 1) "slot (1,0) starts at the second column"
+        expectCell g 9 1 (ValueSome 1) "slot (1,0) ends at the second column"
+        expectCell g 0 2 (ValueSome 2) "slot (0,1) starts at the second row"
+        expectCell g 3 4 (ValueSome 2) "slot (0,1) ends at the second row"
+        expectCell g 0 0 ValueNone "unplaced track cell"
+
+      testCase "slots span tracks and cover the gap"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Fixed 2; Fixed 2 |]
+            Rows = [| Fixed 1 |]
+            Gap = 1
+            Areas = [||]
+            Places = [| struct (Slot(0, 0, 2, 1), fillTile 3) |]
+          }
+
+        Expect.equal stamp.W 5 "the span counts both tracks and the gap"
+
+        let g, _ = runInto 6 1 stamp
+
+        expectCell g 0 0 (ValueSome 3) "span start"
+        expectCell g 4 0 (ValueSome 3) "span covers the gap"
+        expectCell g 5 0 ValueNone "past the span"
+
+      testCase "a slot outside the tracks throws"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [| Fixed 2 |]
+              Rows = [| Fixed 2 |]
+              Gap = 0
+              Areas = [||]
+              Places = [| struct (Slot(1, 0, 1, 1), fillTile 1) |]
+            }
+            |> ignore)
+          "slot past the last column"
+
+      testCase "a slot index past the int32 range throws"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [| Fixed 2 |]
+              Rows = [| Fixed 2 |]
+              Gap = 0
+              Areas = [||]
+              Places = [|
+                struct (Slot(System.Int32.MaxValue, 0, 1, 1), fillTile 1)
+              |]
+            }
+            |> ignore)
+          "a huge column index must not wrap into a valid slot"
+
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [| Fixed 2 |]
+              Rows = [| Fixed 2 |]
+              Gap = 0
+              Areas = [||]
+              Places = [|
+                struct (Slot(0, 0, System.Int32.MaxValue, 1), fillTile 1)
+              |]
+            }
+            |> ignore)
+          "a huge span must not wrap into a valid slot"
+
+      testCase "a slot span below one throws"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [| Fixed 2 |]
+              Rows = [| Fixed 2 |]
+              Gap = 0
+              Areas = [||]
+              Places = [| struct (Slot(0, 0, 0, 1), fillTile 1) |]
+            }
+            |> ignore)
+          "a zero span never silently clamps to one"
+
+      testCase "overlapping slots paint in Places order"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Fixed 4 |]
+            Rows = [| Fixed 2 |]
+            Gap = 0
+            Areas = [||]
+            Places = [|
+              struct (Slot(0, 0, 1, 1), fillTile 1)
+              struct (Slot(0, 0, 1, 1), Flow.at 2 0 (tile 2 1 2))
+            |]
+          }
+
+        let g, _ = runInto 4 2 stamp
+
+        expectCell g 2 0 (ValueSome 2) "the later place paints on top"
+        expectCell g 0 1 (ValueSome 1) "the earlier place shows elsewhere"
+
+      testCase "auto tracks size to their span-1 places"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Auto; Weight 1f |]
+            Rows = [| Auto |]
+            Gap = 0
+            Areas = [||]
+            Places = [|
+              struct (Slot(0, 0, 1, 1), tile 3 2 1)
+              struct (Slot(1, 0, 1, 1), fillTile 2)
+            |]
+          }
+
+        Expect.equal stamp.W 3 "the auto width counts toward the footprint"
+        Expect.equal stamp.H 2 "the auto height counts toward the footprint"
+
+        let g, _ = runInto 10 2 stamp
+
+        expectCell g 0 0 (ValueSome 1) "auto column sized to the tile"
+        expectCell g 2 1 (ValueSome 1) "auto column ends at the tile width"
+        expectCell g 3 0 (ValueSome 2) "weight column takes the rest"
+        expectCell g 9 1 (ValueSome 2) "weight column fills the container"
+
+      testCase "canvas places contribute nothing to auto tracks"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Auto |]
+            Rows = [| Fixed 2 |]
+            Gap = 0
+            Areas = [||]
+            Places = [| struct (Slot(0, 0, 1, 1), fillTile 1) |]
+          }
+
+        Expect.equal stamp.W 0 "a context-sized place reports no footprint"
+
+        let g, _ = runInto 4 2 stamp
+
+        expectCell g 0 0 ValueNone "an auto track with no content collapses"
+
+      testCase "a spanning place sizes the auto tracks it covers"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Auto; Auto |]
+            Rows = [| Auto |]
+            Gap = 0
+            Areas = [||]
+            Places = [|
+              struct (Slot(0, 0, 2, 1), Stamp.named "hall" (tile 4 1 1))
+            |]
+          }
+
+        // the place shares its four cells over both auto columns, so
+        // neither collapses to zero and the place still paints
+        Expect.equal stamp.W 4 "the spanning footprint sizes the tracks"
+
+        let g, placed = runInto 8 1 stamp
+
+        Expect.equal
+          (Flow.tryPosition "hall" placed)
+          (ValueSome { X = 0; Y = 0; W = 4; H = 1 })
+          "the spanning place paints its whole footprint"
+
+        expectCell g 0 0 (ValueSome 1) "the span starts at the first column"
+        expectCell g 3 0 (ValueSome 1) "the span covers the shared width"
+        expectCell g 4 0 ValueNone "nothing paints past the footprint"
+
+      testCase "areas and slots share one grid"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Fixed 4; Fixed 4 |]
+            Rows = [| Fixed 2; Fixed 2 |]
+            Gap = 0
+            Areas = [| "top ." |]
+            Places = [|
+              struct (Area "top", fillTile 1)
+              struct (Slot(1, 1, 1, 1), fillTile 2)
+            |]
+          }
+
+        let g, _ = runInto 8 4 stamp
+
+        expectCell g 0 0 (ValueSome 1) "the named area paints its cell"
+        expectCell g 4 2 (ValueSome 2) "the slot paints at (1,1)"
+        expectCell g 3 3 ValueNone "below the area stays empty"
     ]
 
     testList "layers" [
@@ -815,8 +1028,8 @@ let tests =
             Gap = 0
             Areas = [| "a b" |]
             Places = [|
-              struct ("a", fillTile 1)
-              struct ("b", Flow.at 1 0 (Stamp.named "prop" (tile 2 1 7)))
+              struct (Area "a", fillTile 1)
+              struct (Area "b", Flow.at 1 0 (Stamp.named "prop" (tile 2 1 7)))
             |]
           }
 
@@ -883,8 +1096,8 @@ let tests =
             Gap = 0
             Areas = [| "a" |]
             Places = [|
-              struct ("a", inner)
-              struct ("a", Stamp.named "area" (Stamp.empty()))
+              struct (Area "a", inner)
+              struct (Area "a", Stamp.named "area" (Stamp.empty()))
             |]
           }
 
@@ -992,10 +1205,10 @@ let harbourTests =
           Gap = 1
           Areas = [| "plaza market"; "plaza woods"; "docks woods" |]
           Places = [|
-            struct ("plaza", Stamp.tagged [ "safe-zone" ] plaza)
-            struct ("market", market)
-            struct ("woods", woods)
-            struct ("docks", docks)
+            struct (Area "plaza", Stamp.tagged [ "safe-zone" ] plaza)
+            struct (Area "market", market)
+            struct (Area "woods", woods)
+            struct (Area "docks", docks)
           |]
         }
 
@@ -1091,7 +1304,7 @@ let styleTests =
           Rows = [| Fixed 2 |]
           Gap = 0
           Areas = [| "a" |]
-          Places = [| struct ("a", Flow.canvas [ Flow.fill 7 ]) |]
+          Places = [| struct (Area "a", Flow.canvas [ Flow.fill 7 ]) |]
         }
 
       let g, _ = runInto 4 2 stamp
@@ -1107,7 +1320,7 @@ let styleTests =
           Rows = [| Fixed 4 |]
           Gap = 0
           Areas = [| "a" |]
-          Places = [| struct ("a", Stamp.box 2 1 [ Flow.fill 5 ]) |]
+          Places = [| struct (Area "a", Stamp.box 2 1 [ Flow.fill 5 ]) |]
         }
 
       let g, _ = runInto 4 4 stamp
@@ -1204,8 +1417,8 @@ let landmarkTests =
           Gap = 0
           Areas = [| "zone rest" |]
           Places = [|
-            struct ("zone", Flow.region [ "no-build" ] 0 0)
-            struct ("rest", Flow.canvas [ Flow.fill 9 ])
+            struct (Area "zone", Flow.region [ "no-build" ] 0 0)
+            struct (Area "rest", Flow.canvas [ Flow.fill 9 ])
           |]
         }
 
@@ -1245,7 +1458,7 @@ let landmarkTests =
           Rows = [| Fixed 4 |]
           Gap = 0
           Areas = [| "a" |]
-          Places = [| struct ("a", Flow.region [ "arena" ] 0 0) |]
+          Places = [| struct (Area "a", Flow.region [ "arena" ] 0 0) |]
         }
 
       let _, placed = runInto 4 4 stamp
@@ -1395,8 +1608,8 @@ let hexTests =
           Gap = 0
           Areas = [| "shore woods"; "shore woods" |]
           Places = [|
-            struct ("shore", Stamp.named "shore" (fillTile 1))
-            struct ("woods", fillTile 2)
+            struct (Area "shore", Stamp.named "shore" (fillTile 1))
+            struct (Area "woods", fillTile 2)
           |]
         }
 

@@ -157,8 +157,8 @@ let kingdom =
     Gap = 0
     Areas = [| "plains plains hills"; "plains plains hills" |]
     Places = [|
-      struct ("plains", Flow.canvas [ Flow.fill GrassTile; Flow.noise { Count = 25; Seed = 7 } ForestTile ])
-      struct ("hills", Stamp.tagged [ "no-build" ] (Flow.canvas [ Flow.fill RockTile ]))
+      struct (Area "plains", Flow.canvas [ Flow.fill GrassTile; Flow.noise { Count = 25; Seed = 7 } ForestTile ])
+      struct (Area "hills", Stamp.tagged [ "no-build" ] (Flow.canvas [ Flow.fill RockTile ]))
     |]
   }
 
