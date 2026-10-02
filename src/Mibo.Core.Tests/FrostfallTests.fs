@@ -49,7 +49,12 @@ module Vocabulary =
 
       Flow.docked {
         Anchor = Dock.Bottom ||| Dock.StretchX
-        Inset = 1
+        Inset = {
+          Left = 1
+          Top = 1
+          Right = 1
+          Bottom = 1
+        }
         Stamp =
           Flow.row
             {
@@ -62,7 +67,7 @@ module Vocabulary =
 
       Flow.docked {
         Anchor = Dock.CenterX ||| Dock.CenterY
-        Inset = 0
+        Inset = InsetSpec.Zero
         Stamp =
           Stamp.named
             "king-chest"
@@ -80,12 +85,12 @@ module Vocabulary =
       ]
       Flow.docked {
         Anchor = Dock.CenterX ||| Dock.CenterY
-        Inset = 0
+        Inset = InsetSpec.Zero
         Stamp = Flow.region [ "boss-arena" ] 12 12
       }
       Flow.docked {
         Anchor = Dock.CenterX ||| Dock.CenterY
-        Inset = 0
+        Inset = InsetSpec.Zero
         Stamp = Stamp.named "boss-spawn" (prop Ember)
       }
     ]
@@ -131,7 +136,12 @@ let frostfallKeep =
 
     Flow.docked {
       Anchor = Dock.Bottom ||| Dock.CenterX
-      Inset = 1
+      Inset = {
+        Left = 1
+        Top = 1
+        Right = 1
+        Bottom = 1
+      }
       Stamp =
         Stamp.named
           "keep-entrance"

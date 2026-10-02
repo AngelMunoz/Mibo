@@ -327,7 +327,7 @@ let statusBar =
 let wall =
   Flow.docked {
     Anchor = Dock.StretchX ||| Dock.Bottom
-    Inset = 0
+    Inset = InsetSpec.Zero
     Stamp = Stamp.box 0 1 [ Flow.fill Wall ]   // zero width: stretch the axis
   }
 ```
@@ -341,8 +341,8 @@ Every other container rejects it at build time instead of ignoring it.
 Pick by the job. Full signatures live in the API reference:
 
 | Job                    | Styles                                                            |
-| ---------------------- | ----------------------------------------------------------------- |
-| Cover an area          | `fill`, `texture` (per-cell generator), `checker`                 |
+| ---------------------- | ---------------------------------------------------------------- |
+| Cover an area          | `fill`, `fillRect` (a local sub-rectangle), `texture` (per-cell generator), `checker` |
 | Edges                  | `border`, `rect b f`, `corners`, `checkerBorder`, `scatterBorder` |
 | Sparse props           | `noise`, `noiseBy`, `clumps` (paints small stamps)                |
 | Lines and shapes       | `line`, `circle`, `polygon`, `scatterLine`                        |
@@ -386,9 +386,47 @@ grid modules (`CellGrid3D`, `Layout3D`, and friends) are obsolete. See
 
 ## When you need pixel-perfect control
 
-Flow hides coordinates on purpose. When you want exact index math or
-manual section surgery, the `Layout` module remains open and fully
-supported. Every Flow style is a `Layout` pipeline underneath.
+Flow hides coordinates on purpose. Two primitives give them back exactly:
+
+**`Flow.at x y stamp`** places an element at an exact cell offset of its
+container. It occupies no flow space, so it mounts inside `overlay` and grid
+areas like `docked` does. A zero dimension of the wrapped stamp stretches
+from that origin to the container's far edge:
+
+```fsharp
+// a 2x1 prop at exactly (3, 5), over a base layer
+let prop = Flow.at 3 5 (Stamp.tagged [ "loot" ] (Stamp.box 2 1 [ Flow.fill Chest ]))
+
+// a road from (2, 1) to the right edge, two cells tall
+let road = Flow.at 2 1 (Stamp.box 0 2 [ Flow.fill Road ])
+```
+
+**Per-side dock insets.** `DockSpec.Inset` is an `InsetSpec` (`Left`, `Top`,
+`Right`, `Bottom`), so a docked element can sit at different distances from
+each edge. Edge anchors honor their own side; stretching docks span the
+container minus the two insets of their axis:
+
+```fsharp
+// a HUD band: 2 off the left edge, 1 off the right, 1 above the bottom
+let hud =
+  Flow.docked {
+    Anchor = Dock.StretchX ||| Dock.Bottom
+    Inset = { Left = 2; Top = 0; Right = 1; Bottom = 1 }
+    Stamp = Stamp.box 0 2 [ Flow.rect Steel Slate ]
+  }
+```
+
+**`Flow.fillRect rect content`** fills a sub-rectangle of a box in local
+coordinates — the local-area counterpart of `fill`, for rooms, roads, and
+platforms inside a bigger element:
+
+```fsharp
+let road = Stamp.box 40 22 [ Flow.fill Grass; Flow.fillRect { X = 3; Y = 3; W = 1; H = 7 } Path ]
+```
+
+When you want exact index math or manual section surgery beyond these, the
+`Layout` module remains open and fully supported. Every Flow style is a
+`Layout` pipeline underneath.
 
 An old `Layout` stamp is a section pipeline. `Stamp.sized` wraps it as
 a Flow element, and it joins any container:

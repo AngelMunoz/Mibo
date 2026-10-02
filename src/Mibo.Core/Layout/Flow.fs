@@ -13,6 +13,12 @@ type CellRect = { X: int; Y: int; W: int; H: int }
 [<Struct>]
 type CellPoint = { X: int; Y: int }
 
+/// A cell-space extent: width across, height down. The named pair for
+/// element extents and per-axis lengths, companion to `CellPoint` and
+/// `CellRect`.
+[<Struct>]
+type CellSize = { W: int; H: int }
+
 /// Landmarks collected while a level lays out: named element rectangles,
 /// tag groups of rectangles, and per-cell tag bit grids for fast walking
 /// queries. Tags are opaque strings; the engine stores and queries them,
@@ -187,15 +193,23 @@ type InsetSpec = {
   Top: int
   Right: int
   Bottom: int
-}
+} with
+
+  /// No inset on any side.
+  static member Zero = {
+    Left = 0
+    Top = 0
+    Right = 0
+    Bottom = 0
+  }
 
 /// A dock spec: where the element anchors (`Anchor`, combining `Dock`
-/// values with `|||`, for example `Dock.Top ||| Dock.CenterX`), the inset
-/// from the chosen edges in cells, and the element to dock.
+/// values with `|||`, for example `Dock.Top ||| Dock.CenterX`), the per-side
+/// inset from the container edges in cells, and the element to dock.
 [<Struct>]
 type DockSpec<'T> = {
   Anchor: Dock
-  Inset: int
+  Inset: InsetSpec
   Stamp: Stamp<'T>
 }
 
@@ -209,15 +223,19 @@ module internal FlowImpl =
   }
 
   /// Resolves the docked rectangle for `footprint` inside `bounds` with the
-  /// given anchor flags and inset. A zero footprint dimension stretches over
-  /// its axis; `StretchX`/`StretchY` also stretch a nonzero footprint.
+  /// given anchor flags and per-side inset. A zero footprint dimension
+  /// stretches over its axis (from the left/top inset to the opposite
+  /// inset); `StretchX`/`StretchY` also stretch a nonzero footprint.
   let dockRect
     (flags: Dock)
-    (inset: int)
+    (inset: InsetSpec)
     (bounds: CellRect)
     (footprint: CellRect)
     : CellRect =
-    let ins = max 0 inset
+    let l = max 0 inset.Left
+    let t = max 0 inset.Top
+    let r = max 0 inset.Right
+    let b = max 0 inset.Bottom
 
     let stretchX = (flags &&& Dock.StretchX <> Dock.None) || footprint.W = 0
 
@@ -225,26 +243,26 @@ module internal FlowImpl =
 
     let x =
       if stretchX then
-        ins
+        l
       elif flags &&& Dock.Right <> Dock.None then
-        bounds.W - footprint.W - ins
+        bounds.W - footprint.W - r
       elif flags &&& Dock.CenterX <> Dock.None then
         (bounds.W - footprint.W) / 2
       else
-        ins
+        l
 
     let y =
       if stretchY then
-        ins
+        t
       elif flags &&& Dock.Bottom <> Dock.None then
-        bounds.H - footprint.H - ins
+        bounds.H - footprint.H - b
       elif flags &&& Dock.CenterY <> Dock.None then
         (bounds.H - footprint.H) / 2
       else
-        ins
+        t
 
-    let w = if stretchX then bounds.W - 2 * ins else footprint.W
-    let h = if stretchY then bounds.H - 2 * ins else footprint.H
+    let w = if stretchX then bounds.W - l - r else footprint.W
+    let h = if stretchY then bounds.H - t - b else footprint.H
 
     {
       X = bounds.X + x
@@ -824,6 +842,16 @@ module Flow =
   let inline fill (content: 'T) (section: GridSection2D<'T>) : unit =
     Layout.fill 0 0 section.Width section.Height content section |> ignore
 
+  /// Fills a sub-rectangle of the box with one content, in box-local
+  /// coordinates — the local-area counterpart of `fill` for rooms, roads,
+  /// and platforms inside a bigger element.
+  let inline fillRect
+    (area: CellRect)
+    (content: 'T)
+    (section: GridSection2D<'T>)
+    : unit =
+    Layout.fill area.X area.Y area.W area.H content section |> ignore
+
   /// Outlines the box with one content.
   let inline border (content: 'T) (section: GridSection2D<'T>) : unit =
     Layout.border 0 0 section.Width section.Height content section |> ignore
@@ -1252,11 +1280,11 @@ module Flow =
 
   /// Paints the spec's `Stamp` into a docked rectangle of `section`. The
   /// spec's `Anchor` says where (`Dock.Top ||| Dock.CenterX` and so on);
-  /// `Inset` distances the element from the chosen edges.
-  /// `StretchX`/`StretchY` span the section minus twice the inset, and a
-  /// zero footprint dimension stretches on its axis without them. Returns
-  /// `section` for pipeline chaining. Records no positions; `Flow.docked`
-  /// is the level-document form that reports its rectangle.
+  /// `Inset` distances the element from the container's edges, per side.
+  /// `StretchX`/`StretchY` span the section minus the insets of their two
+  /// edges, and a zero footprint dimension stretches on its axis without
+  /// them. Returns `section` for pipeline chaining. Records no positions;
+  /// `Flow.docked` is the level-document form that reports its rectangle.
   let dock
     (spec: DockSpec<'T>)
     (section: GridSection2D<'T>)
@@ -1279,11 +1307,11 @@ module Flow =
   /// docked rectangle of whatever container it mounts into and occupies no
   /// flow space (zero footprint). The spec's `Anchor` says where
   /// (`Dock.Top ||| Dock.CenterX` and so on); `Inset` distances the element
-  /// from the chosen edges. `StretchX`/`StretchY` span the container minus
-  /// twice the inset, and a zero footprint dimension of the wrapped stamp
-  /// stretches on its axis without them. Pair with `overlay` to place docks
-  /// over a base layout. Name the stamped element to report its docked
-  /// rectangle.
+  /// from the container's edges, per side. `StretchX`/`StretchY` span the
+  /// container minus the insets of their two edges, and a zero footprint
+  /// dimension of the wrapped stamp stretches on its axis without them. Pair
+  /// with `overlay` to place docks over a base layout. Name the stamped
+  /// element to report its docked rectangle.
   let docked(spec: DockSpec<'T>) : Stamp<'T> =
     FlowImpl.checkNoExpand "Flow.docked" "Stamp" spec.Stamp
 
@@ -1304,6 +1332,24 @@ module Flow =
             }
 
           FlowImpl.paintChild s r registry spec.Stamp
+    }
+
+  /// Places `stamp` at an exact offset of its container: the top-left sits
+  /// `x` cells from the left edge and `y` cells from the top edge. Exact
+  /// placement occupies no flow space (zero footprint), so it mounts inside
+  /// `overlay` layers and grid areas like `docked` does; a zero dimension of
+  /// the wrapped stamp stretches on its axis from that origin to the
+  /// container's far edge. Name the stamped element to report its rectangle.
+  let at (x: int) (y: int) (stamp: Stamp<'T>) : Stamp<'T> =
+    docked {
+      Anchor = Dock.Left ||| Dock.Top
+      Inset = {
+        Left = x
+        Top = y
+        Right = 0
+        Bottom = 0
+      }
+      Stamp = stamp
     }
 
   /// A full-length strip docked to one edge (`Dock.Top`, `Dock.Bottom`,
@@ -1333,7 +1379,7 @@ module Flow =
 
     docked {
       Anchor = flags
-      Inset = 0
+      Inset = InsetSpec.Zero
       Stamp = Stamp.box w h styles
     }
 
