@@ -162,9 +162,22 @@ module Kdl =
             children.AddRange(parseNodes())
 
             if reader.TokenType <> KdlTokenType.CloseBrace then
+              // the named node is the innermost one still awaiting its
+              // brace: in `map { field { fill grass` the single `}` on
+              // the last line closes field, so map is the node reported
               failwith $"unclosed '}}' in node '{kind}' {here()}"
 
+            // KDL 2.0: only whitespace and comments may follow the
+            // closing brace on its line. The reader now sits on the next
+            // token, so a same-line name is a stray node, not a sibling.
+            let braceLine = reader.Line
             reader.Read() |> ignore // past the brace
+
+            if
+              reader.TokenType = KdlTokenType.String && reader.Line = braceLine
+            then
+              failwith $"a node cannot follow '}}' on the same line {here()}"
+
             doneNode <- true // the children block ends the node
           | KdlTokenType.Newline
           | KdlTokenType.Semicolon ->
@@ -206,4 +219,6 @@ module Kdl =
 
       Ok roots
     with e ->
-      Error $"{e.GetType().Name}: {e.Message}"
+      // bare message, like the XML front-end: our own failures already
+      // carry kind and position, and the reader's carry their own text
+      Error e.Message

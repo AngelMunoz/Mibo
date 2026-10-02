@@ -200,4 +200,37 @@ let kdlTests =
           (Markup.where mapSrc set.Position)
           "4:3"
           "set's own line, not my-set's"
+
+    testCase "a stray node after a closing brace fails"
+    <| fun _ ->
+      // KDL 2.0: nothing but whitespace and comments may follow `}` on
+      // its line — the stray word must not parse as a second root
+      match Kdl.parse "map {\n  plot {}\n} set 1 2" with
+      | Ok roots ->
+        failtest $"the stray node must not parse: {roots.Length} roots"
+      | Error e ->
+        Expect.stringContains e "cannot follow '}'" "the stray node is named"
+        Expect.stringContains e "(Ln 3, Col 3)" "the stray token's position"
+
+    testCase "sibling roots on separate lines still parse"
+    <| fun _ ->
+      // the rejection is same-line only; a node on its own line is a
+      // normal root
+      match Kdl.parse "map {}\nset 1 2" with
+      | Error e -> failtest $"separate-line roots must parse: {e}"
+      | Ok roots ->
+        Expect.hasLength roots 2 "two roots"
+        Expect.equal roots[1].Kind "set" "the second root's kind"
+
+    testCase "an unclosed outer brace names the node awaiting its brace"
+    <| fun _ ->
+      // the single `}` on the last line closes field, so map is the
+      // innermost node still awaiting its brace — that is the name the
+      // error gives
+      match Kdl.parse "map {\n  field { fill grass\n}" with
+      | Ok roots -> failtest "the unclosed brace must not parse"
+      | Error e ->
+        Expect.stringContains e "unclosed '}' in node 'map'" "the awaiting node"
+        // the parse appends the trailing newline, so EOF lands on Ln 4
+        Expect.stringContains e "(Ln 4, Col 1)" "the end position"
   ]
