@@ -134,5 +134,37 @@ let xmlTests =
     <| fun _ ->
       match Xml.parse "" with
       | Ok _ -> failtest "empty input must not parse"
-      | Error e -> Expect.stringContains e "Root" "no root element"
+      | Error e -> Expect.stringContains e "no root element" "a stable message"
+
+    testCase "a tag spelled inside a comment never captures a position"
+    <| fun _ ->
+      let src =
+        "<map>\n  <!-- <field x=\"1\" /> -->\n  <field x=\"2\" />\n</map>"
+
+      match Xml.parse src with
+      | Ok roots ->
+        let field = roots[0].Children[0]
+
+        Expect.equal
+          (Markup.where src field.Position)
+          "3:3"
+          "the real element's line"
+
+      | Error e -> failtest $"parse failed: {e}"
+
+    testCase "CDATA regions never capture positions either"
+    <| fun _ ->
+      let src =
+        "<map>\n  <![CDATA[ <set 1 2 /> ]]>\n  <set><a>1</a><a>2</a></set>\n</map>"
+
+      match Xml.parse src with
+      | Ok roots ->
+        let set = roots[0].Children[0]
+
+        Expect.equal
+          (Markup.where src set.Position)
+          "3:3"
+          "the real element's line"
+
+      | Error e -> failtest $"parse failed: {e}"
   ]

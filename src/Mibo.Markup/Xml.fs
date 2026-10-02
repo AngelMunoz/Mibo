@@ -34,17 +34,22 @@ module Xml =
        | _ -> Arg.Word t)
 
   // Positions: `Markup.where` wants character offsets. The parser hands
-  // elements back in document order, and a raw '<' cannot occur inside
-  // attribute values or text (XML requires escaping), so a monotonic
-  // cursor scanning for the next "<kind" token finds each node's offset.
+  // elements back in document order. A raw '<' cannot occur unescaped
+  // inside attribute values or text, but it CAN occur inside comments
+  // and CDATA — the cursor skips past those regions before it searches,
+  // so a tag spelled inside a comment never captures a position. A miss
+  // fails loudly instead of returning a wrong offset.
   let private findTag (src: string) (from: int) (kind: string) : int =
-    let probe = "<" + kind
     let mutable i = from
     let mutable found = -1
 
-    while found < 0 && i <= src.Length - probe.Length do
-      if String.CompareOrdinal(src, i, probe, 0, probe.Length) = 0 then
-        let after = i + probe.Length
+    while found < 0 && i <= src.Length - kind.Length - 1 do
+      // the cheap first-char check keeps the compare off most positions
+      if
+        src[i] = '<'
+        && String.CompareOrdinal(src, i + 1, kind, 0, kind.Length) = 0
+      then
+        let after = i + 1 + kind.Length
         let c = if after < src.Length then src[after] else ' '
 
         if
@@ -55,7 +60,22 @@ module Xml =
       if found < 0 then
         i <- i + 1
 
-    if found >= 0 then found else from
+    if found >= 0 then
+      found
+    else
+      failwith
+        $"could not locate the element '<{kind}>' in the source (namespace prefixes are not supported; write namespace-free documents)"
+
+  /// Advances the cursor past a region the position scan must not read:
+  /// a comment runs to `-->`, CDATA to `]]>`.
+  let private skipRegion
+    (src: string)
+    (cursor: int ref)
+    (closer: string)
+    : unit =
+    let stop = src.IndexOf(closer, cursor.Value, StringComparison.Ordinal)
+
+    cursor.Value <- (if stop < 0 then src.Length else stop + closer.Length)
 
   let rec private convert
     (src: string)
@@ -75,6 +95,12 @@ module Xml =
           args.Add(parseScalar ce.Value)
         else
           children.Add(convert src cursor ce)
+      | :? XComment ->
+        // a comment can spell a tag; the position scan must not read it
+        skipRegion src cursor "-->"
+      | :? XCData ->
+        // so can CDATA
+        skipRegion src cursor "]]>"
       | _ -> ()
 
     {
@@ -95,13 +121,16 @@ module Xml =
   /// Parses one XML markup document into its root nodes (one root
   /// element; `map` is the usual one).
   let parse(src: string) : Result<ImmutableArray<Node>, string> =
-    try
-      let root = XDocument.Parse(src, LoadOptions.None).Root
+    if String.IsNullOrWhiteSpace src then
+      Error "the document has no root element"
+    else
+      try
+        let root = XDocument.Parse(src, LoadOptions.None).Root
 
-      if obj.ReferenceEquals(root, null) then
-        Error "the document has no root element"
-      else
-        let cursor = ref 0
-        Ok(ImmutableArray.Create(convert src cursor root))
-    with e ->
-      Error e.Message
+        if obj.ReferenceEquals(root, null) then
+          Error "the document has no root element"
+        else
+          let cursor = ref 0
+          Ok(ImmutableArray.Create(convert src cursor root))
+      with e ->
+        Error e.Message
