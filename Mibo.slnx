@@ -2,6 +2,8 @@
   <Folder Name="/src/">
     <Project Path="src/Mibo.Core/Mibo.Core.fsproj" />
     <Project Path="src/Mibo.Core.Tests/Mibo.Core.Tests.fsproj" />
+    <Project Path="src/Mibo.Markup/Mibo.Markup.fsproj" />
+    <Project Path="src/Mibo.Markup.Tests/Mibo.Markup.Tests.fsproj" />
     <Project Path="src/Mibo.Mvu/Mibo.Mvu.fsproj" />
     <Project Path="src/Mibo.Mvu.Tests/Mibo.Mvu.Tests.fsproj" />
     <Project Path="src/Mibo.Adaptive/Mibo.Adaptive.fsproj" />
