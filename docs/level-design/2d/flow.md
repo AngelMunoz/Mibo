@@ -256,7 +256,15 @@ let rocks = Flow.group 5 5 [ Flow.scatter 13 [ boulder; boulder; boulder ] ]
 The footprint of a scatter is the largest child's, so mount it inside a
 sized context (`group`, a grid area, a docked stretch) to choose the
 region. Name or tag the children as usual — their scattered rectangles
-report through the landmarks.
+report through the landmarks, and a child that fits nowhere fails the
+build naming the child when it is named.
+
+One determinism note: `Flow.scatter` runs a fixed xorshift shuffle, so a
+seeded scatter builds the same level on every .NET version. The paint
+styles above (`noise`, `clumps`, `scatterBorder`, ...) ride the BCL
+random generator, whose sequence can change between runtimes — trust
+`Flow.scatter` when a level must reproduce byte for byte across .NET
+versions.
 
 ## Pattern: build your own vocabulary
 

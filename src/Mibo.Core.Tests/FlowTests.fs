@@ -802,6 +802,42 @@ let tests =
             Flow.scatter 1 [ tile 6 6 1; tile 6 6 2 ] |> runInto 5 5 |> ignore)
           "a 6x6 child never fits a 5x5 container"
 
+      testCase "the failure names a named child"
+      <| fun _ ->
+        let thrown =
+          try
+            Flow.scatter 1 [ Stamp.named "rock" (tile 6 6 1); tile 6 6 2 ]
+            |> runInto 5 5
+            |> ignore
+
+            None
+          with :? System.InvalidOperationException as e ->
+            Some e.Message
+
+        match thrown with
+        | Some msg ->
+          Expect.stringContains msg "'rock'" "the error names the child"
+        | None -> failtest "the scatter must fail"
+
+      testCase "a context-sized child places as a single cell"
+      <| fun _ ->
+        let stamp = Flow.scatter 7 [ fillTile 1; Flow.canvas [ Flow.fill 9 ] ]
+
+        let g, _ = runInto 6 6 stamp
+
+        let mutable painted = 0
+
+        CellGrid2D.iter
+          (fun _ _ v ->
+            if v = 9 then
+              painted <- painted + 1)
+          g
+
+        Expect.equal
+          painted
+          1
+          "the zero-footprint child paints exactly one cell"
+
       testCase "expand children throw"
       <| fun _ ->
         Expect.throwsT<System.ArgumentException>
