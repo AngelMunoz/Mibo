@@ -22,7 +22,7 @@ This is the key to rendering voxel worlds, forests, or any scene with high objec
 | < 50 identical objects | `.mesh(...)` per object (simpler) |
 | 50–1,000+ identical objects | `.instanced(...)` (one draw call) |
 | dozens of *animated* characters | `.animatedModelInstanced(...)`: see [Skinned + Instanced Draws](../animation3d.html#Skinned-Instanced-Draws) |
-| Cell grid (voxels, tiles) | `buffer.renderCellGridInstanced(...)` (automatic grouping) |
+| Footprint grid (2D map + column heights) | `buffer.renderFootprintInstanced(...)` (automatic grouping); voxel grids are retired |
 
 ## Instanced draws
 
@@ -116,7 +116,7 @@ for part in parts do
       .drop()
 ```
 
-For cell grids, `InstancedRenderContext` has a parts constructor that does the folding and the offsets for you: return `ModelPart[]` instead of `(mesh, material)` pairs, and pass the **raw** cell matrix as the transform (do not fold bones into `getTransform`; the context folds each part's own bone and passes the part's real offsets):
+For footprint grids, `InstancedRenderContext` has a parts constructor that does the folding and the offsets for you: return `ModelPart[]` instead of `(mesh, material)` pairs, and pass the **raw** column matrix as the transform (do not fold bones into `getTransform`; the context folds each part's own bone and passes the part's real offsets):
 
 ```fsharp
 let modelKey (cell: BlockType) = cell.ModelName
@@ -130,9 +130,11 @@ let instancedCtx =
         getTransform = translateCell)
 ```
 
-## InstancedRenderContext for cell grids
+## InstancedRenderContext for footprint grids
 
-For grid-based worlds (voxels, tile maps), `InstancedRenderContext<'T, 'K>` handles grouping and batching automatically. It groups cells by a key function, then emits one instanced draw per group per sub-mesh.
+For grid-based worlds, `InstancedRenderContext<'T, 'K>` handles grouping and batching automatically. It groups cells by a key function, then emits one instanced draw per group per sub-mesh. Grids are 2D footprints (`CellGrid2D`, square or hex) with the vertical extent carried in the tile — the heightmap model; the voxel grids are retired.
+
+The transform function receives each column's **base** world position (the footprint position lifted to `y = 0`); scale the unit block by the column's height there.
 
 ### Create the context
 
@@ -182,11 +184,11 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
       .setAmbientLight(AmbientLight3D.create (Color(40, 40, 40, 255)))
       // ... lights ...
 
-      // Render full grid
-      .renderCellGridInstanced(instancedCtx, model.World)
+      // Render the full footprint grid
+      .renderFootprintInstanced(instancedCtx, model.World)
 
-      // Or render only within a bounding volume
-      // .renderCellGridVolumeInstanced(instancedCtx, viewBounds, model.World)
+      // Or render only within a world-space window
+      // .renderFootprintWindowInstanced(instancedCtx, left, top, right, bottom, model.World)
 
       // ... other geometry ...
       .endCamera()
@@ -195,24 +197,23 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
 
 > _**IMPORTANT**_: Call `instancedCtx.ResetFrameBuffers()` once per frame **before** rendering. This returns pooled arrays to `ArrayPool` and prevents memory leaks.
 
-### Volume-culled rendering
+### Window-culled rendering
 
-`renderCellGridVolumeInstanced` only processes cells within a bounding box. Use it for chunk-based worlds where you only render nearby chunks:
+`renderFootprintWindowInstanced` only processes cells whose footprint
+intersects a world-space window. The bounds (`left`/`top`/`right`/
+`bottom`) are **`int` world coordinates**, so cast your float camera
+position. Hex grids cull with an orientation-aware window. Use it for
+large worlds where you only render nearby chunks:
 
 ```fsharp
-let bounds = {
-    Mibo.Layout3D.BoundingBox.Min = Vector3(cx - 50f, 0f, cz - 50f)
-    Max = Vector3(cx + 50f, 64f, cz + 50f)
-}
-
 buffer
-  .renderCellGridVolumeInstanced(instancedCtx, bounds, model.World)
+  .renderFootprintWindowInstanced(instancedCtx, int cx - 50, int cz - 50, int cx + 50, int cz + 50, model.World)
   .drop()
 ```
 
 ## How it works internally
 
-1. `renderCellGridInstanced` iterates all cells in the grid.
+1. `renderFootprintInstanced` iterates all populated cells of the footprint grid.
 2. Each cell's key is computed via `getKey`.
 3. Transforms are accumulated into per-key `ResizeArray<Matrix4x4>`.
 4. After iteration, each group emits one instanced draw command per sub-mesh.
@@ -277,7 +278,7 @@ let ctx =
         getMeshesMaterialAndShader = tileMeshes,
         getTransform = tileTransform)
 
-buffer.renderCellGridInstanced(ctx, grid).drop()
+buffer.renderFootprintInstanced(ctx, grid).drop()
 ```
 
 **Per cell type**: pass a resolver that returns an effect per grid key:
@@ -302,7 +303,7 @@ let ctx =
         getTransform = tileTransform)
 
 buffer
-    .renderCellGridInstanced(ctx, grid, effectFor)
+    .renderFootprintInstanced(ctx, grid, effectFor)
     .drop()
 ```
 
@@ -314,40 +315,50 @@ that always returns `ValueSome effect` to shade every cell with one effect.
 - **Key function**: Keep `getKey` cheap. It's called per cell per frame.
 - **Transform function**: Avoid allocations. `Raymath.MatrixTranslate` returns a struct.
 - **ResetFrameBuffers**: Always call it. Skipping it leaks pooled arrays.
-- **Volume culling**: Use `renderCellGridVolumeInstanced` for large worlds to skip distant cells.
+- **Window culling**: Use `renderFootprintWindowInstanced` for large worlds to skip distant cells.
 - **Material sharing**: Cells with the same key share materials. Don't create new materials per cell.
 
-## Example: voxel world
+## Example: footprint world
 
 ```fsharp
-type BlockType = Air | Stone | Dirt | Grass
+type BlockKind =
+    | Stone
+    | Dirt
+    | Grass
 
-let blockKey (block: BlockType) =
-    match block with
+type Column = { Kind: BlockKind; Height: int }
+
+let blockKey (col: Column) =
+    match col.Kind with
     | Stone -> "stone"
     | Dirt -> "dirt"
     | Grass -> "grass"
-    | Air -> "air"
 
-let blockMeshes (block: BlockType) =
-    match block with
+let blockMeshes (col: Column) =
+    match col.Kind with
     | Stone -> [| struct (cubeMesh, stoneMat) |]
     | Dirt -> [| struct (cubeMesh, dirtMat) |]
     | Grass -> [| struct (cubeMesh, grassMat) |]
-    | Air -> Array.empty
 
-let blockTransform (pos: Vector3) (_block: BlockType) =
-    Raymath.MatrixTranslate(pos.X, pos.Y, pos.Z)
+let blockTransform (basePos: Vector3) (col: Column) =
+    // scale the unit block by the column's height, then place it
+    Raymath.MatrixMultiply(
+        Raymath.MatrixScale(1f, float32 col.Height, 1f),
+        Raymath.MatrixTranslate(basePos.X, basePos.Y, basePos.Z)
+    )
 
 let instancedCtx =
-    InstancedRenderContext<BlockType, string>(
+    InstancedRenderContext<Column, string>(
         getKey = blockKey,
         getMeshesAndMaterial = blockMeshes,
         getTransform = blockTransform
     )
 ```
 
-Air cells produce no draw calls. Stone, dirt, and grass each batch into one instanced draw.
+Empty cells produce no draw calls. Each block kind batches into one
+instanced draw. Give the tile a `Height` and scale the unit block in
+`getTransform` — one grounded column per footprint cell, not one instance
+per voxel.
 
 ## See also
 

@@ -637,6 +637,25 @@ module Layout =
 
     section
 
+  /// Scatters `count` cells of generated content over the section (seeded);
+  /// the callback receives the cell coordinates (x across the section, y
+  /// down the section) and returns the content. The generated counterpart
+  /// of `scatter`.
+  let inline scatterBy
+    count
+    seed
+    ([<InlineIfLambda>] gen: int -> int -> 'T)
+    (section: GridSection2D<'T>)
+    : GridSection2D<'T> =
+    let rng = System.Random(seed)
+
+    for _ in 1..count do
+      let x = rng.Next(0, section.Width)
+      let y = rng.Next(0, section.Height)
+      setLocal x y (gen x y) section
+
+    section
+
   let clear x y width height (section: GridSection2D<'T>) : GridSection2D<'T> =
     let x1 = max 0 x
     let y1 = max 0 y

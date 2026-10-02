@@ -1,9 +1,11 @@
+#nowarn "44"
 namespace Mibo.Layout3D
 
 open System.Collections.Generic
 open System.Numerics
 open Mibo.Layout
 
+[<System.Obsolete("A layered grid is a dictionary of grids; own the dictionary in game code")>]
 type LayeredHexGrid3D<'T> = {
   Width: int
   Height: int
@@ -15,6 +17,7 @@ type LayeredHexGrid3D<'T> = {
   Layers: Dictionary<int, HexGrid3D<'T>>
 }
 
+[<System.Obsolete("A layered grid is a dictionary of grids; own the dictionary in game code")>]
 module LayeredHexGrid3D =
   let create
     width
@@ -58,6 +61,7 @@ module LayeredHexGrid3D =
       grid.Layers.Add(index, newGrid)
       struct (newGrid, grid)
 
+[<System.Obsolete("A layered grid is a dictionary of grids; own the dictionary in game code")>]
 module LayeredHexLayout3D =
   let inline layer
     index

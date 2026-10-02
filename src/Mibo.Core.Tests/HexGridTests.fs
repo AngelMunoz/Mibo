@@ -1,5 +1,7 @@
 module Mibo.Core.Tests.HexGrid
 
+#nowarn "44"
+
 open Expecto
 open System.Numerics
 open Mibo.Layout
@@ -14,8 +16,23 @@ let tests =
 
         Expect.equal grid.Width 10 "Width should be 10"
         Expect.equal grid.Height 5 "Height should be 5"
-        Expect.equal grid.Size 32f "Size should be 32"
-        Expect.equal grid.Orientation HexOrientation.PointyTop "Orientation"
+
+        Expect.equal
+          grid.CellSize
+          (Vector2(32f * sqrt 3f, 64f))
+          "hex bounding box"
+
+        Expect.equal
+          grid.Geometry
+          (CellGeometry.Hex HexOrientation.PointyTop)
+          "Geometry"
+
+        Expect.equal
+          (CellGrid2D.hexOrientation grid)
+          HexOrientation.PointyTop
+          "orientation"
+
+        Expect.equal (CellGrid2D.hexRadius grid) 32f "hex radius"
 
         for col in 0..9 do
           for row in 0..4 do

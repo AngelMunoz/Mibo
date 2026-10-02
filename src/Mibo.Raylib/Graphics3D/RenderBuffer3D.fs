@@ -193,6 +193,11 @@ type RenderBuffer3D with
     =
     b.Add(Command3D.DrawMesh(mesh, transform, material))
 
+  /// <summary>
+  /// Draws static instanced bulk (terrain/props). Historically used by the
+  /// now-obsolete <c>CellGridRenderer3D</c>/<c>HexGrid3DRenderer</c> after
+  /// camera culling; draw your own instance data with it.
+  /// </summary>
   member inline b.AddDrawInstanced
     (
       mesh: Mesh,

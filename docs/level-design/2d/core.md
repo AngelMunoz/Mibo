@@ -2,14 +2,16 @@
 title: 2D Layout Engine
 category: Level Design
 categoryindex: 8
-index: 2
+index: 3
 ---
 
 # 2D Layout Engine
 
 The Layout engine provides a tile-based level design system for 2D games. It lives in `Mibo.Layout`.
 
-> **`Vector2` namespace (MonoGame).** The Core layout APIs (`CellGrid2D`, `LayeredGrid2D`, and the 3D variants) always take `System.Numerics.Vector2`. MonoGame projects `open Microsoft.Xna.Framework`, so a bare `Vector2(...)` resolves to XNA's vector type and the Core layout calls fail to compile (`FS0193`). Qualify those calls explicitly:
+> **Author with [Flow](flow.html) first.** Flow wraps this engine with the CSS-style authoring DSL — grid template areas, flexbox rows and columns, docks, and landmark queries. The `Layout` pipelines documented here remain fully supported as the pixel-perfect escape hatch: every Flow style is a `Layout` pipeline underneath, and `Stamp.sized` wraps any of these pipelines as a Flow element. Reach for raw `Layout` when you want exact index math and manual section surgery. The `LayeredGrid2D` helper is obsolete — a layered grid is a dictionary of grids, and game code can own the dictionary.
+
+> **`Vector2` namespace (MonoGame).** The Core layout API (`CellGrid2D`, square or hex) always takes `System.Numerics.Vector2`. MonoGame projects `open Microsoft.Xna.Framework`, so a bare `Vector2(...)` resolves to XNA's vector type and the Core layout calls fail to compile (`FS0193`). Qualify those calls explicitly:
 > ```fsharp
 > let grid =
 >     CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
@@ -63,13 +65,16 @@ grid
 )
 
 // Iterate only visible cells (culled to viewport). Pass the viewport bounds as
-// left/top/right/bottom pixel coordinates. This is critical for performance in
+// left/top/right/bottom int pixel coordinates. This is critical for performance in
 // large levels, as it avoids processing tiles that aren't on screen.
 grid
-|> CellGrid2D.iterVisible cameraX cameraY (cameraX + viewportWidth) (cameraY + viewportHeight) (fun x y tile ->
-    // render tile at (x, y)
-    ()
-)
+|> CellGrid2D.iterVisible
+    (int cameraX) (int cameraY)
+    (int (cameraX + viewportWidth)) (int (cameraY + viewportHeight))
+    (fun x y tile ->
+        // render tile at (x, y)
+        ()
+    )
 ```
 
 ## GridSection2D - The Cursor
@@ -182,19 +187,36 @@ Layout.setIfEmpty x y content section  // Conditional set
 
 ## Layered Composition
 
-For multi-layer content (background, foreground, decorations), use `LayeredGrid2D`. This manages a collection of grids sharing the same dimensions, keyed by an integer index (usually representing depth).
+`LayeredGrid2D` is obsolete — a layered grid is a dictionary of grids, and
+game code can own the dictionary. For multi-layer content (background,
+foreground, decorations), keep a `Dictionary<int, CellGrid2D<'T>>` keyed by
+a layer index (usually representing depth):
 
 ```fsharp
-let level =
-    LayeredGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
-    |> LayeredLayout.layer 0 (fun section ->
-        // Layer 0: Ground/Collision
-        section |> Layout.fill 0 45 100 5 GroundTile
-    )
-    |> LayeredLayout.layer 1 (fun section ->
-        // Layer 1: Foliage
-        section |> Layout.scatter 50 42 GrassDecoration
-    )
+let layers = Dictionary<int, CellGrid2D<Tile>>()
+
+let layer index paint =
+    let grid =
+        match Dictionary.tryGetValue index layers with
+        | ValueSome grid -> grid
+        | ValueNone ->
+            let grid =
+                CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
+
+            layers.[index] <- grid
+            grid
+
+    Layout.run paint grid
+
+layer 0 (fun section ->
+    // Layer 0: Ground/Collision
+    section |> Layout.fill 0 45 100 5 GroundTile
+) |> ignore
+
+layer 1 (fun section ->
+    // Layer 1: Foliage
+    section |> Layout.scatter 50 42 GrassDecoration
+) |> ignore
 ```
 
 ### Rendering Layers
@@ -203,7 +225,7 @@ When rendering a layered grid, you don't need to manually sort the layers. Inste
 
 ```fsharp
 // Render each layer into the buffer
-for KeyValue(layerIndex, layerGrid) in level.Layers do
+for KeyValueV(layerIndex, layerGrid) in layers do
     let drawTile x y tile =
         let pos = CellGrid2D.getWorldPos x y layerGrid
         // submit the draw command for tile at pos, tagged with layerIndex
@@ -278,7 +300,7 @@ Use them:
 
 ```fsharp
 level
-|> LayeredLayout.layer 0 (fun section ->
+|> Layout.run (fun section ->
     section
     |> Layout.section 0 0 Dungeon.cell
     |> Layout.section 5 1 (Dungeon.corridor 10)
@@ -294,9 +316,12 @@ The key insight: **stamps are functions**. You can store them, pass them around,
 
 ## Domain Modules
 
+> **Obsolete in v6.** The pre-built stamp libraries are retired. Flow
+> styles replace their vocabulary (`Stamp.box` + `Flow.fill` /
+> `Flow.border` and friends). The linked pages remain as pattern
+> references. See [Migrating to Mibo v6](../../migration-to-v6.html).
+
 Mibo includes pre-built stamps for common game types:
 
 - **[Platformer](platformer.html)** - Boxes, platforms, ledges, walls, pillars, stairs, slopes, pits
 - **[TopDown](topdown.html)** - Rooms, corridors, wall segments, doorways
-
-These serve as examples and starting points. Copy and modify them for your game's needs.

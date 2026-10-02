@@ -24,7 +24,7 @@ Mibo is split into two independent runtime lanes (MVU and Adaptive) on top of a 
 ```text
 Mibo.Core              ← the shared kernel (GameContext, GameTime, IRenderer,
                          RenderBuffer, SubId, IInput/IInputMapper contracts,
-                         IAssetCache, Layout/Layout3D, Diagnostics)
+                         IAssetCache, Layout (unified grids + Flow), Diagnostics)
 Mibo.Mvu               ← the MVU runtime (Cmd/Sub, Program builders, System
                          pipeline, HeadlessProgram, MVU input subscriptions)
 Mibo.Adaptive          ← the incremental-computation library powering the adaptive

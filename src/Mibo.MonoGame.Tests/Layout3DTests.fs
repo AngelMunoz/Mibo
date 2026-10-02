@@ -1,5 +1,7 @@
 module Mibo.MonoGame.Tests.Layout3D
 
+#nowarn "44"
+
 open Expecto
 open System
 open Microsoft.Xna.Framework

@@ -1,9 +1,11 @@
+#nowarn "44"
 namespace Mibo.Layout3D
 
 open System.Numerics
 open Mibo.Layout
 
 [<Struct>]
+[<System.Obsolete("Author 3D as a 2D grid with per-column height")>]
 type HexGrid3D<'T> = {
   Origin: Vector3
   HexSize: float32
@@ -15,6 +17,7 @@ type HexGrid3D<'T> = {
   Cells: 'T voption[]
 }
 
+[<System.Obsolete("Author 3D as a 2D grid with per-column height")>]
 module HexGrid3D =
   let inline private toIndex col row layer width depth =
     col + row * width + layer * width * depth

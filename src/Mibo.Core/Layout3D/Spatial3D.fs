@@ -1,3 +1,4 @@
+#nowarn "44"
 namespace Mibo.Layout3D
 
 open System
@@ -7,6 +8,7 @@ open Mibo.Layout
 
 // ── Voxel grid spatial helpers ──────────────────────────────────────────
 
+[<System.Obsolete("Query the 2D footprint with Grid2DSpatial or Hex2DSpatial")>]
 module Grid3DSpatial =
 
   let inline internal toIndex x y z w h = x + y * w + z * w * h
@@ -767,6 +769,7 @@ module Grid3DSpatial =
 
 // ── Hex3D grid spatial helpers ──────────────────────────────────────────
 
+[<System.Obsolete("Query the 2D footprint with Grid2DSpatial or Hex2DSpatial")>]
 module Hex3DSpatial =
 
   let inline internal toIndex col row layer w d = col + row * w + layer * w * d

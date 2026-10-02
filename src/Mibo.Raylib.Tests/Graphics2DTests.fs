@@ -1,5 +1,7 @@
 module Mibo.Raylib.Tests.Graphics2D
 
+#nowarn "44"
+
 open System
 open System.Numerics
 open Expecto

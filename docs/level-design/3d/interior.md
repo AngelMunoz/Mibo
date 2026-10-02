@@ -2,12 +2,14 @@
 title: Building Interior Spaces
 category: Level Design
 categoryindex: 8
-index: 8
+index: 9
 ---
 
 # Building Interior Spaces
 
 Interior spaces (dungeons, buildings, FPS levels) are defined by enclosed areas connected by passages. The `Interior` module provides stamps for designing these efficiently.
+
+> **Obsolete module.** `Mibo.Layout3D.Interior` is obsolete. Author interiors as a [2D Flow document](../2d/flow.html) with per-column height — walls are height-2 columns, rooms are grid template areas. The page remains as a pattern reference.
 
 ## Importing
 

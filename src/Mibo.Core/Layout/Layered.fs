@@ -1,8 +1,10 @@
+#nowarn "44"
 namespace Mibo.Layout
 
 open System.Collections.Generic
 open System.Numerics
 
+[<System.Obsolete("A layered grid is a dictionary of grids; own the dictionary in game code")>]
 type LayeredGrid2D<'T> = {
   Width: int
   Height: int
@@ -11,6 +13,7 @@ type LayeredGrid2D<'T> = {
   Layers: Dictionary<int, CellGrid2D<'T>>
 }
 
+[<System.Obsolete("A layered grid is a dictionary of grids; own the dictionary in game code")>]
 module LayeredGrid2D =
   let create width height cellSize origin : LayeredGrid2D<'T> = {
     Width = width
@@ -35,6 +38,7 @@ module LayeredGrid2D =
       grid.Layers.Add(index, newGrid)
       struct (newGrid, grid)
 
+[<System.Obsolete("A layered grid is a dictionary of grids; own the dictionary in game code")>]
 module LayeredLayout =
   let inline layer
     index

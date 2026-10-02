@@ -1,8 +1,10 @@
+#nowarn "44"
 namespace Mibo.Layout3D
 
 open HexGrid3D
 
 [<Struct>]
+[<System.Obsolete("Author 3D as a 2D grid with per-column height")>]
 type HexGrid3DSection<'T> = {
   BackingGrid: HexGrid3D<'T>
   OffsetCol: int
@@ -66,6 +68,7 @@ module HexLayout3DHelpers =
     then
       clear gc gr gl section.BackingGrid
 
+[<System.Obsolete("Author 3D as a 2D grid with per-column height")>]
 module HexLayout3D =
   let inline run
     ([<InlineIfLambda>] f: HexGrid3DSection<'T> -> HexGrid3DSection<'T>)

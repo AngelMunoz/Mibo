@@ -1,0 +1,1394 @@
+module Mibo.Core.Tests.Flow
+
+open Expecto
+open System.Numerics
+open Mibo.Layout
+
+let private mkGrid w h : CellGrid2D<int> =
+  CellGrid2D.create w h (Vector2(1f, 1f)) Vector2.Zero
+
+let private tile w h content : Stamp<int> =
+  Stamp.sized w h (fun s -> s |> Layout.fill 0 0 w h content)
+
+let private fillTile content : Stamp<int> = Flow.canvas [ Flow.fill content ]
+
+let private expectCell
+  (g: CellGrid2D<int>)
+  x
+  y
+  (expected: int voption)
+  message
+  =
+  Expect.equal (CellGrid2D.get x y g) expected message
+
+let private runInto
+  (w: int)
+  (h: int)
+  (stamp: Stamp<int>)
+  : CellGrid2D<int> * Landmarks =
+  let g = mkGrid w h
+  let struct (g, placed) = g |> Flow.run stamp
+  g, placed
+
+/// Tile vocabulary for the harbour example map.
+type Tile =
+  | Grass
+  | Path
+  | Water
+  | Sand
+  | Wall
+  | Tree
+  | Rock
+  | Stump
+  | Crate
+  | Stall
+  | Lamp
+  | Torch
+  | Fish
+  | Fruit
+  | Chest
+  | Spawn
+
+[<Tests>]
+let tests =
+  testList "Flow" [
+    testList "Stamp" [
+      testCase "combinator sizes"
+      <| fun _ ->
+        let a = Stamp.create 3 1 ignore
+        let b = Stamp.create 2 2 ignore
+
+        let beside = Stamp.beside a b
+        Expect.equal beside.W 5 "beside width"
+        Expect.equal beside.H 2 "beside height"
+
+        let above = Stamp.above a b
+        Expect.equal above.W 3 "above width"
+        Expect.equal above.H 3 "above height"
+
+        let overlay = Stamp.overlay a b
+        Expect.equal overlay.W 3 "overlay width"
+        Expect.equal overlay.H 2 "overlay height"
+
+        let inset = Stamp.inset 1 (Stamp.create 3 2 ignore)
+        Expect.equal inset.W 5 "inset width"
+        Expect.equal inset.H 4 "inset height"
+
+        let offset = Stamp.offset -1 -1 (Stamp.create 2 1 ignore)
+        Expect.equal offset.W 2 "offset width"
+        Expect.equal offset.H 1 "offset height"
+
+        let repeated = Stamp.repeat 3 (Stamp.create 2 1 ignore)
+        Expect.equal repeated.W 6 "repeat width"
+        Expect.equal repeated.H 1 "repeat height"
+
+        let none = Stamp.repeat 0 a
+        Expect.equal none.W 0 "repeat 0 width"
+        Expect.equal none.H 0 "repeat 0 height"
+
+      testCase "sized wraps a section pipeline"
+      <| fun _ ->
+        let stamp = Stamp.sized 4 3 (fun s -> s |> Layout.border 0 0 4 3 7)
+        let g, _ = runInto 6 5 stamp
+
+        expectCell g 0 0 (ValueSome 7) "border corner"
+        expectCell g 3 2 (ValueSome 7) "border corner"
+        expectCell g 1 1 ValueNone "interior stays empty"
+        expectCell g 4 2 ValueNone "outside the stamp footprint"
+
+      testCase "expand marks the element and keeps its footprint"
+      <| fun _ ->
+        let s = Stamp.expand(Stamp.create 2 2 ignore)
+        Expect.equal s.Expand 1 "expand weight"
+
+        let s = Stamp.expandWeight 3 (Stamp.create 2 2 ignore)
+        Expect.equal s.Expand 3 "explicit weight"
+    ]
+
+    testList "row" [
+      testCase "places children with gap"
+      <| fun _ ->
+        let stamp =
+          Flow.row { FlowOpts.Default with Gap = 2 } [ tile 3 1 1; tile 3 1 2 ]
+
+        let g, _ = runInto 20 1 stamp
+
+        expectCell g 0 0 (ValueSome 1) "first child start"
+        expectCell g 2 0 (ValueSome 1) "first child end"
+        expectCell g 3 0 ValueNone "gap"
+        expectCell g 5 0 (ValueSome 2) "second child start"
+        expectCell g 7 0 (ValueSome 2) "second child end"
+        expectCell g 8 0 ValueNone "after children"
+
+      testCase "expand children share the leftover width"
+      <| fun _ ->
+        let stamp =
+          Flow.row FlowOpts.Default [ tile 1 1 1; Stamp.expand(fillTile 2) ]
+
+        let g, _ = runInto 10 1 stamp
+
+        expectCell g 0 0 (ValueSome 1) "fixed child"
+        expectCell g 1 0 (ValueSome 2) "expanded child start"
+        expectCell g 9 0 (ValueSome 2) "expanded child end"
+
+      testCase "expand weights split the leftover space"
+      <| fun _ ->
+        let stamp =
+          Flow.row FlowOpts.Default [
+            Stamp.expandWeight 1 (fillTile 1)
+            Stamp.expandWeight 3 (fillTile 2)
+          ]
+
+        let g, _ = runInto 8 1 stamp
+
+        expectCell g 1 0 (ValueSome 1) "weight 1 ends at 1/4"
+        expectCell g 2 0 (ValueSome 2) "weight 3 starts at 1/4"
+        expectCell g 7 0 (ValueSome 2) "weight 3 fills the rest"
+
+      testCase "align centers children on the cross axis"
+      <| fun _ ->
+        let stamp =
+          Flow.column
+            {
+              FlowOpts.Default with
+                  Gap = 1
+                  Align = Center
+            }
+            [ tile 2 1 1; tile 2 2 2 ]
+
+        let g, _ = runInto 10 5 stamp
+
+        expectCell g 4 0 (ValueSome 1) "centered tile start"
+        expectCell g 5 0 (ValueSome 1) "centered tile end"
+        expectCell g 4 1 ValueNone "gap row"
+        expectCell g 4 2 (ValueSome 2) "second tile start"
+        expectCell g 4 3 (ValueSome 2) "second tile end"
+        expectCell g 4 4 ValueNone "after children"
+
+      testCase "wrap moves children to a new line"
+      <| fun _ ->
+        let stamp =
+          Flow.row { FlowOpts.Default with Wrap = true } [
+            tile 2 1 1
+            tile 2 1 2
+            tile 2 1 3
+          ]
+
+        let g, _ = runInto 5 3 stamp
+
+        expectCell g 0 0 (ValueSome 1) "line 1 child 1"
+        expectCell g 2 0 (ValueSome 2) "line 1 child 2"
+        expectCell g 4 0 ValueNone "no room on line 1"
+        expectCell g 0 1 (ValueSome 3) "wrapped child on line 2"
+
+      testCase "a wrapped line of zero-cross children stretches"
+      <| fun _ ->
+        let stamp =
+          Flow.row
+            {
+              FlowOpts.Default with
+                  Wrap = true
+                  Gap = 1
+            }
+            [ Stamp.box 2 0 [ Flow.fill 1 ]; Stamp.box 2 0 [ Flow.fill 2 ] ]
+
+        let g, _ = runInto 5 3 stamp
+
+        expectCell g 0 0 (ValueSome 1) "first child start"
+        expectCell g 1 2 (ValueSome 1) "first child spans the height"
+        expectCell g 3 0 (ValueSome 2) "second child start"
+        expectCell g 4 2 (ValueSome 2) "second child spans the height"
+
+      testCase "justify pushes children to the end"
+      <| fun _ ->
+        let stamp =
+          Flow.row { FlowOpts.Default with Justify = End } [ tile 3 1 1 ]
+
+        let g, _ = runInto 10 1 stamp
+
+        expectCell g 6 0 ValueNone "before children"
+        expectCell g 7 0 (ValueSome 1) "justified start"
+        expectCell g 9 0 (ValueSome 1) "justified end"
+
+      testCase "children clamp to the assigned container"
+      <| fun _ ->
+        let g = mkGrid 10 1
+
+        let section: GridSection2D<int> = {
+          BackingGrid = g
+          OffsetX = 0
+          OffsetY = 0
+          Width = 6
+          Height = 1
+        }
+
+        let stamp =
+          Flow.row FlowOpts.Default [ tile 3 1 1; Stamp.expand(fillTile 2) ]
+
+        let _ = Flow.paint stamp section
+
+        expectCell g 5 0 (ValueSome 2) "clamped at container edge"
+        expectCell g 6 0 ValueNone "beyond the container"
+    ]
+
+    testList "expand containers" [
+      testCase "overlay rejects expand children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Flow.overlay [ Stamp.expand(fillTile 1) ] |> ignore)
+          "overlay ignores Expand"
+
+      testCase "group rejects expand children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Flow.group 4 4 [ Stamp.expand(fillTile 1) ] |> ignore)
+          "group ignores Expand"
+
+      testCase "grid rejects expand places"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [| Fixed 4 |]
+              Rows = [| Fixed 4 |]
+              Gap = 0
+              Areas = [| "a" |]
+              Places = [| struct ("a", Stamp.expand(tile 1 1 1)) |]
+            }
+            |> ignore)
+          "grid ignores Expand"
+
+      testCase "docked rejects an expand stamp"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.docked {
+              Anchor = Dock.CenterX ||| Dock.CenterY
+              Inset = 0
+              Stamp = Stamp.expand(fillTile 1)
+            }
+            |> ignore)
+          "docked ignores Expand"
+
+      testCase "run rejects an expand root"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> runInto 5 5 (Stamp.expand(Stamp.empty())) |> ignore)
+          "run ignores Expand"
+    ]
+
+    testList "expand combinators" [
+      testCase "beside rejects expand children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Stamp.beside (Stamp.expand(fillTile 1)) (fillTile 2) |> ignore)
+          "beside ignores Expand"
+
+      testCase "beside rejects an expanded second child"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Stamp.beside (fillTile 2) (Stamp.expand(fillTile 1)) |> ignore)
+          "beside ignores Expand on the second child"
+
+      testCase "above rejects expand children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Stamp.above (Stamp.expand(fillTile 1)) (fillTile 2) |> ignore)
+          "above ignores Expand"
+
+      testCase "overlay rejects expand children"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Stamp.overlay (Stamp.expand(fillTile 1)) (fillTile 2) |> ignore)
+          "overlay ignores Expand"
+
+      testCase "inset rejects an expand stamp"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Stamp.inset 1 (Stamp.expand(fillTile 1)) |> ignore)
+          "inset ignores Expand"
+
+      testCase "offset rejects an expand stamp"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Stamp.offset 1 0 (Stamp.expand(fillTile 1)) |> ignore)
+          "offset ignores Expand"
+
+      testCase "repeat rejects an expand stamp"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () -> Stamp.repeat 2 (Stamp.expand(fillTile 1)) |> ignore)
+          "repeat ignores Expand"
+    ]
+
+    testList "grid" [
+      testCase "fixed tracks and template areas"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Fixed 4; Fixed 6 |]
+            Rows = [| Fixed 2; Fixed 3 |]
+            Gap = 1
+            Areas = [| "a a"; "b ." |]
+            Places = [| struct ("a", fillTile 1); struct ("b", fillTile 2) |]
+          }
+
+        let g, _ = runInto 12 7 stamp
+
+        expectCell g 0 0 (ValueSome 1) "area a start"
+        expectCell g 10 0 (ValueSome 1) "area a spans both columns"
+        expectCell g 0 1 (ValueSome 1) "area a bottom row"
+        expectCell g 0 2 ValueNone "row gap"
+        expectCell g 0 3 (ValueSome 2) "area b start"
+        expectCell g 3 5 (ValueSome 2) "area b end"
+        expectCell g 4 4 ValueNone "right of area b"
+        expectCell g 0 6 ValueNone "below area b"
+
+      testCase "weight tracks share the leftover width"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Fixed 2; Weight 1f; Weight 3f |]
+            Rows = [| Fixed 4 |]
+            Gap = 0
+            Areas = [| "s m b" |]
+            Places = [|
+              struct ("s", fillTile 1)
+              struct ("m", fillTile 2)
+              struct ("b", fillTile 3)
+            |]
+          }
+
+        let g, _ = runInto 10 4 stamp
+
+        expectCell g 1 0 (ValueSome 1) "fixed column"
+        expectCell g 2 0 (ValueSome 2) "weight 1 column"
+        expectCell g 3 0 (ValueSome 2) "weight 1 end"
+        expectCell g 4 0 (ValueSome 3) "weight 3 start"
+        expectCell g 9 0 (ValueSome 3) "weight 3 end"
+
+      testCase "percent tracks take a fraction of the container"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Percent 0.5f; Fixed 2 |]
+            Rows = [| Fixed 1 |]
+            Gap = 0
+            Areas = [| "a b" |]
+            Places = [| struct ("a", fillTile 1); struct ("b", fillTile 2) |]
+          }
+
+        let g, _ = runInto 10 1 stamp
+
+        expectCell g 4 0 (ValueSome 1) "percent column end"
+        expectCell g 5 0 (ValueSome 2) "fixed column start"
+        expectCell g 6 0 (ValueSome 2) "fixed column end"
+
+      testCase "percent tracks clamp at the container length"
+      <| fun _ ->
+        let stamp =
+          Flow.grid {
+            Cols = [| Percent 2f |]
+            Rows = [| Fixed 1 |]
+            Gap = 0
+            Areas = [| "a" |]
+            Places = [|
+              struct ("a", Stamp.named "a" (Flow.canvas [ Flow.fill 7 ]))
+            |]
+          }
+
+        let g, placed = runInto 6 1 stamp
+
+        expectCell g 0 0 (ValueSome 7) "clamp start"
+        expectCell g 5 0 (ValueSome 7) "clamp end"
+
+        Expect.equal
+          (Flow.tryPosition "a" placed)
+          (ValueSome { X = 0; Y = 0; W = 6; H = 1 })
+          "the reported rect stays inside the container"
+
+      testCase "unknown area name throws"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [| Fixed 1 |]
+              Rows = [| Fixed 1 |]
+              Gap = 0
+              Areas = [| "a" |]
+              Places = [| struct ("z", tile 1 1 1) |]
+            }
+            |> ignore)
+          "unknown area"
+
+      testCase "empty tracks throw"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [||]
+              Rows = [| Fixed 1 |]
+              Gap = 0
+              Areas = [| "a" |]
+              Places = [||]
+            }
+            |> ignore)
+          "no column tracks"
+
+      testCase "template wider than the tracks throws"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [| Fixed 1 |]
+              Rows = [| Fixed 1 |]
+              Gap = 0
+              Areas = [| "a b" |]
+              Places = [||]
+            }
+            |> ignore)
+          "template column overflow"
+    ]
+
+    testList "layers" [
+      testCase "overlay stacks full-bleed children, later on top"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            fillTile 1
+            Stamp.sized 1 1 (fun s -> s |> Layout.set 0 0 2)
+          ]
+
+        let g, _ = runInto 3 1 stamp
+
+        expectCell g 0 0 (ValueSome 2) "later child paints on top"
+        expectCell g 1 0 (ValueSome 1) "earlier child shows elsewhere"
+        expectCell g 2 0 (ValueSome 1) "base fills the whole area"
+
+      testCase
+        "docked elements anchor inside the container and report positions"
+      <| fun _ ->
+        let gate =
+          Flow.docked {
+            Anchor = Dock.StretchX ||| Dock.Bottom
+            Inset = 0
+            Stamp =
+              Stamp.named
+                "gate"
+                (Stamp.sized 4 1 (fun s ->
+                  s |> Layout.fill 0 0 s.Width s.Height 7))
+          }
+
+        let stamp = Flow.overlay [ gate ]
+
+        let g, placed = runInto 10 6 stamp
+
+        expectCell g 0 5 (ValueSome 7) "stretched across the bottom row"
+        expectCell g 9 5 (ValueSome 7) "stretched across the bottom row"
+
+        Expect.equal
+          (Flow.tryPosition "gate" placed)
+          (ValueSome { X = 0; Y = 5; W = 10; H = 1 })
+          "gate reports the docked rectangle"
+    ]
+
+    testList "dock" [
+      testCase "top right corner with inset"
+      <| fun _ ->
+        let g, _ = runInto 10 6 (Stamp.empty())
+
+        let _ =
+          g
+          |> Layout.run(
+            Flow.dock {
+              Anchor = Dock.Top ||| Dock.Right
+              Inset = 1
+              Stamp = tile 2 1 9
+            }
+          )
+
+        expectCell g 7 1 (ValueSome 9) "docked start"
+        expectCell g 8 1 (ValueSome 9) "docked end"
+        expectCell g 6 1 ValueNone "left of docked"
+
+      testCase "center of the section"
+      <| fun _ ->
+        let g, _ = runInto 10 6 (Stamp.empty())
+
+        let _ =
+          g
+          |> Layout.run(
+            Flow.dock {
+              Anchor = Dock.CenterX ||| Dock.CenterY
+              Inset = 0
+              Stamp = tile 2 1 9
+            }
+          )
+
+        expectCell g 4 2 (ValueSome 9) "centered"
+        expectCell g 5 2 (ValueSome 9) "centered"
+
+      testCase "stretch spans the section minus insets"
+      <| fun _ ->
+        let g, _ = runInto 10 6 (Stamp.empty())
+
+        let _ =
+          g
+          |> Layout.run(
+            Flow.dock {
+              Anchor = Dock.StretchX ||| Dock.Bottom
+              Inset = 1
+              Stamp =
+                Stamp.sized 1 1 (fun s ->
+                  s |> Layout.fill 0 0 s.Width s.Height 5)
+            }
+          )
+
+        expectCell g 0 4 ValueNone "left inset"
+        expectCell g 1 4 (ValueSome 5) "stretch start"
+        expectCell g 8 4 (ValueSome 5) "stretch end"
+        expectCell g 9 4 ValueNone "right inset"
+
+      testCase "zero footprint stretches without the stretch flags"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.Bottom
+              Inset = 0
+              Stamp = Stamp.box 0 1 [ Flow.fill 7 ]
+            }
+          ]
+
+        let g, _ = runInto 6 4 stamp
+
+        expectCell g 0 3 (ValueSome 7) "stretched across the bottom row"
+        expectCell g 5 3 (ValueSome 7) "stretched across the bottom row"
+        expectCell g 0 2 ValueNone "above the docked row"
+
+      testCase "a docked canvas fills the container"
+      <| fun _ ->
+        let stamp =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.CenterX ||| Dock.CenterY
+              Inset = 0
+              Stamp = Flow.canvas [ Flow.fill 7 ]
+            }
+          ]
+
+        let g, _ = runInto 4 3 stamp
+
+        expectCell g 0 0 (ValueSome 7) "full bleed start"
+        expectCell g 3 2 (ValueSome 7) "full bleed end"
+    ]
+
+    testList "mount" [
+      testCase "reports named element positions"
+      <| fun _ ->
+        let stamp =
+          Flow.row { FlowOpts.Default with Gap = 2 } [
+            Stamp.named "left" (tile 3 1 1)
+            Stamp.named "right" (tile 3 1 2)
+          ]
+
+        let _, result = runInto 20 1 stamp
+
+        Expect.equal
+          (Flow.tryPosition "left" result)
+          (ValueSome { X = 0; Y = 0; W = 3; H = 1 })
+          "left position"
+
+        Expect.equal
+          (Flow.tryPosition "right" result)
+          (ValueSome { X = 5; Y = 0; W = 3; H = 1 })
+          "right position"
+
+        Expect.equal
+          (Flow.tryPosition "missing" result)
+          ValueNone
+          "unknown name"
+
+      testCase "reports nested and grid-placed names"
+      <| fun _ ->
+        let inner =
+          Flow.column FlowOpts.Default [ Stamp.named "dot" (tile 1 1 1) ]
+
+        let stamp =
+          Flow.grid {
+            Cols = [| Fixed 4 |]
+            Rows = [| Fixed 4 |]
+            Gap = 0
+            Areas = [| "a" |]
+            Places = [|
+              struct ("a", inner)
+              struct ("a", Stamp.named "area" (Stamp.empty()))
+            |]
+          }
+
+        let g, result = runInto 4 4 stamp
+
+        Expect.equal
+          (Flow.tryPosition "dot" result)
+          (ValueSome { X = 0; Y = 0; W = 1; H = 1 })
+          "nested name inside area"
+
+        Expect.equal
+          (Flow.tryPosition "area" result)
+          (ValueSome { X = 0; Y = 0; W = 4; H = 4 })
+          "grid area position"
+
+        expectCell g 0 0 (ValueSome 1) "content painted"
+
+      testCase "paint records no positions"
+      <| fun _ ->
+        let g = mkGrid 4 4
+
+        let _ = g |> Layout.run(Flow.paint(Stamp.named "x" (tile 1 1 1)))
+
+        expectCell g 0 0 (ValueSome 1) "painted"
+    ]
+  ]
+
+[<Tests>]
+let harbourTests =
+  testList "creative map: old harbour" [
+    testCase "a noisy harbour built from stamps, grid areas, and docks"
+    <| fun _ ->
+      // A fountain: pool with lantern posts at the corners.
+      let fountain = Stamp.box 5 5 [ Flow.fill Water; Flow.corners Torch ]
+
+      // A cobble plaza with weathered stones and the fountain at its heart.
+      // The group states the size once; the fountain just gets centered.
+      let plaza =
+        Flow.group 30 20 [
+          Flow.canvas [
+            Flow.fill Path
+            Flow.border Grass
+            Flow.noise { Count = 24; Seed = 7 } Rock
+          ]
+          Flow.docked {
+            Anchor = Dock.CenterX ||| Dock.CenterY
+            Inset = 0
+            Stamp = Stamp.named "fountain" fountain
+          }
+        ]
+
+      // A market stall: awning over crates of goods, signed center-front.
+      let stall goods =
+        Stamp.above
+          (Stamp.box 4 1 [ Flow.fill Stall ])
+          (Flow.group 4 2 [
+            Flow.canvas [ Flow.fill Crate ]
+            Flow.docked {
+              Anchor = Dock.CenterX ||| Dock.Top
+              Inset = 0
+              Stamp = Stamp.box 1 1 [ Flow.fill goods ]
+            }
+          ])
+
+      // The market: stalls wrap onto new rows when the area runs out.
+      let market =
+        Flow.row
+          {
+            FlowOpts.Default with
+                Gap = 1
+                Wrap = true
+          }
+          [ stall Fish; stall Fruit; stall Fish; stall Fruit ]
+
+      // Woods: seeded tree noise, weathered into clearings, rock clusters,
+      // fallen stumps, and one chest somewhere in the undergrowth.
+      let woods =
+        Stamp.box 18 30 [
+          Flow.texture(fun x y ->
+            if (x * 7 + y * 13) % 4 = 0 then Tree else Grass)
+          Flow.weather { Probability = 0.3f; Seed = 11 } Tree Grass
+          Flow.clumps { Count = 4; Seed = 5 } (fun c ->
+            c |> Layout.circle 1 1 1 true Rock)
+          Flow.noise { Count = 6; Seed = 9 } Stump
+          Flow.noise { Count = 1; Seed = 15 } Chest
+        ]
+
+      // Docks: water with piers reaching in, lanterns at the pier heads.
+      let pier planks =
+        Stamp.above
+          (Stamp.box 1 1 [ Flow.fill Lamp ])
+          (Stamp.box 1 planks [ Flow.fill Path ])
+
+      let docks =
+        Flow.group 34 10 [
+          Flow.canvas [ Flow.fill Water ]
+          Flow.row { FlowOpts.Default with Gap = 9 } [ pier 5; pier 7; pier 5 ]
+        ]
+
+      // The map: structure by layout, noise by stamps.
+      let harbour =
+        Flow.grid {
+          Cols = [| Weight 2f; Weight 1f |]
+          Rows = [| Fixed 10; Weight 1f; Weight 1f |]
+          Gap = 1
+          Areas = [| "plaza market"; "plaza woods"; "docks woods" |]
+          Places = [|
+            struct ("plaza", Stamp.tagged [ "safe-zone" ] plaza)
+            struct ("market", market)
+            struct ("woods", woods)
+            struct ("docks", docks)
+          |]
+        }
+
+      let g: CellGrid2D<Tile> =
+        CellGrid2D.create 60 44 (Vector2(1f, 1f)) Vector2.Zero
+
+      let expect x y (expected: Tile voption) message =
+        Expect.equal (CellGrid2D.get x y g) expected message
+
+      // The banner floats over the map, the gate strip closes the bottom
+      // edge, and the harbour fills what is left. One expression, one pipe.
+      let struct (_, placed) =
+        g
+        |> Flow.run(
+          Flow.overlay [
+            harbour
+
+            Flow.docked {
+              Anchor = Dock.Top ||| Dock.CenterX
+              Inset = 0
+              Stamp = Stamp.box 12 3 [ Flow.fill Wall ]
+            }
+
+            // zero footprint width = stretch over the container
+            Flow.docked {
+              Anchor = Dock.Bottom
+              Inset = 0
+              Stamp = Stamp.named "gate" (Stamp.box 0 1 [ Flow.fill Sand ])
+            }
+          ]
+        )
+
+      // The layout decided where things are; read the answer back.
+      Expect.equal
+        (Flow.tryPosition "gate" placed)
+        (ValueSome { X = 0; Y = 43; W = 60; H = 1 })
+        "gate strip at the bottom edge"
+
+      // Spawn the player at the middle of the gate strip.
+      match Flow.tryPosition "gate" placed with
+      | ValueSome gate -> CellGrid2D.set (gate.X + gate.W / 2) gate.Y Spawn g
+      | ValueNone -> ()
+
+      Expect.equal
+        (Flow.tryPosition "fountain" placed)
+        (ValueSome { X = 12; Y = 7; W = 5; H = 5 })
+        "fountain centered in the plaza"
+
+      expect 30 43 (ValueSome Spawn) "spawn read back from the gate"
+
+      expect 12 7 (ValueSome Torch) "fountain lantern post"
+      expect 14 9 (ValueSome Water) "fountain pool"
+
+      expect 2 2 (ValueSome Path) "plaza cobble inside the fringe"
+
+      expect 41 0 (ValueSome Stall) "market awning"
+
+      expect 0 28 (ValueSome Lamp) "pier head lantern"
+      expect 0 30 (ValueSome Path) "pier planks"
+      expect 4 37 (ValueSome Water) "docks water past the piers"
+  ]
+
+[<Tests>]
+let styleTests =
+  testList "styles" [
+    testCase "box paints its style list over its own area"
+    <| fun _ ->
+      let stamp = Stamp.box 3 3 [ Flow.fill 1; Flow.border 2 ]
+      let g, _ = runInto 3 3 stamp
+
+      expectCell g 0 0 (ValueSome 2) "border corner"
+      expectCell g 1 1 (ValueSome 1) "fill interior"
+
+    testCase "canvas stretches in rows by default"
+    <| fun _ ->
+      let stamp =
+        Flow.row FlowOpts.Default [
+          tile 2 1 1
+          Stamp.expand(Flow.canvas [ Flow.fill 2 ])
+        ]
+
+      let g, _ = runInto 6 3 stamp
+
+      expectCell g 0 0 (ValueSome 1) "fixed child"
+      expectCell g 2 0 (ValueSome 2) "canvas fills the rest of the row"
+      expectCell g 5 2 (ValueSome 2) "canvas stretches across, too"
+
+    testCase "canvas stretches over a grid area"
+    <| fun _ ->
+      let stamp =
+        Flow.grid {
+          Cols = [| Fixed 4 |]
+          Rows = [| Fixed 2 |]
+          Gap = 0
+          Areas = [| "a" |]
+          Places = [| struct ("a", Flow.canvas [ Flow.fill 7 ]) |]
+        }
+
+      let g, _ = runInto 4 2 stamp
+
+      expectCell g 0 0 (ValueSome 7) "canvas fills the area"
+      expectCell g 3 1 (ValueSome 7) "canvas fills the area"
+
+    testCase "fixed boxes keep their size in a grid area"
+    <| fun _ ->
+      let stamp =
+        Flow.grid {
+          Cols = [| Fixed 4 |]
+          Rows = [| Fixed 4 |]
+          Gap = 0
+          Areas = [| "a" |]
+          Places = [| struct ("a", Stamp.box 2 1 [ Flow.fill 5 ]) |]
+        }
+
+      let g, _ = runInto 4 4 stamp
+
+      expectCell g 1 0 (ValueSome 5) "box keeps its width"
+      expectCell g 2 0 ValueNone "no stretch past the box"
+
+    testCase "strip docks a full-length bar"
+    <| fun _ ->
+      let stamp = Flow.overlay [ Flow.strip Dock.Bottom 1 [ Flow.fill 9 ] ]
+      let g, _ = runInto 5 4 stamp
+
+      expectCell g 0 3 (ValueSome 9) "strip start"
+      expectCell g 4 3 (ValueSome 9) "strip end"
+      expectCell g 2 2 ValueNone "above the strip"
+
+    testCase "group sizes the canvas and anchors children"
+    <| fun _ ->
+      let stamp =
+        Flow.group 4 2 [
+          Flow.canvas [ Flow.fill 1 ]
+          Flow.docked {
+            Anchor = Dock.CenterX ||| Dock.CenterY
+            Inset = 0
+            Stamp = Stamp.box 2 2 [ Flow.fill 2 ]
+          }
+        ]
+
+      let g, _ = runInto 10 10 stamp
+
+      expectCell g 0 0 (ValueSome 1) "canvas fills the group"
+      expectCell g 3 1 (ValueSome 1) "canvas fills the group"
+      expectCell g 1 0 (ValueSome 2) "centered child start"
+      expectCell g 2 1 (ValueSome 2) "centered child end"
+      expectCell g 4 0 ValueNone "group does not stretch"
+
+    testCase "weather replaces box-wide with a probability"
+    <| fun _ ->
+      let stamp =
+        Stamp.box 2 1 [
+          Flow.fill 1
+          Flow.weather { Probability = 1.0f; Seed = 3 } 1 2
+        ]
+
+      let g, _ = runInto 4 1 stamp
+
+      expectCell g 0 0 (ValueSome 2) "weathered"
+      expectCell g 1 0 (ValueSome 2) "weathered"
+
+    testCase "noiseBy generates the scattered cells"
+    <| fun _ ->
+      let stamp =
+        Stamp.box 4 1 [
+          Flow.noiseBy { Count = 2; Seed = 1 } (fun x _ -> x * 10 + 1)
+        ]
+
+      let g, _ = runInto 4 1 stamp
+
+      expectCell g 0 0 (ValueSome 1) "generated at x 0"
+      expectCell g 1 0 (ValueSome 11) "generated at x 1"
+      expectCell g 2 0 ValueNone "not scattered"
+      expectCell g 3 0 ValueNone "not scattered"
+  ]
+
+[<Tests>]
+let landmarkTests =
+  testList "landmarks" [
+    testCase "tagged elements group their rectangles"
+    <| fun _ ->
+      let stamp =
+        Flow.row { FlowOpts.Default with Gap = 2 } [
+          Stamp.tagged [ "spawn" ] (tile 2 1 1)
+          Stamp.tagged [ "spawn"; "danger" ] (tile 2 1 2)
+        ]
+
+      let _, placed = runInto 10 1 stamp
+
+      let spawns = Flow.taggedRects "spawn" placed
+      Expect.hasLength spawns 2 "two spawn rects"
+
+      Expect.equal
+        (Flow.taggedRects "danger" placed)
+        [ { X = 4; Y = 0; W = 2; H = 1 } ]
+        "danger rect, most recent first"
+
+      Expect.equal (Flow.taggedRects "nothing" placed) [] "unknown tag"
+
+    testCase "tagged cells answer walking queries"
+    <| fun _ ->
+      let stamp =
+        Flow.grid {
+          Cols = [| Fixed 3; Fixed 3 |]
+          Rows = [| Fixed 4 |]
+          Gap = 0
+          Areas = [| "zone rest" |]
+          Places = [|
+            struct ("zone", Flow.region [ "no-build" ] 0 0)
+            struct ("rest", Flow.canvas [ Flow.fill 9 ])
+          |]
+        }
+
+      let g, placed = runInto 6 4 stamp
+
+      Expect.isTrue
+        (Flow.isTag "no-build" { X = 0; Y = 0 } placed)
+        "inside the region"
+
+      Expect.isTrue
+        (Flow.isTag "no-build" { X = 2; Y = 1 } placed)
+        "region corner"
+
+      Expect.isFalse
+        (Flow.isTag "no-build" { X = 3; Y = 1 } placed)
+        "outside the region"
+
+      Expect.isFalse
+        (Flow.isTag "no-build" { X = 5; Y = 3 } placed)
+        "far outside"
+
+      Expect.isFalse
+        (Flow.isTag "no-build" { X = -1; Y = 0 } placed)
+        "out of range is never tagged"
+
+      Expect.isFalse
+        (Flow.isTag "unknown" { X = 0; Y = 0 } placed)
+        "unknown tag"
+
+      expectCell g 3 1 (ValueSome 9) "the neighbor area paints normally"
+
+    testCase "region stretches like any zero-footprint child"
+    <| fun _ ->
+      let stamp =
+        Flow.grid {
+          Cols = [| Fixed 4 |]
+          Rows = [| Fixed 4 |]
+          Gap = 0
+          Areas = [| "a" |]
+          Places = [| struct ("a", Flow.region [ "arena" ] 0 0) |]
+        }
+
+      let _, placed = runInto 4 4 stamp
+
+      Expect.isTrue
+        (Flow.isTag "arena" { X = 3; Y = 3 } placed)
+        "stretched over the area"
+
+      Expect.equal
+        (Flow.taggedRects "arena" placed)
+        [ { X = 0; Y = 0; W = 4; H = 4 } ]
+        "region rect covers the area"
+
+    testCase "scanTiles derives cell tags from the painted tiles"
+    <| fun _ ->
+      let stamp = Flow.row FlowOpts.Default [ tile 2 1 1; tile 2 1 2 ]
+
+      let g, placed = runInto 5 1 stamp
+
+      let tileTags _ _ (v: int) =
+        if v = 2 then seq { "dangerous" } else seq { "safe" }
+
+      let scanned = placed |> Landmarks.scanTiles tileTags g
+
+      Expect.isTrue
+        (Flow.isTag "safe" { X = 0; Y = 0 } scanned)
+        "tile 1 is safe"
+
+      Expect.isTrue
+        (Flow.isTag "safe" { X = 1; Y = 0 } scanned)
+        "tile 1 is safe"
+
+      Expect.isTrue
+        (Flow.isTag "dangerous" { X = 2; Y = 0 } scanned)
+        "tile 2 is dangerous"
+
+      Expect.isTrue
+        (Flow.isTag "dangerous" { X = 3; Y = 0 } scanned)
+        "tile 2 is dangerous"
+
+      Expect.isFalse
+        (Flow.isTag "dangerous" { X = 0; Y = 0 } scanned)
+        "tile 1 is not dangerous"
+
+      Expect.isFalse
+        (Flow.isTag "safe" { X = 4; Y = 0 } scanned)
+        "empty cell has no tags"
+
+    testCase "duplicate names throw"
+    <| fun _ ->
+      Expect.throwsT<System.ArgumentException>
+        (fun () ->
+          runInto
+            10
+            1
+            (Flow.row FlowOpts.Default [
+              Stamp.named "dup" (tile 1 1 1)
+              Stamp.named "dup" (tile 1 1 2)
+            ])
+          |> ignore)
+        "duplicate element name"
+
+    testCase "landmark rects clip to the container"
+    <| fun _ ->
+      let stamp =
+        Flow.overlay [
+          Flow.docked {
+            Anchor = Dock.Bottom ||| Dock.CenterX
+            Inset = 0
+            Stamp =
+              Stamp.tagged [ "exit" ] (Stamp.box 20 2 [ Flow.fill 7 ])
+              |> Stamp.named "gate"
+          }
+        ]
+
+      let g, placed = runInto 10 4 stamp
+
+      expectCell g 0 2 (ValueSome 7) "painted from the left edge"
+      expectCell g 9 3 (ValueSome 7) "painted to the right edge"
+
+      Expect.equal
+        (Flow.tryPosition "gate" placed)
+        (ValueSome { X = 0; Y = 2; W = 10; H = 2 })
+        "clipped to the container"
+
+      Expect.equal
+        (Flow.taggedRects "exit" placed)
+        [ { X = 0; Y = 2; W = 10; H = 2 } ]
+        "tagged rect clips too"
+
+    testCase "tryTagGrid hands out the raw bit grid"
+    <| fun _ ->
+      let stamp = Flow.overlay [ Flow.region [ "zone" ] 0 0 ]
+      let _, placed = runInto 6 4 stamp
+
+      match Flow.tryTagGrid "zone" placed with
+      | ValueSome cells ->
+        Expect.isTrue cells.[0 + 0 * 6] "inside the region"
+        Expect.isTrue cells.[5 + 3 * 6] "inside the region"
+      | ValueNone -> failtest "the region has a grid"
+
+      Expect.equal (Flow.tryTagGrid "unknown" placed) ValueNone "unknown tag"
+
+    testCase "tagged and named compose with docking"
+    <| fun _ ->
+      let gate =
+        Flow.docked {
+          Anchor = Dock.StretchX ||| Dock.Bottom
+          Inset = 0
+          Stamp =
+            Stamp.tagged [ "exit"; "no-build" ] (Stamp.box 0 1 [ Flow.fill 7 ])
+        }
+
+      let stamp = Flow.overlay [ gate ]
+      let g, placed = runInto 6 4 stamp
+
+      expectCell g 0 3 (ValueSome 7) "gate painted on the bottom edge"
+
+      Expect.equal
+        (Flow.tryPosition "gate2" placed)
+        ValueNone
+        "no name, no position"
+
+      Expect.equal
+        (Flow.taggedRects "exit" placed)
+        [ { X = 0; Y = 3; W = 6; H = 1 } ]
+        "tagged with the docked rectangle"
+
+      Expect.isTrue
+        (Flow.isTag "exit" { X = 3; Y = 3 } placed)
+        "walkable query on the docked rect"
+
+      Expect.isFalse
+        (Flow.isTag "exit" { X = 3; Y = 2 } placed)
+        "one above is not the gate"
+  ]
+
+[<Tests>]
+let hexTests =
+  testList "Flow hex" [
+    testCase "a grid-template document runs over hex storage"
+    <| fun _ ->
+      let doc =
+        Flow.grid {
+          Cols = [| Fixed 4; Fixed 6 |]
+          Rows = [| Fixed 2; Fixed 2 |]
+          Gap = 0
+          Areas = [| "shore woods"; "shore woods" |]
+          Places = [|
+            struct ("shore", Stamp.named "shore" (fillTile 1))
+            struct ("woods", fillTile 2)
+          |]
+        }
+
+      let g =
+        CellGrid2D.createHex {
+          Orientation = HexOrientation.PointyTop
+          Width = 10
+          Height = 4
+          Radius = 32f
+          Origin = Vector2.Zero
+        }
+
+      let struct (g, placed) = g |> Flow.run doc
+
+      expectCell g 0 0 (ValueSome 1) "shore area start"
+      expectCell g 3 1 (ValueSome 1) "shore area end"
+      expectCell g 4 0 (ValueSome 2) "woods area start"
+      expectCell g 9 3 (ValueSome 2) "woods area end"
+
+      Expect.equal
+        (Flow.tryPosition "shore" placed)
+        (ValueSome { X = 0; Y = 0; W = 4; H = 4 })
+        "offset-space rect over hex storage"
+
+    testCase "named and tagged landmarks work on hex storage"
+    <| fun _ ->
+      let depot =
+        Flow.docked {
+          Anchor = Dock.Bottom ||| Dock.Right
+          Inset = 0
+          Stamp =
+            Stamp.tagged [ "depot" ] (Stamp.box 2 2 [ Flow.fill 3 ])
+            |> Stamp.named "depot"
+        }
+
+      let g =
+        CellGrid2D.createHex {
+          Orientation = HexOrientation.FlatTop
+          Width = 6
+          Height = 4
+          Radius = 32f
+          Origin = Vector2.Zero
+        }
+
+      let struct (g, placed) = g |> Flow.run(Flow.overlay [ depot ])
+
+      expectCell g 4 2 (ValueSome 3) "depot paints at the bottom right"
+
+      Expect.equal
+        (Flow.tryPosition "depot" placed)
+        (ValueSome { X = 4; Y = 2; W = 2; H = 2 })
+        "docked rect on hex storage"
+
+      Expect.isTrue
+        (Flow.isTag "depot" { X = 5; Y = 3 } placed)
+        "tag bit grid indexes hex storage"
+
+      Expect.isFalse
+        (Flow.isTag "depot" { X = 3; Y = 3 } placed)
+        "outside the depot"
+
+    testCase "scanTiles derives tags from hex tiles"
+    <| fun _ ->
+      let doc = Flow.overlay [ Flow.canvas [ Flow.fill 9 ] ]
+
+      let g =
+        CellGrid2D.createHex {
+          Orientation = HexOrientation.PointyTop
+          Width = 3
+          Height = 2
+          Radius = 32f
+          Origin = Vector2.Zero
+        }
+
+      let struct (g, placed) = g |> Flow.run doc
+
+      let marks =
+        Landmarks.scanTiles
+          (fun _ _ t -> if t = 9 then [ "all" ] else [])
+          g
+          placed
+
+      Expect.isTrue
+        (Flow.isTag "all" { X = 0; Y = 0 } marks)
+        "first cell tagged"
+
+      Expect.isTrue (Flow.isTag "all" { X = 2; Y = 1 } marks) "last cell tagged"
+  ]
+
+[<Tests>]
+let cellOpTests =
+  testList "Flow cell ops" [
+    testCase "cell paints one cell"
+    <| fun _ ->
+      let g, _ = runInto 3 1 (Stamp.box 3 1 [ Flow.cell { X = 1; Y = 0 } 5 ])
+
+      expectCell g 0 0 ValueNone "left of the cell"
+      expectCell g 1 0 (ValueSome 5) "the cell"
+      expectCell g 2 0 ValueNone "right of the cell"
+
+    testCase "repeatX paints a horizontal run"
+    <| fun _ ->
+      let g, _ = runInto 4 1 (Stamp.box 4 1 [ Flow.repeatX 3 7 ])
+
+      expectCell g 0 0 (ValueSome 7) "run start"
+      expectCell g 2 0 (ValueSome 7) "run end"
+      expectCell g 3 0 ValueNone "past the run"
+
+    testCase "repeatY paints a vertical run"
+    <| fun _ ->
+      let g, _ = runInto 1 4 (Stamp.box 1 4 [ Flow.repeatY 3 7 ])
+
+      expectCell g 0 0 (ValueSome 7) "run start"
+      expectCell g 0 2 (ValueSome 7) "run end"
+      expectCell g 0 3 ValueNone "past the run"
+
+    testCase "line paints a Bresenham diagonal"
+    <| fun _ ->
+      let g, _ =
+        runInto
+          5
+          5
+          (Stamp.box 5 5 [ Flow.line { X = 0; Y = 0 } { X = 4; Y = 4 } 9 ])
+
+      expectCell g 0 0 (ValueSome 9) "start"
+      expectCell g 2 2 (ValueSome 9) "middle"
+      expectCell g 4 4 (ValueSome 9) "end"
+      expectCell g 0 4 ValueNone "off the line"
+
+    testCase "circle paints an outline or a disc"
+    <| fun _ ->
+      let outline, _ =
+        runInto
+          7
+          7
+          (Stamp.box 7 7 [
+            Flow.circle
+              {
+                Center = { X = 3; Y = 3 }
+                Radius = 3
+                Filled = false
+              }
+              4
+          ])
+
+      let disc, _ =
+        runInto
+          7
+          7
+          (Stamp.box 7 7 [
+            Flow.circle
+              {
+                Center = { X = 3; Y = 3 }
+                Radius = 3
+                Filled = true
+              }
+              4
+          ])
+
+      expectCell outline 3 0 (ValueSome 4) "top of the ring"
+      expectCell outline 3 3 ValueNone "hollow center"
+      expectCell disc 3 3 (ValueSome 4) "filled center"
+
+    testCase "polygon paints a filled rectangle"
+    <| fun _ ->
+      let g, _ =
+        runInto
+          4
+          3
+          (Stamp.box 4 3 [
+            Flow.polygon
+              [| struct (0, 0); struct (3, 0); struct (3, 2); struct (0, 2) |]
+              true
+              6
+          ])
+
+      expectCell g 0 0 (ValueSome 6) "corner"
+      expectCell g 3 1 (ValueSome 6) "right edge"
+      expectCell g 1 1 (ValueSome 6) "interior"
+
+    testCase "scatterBorder scatters up to count border cells"
+    <| fun _ ->
+      let g, _ =
+        runInto
+          4
+          4
+          (Stamp.box 4 4 [ Flow.scatterBorder { Count = 3; Seed = 11 } 2 ])
+
+      let mutable filled = 0
+      CellGrid2D.iter (fun _ _ _ -> filled <- filled + 1) g
+      Expect.isGreaterThan filled 0 "at least one scattered cell"
+      Expect.isLessThanOrEqual filled 3 "at most count scattered cells"
+
+    testCase "scatterLine scatters up to count line cells"
+    <| fun _ ->
+      let g, _ =
+        runInto
+          5
+          1
+          (Stamp.box 5 1 [
+            Flow.scatterLine
+              {
+                From = { X = 0; Y = 0 }
+                To = { X = 4; Y = 0 }
+                Count = 2
+                Seed = 7
+              }
+              3
+          ])
+
+      let mutable filled = 0
+      CellGrid2D.iter (fun _ _ _ -> filled <- filled + 1) g
+      Expect.isGreaterThan filled 0 "at least one scattered cell"
+      Expect.isLessThanOrEqual filled 2 "at most count scattered cells"
+
+    testCase "checkerBorder alternates the border only"
+    <| fun _ ->
+      let g, _ = runInto 4 4 (Stamp.box 4 4 [ Flow.checkerBorder 1 2 ])
+
+      expectCell g 0 0 (ValueSome 1) "odd border cell"
+      expectCell g 1 0 (ValueSome 2) "even border cell"
+      expectCell g 1 1 ValueNone "interior stays empty"
+
+    testCase "clear erases the box"
+    <| fun _ ->
+      let g, _ = runInto 3 2 (Stamp.box 3 2 [ Flow.fill 5; Flow.clear() ])
+
+      expectCell g 0 0 ValueNone "erased"
+      expectCell g 2 1 ValueNone "erased"
+
+    testCase "setIfEmpty respects occupied cells"
+    <| fun _ ->
+      let g, _ =
+        runInto
+          2
+          1
+          (Stamp.box 2 1 [
+            Flow.cell { X = 0; Y = 0 } 1
+            Flow.setIfEmpty { X = 0; Y = 0 } 8
+            Flow.setIfEmpty { X = 1; Y = 0 } 8
+          ])
+
+      expectCell g 0 0 (ValueSome 1) "occupied cell keeps its content"
+      expectCell g 1 0 (ValueSome 8) "empty cell takes the content"
+
+    testCase "map rewrites existing cells"
+    <| fun _ ->
+      let g, _ =
+        runInto 2 2 (Stamp.box 2 2 [ Flow.fill 3; Flow.map(fun v -> v * 10) ])
+
+      expectCell g 0 0 (ValueSome 30) "mapped"
+      expectCell g 1 1 (ValueSome 30) "mapped"
+  ]

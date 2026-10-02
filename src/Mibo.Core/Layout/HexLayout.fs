@@ -1,8 +1,10 @@
+#nowarn "44"
 namespace Mibo.Layout
 
-open HexGrid
+open CellGrid2D
 
 [<Struct>]
+[<System.Obsolete("Author hex maps with the Flow DSL; for pixel-perfect control the square Layout ops also run on hex storage")>]
 type HexGridSection<'T> = {
   BackingGrid: HexGrid<'T>
   OffsetCol: int
@@ -12,6 +14,7 @@ type HexGridSection<'T> = {
 }
 
 [<AutoOpen>]
+[<System.Obsolete("Author hex maps with the Flow DSL; for pixel-perfect control the square Layout ops also run on hex storage")>]
 module HexLayoutHelpers =
   let createHexSection(grid: HexGrid<'T>) : HexGridSection<'T> = {
     BackingGrid = grid
@@ -38,6 +41,7 @@ module HexLayoutHelpers =
     then
       set gc gr content section.BackingGrid
 
+[<System.Obsolete("Author hex maps with the Flow DSL; for pixel-perfect control the square Layout ops also run on hex storage")>]
 module HexLayout =
   let inline run
     ([<InlineIfLambda>] f: HexGridSection<'T> -> HexGridSection<'T>)

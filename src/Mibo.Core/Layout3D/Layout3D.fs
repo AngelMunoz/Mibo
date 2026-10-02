@@ -1,8 +1,10 @@
+#nowarn "44"
 namespace Mibo.Layout3D
 
 open CellGrid3D
 
 [<Struct>]
+[<System.Obsolete("Author 3D as a 2D grid with per-column height")>]
 type GridSection3D<'T> = {
   BackingGrid: CellGrid3D<'T>
   OffsetX: int
@@ -14,6 +16,7 @@ type GridSection3D<'T> = {
 }
 
 [<AutoOpen>]
+[<System.Obsolete("Author 3D as a 2D grid with per-column height")>]
 module Layout3DHelpers =
   let inline createSection(grid: CellGrid3D<'T>) : GridSection3D<'T> = {
     BackingGrid = grid
@@ -66,6 +69,7 @@ module Layout3DHelpers =
     then
       clear gx gy gz section.BackingGrid
 
+[<System.Obsolete("Author 3D as a 2D grid with per-column height")>]
 module Layout3D =
   let inline run
     ([<InlineIfLambda>] f: GridSection3D<'T> -> GridSection3D<'T>)

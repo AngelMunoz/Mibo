@@ -28,8 +28,8 @@ Mibo aims to solve 80/20 of use cases for enabling developers to focus on game l
   - 3D batch renderer with opaque/transparent passes and custom shader switching
   - Escape hatches for custom GPU work
 - **Camera** helpers with screen-to-world, orbit, and ray casting
-- **Layout** — 2D procedural grid layout (`CellGrid2D`) with platformer, top-down, and geometric primitives
-- **Layout3D** — 3D voxel-style grid layout (`CellGrid3D`) with terrain, interior rooms, corridors, stairs, and procedural generation
+- **Layout**: 2D procedural level layout. One `CellGrid2D` for squares and hexes, authored with the Flow DSL (grid template areas, flexbox rows and columns, docks, landmark queries)
+- **3D levels**: authored as 2D grids with per-column height; the retired `Layout3D` voxel family still compiles with obsolete warnings (see `docs/migration-to-v6.md`)
 - **Animation** — sprite sheet slicing, `AnimatedSprite` state machines, and grid-based animation definitions
 - **Mibo.Adaptive** — a pull-based incremental computation library for tight-loop workloads: `CVal`/`AVal` roots and projections plus adaptive sets, maps, and lists with element-level deltas, allocation-free in steady state. The Mibo integration (`AdaptiveProgram`/`AdaptiveHeadless` and the windowed hosts) is experimental.
 - **Input Mapper** — Listen to raw input and map it to semantic actions

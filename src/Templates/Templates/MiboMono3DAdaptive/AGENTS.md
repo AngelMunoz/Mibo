@@ -160,7 +160,7 @@ for when each rung pays off. You can ship a lot of games at Level 2 or 3.
 - Skeletal animation once you swap the cube for a character model → [Animation 3D](https://angelmunoz.github.io/Mibo/animation3d.html)
 - Many copies of a mesh: voxel worlds, forests (`drawMeshInstanced`, `InstancedRenderContext`) → [GPU Instancing](https://angelmunoz.github.io/Mibo/graphics3d/instancing.html)
 - HUD/2D overlay over the 3D scene (multi-renderer, the `noClear` rule) → [Layered Rendering](https://angelmunoz.github.io/Mibo/patterns/layered-rendering.html)
-- Voxel/grid 3D levels (`CellGrid3D`, stamps, `CellGridRenderer3D`): start at the [Level Design overview](https://angelmunoz.github.io/Mibo/level-design/overview.html), then the [3D Layout Engine](https://angelmunoz.github.io/Mibo/level-design/3d/core.html); genre stamps: [Interior](https://angelmunoz.github.io/Mibo/level-design/3d/interior.html), [Terrain](https://angelmunoz.github.io/Mibo/level-design/3d/terrain.html), [Hex](https://angelmunoz.github.io/Mibo/level-design/3d/hex.html)
+- 3D levels (`CellGrid2D` footprint + per-column height, Flow): start at the [Level Design overview](https://angelmunoz.github.io/Mibo/level-design/overview.html) and [Flow - Level Authoring](https://angelmunoz.github.io/Mibo/level-design/2d/flow.html). The voxel family (`CellGrid3D`, `Layout3D`, `CellGridRenderer3D`, the Interior/Terrain stamp pages) is obsolete; see the [v6 migration guide](https://angelmunoz.github.io/Mibo/migration-to-v6.html)
 - Custom HLSL look (toon/cel/post-processing; `.fx`→`.mgfx`) → [Shaders](https://angelmunoz.github.io/Mibo/shaders.html) + [Shader Uniform Reference](https://angelmunoz.github.io/Mibo/shader-uniforms.html)
 
 **Performance**

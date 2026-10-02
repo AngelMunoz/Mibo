@@ -2,12 +2,14 @@
 title: Building Top-Down Levels
 category: Level Design
 categoryindex: 8
-index: 4
+index: 5
 ---
 
 # Building Top-Down Levels
 
 Top-down games (RPGs, roguelikes, dungeon crawlers) are defined by connected spaces: rooms, corridors, and the flow between them. The `TopDown` module provides stamps for designing these efficiently.
+
+> **Obsolete module.** `Mibo.Layout.TopDown` is obsolete — rooms and corridors author as [Flow grid template areas](flow.html). The page remains as a pattern reference.
 
 ## Importing
 
