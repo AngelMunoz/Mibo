@@ -69,6 +69,33 @@ is a number, `cell="grass"` is a word, `f="NaN"` stays a word — the
 resolver never computes with non-finite floats). An `element`
 definition names itself with the `name` attribute.
 
+## The KDL front-end
+
+`Kdl.parse` reads KDL 2.0 (via KdlSharp — the package's only external
+dependency, confined to this one file). Bare values are positional
+args, `name=value` pairs are properties, `/-` comments out a whole
+node. Two restrictions the parser enforces: `#null`, `#inf` and `#nan`
+values fail the parse, and `/-` works before whole nodes only. Node
+positions come from the reader's own line and column — no text
+scanning — so resolution errors point at the authoring line even when
+a property spells a later node's kind or a comment spells a kind. An
+integer past the int32 range becomes a decimal in both front-ends:
+
+```kdl
+map 36 20 {
+    field { fill grass }
+    plot x=1 y=1 w=5 h=5 pack=scatter seed=13 { boulder; boulder; boulder }
+}
+```
+
+Both front-ends resolve the same document to the same level — the
+resolver reads every scalar by name, so KDL's positional args and XML's
+attributes land identically, and the emitter's tests build the same
+document in both syntaxes and compare the grids cell for cell. KDL's
+typed literals (hex, underscores, quoted numbers) have no XML
+equivalent; XML attributes type by content. Pick the syntax your team
+prefers; a document can migrate between them without touching the game.
+
 *The resolver (`Doc`), the game-supplied surface (words, kernels,
 elements), and the Flow emitter (`DocFlow`) land with the rest of this
 stack — this page grows with them.*

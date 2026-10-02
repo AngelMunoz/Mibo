@@ -109,6 +109,63 @@ let kdlTests =
       match Kdl.parse "map 36 20 {" with
       | Ok _ -> failtest "unbalanced input must not parse"
       | Error e -> Expect.isGreaterThan e.Length 0 "the error carries a message"
+
+    testCase "a property named like a later node never captures its position"
+    <| fun _ ->
+      // `set=13` reads as a property; the `set` node below it must take
+      // its own offset, not the property's
+      match Kdl.parse "map 4 4 set=13\nset 1 2 way" with
+      | Ok roots ->
+        Expect.hasLength roots 2 "two root nodes"
+
+        let set = roots[1]
+        Expect.equal set.Kind "set" "the node parsed"
+
+        Expect.equal
+          (Markup.where "map 4 4 set=13\nset 1 2 way" set.Position)
+          "2:1"
+          "the node's own line"
+
+      | Error e -> failtest $"parse failed: {e}"
+
+    testCase "a kind spelled in a line comment never captures a position"
+    <| fun _ ->
+      match
+        Kdl.parse "map 4 4 {\n    // fill the meadow\n    fill grass\n}"
+      with
+      | Ok roots ->
+        let fill = roots[0].Children[0]
+        Expect.equal fill.Kind "fill" "the node parsed"
+
+        Expect.equal
+          (Markup.where
+            "map 4 4 {\n    // fill the meadow\n    fill grass\n}"
+            fill.Position)
+          "3:5"
+          "the node's own line"
+
+      | Error e -> failtest $"parse failed: {e}"
+
+    testCase "an integer past the int32 range becomes a decimal"
+    <| fun _ ->
+      match
+        Kdl.parse
+          "map 4 4 {\n    plot {\n        fillRect 1 1 4000000000 1 stone\n    }\n}"
+      with
+      | Error e -> failtest $"parse failed: {e}"
+      | Ok roots ->
+        // the resolver would reject the width; parse-level typing is
+        // the point here — no overflow, a decimal instead
+        Expect.equal roots.Length 1 "parsed"
+
+        match Kdl.parse "thing 4000000000" with
+        | Ok single ->
+          Expect.equal
+            (Seq.toList single[0].Args)
+            [ Arg.Decimal 4e+09 ]
+            "typed as decimal"
+
+        | Error e -> failtest $"parse failed: {e}"
   ]
 
 [<Tests>]

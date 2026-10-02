@@ -2,6 +2,7 @@ namespace Mibo.Markup
 
 open System
 open System.Collections.Immutable
+open System.Globalization
 open System.IO
 open KdlSharp
 open KdlSharp.Parsing
@@ -24,15 +25,28 @@ open KdlSharp.Parsing
 /// and unbalanced braces fail visibly.
 module Kdl =
 
+  // Position matching, in one pass: a node's kind token follows a
+  // boundary (start of file, a newline, `;`, `{`, or the `-` tail of a
+  // slashdash or a negative argument) and is not followed by a
+  // letter/digit or `=` — so a property named like a later node, or a
+  // kind spelled inside a `//` line comment, never captures a position.
+  // One residual corner stays: a slashdash-dropped node whose kind
+  // equals a later sibling's can take that sibling's first occurrence;
+  // the tree stays correct, only the error position shifts a node early.
   let private findKind (src: string) (from: int) (kind: string) : int =
     let mutable i = from
     let mutable found = -1
 
     while found < 0 && i <= src.Length - kind.Length do
-      if String.CompareOrdinal(src, i, kind, 0, kind.Length) = 0 then
+      // the cheap first-char check keeps the compare off most positions
+      if
+        src[i] = kind[0]
+        && String.CompareOrdinal(src, i, kind, 0, kind.Length) = 0
+      then
         let afterOk =
           i + kind.Length >= src.Length
-          || not(Char.IsLetterOrDigit src[i + kind.Length])
+          || (let c = src[i + kind.Length]
+              not(Char.IsLetterOrDigit c) && c <> '=')
 
         // the previous non-space character marks a node boundary
         let mutable j = i - 1
@@ -41,12 +55,7 @@ module Kdl =
           j <- j - 1
 
         let beforeOk =
-          j < 0
-          || src[j] = '\n'
-          || src[j] = ';'
-          || src[j] = '{'
-          || src[j] = '-' // the tail of a slashdash
-          || src[j] = '/'
+          j < 0 || src[j] = '\n' || src[j] = ';' || src[j] = '{' || src[j] = '-' // the tail of a slashdash, or a negative argument
 
         if afterOk && beforeOk then
           found <- i
@@ -71,6 +80,11 @@ module Kdl =
             |> ImmutableArray.CreateRange
     }
 
+  /// Parses one KDL markup document into its root nodes (one root per
+  /// line; `map` is the usual one). An integer past the int32 range
+  /// becomes a decimal, matching the XML front-end's typing. Failure
+  /// messages carry the reader's line and column; node positions feed
+  /// `Markup.where` like every front-end.
   let parse(src: string) : Result<ImmutableArray<Node>, string> =
     let src = if src.EndsWith("\n") then src else src + "\n"
 
@@ -96,7 +110,17 @@ module Kdl =
           if raw <> null && raw.IndexOfAny([| '.'; 'e'; 'E' |]) >= 0 then
             Arg.Decimal(float dec)
           else
-            Arg.Number(int dec)
+            // an integer past the int32 range becomes a decimal, the
+            // same way the XML front-end types it
+            match
+              Int32.TryParse(
+                raw,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture
+              )
+            with
+            | true, v -> Arg.Number v
+            | _ -> Arg.Decimal(float dec)
         | KdlTokenType.True ->
           reader.Read() |> ignore
           Arg.Word "true"
