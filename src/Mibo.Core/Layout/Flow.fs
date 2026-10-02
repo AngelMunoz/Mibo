@@ -312,11 +312,12 @@ module internal FlowImpl =
           landmarks.Cells.[tag] <- cells)
 
   /// Paints a child into `r`, skipping it when it lies fully outside the
-  /// parent. The child section keeps the child's own origin, so stamps paint
-  /// exactly where they are placed; ops that respect section bounds
-  /// (fill/border/checker/...) clamp at the parent's right/bottom edge.
-  /// Landmarks record the intersection of `r` with the parent, so reported
-  /// rects never describe cells that nothing painted.
+  /// parent. The child section is the intersection of `r` with the parent,
+  /// so a stamp whose origin sits before the parent's edge clips at that
+  /// edge instead of writing outside the grid; ops that respect section
+  /// bounds (fill/border/checker/...) clamp at the parent's right/bottom
+  /// edge. Landmarks record the same intersection, so reported rects never
+  /// describe cells that nothing painted.
   let paintChild
     (parent: GridSection2D<'T>)
     (r: CellRect)
@@ -340,10 +341,10 @@ module internal FlowImpl =
 
         let child: GridSection2D<'T> = {
           BackingGrid = parent.BackingGrid
-          OffsetX = r.X
-          OffsetY = r.Y
-          Width = x2 - r.X
-          Height = y2 - r.Y
+          OffsetX = x1
+          OffsetY = y1
+          Width = x2 - x1
+          Height = y2 - y1
         }
 
         stamp.Paint child registry

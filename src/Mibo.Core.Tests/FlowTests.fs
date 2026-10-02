@@ -762,6 +762,50 @@ let tests =
         Expect.equal (Flow.tryPosition "huge" placed) ValueNone "no rectangle"
         expectCell g 0 0 ValueNone "nothing paints"
 
+      testCase "an element past the container edge clips inside it"
+      <| fun _ ->
+        // a centered element wider than the container starts at a negative
+        // origin: it must clip at the edge, not index outside the grid
+        let centered =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.CenterX ||| Dock.CenterY
+              Inset = InsetSpec.Zero
+              Stamp = Stamp.named "huge" (Stamp.box 14 14 [ Flow.fill 7 ])
+            }
+          ]
+
+        let g, placed = runInto 10 10 centered
+
+        Expect.equal
+          (Flow.tryPosition "huge" placed)
+          (ValueSome { X = 0; Y = 0; W = 10; H = 10 })
+          "the overflowing element clips at the container"
+
+        expectCell g 0 0 (ValueSome 7) "paints from the corner"
+        expectCell g 9 9 (ValueSome 7) "paints to the far corner"
+
+        // a right-docked element whose inset pushes it past the left edge
+        let pushed =
+          Flow.overlay [
+            Flow.docked {
+              Anchor = Dock.Right ||| Dock.Top
+              Inset = { InsetSpec.Zero with Right = 8 }
+              Stamp = Stamp.named "bar" (Stamp.box 4 4 [ Flow.fill 3 ])
+            }
+          ]
+
+        let g2, placed2 = runInto 10 10 pushed
+
+        Expect.equal
+          (Flow.tryPosition "bar" placed2)
+          (ValueSome { X = 0; Y = 0; W = 2; H = 4 })
+          "only the part inside the container is reported"
+
+        expectCell g2 0 0 (ValueSome 3) "the visible part paints"
+        expectCell g2 2 0 ValueNone "nothing paints past the visible part"
+        expectCell g2 0 4 ValueNone "nothing paints past the bottom edge"
+
       testCase "at places inside a grid area like docked"
       <| fun _ ->
         let stamp =
