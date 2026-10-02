@@ -49,8 +49,10 @@ parser's own line and position.
 ## The XML front-end
 
 XML the way XML means it: elements are nodes and children, attributes
-are the scalar channel. Comments are free, and the BCL parser does all
-the parsing:
+are the scalar channel. Comments and whitespace are free, and the BCL
+parser does all the parsing. Text is not markup: a non-whitespace text
+node inside an element fails the parse, so a forgotten statement never
+disappears silently:
 
 ```xml
 <map w="36" h="20">

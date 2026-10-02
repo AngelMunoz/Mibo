@@ -14,4 +14,10 @@
     <ProjectReference Include="..\Mibo.Core\Mibo.Core.fsproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- versions the package from the repo changelog, like every other
+         library in the solution -->
+    <PackageReference Include="Ionide.KeepAChangelog.Tasks" Version="0.3.3" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>

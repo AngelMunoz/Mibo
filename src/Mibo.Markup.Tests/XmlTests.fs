@@ -117,6 +117,19 @@ let xmlTests =
 
       | Error e -> failtest $"parse failed: {e}"
 
+    testCase "text content is not markup and fails the parse"
+    <| fun _ ->
+      match Xml.parse """<map w="4" h="4"><plot>oops</plot></map>""" with
+      | Ok _ -> failtest "text inside an element must not be dropped"
+      | Error e ->
+        Expect.stringContains e "not markup" "the error says what is wrong"
+        Expect.stringContains e "plot" "the error names the element"
+
+      // whitespace between elements stays legal
+      match Xml.parse "<map w=\"4\" h=\"4\">\n  <plot />\n</map>" with
+      | Ok roots -> Expect.hasLength roots[0].Children 1 "whitespace stays free"
+      | Error e -> failtest $"whitespace must parse: {e}"
+
     testCase "parse failures carry the parser's line and position"
     <| fun _ ->
       match Xml.parse "<map>\n  <broken>\n</map>" with

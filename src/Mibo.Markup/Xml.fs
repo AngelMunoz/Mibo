@@ -17,7 +17,8 @@ open System.Xml.Linq
 ///   number, `place="center"` is a word)
 /// - an `element` definition carries its template name in the `name`
 ///   attribute (the label)
-/// - comments and processing instructions are free
+/// - comments and processing instructions are free; text is not markup —
+///   a non-whitespace text node inside an element fails the parse
 ///
 /// Namespace-free documents: `xmlns` attributes would become plain
 /// properties. Parse failures carry the parser's line and position.
@@ -43,6 +44,16 @@ module Xml =
        | _ -> Arg.Word t)
 
   let rec private convert(el: XElement) : Node =
+    // text is not markup: a non-whitespace text node (or CDATA, which
+    // derives from XText) where a child element belongs is an authoring
+    // mistake, and dropping it silently hides a forgotten statement
+    for node in el.Nodes() do
+      match node with
+      | :? XText as t when not(String.IsNullOrWhiteSpace t.Value) ->
+        failwith
+          $"<{el.Name.LocalName}> contains text that is not markup: '{t.Value.Trim()}'"
+      | _ -> ()
+
     // an element definition names itself through the name attribute;
     // the KDL front-end does the same with its first word argument
     let mutable label = ValueNone
@@ -83,6 +94,7 @@ module Xml =
           Error "the document has no root element"
         else
           Ok(ImmutableArray.Create(convert root))
-      with :? System.Xml.XmlException as e ->
-        // the BCL message already embeds its line and position
+      with e ->
+        // the BCL parser's message already embeds its line and position;
+        // the text-not-markup failure carries the element and the text
         Error e.Message
