@@ -113,9 +113,9 @@ module Doc =
 
   // ── Positioned failures and argument readers ─────────────────
 
-  // The positioned half of an error message; XML nodes carry Position
-  // -1 (that front-end tracks no positions), so the message names the
-  // element only.
+  /// The positioned half of an error message; XML nodes carry Position
+  /// -1 (that front-end tracks no positions), so the message names the
+  /// element only.
   let at(src: string, n: Node) : string = Markup.at src n.Position
 
   /// Reads one whole-number scalar by name first (the XML channel),
@@ -186,6 +186,8 @@ module Doc =
 
   // ── Style: the layout property channel ───────────────────────
 
+  /// The solver's defaults: no size, no placement, no pack, no gap. Every
+  /// cascade starts here, so an absent property means "inherit".
   let emptyStyle: Style = {
     Size = ValueNone
     At = ValueNone
@@ -201,41 +203,52 @@ module Doc =
     Seed = ValueNone
   }
 
+  /// The `W` of a size, or 0 when absent — a half-stated `w=`/`h=` pair
+  /// merges field-wise, so the missing axis reads 0 ("stretch this axis").
   let inline wOf(v: CellSize voption) =
     match v with
     | ValueSome sz -> sz.W
     | _ -> 0
 
+  /// The `H` of a size, or 0 when absent.
   let inline hOf(v: CellSize voption) =
     match v with
     | ValueSome sz -> sz.H
     | _ -> 0
 
+  /// The `X` of a point, or 0 when absent — a half-stated `x=`/`y=` pair
+  /// merges field-wise, so the missing axis reads 0.
   let inline xOf(v: CellPoint voption) =
     match v with
     | ValueSome pt -> pt.X
     | _ -> 0
 
+  /// The `Y` of a point, or 0 when absent.
   let inline yOf(v: CellPoint voption) =
     match v with
     | ValueSome pt -> pt.Y
     | _ -> 0
 
+  /// The horizontal half of a `CellSize` gap pair, or 0 when absent.
   let inline gapXOf(v: CellSize voption) =
     match v with
     | ValueSome g -> g.W
     | _ -> 0
 
+  /// The vertical half of a `CellSize` gap pair, or 0 when absent.
   let inline gapYOf(v: CellSize voption) =
     match v with
     | ValueSome g -> g.H
     | _ -> 0
 
+  /// The column span of a `colspan`/`rowspan` pair, or 1 when absent — a
+  /// half-stated span merges field-wise, and one track is the default.
   let inline csOf(v: struct (int * int) voption) =
     match v with
     | ValueSome(cs, _) -> cs
     | _ -> 1
 
+  /// The row span of a `colspan`/`rowspan` pair, or 1 when absent.
   let inline rsOf(v: struct (int * int) voption) =
     match v with
     | ValueSome(_, rs) -> rs
@@ -373,6 +386,8 @@ module Doc =
     | "seed" -> num() |> Result.map(fun v -> { s with Seed = ValueSome v })
     | _ -> Error $"unknown property '{p.Name}'{at(src, n)}"
 
+  /// Merges a node's inline properties over a base style, in document
+  /// order; the first bad property fails with its position.
   let styleOfProps
     (src: string, n: Node, baseStyle: Style)
     : Result<Style, string> =
@@ -1169,17 +1184,15 @@ module Doc =
       if n.Kind <> "map" then
         false
       else
-        // one pass finds both named dimensions
-        let mutable w = false
-        let mutable h = false
+        // the two dimensions come from positional args, `w=`/`h=`
+        // properties, or one of each: the count decides, not the channel
+        let mutable named = 0
 
         for p in n.Props do
-          if p.Name = "w" then
-            w <- true
-          elif p.Name = "h" then
-            h <- true
+          if p.Name = "w" || p.Name = "h" then
+            named <- named + 1
 
-        n.Args.Length >= 2 || (w && h)
+        n.Args.Length + named >= 2
 
     let rec go(n: Node) : Node voption =
       if isMap n then
@@ -1201,33 +1214,60 @@ module Doc =
 
     root
 
-  /// Reads and validates the map node's dimensions: `w=`/`h=` by name
-  /// (the XML channel) or the first two positional args (the KDL
-  /// channel). Zero and negative dimensions fail with a position, and
-  /// positional args beyond the two dimension slots are leftovers, not
-  /// silent drops.
+  /// Reads and validates the map node's dimensions: `w=`/`h=` properties
+  /// (the XML channel), positional args (the KDL channel), or one of
+  /// each. A named dimension claims its slot, so `map 36 h=20` reads 36
+  /// across and 20 down instead of failing on a mixed document. Leftover
+  /// args, and zero or negative dimensions, fail with a position.
   let dimsOf(src: string, n: Node) : Result<CellSize, string> =
-    // each named dimension closes its positional slot
-    let mutable slots = 0
+    let mutable w = ValueNone
+    let mutable h = ValueNone
 
     for p in n.Props do
-      if p.Name = "w" || p.Name = "h" then
-        slots <- slots + 1
+      match p.Name with
+      | "w" when w.IsNone -> w <- ValueSome p.Value
+      | "h" when h.IsNone -> h <- ValueSome p.Value
+      | _ -> ()
 
-    let slots = 2 - min 2 slots
+    let mutable next = 0
 
-    if n.Args.Length > slots then
+    let take() =
+      if next < n.Args.Length then
+        let a = n.Args[next]
+        next <- next + 1
+        ValueSome a
+      else
+        ValueNone
+
+    if w.IsNone then
+      w <- take()
+
+    if h.IsNone then
+      h <- take()
+
+    let asInt(slot: string, v: Arg voption) =
+      match v with
+      | ValueSome(Number v) -> Ok v
+      | ValueSome(Decimal _) ->
+        Error
+          $"`{n.Kind}` wants a whole number for '{slot}', not a decimal{at(src, n)}"
+      | ValueSome(Word word) ->
+        Error
+          $"`{n.Kind}` wants a whole number for '{slot}', got '{word}'{at(src, n)}"
+      | ValueNone -> Error $"'{n.Kind}' wants '{slot}'{at(src, n)}"
+
+    if next < n.Args.Length then
       Error
-        $"'{n.Kind}' has {n.Args.Length - slots} extra argument(s){at(src, n)}"
+        $"'{n.Kind}' has {n.Args.Length - next} extra argument(s){at(src, n)}"
     else
-      (match wantInt(src, n, "w", 0) with
+      (match asInt("w", w) with
        | Error e -> Error e
-       | Ok w ->
-         (match wantInt(src, n, "h", 1) with
+       | Ok wv ->
+         (match asInt("h", h) with
           | Error e -> Error e
-          | Ok h ->
-            if w > 0 && h > 0 then
-              Ok { W = w; H = h }
+          | Ok hv ->
+            if wv > 0 && hv > 0 then
+              Ok { W = wv; H = hv }
             else
               Error $"map dimensions must be positive{at(src, n)}"))
 
@@ -1265,24 +1305,43 @@ module Doc =
   /// its children; `cols`, `rows` and `areas` child nodes declare a
   /// container's tracks and named areas. Declared `cols`/`rows` imply
   /// `pack=flow`. `plot` is the built-in anonymous container: empty
-  /// body, exact box.
+  /// body, exact box. Every root is the map or a declaration: a stray
+  /// root node would be dropped without a word, so it fails the build.
   let resolve
     (surface: Surface<'T>)
     (src: string)
     (roots: ImmutableArray<Node>)
     : Result<Item<'T>[], string> =
+    let mutable strayRoot = ValueNone
+    let mutable mapRoots = 0
+
+    for n in roots do
+      if n.Kind = "map" then
+        mapRoots <- mapRoots + 1
+      elif n.Kind <> "element" && n.Kind <> "style" && strayRoot.IsNone then
+        strayRoot <- ValueSome n
+
     let withDecls templates =
       match collectStyles(src, roots) with
       | Error e -> Error e
       | Ok styles ->
         match findMapNode roots with
-        | ValueNone -> Error "the document needs a map node"
+        | ValueNone ->
+          Error
+            "the document needs a map node with two dimensions: `map 36 20`, `map w=36 h=20`, or one of each"
         | ValueSome mapNode ->
           dimsOf(src, mapNode)
           |> Result.bind(fun _ ->
             resolveContainer(surface, src, templates, styles, "map", mapNode)
             |> Result.map(fun root -> [| root |]))
 
-    validateSurface surface
-    |> Result.bind(fun () -> collectTemplates(surface, src, roots))
-    |> Result.bind withDecls
+    match strayRoot, mapRoots with
+    | ValueSome n, _ ->
+      Error
+        $"'{n.Kind}' is not a root node: a document holds one map and its element and style declarations{at(src, n)}"
+    | ValueNone, m when m > 1 ->
+      Error $"the document holds {m} map nodes; one document is one map"
+    | ValueNone, _ ->
+      validateSurface surface
+      |> Result.bind(fun () -> collectTemplates(surface, src, roots))
+      |> Result.bind withDecls

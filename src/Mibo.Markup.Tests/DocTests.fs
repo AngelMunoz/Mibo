@@ -278,6 +278,53 @@ let resolveTests =
       | Error e ->
         Expect.stringContains e "'x' wants a number" "names the property"
 
+    testCase "a map mixes the two dimension channels"
+    <| fun _ ->
+      // a named dimension claims its slot, so the positional arg fills
+      // the other one instead of being read as a leftover
+      match resolveKdl "map 36 h=20 {\n  generate plain\n}" with
+      | Ok [| root |] -> Expect.equal root.Name "map" "the mixed map resolves"
+      | Ok _ -> failtest "expected exactly one root item"
+      | Error e -> failtest $"a mixed map must resolve: {e}"
+
+      match resolveKdl "map w=36 20 {\n  generate plain\n}" with
+      | Ok [| root |] -> Expect.equal root.Name "map" "the other mix resolves"
+      | Ok _ -> failtest "expected exactly one root item"
+      | Error e -> failtest $"a mixed map must resolve: {e}"
+
+    testCase "a map dimension past the two slots is a leftover"
+    <| fun _ ->
+      match resolveKdl "map 36 20 5 {\n  generate plain\n}" with
+      | Ok _ -> failtest "a third dimension must fail"
+      | Error e -> Expect.stringContains e "extra argument" "names the leftover"
+
+    testCase "a root node that is not the map fails the build"
+    <| fun _ ->
+      match
+        resolveKdl "map 4 4 {\n  generate plain\n}\nplot { fill grass }"
+      with
+      | Ok _ -> failtest "a stray root must fail instead of vanishing"
+      | Error e ->
+        Expect.stringContains e "is not a root node" "says why"
+        Expect.stringContains e "plot" "names the node"
+
+    testCase "a second map fails the build"
+    <| fun _ ->
+      match
+        resolveKdl
+          "map 4 4 {\n  generate plain\n}\nmap 2 2 {\n  generate plain\n}"
+      with
+      | Ok _ -> failtest "two maps must fail"
+      | Error e -> Expect.stringContains e "2 map nodes" "counts them"
+
+    testCase "a document with no map says what a map needs"
+    <| fun _ ->
+      match resolveKdl "map {\n  generate plain\n}" with
+      | Ok _ -> failtest "a document without a map must fail"
+      | Error e ->
+        Expect.stringContains e "map 36 20" "names the positional form"
+        Expect.stringContains e "map w=36 h=20" "names the property form"
+
     testCase "a repeat past the cap fails the build"
     <| fun _ ->
       match resolveKdl "map 4 4 {\n  repeat 2000000000 { grove }\n}" with

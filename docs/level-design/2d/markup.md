@@ -30,7 +30,11 @@ named properties, and children. The resolver (`Doc.resolve`) never sees
 the text format. The two front-ends differ in one channel: KDL spells
 scalars as positional arguments (`map 36 20`), XML spells them as
 attributes (`map w="36" h="20"`), and the resolver reads every scalar by
-name so both resolve identically:
+name so both resolve identically. A document holds exactly one map:
+a stray root node or a second map fails the build instead of being
+dropped. The map takes its two dimensions from either channel, or one of
+each — `map 36 20`, `map w="36" h="20"`, and `map 36 h="20"` all read
+36 across and 20 down:
 
 ```fsharp
 open Mibo.Markup
