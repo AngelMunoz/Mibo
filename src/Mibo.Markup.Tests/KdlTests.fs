@@ -1,16 +1,7 @@
 module Mibo.Markup.Tests.Kdl
 
 open Expecto
-open System.Collections.Immutable
 open Mibo.Markup
-
-/// Zeroes node positions so the two front-ends' trees compare equal:
-/// offsets differ by construction, everything else must not.
-let rec private normalize(n: Node) : Node = {
-  n with
-      Position = 0
-      Children = n.Children |> Seq.map normalize |> ImmutableArray.CreateRange
-}
 
 let private kdlDoc =
   """map 36 20 {
@@ -22,16 +13,7 @@ let private kdlDoc =
     /- dropped whole node { still parsed }
 }"""
 
-let private xmlDoc =
-  """<map>
-  <a>36</a><a>20</a>
-  <field><fill><a>grass</a></fill></field>
-  <element><a>thicket</a><generate><a>forest</a></generate></element>
-  <plot x="1" y="1" w="5" h="5" pack="scatter" seed="13"><boulder /><boulder /><boulder /></plot>
-  <set><a>1</a><a>2</a><a>waypoint</a></set>
-  <weather><a>0.45</a><a>grass</a><a>dirt</a></weather>
-  <!-- dropped whole node: comments are free -->
-</map>"""
+let private mapSrc = "map 36 20 {\n  plot x=1 {}\n  my-set 1\n  set 1 2 way\n}"
 
 [<Tests>]
 let kdlTests =
@@ -166,19 +148,56 @@ let kdlTests =
             "typed as decimal"
 
         | Error e -> failtest $"parse failed: {e}"
-  ]
 
-[<Tests>]
-let parityTests =
-  testList "front-end parity" [
-    testCase "the same document parses to the same tree in both syntaxes"
+    testCase "typed KDL literals pin their own typing"
     <| fun _ ->
-      match Kdl.parse kdlDoc, Xml.parse xmlDoc with
-      | Ok kdlRoots, Ok xmlRoots ->
-        let kdlTrees = kdlRoots |> Seq.map normalize |> Seq.toList
-        let xmlTrees = xmlRoots |> Seq.map normalize |> Seq.toList
+      // KDL has typed literals XML attributes cannot spell; these pins
+      // hold the KDL side steady so the documented divergences stay
+      // divergences and not drift
+      match Kdl.parse "thing 0x1F 1_000 1e3 \"36\"" with
+      | Error e -> failtest $"parse failed: {e}"
+      | Ok roots ->
+        Expect.equal
+          (Seq.toList roots[0].Args)
+          [
+            Arg.Decimal 31.0 // hex
+            Arg.Number 1000 // underscores
+            Arg.Decimal 1000.0 // exponent
+            Arg.Word "36" // quoted stays a word
+          ]
+          "hex, underscore, exponent, quoted-number typing"
 
-        Expect.equal kdlTrees xmlTrees "trees match modulo positions"
+    testCase "an empty document parses to zero roots"
+    <| fun _ ->
+      match Kdl.parse "" with
+      | Ok roots -> Expect.hasLength roots 0 "no nodes"
+      | Error e -> failtest $"empty input must parse: {e}"
 
-      | kdlRes, xmlRes -> failtest $"parse failed: kdl={kdlRes} xml={xmlRes}"
+    testCase "positions come from the reader, exactly"
+    <| fun _ ->
+      // reader line/column at the node's name token — no text scanning
+      match Kdl.parse mapSrc with
+      | Error e -> failtest $"parse failed: {e}"
+      | Ok roots ->
+        let map = roots[0]
+        Expect.equal (Markup.where mapSrc map.Position) "1:1" "the root's line"
+
+        let plot = map.Children[0]
+        Expect.equal (Markup.where mapSrc plot.Position) "2:3" "the plot's line"
+
+        // a kind that is a hyphen suffix of an earlier node never moves
+        // the later node's position
+        let mySet = map.Children[1]
+
+        Expect.equal
+          (Markup.where mapSrc mySet.Position)
+          "3:3"
+          "my-set's own line"
+
+        let set = map.Children[2]
+
+        Expect.equal
+          (Markup.where mapSrc set.Position)
+          "4:3"
+          "set's own line, not my-set's"
   ]

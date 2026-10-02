@@ -8,7 +8,9 @@ open KdlSharp
 open KdlSharp.Parsing
 
 /// The KDL front-end. Produces the format-neutral `Node` tree from KDL
-/// 2.0 text on KdlSharp's token reader:
+/// 2.0 text on KdlSharp's token reader — the reader does all the
+/// parsing, and node positions come from the reader's own line and
+/// column, converted to character offsets against the source:
 ///
 /// - a node is `kind args? props? { children }?`
 /// - `name=value` pairs are properties (the layout channel); bare values
@@ -18,75 +20,41 @@ open KdlSharp.Parsing
 /// - slashdash `/-` comments out a whole node — parsed and dropped, so a
 ///   bad body still errors
 ///
-/// Node positions resolve after parsing through a monotonic cursor (the
-/// reader's `Position` is not a character offset): a node's kind token
-/// follows a boundary — start of file, a newline, `;`, `{`, or a
-/// slashdash — which property values and arguments never do. Unclosed
-/// and unbalanced braces fail visibly.
+/// KDL's typed literals (hex, underscores, quoted numbers) have no XML
+/// equivalent; XML attributes type by content. Unclosed and unbalanced
+/// braces fail visibly, and adapter failures carry the reader's line
+/// and column.
 module Kdl =
 
-  // Position matching, in one pass: a node's kind token follows a
-  // boundary (start of file, a newline, `;`, `{`, or the `-` tail of a
-  // slashdash or a negative argument) and is not followed by a
-  // letter/digit or `=` — so a property named like a later node, or a
-  // kind spelled inside a `//` line comment, never captures a position.
-  // One residual corner stays: a slashdash-dropped node whose kind
-  // equals a later sibling's can take that sibling's first occurrence;
-  // the tree stays correct, only the error position shifts a node early.
-  let private findKind (src: string) (from: int) (kind: string) : int =
-    let mutable i = from
-    let mutable found = -1
+  // One pass over the source gives the offset of every line start; the
+  // reader's one-based line/column pairs convert to offsets against it.
+  // The trailing newline the reader wants never starts a node, so the
+  // table covers every position a node can have.
+  let private lineStarts(src: string) : int[] =
+    let starts = ResizeArray<int>()
+    starts.Add 0
 
-    while found < 0 && i <= src.Length - kind.Length do
-      // the cheap first-char check keeps the compare off most positions
-      if
-        src[i] = kind[0]
-        && String.CompareOrdinal(src, i, kind, 0, kind.Length) = 0
-      then
-        let afterOk =
-          i + kind.Length >= src.Length
-          || (let c = src[i + kind.Length]
-              not(Char.IsLetterOrDigit c) && c <> '=')
+    for i in 0 .. src.Length - 1 do
+      if src[i] = '\n' then
+        starts.Add(i + 1)
 
-        // the previous non-space character marks a node boundary
-        let mutable j = i - 1
+    starts.ToArray()
 
-        while j >= 0 && (src[j] = ' ' || src[j] = '\t' || src[j] = '\r') do
-          j <- j - 1
-
-        let beforeOk =
-          j < 0 || src[j] = '\n' || src[j] = ';' || src[j] = '{' || src[j] = '-' // the tail of a slashdash, or a negative argument
-
-        if afterOk && beforeOk then
-          found <- i
-
-      if found < 0 then
-        i <- i + 1
-
-    if found >= 0 then found else from
-
-  // Positions land after parsing: the parse order is the document order,
-  // so one pre-order cursor pass resolves every node's offset.
-  let rec private place (src: string) (cursor: int ref) (n: Node) : Node =
-    let at = findKind src cursor.Value n.Kind
-    cursor.Value <- at + 1
-
-    {
-      n with
-          Position = at
-          Children =
-            n.Children
-            |> Seq.map(place src cursor)
-            |> ImmutableArray.CreateRange
-    }
+  let private offsetOf (starts: int[]) (line: int) (col: int) : int =
+    if line < 1 || line > starts.Length then
+      -1
+    else
+      starts[line - 1] + max 0 (col - 1)
 
   /// Parses one KDL markup document into its root nodes (one root per
   /// line; `map` is the usual one). An integer past the int32 range
   /// becomes a decimal, matching the XML front-end's typing. Failure
   /// messages carry the reader's line and column; node positions feed
-  /// `Markup.where` like every front-end.
+  /// `Markup.where`, so resolution errors point at the authoring line.
+  /// An empty document parses to zero roots.
   let parse(src: string) : Result<ImmutableArray<Node>, string> =
     let src = if src.EndsWith("\n") then src else src + "\n"
+    let starts = lineStarts src
 
     try
       use reader = new KdlReader(new StringReader(src))
@@ -163,6 +131,9 @@ module Kdl =
         builder.ToImmutable()
 
       and parseNode() : Node =
+        // the reader sits on the node's name token: its line and column
+        // are the node's position
+        let position = offsetOf starts reader.Line reader.Column
         let kind = reader.StringValue
         reader.Read() |> ignore // move off the name
 
@@ -220,7 +191,7 @@ module Kdl =
 
         {
           Kind = kind
-          Position = 0
+          Position = position
           Label = label
           Props = ImmutableArray.CreateRange(props)
           Args = ImmutableArray.Create<Arg>(rest)
@@ -233,7 +204,6 @@ module Kdl =
       if reader.TokenType <> KdlTokenType.EndOfFile then
         failwith $"unbalanced '}}' {here()}"
 
-      let cursor = ref 0
-      Ok(roots |> Seq.map(place src cursor) |> ImmutableArray.CreateRange)
+      Ok roots
     with e ->
       Error $"{e.GetType().Name}: {e.Message}"
