@@ -59,6 +59,7 @@ let resolveTests =
         Expect.equal plaza.Style.Pack (ValueSome Doc.Flow) "pack from the rule"
 
       | Error e -> failtest e
+      | Ok _ -> failtest "expected exactly one root item"
 
     testCase "templates expand and merge bodies"
     <| fun _ ->
@@ -104,6 +105,7 @@ let resolveTests =
           "the declaration body painted"
 
       | Error e -> failtest e
+      | Ok _ -> failtest "expected exactly one root item"
 
     testCase "repeat duplicates known children"
     <| fun _ ->
@@ -121,6 +123,18 @@ let resolveTests =
         Expect.equal plot.Children[0].Name "grove" "the repeated child"
 
       | Error e -> failtest e
+      | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "nested repeats fail on the total node cap"
+    <| fun _ ->
+      // each count is legal alone; the product passes the total
+      match
+        resolveKdl "map 4 4 {\n  repeat 500 { repeat 400 { grove } }\n}"
+      with
+      | Ok _ -> failtest "a nested repeat blowup must fail"
+      | Error e ->
+        Expect.stringContains e "past the 100000 node cap" "names the total cap"
+        Expect.stringContains e "2:" "carries the line"
 
     testCase "tracks and areas resolve"
     <| fun _ ->
@@ -162,6 +176,7 @@ let resolveTests =
         Expect.equal grove.Style.Row (ValueSome 0) "row placement"
 
       | Error e -> failtest e
+      | Ok _ -> failtest "expected exactly one root item"
 
     testCase "statements resolve with named and positional slots"
     <| fun _ ->
@@ -190,6 +205,31 @@ let resolveTests =
         Expect.equal plot.Name "plot" "the plot resolved"
 
       | Error e -> failtest e
+      | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "the set anchor form resolves one positional cell"
+    <| fun _ ->
+      // `set c` — no coordinates: the cell places by the two aligns
+      match resolveKdl "map 8 6 {\n  plot {\n    set way\n  }\n}" with
+      | Error e -> failtest $"the anchor form must resolve: {e}"
+      | Ok [| root |] ->
+        Expect.equal root.Children[0].Name "plot" "the body resolved"
+      | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "a two-positional set fails loud"
+    <| fun _ ->
+      match resolveKdl "map 8 6 {\n  plot {\n    set way extra\n  }\n}" with
+      | Ok _ -> failtest "an ambiguous set must fail"
+      | Error e ->
+        Expect.stringContains e "'set' wants" "names the accepted forms"
+
+    testCase "a map with extra positional args fails the build"
+    <| fun _ ->
+      match resolveKdl "map 8 6 9 {\n  plot {}\n}" with
+      | Ok _ -> failtest "the extra map argument must fail"
+      | Error e ->
+        Expect.stringContains e "extra argument" "names the leftover"
+        Expect.stringContains e "1:" "carries the line"
 
     testCase "unknown elements fail with their position"
     <| fun _ ->

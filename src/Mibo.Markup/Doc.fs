@@ -174,6 +174,8 @@ module Doc =
       | ValueSome w -> Ok w
       | ValueNone -> Error $"'{n.Kind}' wants '{name}'{at(src, n)}"
 
+  /// Reads one align word — `start`, `center`, `end`, `stretch` — into
+  /// its `Align`; anything else is `ValueNone`.
   let axisWord(w: string) : Align voption =
     match w with
     | "start" -> ValueSome Start
@@ -263,6 +265,9 @@ module Doc =
     Seed = if patch.Seed.IsSome then patch.Seed else baseStyle.Seed
   }
 
+  /// Applies one layout property (`w=`, `x=`, `col=`, `pack=`,
+  /// `hplace=`, `seed=`, ...) on top of a style. A value of the wrong
+  /// shape or an unknown property name is a positioned error.
   let applyProp
     (src: string, n: Node, s: Style, p: Prop)
     : Result<Style, string> =
@@ -489,6 +494,9 @@ module Doc =
 
   // ── Operation resolution ─────────────────────────────────────
 
+  /// Whether the node kind is a paint statement (`fill`, `fillRect`,
+  /// `set`, `border`, `rect`, `generate`). Everything else in a body is
+  /// a child container or a declaration node.
   let isOpKind(kind: string) : bool =
     match kind with
     | "fill"
@@ -510,7 +518,7 @@ module Doc =
     for p in n.Props do
       named[p.Name] <- p.Value
 
-    let positional = ResizeArray<Arg>(Seq.toArray n.Args)
+    let positional = ResizeArray<Arg>(n.Args)
 
     let take(slot: string) : Arg voption =
       match named.TryGetValue slot with
@@ -566,32 +574,48 @@ module Doc =
       | _ -> Error $"'{n.Kind}' wants an axis word for '{slot}'{at(src, n)}"
 
     /// Reads the four rect slots in order; the first failure wins.
+    /// Four mutable locals — no intermediate collection for four values.
     let takeRect() =
-      let values = ResizeArray<int>()
       let mutable failed = ValueNone
+      let mutable x, y, w, h = 0, 0, 0, 0
 
-      for slot in [ "x"; "y"; "w"; "h" ] do
+      let put slot v =
+        match slot with
+        | "x" -> x <- v
+        | "y" -> y <- v
+        | "w" -> w <- v
+        | _ -> h <- v
+
+      let readSlot slot =
         if failed.IsNone then
-          match takeInt slot with
-          | Ok v -> values.Add v
-          | Error e -> failed <- ValueSome e
+          (match takeInt slot with
+           | Ok v -> put slot v
+           | Error e -> failed <- ValueSome e)
+
+      readSlot "x"
+      readSlot "y"
+      readSlot "w"
+      readSlot "h"
 
       match failed with
       | ValueSome e -> Error e
-      | ValueNone -> Ok struct (values[0], values[1], values[2], values[3])
+      | ValueNone -> Ok struct (x, y, w, h)
 
     let noLeftovers allowed =
       if positional.Count > 0 then
         Error $"'{n.Kind}' has {positional.Count} extra argument(s){at(src, n)}"
       else
-        let extra =
-          named.Keys
-          |> Seq.filter(fun k -> not(List.contains k allowed))
-          |> Seq.toList
+        // one pass over the named keys; `allowed` is an array so the
+        // membership test allocates nothing
+        let mutable extra = ValueNone
+
+        for k in named.Keys do
+          if extra.IsNone && not(Array.contains k allowed) then
+            extra <- ValueSome k
 
         match extra with
-        | k :: _ -> Error $"'{n.Kind}' has no argument '{k}'{at(src, n)}"
-        | [] -> Ok()
+        | ValueSome k -> Error $"'{n.Kind}' has no argument '{k}'{at(src, n)}"
+        | ValueNone -> Ok()
 
     let rectOf(x: int, y: int, w: int, h: int) : CellRect = {
       X = x
@@ -607,18 +631,19 @@ module Doc =
     let checkedOp allowed op =
       noLeftovers allowed |> Result.map(fun () -> op)
 
-    let fillStatement cell = checkedOp [ "cell" ] (Op.Fill cell)
+    let fillStatement cell = checkedOp [| "cell" |] (Op.Fill cell)
 
     let fillRectStatement(struct (x, y, w, h)) =
       takeCell "cell"
       |> Result.bind(fun cell ->
         checkedOp
-          [ "x"; "y"; "w"; "h"; "cell" ]
+          [| "x"; "y"; "w"; "h"; "cell" |]
           (Op.FillRect(rectOf(x, y, w, h), cell)))
 
     let setStatement() =
       // exact: `set x=1 y=2 cell` or `set 1 2 cell`; anchored:
-      // `set hplace=center vplace=center cell`
+      // `set hplace=center vplace=center cell` or the bare anchor
+      // `set c` — the cell places by the two aligns, Start by default
       let coords =
         named.ContainsKey "x" || named.ContainsKey "y" || positional.Count = 3
 
@@ -636,7 +661,15 @@ module Doc =
             takeCell "cell"
             |> Result.bind(fun cell ->
               checkedOp
-                [ "x"; "y"; "cell"; "halign"; "valign"; "hplace"; "vplace" ]
+                [|
+                  "x"
+                  "y"
+                  "cell"
+                  "halign"
+                  "valign"
+                  "hplace"
+                  "vplace"
+                |]
                 (Op.Set(ValueSome { X = x; Y = y }, Start, Start, cell)))))
       elif anchored then
         takeAlign hName
@@ -646,17 +679,18 @@ module Doc =
             takeCell "cell"
             |> Result.bind(fun cell ->
               checkedOp
-                [ "halign"; "valign"; "hplace"; "vplace"; "cell" ]
+                [| "halign"; "valign"; "hplace"; "vplace"; "cell" |]
                 (Op.Set(ValueNone, h, v, cell)))))
-      elif positional.Count = 2 then
+      elif positional.Count = 1 then
+        // the `set c` anchor form: no coordinates, the aligns default
         takeCell "cell"
         |> Result.bind(fun cell ->
           checkedOp
-            [ "cell"; "halign"; "valign"; "hplace"; "vplace" ]
-            (Op.Set(ValueSome { X = 0; Y = 0 }, Start, Start, cell)))
+            [| "cell"; "halign"; "valign"; "hplace"; "vplace" |]
+            (Op.Set(ValueNone, Start, Start, cell)))
       else
         Error
-          $"'set' wants x= y= coordinates or hplace= vplace= alignment, and a cell{at(src, n)}"
+          $"'set' wants x= y= coordinates, hplace= vplace= alignment, or a cell to anchor{at(src, n)}"
 
     let borderStatement() =
       if usesRectArea then
@@ -665,19 +699,19 @@ module Doc =
           takeCell "cell"
           |> Result.bind(fun cell ->
             checkedOp
-              [ "x"; "y"; "w"; "h"; "cell" ]
+              [| "x"; "y"; "w"; "h"; "cell" |]
               (Op.Border(ValueSome(rectOf(x, y, w, h)), cell))))
       else
         takeCell "cell"
         |> Result.bind(fun cell ->
-          checkedOp [ "cell" ] (Op.Border(ValueNone, cell)))
+          checkedOp [| "cell" |] (Op.Border(ValueNone, cell)))
 
     let rectStatement() =
       takeCell "edge"
       |> Result.bind(fun edge ->
         takeCell "floor"
         |> Result.bind(fun floor ->
-          checkedOp [ "edge"; "floor" ] (Op.Rect(edge, floor))))
+          checkedOp [| "edge"; "floor" |] (Op.Rect(edge, floor))))
 
     let generateStatement() =
       if usesRectArea then
@@ -686,12 +720,12 @@ module Doc =
           takeKernel "kernel"
           |> Result.bind(fun name ->
             checkedOp
-              [ "x"; "y"; "w"; "h"; "kernel" ]
+              [| "x"; "y"; "w"; "h"; "kernel" |]
               (Op.Generate(name, ValueSome(rectOf(x, y, w, h))))))
       else
         takeKernel "kernel"
         |> Result.bind(fun name ->
-          checkedOp [ "kernel" ] (Op.Generate(name, ValueNone)))
+          checkedOp [| "kernel" |] (Op.Generate(name, ValueNone)))
 
     match n.Kind with
     | "fill" -> takeCell "cell" |> Result.bind fillStatement
@@ -844,9 +878,12 @@ module Doc =
   // ── Repeat expansion ─────────────────────────────────────────
 
   /// `repeat n` duplicates its children, nested repeats included. The
-  /// count is read by name (`count=`) or positionally, and a count past
-  /// 100000 fails with its position — an authoring typo must not loop
-  /// until memory stops. Returns an array; every consumer iterates.
+  /// count is read by name (`count=`) or positionally. Two caps hold, a
+  /// per-`repeat` count cap and a 100000-node cap on the expansion's
+  /// total output — nested repeats multiply, so `repeat 100000 {
+  /// repeat 100000 { x } }` fails on the running total instead of
+  /// looping until memory stops. Returns an array; every consumer
+  /// iterates.
   let expandNodes
     (src: string, nodes: ImmutableArray<Node>)
     : Result<Node[], string> =
@@ -866,8 +903,19 @@ module Doc =
                      ValueSome
                        $"repeat count {count} is past the 100000 cap{at(src, n)}"
                  else
-                   for _ in 1..count do
-                     go n.Children)
+                   // one cap check per child emission: the running total
+                   // is what nesting multiplies, so it is what stops it
+                   let mutable i = 0
+
+                   while i < count && failed.IsNone do
+                     if out.Count > 100000 then
+                       failed <-
+                         ValueSome
+                           $"the repeat expansion is past the 100000 node cap{at(src, n)}"
+                     else
+                       go n.Children
+
+                     i <- i + 1)
             else
               out.Add n
 
@@ -1003,6 +1051,11 @@ module Doc =
 
   // ── Container resolution ─────────────────────────────────────
 
+  /// Resolves one container node into an `Item`: expands repeats,
+  /// cascades the style (rule sheet, then inline props), splits the
+  /// children into paint statements (this element's body), track and
+  /// area directives, and child containers. Declarations (`element`,
+  /// `style`) are leaves here — their collectors ran first.
   let rec resolveContainer
     (
       surface: Surface<'T>,
@@ -1116,9 +1169,17 @@ module Doc =
       if n.Kind <> "map" then
         false
       else
-        n.Args.Length >= 2
-        || (n.Props |> Seq.exists(fun p -> p.Name = "w")
-            && n.Props |> Seq.exists(fun p -> p.Name = "h"))
+        // one pass finds both named dimensions
+        let mutable w = false
+        let mutable h = false
+
+        for p in n.Props do
+          if p.Name = "w" then
+            w <- true
+          elif p.Name = "h" then
+            h <- true
+
+        n.Args.Length >= 2 || (w && h)
 
     let rec go(n: Node) : Node voption =
       if isMap n then
@@ -1142,18 +1203,33 @@ module Doc =
 
   /// Reads and validates the map node's dimensions: `w=`/`h=` by name
   /// (the XML channel) or the first two positional args (the KDL
-  /// channel). Zero and negative dimensions fail with a position.
+  /// channel). Zero and negative dimensions fail with a position, and
+  /// positional args beyond the two dimension slots are leftovers, not
+  /// silent drops.
   let dimsOf(src: string, n: Node) : Result<CellSize, string> =
-    match wantInt(src, n, "w", 0) with
-    | Error e -> Error e
-    | Ok w ->
-      (match wantInt(src, n, "h", 1) with
+    // each named dimension closes its positional slot
+    let mutable slots = 0
+
+    for p in n.Props do
+      if p.Name = "w" || p.Name = "h" then
+        slots <- slots + 1
+
+    let slots = 2 - min 2 slots
+
+    if n.Args.Length > slots then
+      Error
+        $"'{n.Kind}' has {n.Args.Length - slots} extra argument(s){at(src, n)}"
+    else
+      (match wantInt(src, n, "w", 0) with
        | Error e -> Error e
-       | Ok h ->
-         if w > 0 && h > 0 then
-           Ok { W = w; H = h }
-         else
-           Error $"map dimensions must be positive{at(src, n)}")
+       | Ok w ->
+         (match wantInt(src, n, "h", 1) with
+          | Error e -> Error e
+          | Ok h ->
+            if w > 0 && h > 0 then
+              Ok { W = w; H = h }
+            else
+              Error $"map dimensions must be positive{at(src, n)}"))
 
   /// Game-declared element bodies never pass through statement
   /// resolution, so their kernel references get checked here: a typo in
