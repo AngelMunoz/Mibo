@@ -142,26 +142,30 @@ build instead of silently dropping the offsets), `hplace=`/`vplace=`/
 
 ## The emitter
 
-`DocFlow.build` is the whole pipeline in one call: parse (KDL), resolve,
-emit to Flow stamps, one `Flow.run`. Every layout channel rides the
-framework's own primitives — exact placement is `Flow.at`, stack
-alignment is `Dock` flags, flow packing is `Flow.grid` with named areas
-and explicit slots, `auto` tracks size from the children's footprints
-inside the grid, and scatter is `Flow.scatter`'s seeded rule:
+`DocFlow.build` (KDL) and `DocFlow.buildXml` (XML) are the whole
+pipeline in one call: parse, resolve, emit to Flow stamps, one
+`Flow.run`. Every layout channel rides the framework's own primitives —
+exact placement is `Flow.at`, stack alignment is `Dock` flags, flow
+packing is `Flow.grid` with named areas and explicit slots, `auto`
+tracks size from the children's footprints inside the grid, and scatter
+is `Flow.scatter`'s seeded rule:
 
 ```fsharp
-match DocFlow.build (surface, src) with
+match DocFlow.build (surface, src) with        // or DocFlow.buildXml
 | Ok grid -> ...          // a CellGrid2D<Tile>, painted and query-ready
 | Error e -> printfn "%s" e
 ```
 
 The golden tests hand-lay each layout channel with the raw `Layout` ops
 and compare cell for cell — the emitter is checked against the
-framework's own painting, not against itself. Parse and resolution
-errors carry their document positions; emitter-stage failures carry the
-container and the child. The build returns the painted grid only —
-named and tagged landmarks are a scope cut, so derive gameplay regions
-from the tiles (the `Flow.build` scan) rather than the document tree.
+framework's own painting, not against itself — and the same document
+built in KDL and in XML produces the identical grid. Parse and
+resolution errors carry their document positions (KDL); emitter-stage
+failures name the container and the channel (a gap mismatch, a bad
+slot, an unknown area, a mixed pack). The build returns the painted
+grid only — named and tagged landmarks are a scope cut, so derive
+gameplay regions from the tiles (the `Flow.build` scan) rather than the
+document tree.
 
 ## Live reload
 

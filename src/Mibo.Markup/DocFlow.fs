@@ -24,23 +24,29 @@ module DocFlow =
   open Mibo.Layout
 
   // ── geometry between the two vocabularies ────────────────────
+  // All inline: thin record shuffles over struct inputs, and the emit
+  // walk calls them per child per paint.
 
-  let private rectOf(s: GridSection2D<'T>) : CellRect = {
+  let inline private rectOf(s: GridSection2D<'T>) : CellRect = {
     X = s.OffsetX
     Y = s.OffsetY
     W = s.Width
     H = s.Height
   }
 
-  let private sectionOf(grid: CellGrid2D<'T>, r: CellRect) : GridSection2D<'T> = {
-    BackingGrid = grid
-    OffsetX = r.X
-    OffsetY = r.Y
-    Width = r.W
-    Height = r.H
-  }
+  let inline private sectionOf
+    (grid: CellGrid2D<'T>)
+    (r: CellRect)
+    : GridSection2D<'T> =
+    {
+      BackingGrid = grid
+      OffsetX = r.X
+      OffsetY = r.Y
+      Width = r.W
+      Height = r.H
+    }
 
-  let private insetRect(n: int, r: CellRect) : CellRect =
+  let inline private insetRect(n: int, r: CellRect) : CellRect =
     let n = max 0 n
 
     {
@@ -50,24 +56,25 @@ module DocFlow =
       H = max 0 (r.H - 2 * n)
     }
 
-  let private sizeOf(r: CellRect) : CellSize = { W = r.W; H = r.H }
+  let inline private sizeOf(r: CellRect) : CellSize = { W = r.W; H = r.H }
 
   // ── child reads ──────────────────────────────────────────────
 
-  let private childSize(inner: CellSize, c: Doc.Item<'T>) : CellSize =
-    let declaredOrMeasured =
+  /// Size: stated first, then the element's extent — which the resolver
+  /// already derived from the body's own geometry (`measureOps`, no
+  /// allocation), so the scratch-grid measure never runs on the emitter
+  /// path. Zero means "stretch this axis".
+  let inline private childSize(c: Doc.Item<'T>) : CellSize =
+    c.Style.Size
+    |> ValueOption.defaultWith(fun () ->
       c.Element.Extent
-      |> ValueOption.defaultWith(fun () ->
-        let m = Doc.measure(c.Element, inner)
+      |> ValueOption.map id
+      |> ValueOption.defaultValue { W = 0; H = 0 })
 
-        if m = inner then { W = 0; H = 0 } else m)
-
-    c.Style.Size |> ValueOption.defaultValue declaredOrMeasured
-
-  let private alignH(c: Doc.Item<'T>) : Align =
+  let inline private alignH(c: Doc.Item<'T>) : Align =
     c.Style.PlaceH |> ValueOption.defaultValue Start
 
-  let private alignV(c: Doc.Item<'T>) : Align =
+  let inline private alignV(c: Doc.Item<'T>) : Align =
     c.Style.PlaceV |> ValueOption.defaultValue Start
 
   let private dockFlagsOf(h: Align, v: Align) : Dock =
@@ -150,11 +157,16 @@ module DocFlow =
 
       match c.Style.Area with
       | ValueSome name ->
+        // an unknown area name is an emitter-stage failure: resolve does
+        // not read the areas template, so the message names the area
         (match areaSpan(areas, name) with
-         | ValueSome span -> claim span
-         | ValueNone ->
-           failwith
-             $"no area named '{name}' (the resolver must have caught this)")
+         | ValueSome span ->
+           if c.Style.Col.IsSome || c.Style.Row.IsSome then
+             failwith
+               $"a flow child places by area= or by col=/row=, not both ('{name}')"
+
+           claim span
+         | ValueNone -> failwith $"no area named '{name}' in the declared areas")
       | ValueNone ->
         (match c.Style.Col, c.Style.Row with
          | ValueSome col, ValueSome row ->
@@ -175,7 +187,11 @@ module DocFlow =
                $"slot placement wants non-negative row= and spans of at least one (got row {row}, colspan {cs}, rowspan {rs})"
 
            claim struct (0, row, cs, rs)
-         | ValueNone, ValueNone -> ())
+         | ValueNone, ValueNone ->
+           // a flow child with a stated span would silently drop it
+           if c.Style.Span.IsSome then
+             failwith
+               "a flow child takes the next free cell; colspan=/rowspan= needs col= or row=")
 
     for i in 0 .. children.Length - 1 do
       if not claimed[i] then
@@ -222,7 +238,128 @@ module DocFlow =
 
   // ── the emit walk ────────────────────────────────────────────
 
+  // One recursive function, no `let rec ... and` chain: the pack
+  // builders are locals of `emit` and the only recursion is `emit`
+  // itself, called once per child inside plain loops. Depth equals the
+  // document's nesting depth — a handful of frames for real documents —
+  // and each call builds a stamp bottom-up, so the walk is a fold over
+  // the item tree, not a traversal that could loop unbounded.
+
   let rec emit(item: Doc.Item<'T>) : Stamp<'T> =
+    // One stack child as a layer: an exact-At child mounts at its
+    // origin (a zero axis stretching to the inner far edge), a placed
+    // child mounts as a docked layer anchored by its alignment.
+    let stackLayer(inner: CellRect, c: Doc.Item<'T>) : Stamp<'T> =
+      let stamp = emit c
+      let size = childSize c
+
+      match c.Style.At with
+      | ValueSome at ->
+        let w =
+          if size.W = 0 then
+            max 0 (inner.W - at.X)
+          else
+            min size.W inner.W
+
+        let h =
+          if size.H = 0 then
+            max 0 (inner.H - at.Y)
+          else
+            min size.H inner.H
+
+        Flow.at at.X at.Y { stamp with W = w; H = h }
+      | ValueNone ->
+        let w = if size.W = 0 then 0 else min size.W inner.W
+        let h = if size.H = 0 then 0 else min size.H inner.H
+
+        Flow.docked {
+          Anchor = dockFlagsOf(alignH c, alignV c)
+          Inset = InsetSpec.Zero
+          Stamp = { stamp with W = w; H = h }
+        }
+
+    // Scatter keeps the framework's seeded rule: sized children place
+    // at non-overlapping origins over the assigned area.
+    let scatterLayers
+      (seed: int, inner: CellRect, children: Doc.Item<'T>[])
+      : Stamp<'T> =
+      let scattered = Array.zeroCreate<Stamp<'T>> children.Length
+
+      for i in 0 .. children.Length - 1 do
+        let size = childSize children[i]
+
+        scattered[i] <- {
+          emit children[i] with
+              W = max 1 size.W
+              H = max 1 size.H
+        }
+
+      Flow.scatter seed scattered
+
+    // The flow pack rides `Flow.grid`: named areas pass through, slot
+    // and flow children place as explicit slots, and `auto` tracks size
+    // from the children's footprints inside the grid itself.
+    let flowGrid(gap: CellSize, inner: CellRect) : Stamp<'T> =
+      if gap.W <> gap.H then
+        failwith
+          "the Flow grid takes one gap for both axes; gapx= and gapy= differ"
+
+      let children = item.Children
+      let cols = if item.Cols.Length = 0 then [| Weight 1f |] else item.Cols
+      let colCount = cols.Length
+      let slots = assignSlots(item.Areas, colCount, children)
+      let sizes = children |> Array.map childSize
+
+      let mutable rowCount = item.Rows.Length
+
+      for struct (_, r, _, rs) in slots do
+        rowCount <- max rowCount (r + rs)
+
+      rowCount <- max rowCount item.Areas.Length
+
+      let rows =
+        if item.Rows.Length = 0 then
+          Array.create (max 1 rowCount) (Weight 1f)
+        elif rowCount > item.Rows.Length then
+          Array.append
+            item.Rows
+            (Array.create (rowCount - item.Rows.Length) Auto)
+        else
+          item.Rows
+
+      // named areas from the document become template rows; slot
+      // children need no template names — `Place.Slot` addresses the
+      // tracks directly
+      let places = Array.zeroCreate<struct (Place * Stamp<'T>)> children.Length
+
+      for i in 0 .. children.Length - 1 do
+        let c = children[i]
+        let size = sizes[i]
+
+        let place =
+          match c.Style.Area with
+          | ValueSome name -> Place.Area name
+          | ValueNone ->
+            let struct (c0, r0, cs, rs) = slots[i]
+            Place.Slot(c0, r0, cs, rs)
+
+        places[i] <-
+          struct (place,
+                  areaPlace(
+                    alignH c,
+                    alignV c,
+                    size,
+                    { emit c with W = size.W; H = size.H }
+                  ))
+
+      Flow.grid {
+        Cols = cols
+        Rows = rows
+        Gap = max 0 gap.W
+        Areas = item.Areas |> Array.map(String.concat " ")
+        Places = places
+      }
+
     let fp =
       item.Style.Size
       |> ValueOption.orElse item.Element.Extent
@@ -237,7 +374,7 @@ module DocFlow =
       Paint =
         fun s _ ->
           // the body first, the children after, per node
-          item.Element.Paint(sectionOf(s.BackingGrid, rectOf s))
+          item.Element.Paint(sectionOf s.BackingGrid (rectOf s))
 
           if item.Children.Length > 0 then
             let pad =
@@ -281,134 +418,32 @@ module DocFlow =
             let composite =
               match pack with
               | Doc.Stack ->
-                Flow.overlay(
-                  item.Children |> Array.map(fun c -> stackLayer(inner, c))
-                )
+                // build the layer array in a loop, not a map chain
+                let layers = Array.zeroCreate<Stamp<'T>> item.Children.Length
+
+                for i in 0 .. item.Children.Length - 1 do
+                  layers[i] <- stackLayer(inner, item.Children[i])
+
+                Flow.overlay layers
               | Doc.Scatter -> scatterLayers(seed, inner, item.Children)
-              | Doc.Flow -> flowGrid(gap, inner, item)
+              | Doc.Flow -> flowGrid(gap, inner)
 
-            Flow.paint composite (sectionOf(s.BackingGrid, inner)) |> ignore
-    }
-
-  /// One stack child as a layer: an exact-At child mounts at its origin
-  /// (a zero axis stretching to the inner far edge), a placed child
-  /// mounts as a docked layer anchored by its alignment.
-  and stackLayer(inner: CellRect, c: Doc.Item<'T>) : Stamp<'T> =
-    let stamp = emit c
-    let size = childSize(sizeOf inner, c)
-
-    match c.Style.At with
-    | ValueSome at ->
-      let w =
-        if size.W = 0 then
-          max 0 (inner.W - at.X)
-        else
-          min size.W inner.W
-
-      let h =
-        if size.H = 0 then
-          max 0 (inner.H - at.Y)
-        else
-          min size.H inner.H
-
-      Flow.at at.X at.Y { stamp with W = w; H = h }
-    | ValueNone ->
-      let w = if size.W = 0 then 0 else min size.W inner.W
-      let h = if size.H = 0 then 0 else min size.H inner.H
-
-      Flow.docked {
-        Anchor = dockFlagsOf(alignH c, alignV c)
-        Inset = InsetSpec.Zero
-        Stamp = { stamp with W = w; H = h }
-      }
-
-  /// Scatter keeps the framework's seeded rule: sized children place at
-  /// non-overlapping origins over the assigned area.
-  and scatterLayers
-    (seed: int, inner: CellRect, children: Doc.Item<'T>[])
-    : Stamp<'T> =
-    children
-    |> Array.map(fun c ->
-      let size = childSize(sizeOf inner, c)
-
-      {
-        emit c with
-            W = max 1 size.W
-            H = max 1 size.H
-      })
-    |> Flow.scatter seed
-
-  /// The flow pack rides `Flow.grid`: named areas pass through, slot and
-  /// flow children place as explicit slots, and `auto` tracks size from
-  /// the children's footprints inside the grid itself.
-  and flowGrid(gap: CellSize, inner: CellRect, item: Doc.Item<'T>) : Stamp<'T> =
-    if gap.W <> gap.H then
-      failwith
-        "the Flow grid takes one gap for both axes; gapx= and gapy= differ"
-
-    let children = item.Children
-    let cols = if item.Cols.Length = 0 then [| Weight 1f |] else item.Cols
-    let colCount = cols.Length
-    let slots = assignSlots(item.Areas, colCount, children)
-    let sizes = children |> Array.map(fun c -> childSize(sizeOf inner, c))
-
-    let mutable rowCount = item.Rows.Length
-
-    for struct (_, r, _, rs) in slots do
-      rowCount <- max rowCount (r + rs)
-
-    rowCount <- max rowCount item.Areas.Length
-
-    let rows =
-      if item.Rows.Length = 0 then
-        Array.create (max 1 rowCount) (Weight 1f)
-      elif rowCount > item.Rows.Length then
-        Array.append item.Rows (Array.create (rowCount - item.Rows.Length) Auto)
-      else
-        item.Rows
-
-    // named areas from the document become template rows; slot children
-    // need no template names — `Place.Slot` addresses the tracks
-    let places =
-      (children, slots, sizes)
-      |||> Array.map3(fun c struct (c0, r0, cs, rs) size ->
-        let place =
-          match c.Style.Area with
-          | ValueSome name -> Place.Area name
-          | ValueNone -> Place.Slot(c0, r0, cs, rs)
-
-        struct (place,
-                areaPlace(
-                  alignH c,
-                  alignV c,
-                  size,
-                  { emit c with W = size.W; H = size.H }
-                )))
-
-    Flow.grid {
-      Cols = cols
-      Rows = rows
-      Gap = max 0 gap.W
-      Areas = item.Areas |> Array.map(String.concat " ")
-      Places = places
+            Flow.paint composite (sectionOf s.BackingGrid inner) |> ignore
     }
 
   // ── the map shell ────────────────────────────────────────────
 
-  /// Parses, resolves and lays the document out through the Flow API.
-  /// Parse and resolution failures carry their document positions (the
-  /// same messages as `Doc.resolve`); emitter-stage failures — a gap
-  /// mismatch, a bad slot, a mixed pack channel — carry the container
-  /// and the child instead. Error builds nothing. The build returns the
-  /// painted grid; named and tagged landmarks stay a scope cut (derive
-  /// gameplay regions from the tiles, the way `Flow.build` does).
-  let build
-    (surface: Doc.Surface<'T>, src: string)
+  let private buildFrom
+    (parse: string -> Result<ImmutableArray<Node>, string>)
+    (surface: Doc.Surface<'T>)
+    (src: string)
     : Result<CellGrid2D<'T>, string> =
     try
-      Kdl.parse src
+      parse src
       |> Result.bind(fun roots ->
         // resolve already guarantees one map container and one root item
+        // (dimsOf runs inside it), so findMapNode here only locates the
+        // node whose dimensions the grid needs
         Doc.resolve surface src roots
         |> Result.bind(fun items ->
           match items with
@@ -432,3 +467,24 @@ module DocFlow =
           | _ -> Error "the document needs exactly one map container"))
     with e ->
       Error e.Message
+
+  /// Parses (KDL or XML — the same document in either syntax builds the
+  /// same grid, pinned by test), resolves, and lays the document out
+  /// through the Flow API. Parse and resolution failures carry their
+  /// document positions when the front-end tracks them; emitter-stage
+  /// failures — a gap mismatch, a bad slot, a mixed pack channel — name
+  /// the container and the child instead. Error builds nothing. The
+  /// build returns the painted grid; named and tagged landmarks stay a
+  /// scope cut (derive gameplay regions from the tiles, the way
+  /// `Flow.build` does).
+  let build
+    (surface: Doc.Surface<'T>, src: string)
+    : Result<CellGrid2D<'T>, string> =
+    buildFrom Kdl.parse surface src
+
+  /// `build` with the XML front-end: attributes carry the scalars, so
+  /// the document reads the way XML means it.
+  let buildXml
+    (surface: Doc.Surface<'T>, src: string)
+    : Result<CellGrid2D<'T>, string> =
+    buildFrom Xml.parse surface src

@@ -394,4 +394,110 @@ let failureTests =
       | Ok _ -> failtest "exact placement must not vanish inside flow"
       | Error e ->
         Expect.stringContains e "stack pack" "the error names the working pack"
+
+    testCase "a gap mismatch fails the build"
+    <| fun _ ->
+      match
+        build
+          """map 8 6 {
+    plot w=8 h=6 gapx=1 gapy=2 {
+        cols 1 1
+        plot { fill sand }
+    }
+}
+"""
+      with
+      | Ok _ -> failtest "a gap mismatch must fail"
+      | Error e -> Expect.stringContains e "one gap" "names the restriction"
+
+    testCase "an unknown area name fails the build"
+    <| fun _ ->
+      match
+        build
+          """map 8 6 {
+    plot w=8 h=6 {
+        areas {
+            row names="road woods"
+        }
+        plot area=lake { fill sand }
+    }
+}
+"""
+      with
+      | Ok _ -> failtest "an unknown area must fail"
+      | Error e ->
+        Expect.stringContains e "lake" "names the area"
+        Expect.stringContains e "declared areas" "names the container"
+
+    testCase "a slot past the declared tracks fails the build"
+    <| fun _ ->
+      match
+        build
+          """map 8 6 {
+    plot w=8 h=6 {
+        cols 1 1
+        plot col=5 row=0 { fill sand }
+    }
+}
+"""
+      with
+      | Ok _ -> failtest "an out-of-grid slot must fail"
+      | Error e -> Expect.stringContains e "outside" "names the tracks"
+
+    testCase "a span on a plain flow child fails the build"
+    <| fun _ ->
+      match
+        build
+          """map 8 6 {
+    plot w=8 h=6 {
+        cols 1 1
+        plot colspan=2 { fill sand }
+    }
+}
+"""
+      with
+      | Ok _ -> failtest "a dropped span must fail"
+      | Error e -> Expect.stringContains e "colspan" "names the channel"
+  ]
+
+[<Tests>]
+let parityTests =
+  testList "DocFlow front-end parity" [
+    testCase "the same document in KDL and in XML builds the same grid"
+    <| fun _ ->
+      let kdl =
+        """map 12 8 {
+    generate grass
+    element plaza w=3 h=2 { rect edge=stone floor=grass }
+    plaza x=2 y=2 { fill dirt }
+    plot x=6 y=1 w=4 h=4 pack=scatter seed=7 { pine; pine; boulder }
+    set 1 1 way
+}
+"""
+
+      let xml =
+        """<map w="12" h="8">
+  <generate kernel="grass" />
+  <element name="plaza" w="3" h="2"><rect edge="stone" floor="grass" /></element>
+  <plaza x="2" y="2"><fill cell="dirt" /></plaza>
+  <plot x="6" y="1" w="4" h="4" pack="scatter" seed="7">
+    <pine /><pine /><boulder />
+  </plot>
+  <set x="1" y="1" cell="way" />
+</map>"""
+
+      match DocFlow.build(surface, kdl), DocFlow.buildXml(surface, xml) with
+      | Ok a, Ok b ->
+        // goldens compare cell for cell; this is the front-end parity
+        // the parse-level test cannot express (args vs properties)
+        let mutable diffs = 0
+
+        for y in 0 .. a.Height - 1 do
+          for x in 0 .. a.Width - 1 do
+            if CellGrid2D.get x y a <> CellGrid2D.get x y b then
+              diffs <- diffs + 1
+
+        Expect.equal diffs 0 "both syntaxes build the identical grid"
+
+      | kdlRes, xmlRes -> failtest(sprintf "kdl=%A xml=%A" kdlRes xmlRes)
   ]
