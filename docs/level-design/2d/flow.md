@@ -244,6 +244,28 @@ Flow.texture (fun x y -> heightMap.[x, y])
 fixed seed for a curated level. Derive the seed from the save file for
 per-run variety.
 
+`Flow.scatter` brings the same determinism to whole elements: sized
+children place at seeded, non-overlapping origins over the assigned area,
+first-fit in child order. Same seed and same container, same level:
+
+```fsharp
+// a rock ring around the spawn cave — boulders never overlap
+let rocks = Flow.group 5 5 [ Flow.scatter 13 [ boulder; boulder; boulder ] ]
+```
+
+The footprint of a scatter is the largest child's, so mount it inside a
+sized context (`group`, a grid area, a docked stretch) to choose the
+region. Name or tag the children as usual — their scattered rectangles
+report through the landmarks, and a child that fits nowhere fails the
+build naming the child when it is named.
+
+One determinism note: `Flow.scatter` runs a fixed xorshift shuffle, so a
+seeded scatter builds the same level on every .NET version. The paint
+styles above (`noise`, `clumps`, `scatterBorder`, ...) ride the BCL
+random generator, whose sequence can change between .NET versions —
+trust `Flow.scatter` when a level must reproduce byte for byte across
+.NET versions.
+
 ## Pattern: build your own vocabulary
 
 Stamps are values. Parameterize them and give them names from your

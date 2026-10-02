@@ -388,6 +388,99 @@ module internal FlowImpl =
     for c in stamps do
       checkNoExpand container arg c
 
+  /// A deterministic permutation of `0..n-1`: xorshift seeded from `seed`,
+  /// Fisher-Yates over the identity. No BCL RNG, so the sequence cannot
+  /// drift across runtimes. A zero state would freeze the xorshift, so
+  /// the one seed that mixes to zero re-mixes once.
+  let permutation (seed: int) (n: int) : int[] =
+    let mutable s = uint32 seed * 2654435761u + 2891336453u
+
+    if s = 0u then
+      s <- s ^^^ 0x9E3779B9u
+
+    let next() =
+      s <- s ^^^ (s <<< 13)
+      s <- s ^^^ (s >>> 17)
+      s <- s ^^^ (s <<< 5)
+      s
+
+    let order = Array.init n id
+
+    for i in n - 1 .. -1 .. 1 do
+      let j = int(next() % uint32(i + 1))
+      let tmp = order.[i]
+      order.[i] <- order.[j]
+      order.[j] <- tmp
+
+    order
+
+  /// Places sized children at seeded, non-overlapping origins of `bounds`:
+  /// candidate origins are the cells of `bounds` visited in the order of a
+  /// seeded permutation, children place in array order, and each takes the
+  /// first origin where its size fits without overlapping an earlier one.
+  /// A child with no fitting origin fails the build naming the child when
+  /// it is named. The overlap scan is linear in the placed count: typical
+  /// level scatters place a handful of elements, and this runs once at
+  /// build time — swap in an occupancy bitmap if huge dense scatters ever
+  /// show up in a profile.
+  let scatterRects
+    (seed: int)
+    (bounds: CellRect)
+    (stamps: Stamp<'T>[])
+    : CellRect[] =
+    let origins = permutation seed (bounds.W * bounds.H)
+
+    let placed = ResizeArray<CellRect>()
+    let result = Array.zeroCreate stamps.Length
+
+    for i in 0 .. stamps.Length - 1 do
+      let w = max 1 stamps.[i].W
+      let h = max 1 stamps.[i].H
+      let mutable found = ValueNone
+      let mutable k = 0
+
+      while found.IsNone && k < origins.Length do
+        let cell = origins.[k]
+        let ox = bounds.X + (cell % bounds.W)
+        let oy = bounds.Y + (cell / bounds.W)
+
+        let fits =
+          ox + w <= bounds.X + bounds.W && oy + h <= bounds.Y + bounds.H
+
+        let candidate: CellRect = { X = ox; Y = oy; W = w; H = h }
+
+        // Bounds first: a candidate that leaves the container must not
+        // pay for the overlap scan. Manual loop, not a List.Exists
+        // closure: this is the innermost scan and a closure capture
+        // would allocate per candidate.
+        if fits then
+          let mutable clash = false
+          let mutable j = 0
+
+          while not clash && j < placed.Count do
+            clash <- overlaps candidate placed.[j]
+            j <- j + 1
+
+          if not clash then
+            found <- ValueSome candidate
+
+        k <- k + 1
+
+      match found with
+      | ValueSome rect ->
+        placed.Add rect
+        result.[i] <- rect
+      | ValueNone ->
+        let who =
+          match stamps.[i].Name with
+          | ValueSome name -> $" '{name}'"
+          | ValueNone -> ""
+
+        invalidOp
+          $"Flow.scatter: child{who} ({i + 1} of {stamps.Length}) does not fit the container"
+
+    result
+
 [<RequireQualifiedAccess>]
 module Stamp =
   /// Creates a leaf element with a fixed cell footprint.
@@ -1517,6 +1610,45 @@ module Flow =
 
             for c in arr do
               FlowImpl.paintChild s r registry c
+      }
+
+  /// Scatters sized children over the assigned area at seeded,
+  /// non-overlapping origins — prop clusters, debris fields, spawn rings.
+  /// Candidate origins are the container's cells in the order of a seeded
+  /// permutation (a fixed xorshift shuffle — the placement cannot drift
+  /// across .NET versions, unlike the BCL random generator behind the
+  /// paint-side scatter styles); children place in the given order and
+  /// each takes the first origin where its footprint fits without
+  /// overlapping an earlier one. The same seed and the same container
+  /// build the same level every run. A child that fits nowhere fails the
+  /// build naming the child when it is named. The footprint is the
+  /// largest child's, so scatter inside a sized context (`group`, a grid
+  /// area, a docked stretch) to choose the region; a child with a zero
+  /// axis (a context-sized child, or any element sized `0` on one side)
+  /// places as one cell on that axis, and `expand` children throw.
+  let scatter (seed: int) (children: Stamp<'T> seq) : Stamp<'T> =
+    let arr = Array.ofSeq children
+    FlowImpl.checkNoExpandAll "Flow.scatter" "children" arr
+
+    if arr.Length = 0 then
+      Stamp.empty()
+    else
+      let w = arr |> Array.map(fun c -> c.W) |> Array.max
+      let h = arr |> Array.map(fun c -> c.H) |> Array.max
+
+      {
+        W = w
+        H = h
+        Expand = 0
+        Name = ValueNone
+        Tags = []
+        Paint =
+          fun s registry ->
+            let assigned = FlowImpl.rectOf s
+            let rects = FlowImpl.scatterRects seed assigned arr
+
+            for i in 0 .. arr.Length - 1 do
+              FlowImpl.paintChild s rects.[i] registry arr.[i]
       }
 
   /// A fixed-size group that lays its children out over its own area with
