@@ -514,6 +514,20 @@ let tests =
             |> ignore)
           "slot past the last column"
 
+      testCase "a slot span below one throws"
+      <| fun _ ->
+        Expect.throwsT<System.ArgumentException>
+          (fun () ->
+            Flow.grid {
+              Cols = [| Fixed 2 |]
+              Rows = [| Fixed 2 |]
+              Gap = 0
+              Areas = [||]
+              Places = [| struct (Slot(0, 0, 0, 1), fillTile 1) |]
+            }
+            |> ignore)
+          "a zero span never silently clamps to one"
+
       testCase "overlapping slots paint in Places order"
       <| fun _ ->
         let stamp =
@@ -956,8 +970,8 @@ let tests =
             Gap = 0
             Areas = [| "a b" |]
             Places = [|
-              struct ("a", fillTile 1)
-              struct ("b", Flow.at 1 0 (Stamp.named "prop" (tile 2 1 7)))
+              struct (Area "a", fillTile 1)
+              struct (Area "b", Flow.at 1 0 (Stamp.named "prop" (tile 2 1 7)))
             |]
           }
 

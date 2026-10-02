@@ -86,10 +86,11 @@ What you get:
 ### Track sizes and explicit slots
 
 Beyond `Fixed`, tracks size three ways. `Auto` sizes a track to the largest
-footprint of its span-1 places at construction (a context-sized place like
-`Flow.canvas` reports no footprint, so it contributes nothing), `Weight`
-shares the assigned length after `Fixed`/`Auto`/`Percent`, and `Percent`
-takes a fraction of it.
+footprint of its span-1 places at construction (`Weight` shares the assigned
+length after `Fixed`/`Auto`/`Percent`, and `Percent` takes a fraction of
+it). A place reports no footprint on a zero axis — `Flow.canvas`, or any
+element sized `0` on one side — so it contributes nothing to an `Auto`
+track on that axis and the track collapses.
 
 Places can also skip the template entirely: `Slot (col, row, colspan,
 rowspan)` mounts an element at explicit track indices. Slots may overlap;
@@ -101,15 +102,16 @@ Flow.grid {
   Rows = [| Fixed 6 |]
   Gap = 1
   Areas = [||]
-  Places = [
+  Places = [|
     struct (Slot (0, 0, 1, 1), Flow.canvas [ Flow.fill Path ])   // fixed column
     struct (Slot (1, 0, 1, 1), sidePanel)   // Auto track sizes to the panel
-  ]
+  |]
 }
 ```
 
-A slot with negative indices or a span past the last track throws at
-construction — the same fail-loud rule as every other placement mistake.
+A slot with negative indices, a span below one, or a span past the last
+track throws at construction — the same fail-loud rule as every other
+placement mistake.
 
 ## Pattern: rooms, corridors, doors
 

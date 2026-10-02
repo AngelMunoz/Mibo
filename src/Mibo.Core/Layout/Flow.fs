@@ -1251,8 +1251,10 @@ module Flow =
               "Places"
               ("area '" + name + "' is not defined in the grid template")
         | Place.Slot(c0, r0, cs, rs) ->
-          let cs = max 1 cs
-          let rs = max 1 rs
+          if cs < 1 || rs < 1 then
+            invalidArg
+              "Places"
+              $"slot spans must be positive, got colspan {cs} and rowspan {rs}"
 
           if
             c0 < 0
@@ -1267,7 +1269,8 @@ module Flow =
           struct (c0, r0, cs, rs))
 
     // Auto tracks size to the largest footprint of their span-1 places;
-    // context-sized places report no footprint and contribute nothing.
+    // a place reports no footprint on a zero axis, so it contributes
+    // nothing and the track collapses.
     let colAuto = Array.zeroCreate colArr.Length
     let rowAuto = Array.zeroCreate rowArr.Length
 
@@ -1281,19 +1284,20 @@ module Flow =
       if rs = 1 && stamp.H > 0 then
         rowAuto.[r0] <- max rowAuto.[r0] stamp.H
 
-    let cols =
-      colArr
-      |> Array.mapi(fun i t ->
-        match t with
-        | Auto -> Fixed(max 0 colAuto.[i])
-        | t -> t)
+    // The conversions copy the track arrays; skip them when no Auto
+    // track needs resolving.
+    let resolveAuto (tracks: Track[]) (auto: int[]) : Track[] =
+      if not(Array.contains Auto tracks) then
+        tracks
+      else
+        tracks
+        |> Array.mapi(fun i t ->
+          match t with
+          | Auto -> Fixed(max 0 auto.[i])
+          | t -> t)
 
-    let rows =
-      rowArr
-      |> Array.mapi(fun i t ->
-        match t with
-        | Auto -> Fixed(max 0 rowAuto.[i])
-        | t -> t)
+    let cols = resolveAuto colArr colAuto
+    let rows = resolveAuto rowArr rowAuto
 
     let placements = opts.Places
 
