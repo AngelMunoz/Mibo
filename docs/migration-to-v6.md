@@ -464,7 +464,73 @@ let level =
   ]
 ```
 
-## 6. Migration checklist
+## 6. State a span and read the occupancy
+
+A cell can cover more than its own cell. `InstanceSpan` states how many
+cells one instance covers, and a build derives an `Occupancy` from the
+painted grid, so a query reads the instance that owns a cell instead of
+the empty neighbours next to it.
+
+Two fields on `Doc.Surface` carry it, and both are optional:
+
+```fsharp
+let spanOf (cell: BlockCell) = cell.Span
+let withSpan (cell: BlockCell) (span: InstanceSpan) = { cell with Span = span }
+
+let surface: Doc.Surface<BlockCell> = {
+  Words = words
+  Kernels = kernels
+  Elements = elements
+  Span = ValueSome spanOf        // absent: every cell covers one cell
+  WithSpan = ValueSome withSpan  // absent: a statement cannot size one
+}
+```
+
+A document then sizes one instance with `set`:
+
+```kdl
+layer ground {
+    fill grass
+    set 3 9 slab spanX=16 spanZ=6
+}
+```
+
+XML spells the same statement `<set x="3" y="9" cell="slab" spanX="16" spanZ="6" />`.
+No other statement takes a span: they paint every cell of their box.
+
+`DocFlow.buildLayers` returns the occupancy with each layer, and
+`DocFlow.build` refuses a document that places a spanning word — one grid
+cannot report the occupancy the map needs.
+
+```fsharp
+for layer in layers do
+  context.RenderInstanced(buffer, layer.Grid, layer.Occupancy)
+```
+
+Render with the occupancy form, and give the context a rectangle
+transform so one model scales over the cells it covers:
+
+```fsharp
+let context =
+  InstancedRenderContext<BlockCell, string>.Rect(
+    getKey = (fun cell -> cell.Model.Name),
+    getMeshesAndMaterial = meshesOf,
+    getTransform =
+      fun rect basePos cell ->
+        Matrix4x4.CreateScale(
+          float32 rect.W * cellSize / cell.Model.SizeX,
+          cell.Height * cellSize / cell.Model.SizeY,
+          float32 rect.H * cellSize / cell.Model.SizeZ)
+        * Matrix4x4.CreateTranslation(basePos.X, cell.Lift, basePos.Z)
+  )
+```
+
+`Occupancy.owner` answers which instance owns a cell, `rectOf` gives its
+rectangle, and `iterInWindow` enumerates the anchors a window touches.
+`Stack.feet` gives each layer the height the layers below it reach, so a
+decoration stands on a plate instead of replacing it.
+
+## 7. Migration checklist
 
 1. Swap `HexGrid.create` for `CellGrid2D.createHex` with a `HexSpec`.
    `set`/`get`/`clear`/`iter`/`getWorldPos` calls rename to
@@ -484,3 +550,7 @@ let level =
    into the tile as fields.
 8. Read [Flow - Level Authoring](level-design/2d/flow.html). Hex and
    3D-as-heightmap levels now author with the same DSL.
+9. Add `Span` and `WithSpan` to every `Doc.Surface` you construct — both
+   `ValueNone` keeps the map as it is — and read each layer's `Occupancy`
+   when a cell can cover more than one cell. See [state a span and read
+   the occupancy](#6-state-a-span-and-read-the-occupancy).

@@ -27,10 +27,37 @@ let private surface: Doc.Surface<int> = {
     }
 
     frozen [ "grove", grove ]
+  Doc.Span = ValueNone
+  Doc.WithSpan = ValueNone
 }
 
 let private resolveKdl(src: string) : Result<Doc.Item<int>[], string> =
   Kdl.parse src |> Result.bind(fun roots -> Doc.resolve surface src roots)
+
+/// A cell that states how many cells its instance covers, and lets a statement
+/// size it — the two channels the span vocabulary adds to a surface.
+[<Struct>]
+type private SpanCell = { Word: string; Span: InstanceSpan }
+
+let private spanCell word span : SpanCell = { Word = word; Span = span }
+let private grassCell = spanCell "grass" One
+
+let private spanSurface: Doc.Surface<SpanCell> = {
+  Doc.Words =
+    frozen [
+      "grass", grassCell
+      "stone", spanCell "stone" One
+      "slab", spanCell "slab" (Span(4, 2))
+      "hut", spanCell "hut" (Radius 1)
+    ]
+  Doc.Kernels = frozen [ "plain", Doc.Gen2(fun _ _ -> grassCell) ]
+  Doc.Elements = frozen []
+  Doc.Span = ValueSome(fun cell -> cell.Span)
+  Doc.WithSpan = ValueSome(fun cell span -> { cell with Span = span })
+}
+
+let private resolveSpan(src: string) : Result<Doc.Item<SpanCell>[], string> =
+  Kdl.parse src |> Result.bind(fun roots -> Doc.resolve spanSurface src roots)
 
 [<Tests>]
 let resolveTests =
@@ -300,6 +327,8 @@ let resolveTests =
           }
 
           frozen [ "broken", broken ]
+        Doc.Span = ValueNone
+        Doc.WithSpan = ValueNone
       }
 
       match Kdl.parse "map 4 4 { broken }" with
@@ -680,26 +709,205 @@ let measureTests =
     <| fun _ ->
       // the emitter path: pure arithmetic, no scratch grid
       Expect.equal
-        (Doc.measureOps [| Doc.Op.FillRect({ X = 1; Y = 1; W = 4; H = 2 }, 1) |])
+        (Doc.measureOps surface [|
+          Doc.Op.FillRect({ X = 1; Y = 1; W = 4; H = 2 }, 1)
+        |])
         (ValueSome { W = 5; H = 3 })
         "a bounded body derives its bounds"
 
       Expect.equal
-        (Doc.measureOps [| Doc.Op.Fill 1 |])
+        (Doc.measureOps surface [| Doc.Op.Fill 1 |])
         ValueNone
         "a greedy body reports stretch"
 
-      Expect.equal (Doc.measureOps [||]) ValueNone "an empty body stretches"
+      Expect.equal
+        (Doc.measureOps surface [||])
+        ValueNone
+        "an empty body stretches"
 
       Expect.equal
-        (Doc.measureOps [|
+        (Doc.measureOps surface [|
           Doc.Op.Set(ValueSome { X = 2; Y = 1 }, Start, Start, 5)
         |])
         (ValueSome { W = 3; H = 2 })
         "a set at (2,1) bounds to 3x2"
 
       Expect.equal
-        (Doc.measureOps [| Doc.Op.Border(ValueNone, 1) |])
+        (Doc.measureOps surface [| Doc.Op.Border(ValueNone, 1) |])
         ValueNone
         "a whole-box border is greedy"
+
+    testCase "a spanning set measures the whole instance"
+    <| fun _ ->
+      let slab = {
+        SpanCell.Word = "slab"
+        Span = Span(4, 2)
+      }
+
+      Expect.equal
+        (Doc.measureOps spanSurface [|
+          Doc.Op.Set(ValueSome { X = 1; Y = 1 }, Start, Start, slab)
+        |])
+        (ValueSome { W = 5; H = 3 })
+        "the instance bounds the element"
+
+      Expect.equal
+        (Doc.measureOps spanSurface [|
+          Doc.Op.Set(ValueSome { X = 0; Y = 0 }, Start, Start, grassCell)
+        |])
+        (ValueSome { W = 1; H = 1 })
+        "a plain word still measures one cell"
+  ]
+
+[<Tests>]
+let spanTests =
+  testList "Doc spans" [
+    testCase "an area statement rejects a spanning word with its position"
+    <| fun _ ->
+      let documents = [
+        "fill", "map 8 6 {\n  fill slab\n}"
+        "fillRect", "map 8 6 {\n  fillRect 0 0 4 2 slab\n}"
+        "border", "map 8 6 {\n  border slab\n}"
+        "rect", "map 8 6 {\n  rect slab stone\n}"
+      ]
+
+      for label, src in documents do
+        match resolveSpan src with
+        | Ok _ ->
+          failtestf "%s: a spanning word must fail in an area statement" label
+        | Error e ->
+          Expect.stringContains e "'slab'" $"{label}: names the word"
+          Expect.stringContains e "spans 4x2" $"{label}: names the span"
+          Expect.stringContains e "2:" $"{label}: carries the line"
+
+    testCase "set places a spanning word and the extent follows it"
+    <| fun _ ->
+      match resolveSpan "map 9 9 {\n  set 1 1 slab\n}" with
+      | Ok [| root |] ->
+        Expect.equal
+          root.Element.Extent
+          (ValueSome { W = 5; H = 3 })
+          "the instance bounds the element"
+
+      | Ok _ -> failtest "expected exactly one root item"
+      | Error e -> failtest $"a spanning set must resolve: {e}"
+
+    testCase "a stated span sizes the instance"
+    <| fun _ ->
+      match resolveSpan "map 9 9 {\n  set 1 1 slab spanX=2 spanZ=6\n}" with
+      | Ok [| root |] ->
+        Expect.equal
+          root.Element.Extent
+          (ValueSome { W = 3; H = 7 })
+          "the stated span replaces the word's own"
+
+        let cell = root.Element.Body |> Array.head
+
+        match cell with
+        | Doc.Op.Set(_, _, _, written) ->
+          Expect.equal written.Span (Span(2, 6)) "the span lands in the cell"
+        | _ -> failtest "expected a set statement"
+
+      | Ok _ -> failtest "expected exactly one root item"
+      | Error e -> failtest $"a stated span must resolve: {e}"
+
+    testCase "a stated span needs both sides"
+    <| fun _ ->
+      match resolveSpan "map 9 9 {\n  set 1 1 slab spanX=2\n}" with
+      | Ok _ -> failtest "half a span must fail"
+      | Error e ->
+        Expect.stringContains e "both spanX and spanZ" "asks for the pair"
+
+    testCase "a stated span needs a surface that can write one"
+    <| fun _ ->
+      let pinned: Doc.Surface<int> = {
+        Doc.Words = frozen [ "slab", 9 ]
+        Doc.Kernels = frozen []
+        Doc.Elements = frozen []
+        Doc.Span = ValueSome(fun _ -> Span(4, 2))
+        Doc.WithSpan = ValueNone
+      }
+
+      let src = "map 9 9 {\n  set 1 1 slab spanX=2 spanZ=2\n}"
+
+      match Kdl.parse src with
+      | Error e -> failtest $"parse failed: {e}"
+      | Ok roots ->
+        match Doc.resolve pinned src roots with
+        | Ok _ -> failtest "a stated span must need a surface that writes one"
+        | Error e ->
+          Expect.stringContains e "cannot state a span" "names the gap"
+
+    testCase "a stated box does not size a hex span"
+    <| fun _ ->
+      match resolveSpan "map 9 9 {\n  set 1 1 hut spanX=2 spanZ=2\n}" with
+      | Ok _ -> failtest "a box must not size a hex span"
+      | Error e -> Expect.stringContains e "hex span" "names the shape"
+
+    testCase "a span covers at least one cell"
+    <| fun _ ->
+      match resolveSpan "map 9 9 {\n  set 1 1 slab spanX=0 spanZ=2\n}" with
+      | Ok _ -> failtest "a zero span must fail"
+      | Error e -> Expect.stringContains e "at least one cell" "names the rule"
+
+    testCase "span properties belong to set alone"
+    <| fun _ ->
+      match resolveSpan "map 9 9 {\n  fill grass spanX=2\n}" with
+      | Ok _ -> failtest "an area statement takes no span"
+      | Error e -> Expect.stringContains e "spanX" "names the argument"
+
+    testCase "a style size must agree with the span"
+    <| fun _ ->
+      let document width height =
+        $"map 9 9 {{\n  element deck {{ set 0 0 slab }}\n  style deck w={width} h={height}\n  deck\n}}"
+
+      match resolveSpan(document 4 2) with
+      | Ok _ -> ()
+      | Error e -> failtest $"a matching style size must resolve: {e}"
+
+      match resolveSpan(document 2 6) with
+      | Ok _ -> failtest "a disagreeing style size must fail"
+      | Error e ->
+        Expect.stringContains e "'deck'" "names the element"
+        Expect.stringContains e "states w= 2" "names the stated size"
+        Expect.stringContains e "covers 4 cells across" "names the span"
+
+    testCase "a declared extent must agree with the span"
+    <| fun _ ->
+      let document width height =
+        $"map 9 9 {{\n  element deck w={width} h={height} {{ set 0 0 slab }}\n  deck\n}}"
+
+      match resolveSpan(document 4 2) with
+      | Ok _ -> ()
+      | Error e -> failtest $"a matching declared size must resolve: {e}"
+
+      match resolveSpan(document 5 2) with
+      | Ok _ -> failtest "a disagreeing declared size must fail"
+      | Error e ->
+        Expect.stringContains e "'deck'" "names the element"
+        Expect.stringContains e "declares w= 5" "names the declared size"
+
+    testCase "a game element body cannot fill with a spanning word"
+    <| fun _ ->
+      let broken = {
+        Doc.Name = "broken"
+        Doc.Extent = ValueNone
+        Doc.Body = [| Doc.Op.Fill(spanCell "slab" (Span(4, 2))) |]
+      }
+
+      let bad: Doc.Surface<SpanCell> = {
+        spanSurface with
+            Doc.Elements = frozen [ "broken", broken ]
+      }
+
+      let src = "map 6 4 { broken }"
+
+      match Kdl.parse src with
+      | Error e -> failtest $"parse failed: {e}"
+      | Ok roots ->
+        match Doc.resolve bad src roots with
+        | Ok _ -> failtest "a spanning fill in a game element body must fail"
+        | Error e ->
+          Expect.stringContains e "'broken'" "names the element"
+          Expect.stringContains e "spans 4x2" "names the span"
   ]

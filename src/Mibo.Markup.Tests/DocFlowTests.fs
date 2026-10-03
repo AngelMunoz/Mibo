@@ -50,7 +50,12 @@ let private surface: Doc.Surface<int> =
       frozen [
         "pine", element "pine" 1 1 8
         "boulder", element "boulder" 1 1 9
+        "wideA", element "wideA" 2 2 8
+        "wideB", element "wideB" 2 2 9
+        "wide4", element "wide4" 4 2 7
       ]
+    Doc.Span = ValueNone
+    Doc.WithSpan = ValueNone
   }
 
 let private build(src: string) : Result<CellGrid2D<int>, string> =
@@ -326,6 +331,75 @@ let goldenTests =
             s |> Layout.fill 0 1 4 1 7 |> ignore
         )
       )
+
+    testCase "a flow child claims the tracks its own size needs"
+    <| fun _ ->
+      // one-cell tracks, two-by-two children: each child takes two tracks on
+      // each axis, so the pair fills the map instead of overlapping
+      buildGolden(
+        """map 4 2 {
+    generate grass
+    plot w=4 h=2 {
+        cols fixed 1 fixed 1 fixed 1 fixed 1
+        wideA
+        wideB
+    }
+}
+""",
+        "flow by footprint",
+        golden(
+          4,
+          2,
+          fun s ->
+            s |> Layout.fill 0 0 4 2 1 |> ignore
+            s |> Layout.fill 0 0 2 2 8 |> ignore
+            s |> Layout.fill 2 0 2 2 9 |> ignore
+        )
+      )
+
+    testCase "a flow child wraps when its tracks no longer fit the row"
+    <| fun _ ->
+      // three two-by-two children in four one-cell tracks: two fill the first
+      // row of tracks, and the third wraps to the row below them
+      buildGolden(
+        """map 4 4 {
+    generate grass
+    plot w=4 h=4 {
+        cols fixed 1 fixed 1 fixed 1 fixed 1
+        wideA
+        wideB
+        wideA
+    }
+}
+""",
+        "flow wraps by footprint",
+        golden(
+          4,
+          4,
+          fun s ->
+            s |> Layout.fill 0 0 4 4 1 |> ignore
+            s |> Layout.fill 0 0 2 2 8 |> ignore
+            s |> Layout.fill 2 0 2 2 9 |> ignore
+            s |> Layout.fill 0 2 2 2 8 |> ignore
+        )
+      )
+
+    testCase "a flow child wider than the declared tracks fails"
+    <| fun _ ->
+      let doc =
+        """map 2 2 {
+    plot w=2 h=2 {
+        cols fixed 1 fixed 1
+        wide4
+    }
+}
+"""
+
+      match DocFlow.build(surface, doc) with
+      | Ok _ -> failtest "a child wider than the tracks must fail the build"
+      | Error e ->
+        Expect.stringContains e "'wide4'" "names the child"
+        Expect.stringContains e "cannot hold" "says the tracks are too small"
   ]
 
 [<Tests>]
@@ -790,7 +864,11 @@ let private emitOf(src: string) : struct (string * Stamp<int>)[] =
 let private layerNames(built: DocFlow.BuiltLayer<int>[]) : string[] =
   built |> Array.map(fun l -> l.Name)
 
-let private equalGrid (a: CellGrid2D<int>) (b: CellGrid2D<int>) (what: string) =
+let private equalGrid<'T when 'T: equality>
+  (a: CellGrid2D<'T>)
+  (b: CellGrid2D<'T>)
+  (what: string)
+  =
   Expect.equal
     struct (a.Width, a.Height)
     struct (b.Width, b.Height)
@@ -1078,4 +1156,203 @@ let layerBuildTests =
       | Ok grid ->
         Expect.equal (CellGrid2D.get 1 1 grid) (ValueSome 3) "the layer's cells"
         Expect.equal (CellGrid2D.get 0 0 grid) ValueNone "and nothing else"
+  ]
+
+/// A cell that states how many cells its instance covers.
+[<Struct>]
+type private SpanCell = { Word: string; Span: InstanceSpan }
+
+let private spanCell word span : SpanCell = { Word = word; Span = span }
+let private grassCell = spanCell "grass" One
+let private slabCell = spanCell "slab" (Span(3, 2))
+
+/// A kernel that plants a spanning cell wherever the predicate holds, so a
+/// document can make the scan meet spans the resolver never saw.
+let private plantingKernel(plant: int -> int -> SpanCell voption) =
+  Doc.Gen2(fun x y -> plant x y |> ValueOption.defaultValue grassCell)
+
+let private spanSurface: Doc.Surface<SpanCell> = {
+  Doc.Words = frozen [ "grass", grassCell; "slab", slabCell ]
+  Doc.Kernels =
+    frozen [
+      "planted",
+      plantingKernel(fun x y ->
+        if x = 0 && y = 0 then ValueSome slabCell else ValueNone)
+      "twice",
+      plantingKernel(fun x y ->
+        if (x = 0 && y = 0) || (x = 1 && y = 1) then
+          ValueSome slabCell
+        else
+          ValueNone)
+    ]
+  Doc.Elements = frozen []
+  Doc.Span = ValueSome(fun cell -> cell.Span)
+  Doc.WithSpan = ValueSome(fun cell span -> { cell with Span = span })
+}
+
+let private spanKdl =
+  """map 6 4 {
+    layer ground {
+        fill grass
+        set 0 0 slab
+    }
+}
+"""
+
+let private spanXml =
+  """<map w="6" h="4">
+  <layer name="ground">
+    <fill cell="grass" />
+    <set x="0" y="0" cell="slab" />
+  </layer>
+</map>"""
+
+[<Tests>]
+let spanTests =
+  testList "DocFlow spans" [
+    testCase "buildLayers hands back the occupancy of every layer"
+    <| fun _ ->
+      match DocFlow.buildLayers(spanSurface, spanKdl) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok layers ->
+        Expect.equal layers.Length 1 "one layer"
+        Expect.equal layers[0].Name "ground" "the layer's name"
+
+        let occupancy = layers[0].Occupancy
+
+        Expect.equal
+          occupancy.Cells.Length
+          19
+          "the span plus the cells it leaves"
+
+        Expect.equal occupancy.Claimed 5 "the cells the span hides"
+
+        Expect.equal
+          (Occupancy.owner 2 1 occupancy)
+          (ValueSome { X = 0; Y = 0 })
+          "a covered cell answers with the span"
+
+        Expect.equal
+          (Occupancy.rectOf { X = 2; Y = 1 } occupancy)
+          (ValueSome { X = 0; Y = 0; W = 3; H = 2 })
+          "the span's rect"
+
+    testCase "both syntaxes agree on the grids and the occupancies"
+    <| fun _ ->
+      match
+        DocFlow.buildLayers(spanSurface, spanKdl),
+        DocFlow.buildLayersXml(spanSurface, spanXml)
+      with
+      | Ok kdl, Ok xml ->
+        equalGrid kdl[0].Grid xml[0].Grid "the two syntaxes"
+
+        Expect.equal
+          kdl[0].Occupancy.Cells.Length
+          xml[0].Occupancy.Cells.Length
+          "the anchor counts"
+
+        Expect.equal
+          kdl[0].Occupancy.Claimed
+          xml[0].Occupancy.Claimed
+          "the claimed counts"
+
+        Expect.equal
+          (Occupancy.rectOf { X = 1; Y = 1 } kdl[0].Occupancy)
+          (Occupancy.rectOf { X = 1; Y = 1 } xml[0].Occupancy)
+          "the same rect"
+      | kdlRes, xmlRes -> failtest $"kdl=%A{kdlRes} xml=%A{xmlRes}"
+
+    testCase
+      "a kernel that makes two spans meet fails, naming the layer and the cell"
+    <| fun _ ->
+      let doc =
+        """map 6 4 {
+    layer ground {
+        generate twice
+    }
+}
+"""
+
+      match DocFlow.buildLayers(spanSurface, doc) with
+      | Ok _ -> failtest "two overlapping spans must fail the build"
+      | Error e ->
+        Expect.stringContains e "layer 'ground'" "names the layer"
+        Expect.stringContains e "(0,0)" "names the first anchor"
+        Expect.stringContains e "(1,1)" "names the second anchor"
+
+    testCase "a kernel-made span builds when nothing overlaps"
+    <| fun _ ->
+      let doc =
+        """map 6 4 {
+    layer ground {
+        generate planted
+    }
+}
+"""
+
+      match DocFlow.buildLayers(spanSurface, doc) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok layers ->
+        // the kernel paints every cell, so the span and the cells it leaves
+        // are the anchors
+        Expect.equal
+          layers[0].Occupancy.Cells.Length
+          19
+          "the span and the plain cells"
+
+        Expect.equal layers[0].Occupancy.Claimed 5 "the cells the span hides"
+
+        Expect.equal
+          (Occupancy.owner 1 1 layers[0].Occupancy)
+          (ValueSome { X = 0; Y = 0 })
+          "the kernel's span owns the cells it covers"
+
+    testCase "a single-grid build refuses a spanning document"
+    <| fun _ ->
+      let doc =
+        """map 6 4 {
+    fill grass
+    set 0 0 slab
+}
+"""
+
+      match DocFlow.build(spanSurface, doc) with
+      | Ok _ -> failtest "a spanning document must not build as one grid"
+      | Error e ->
+        Expect.stringContains e "spanning word" "names the cause"
+        Expect.stringContains e "DocFlow.buildLayers" "points at the plural"
+
+    testCase "a set inside a layer keeps its stated span"
+    <| fun _ ->
+      let doc =
+        """map 6 4 {
+    layer ground {
+        set 0 0 slab spanX=3 spanZ=2
+    }
+}
+"""
+
+      match DocFlow.buildLayers(spanSurface, doc) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok layers ->
+        printfn
+          "DEBUG layercell %A anchors %d"
+          (CellGrid2D.get 0 0 layers[0].Grid
+           |> ValueOption.map(fun cell -> cell.Span))
+          layers[0].Occupancy.Cells.Length
+
+        Expect.equal layers[0].Occupancy.Cells.Length 1 "one instance"
+
+    testCase "a map with no spans builds as it always did"
+    <| fun _ ->
+      let doc =
+        """map 6 4 {
+    fill grass
+}
+"""
+
+      match DocFlow.build(spanSurface, doc) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok grid ->
+        Expect.equal (CellGrid2D.get 3 2 grid) (ValueSome grassCell) "painted"
   ]
