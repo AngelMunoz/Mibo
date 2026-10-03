@@ -392,20 +392,20 @@ module internal FlowImpl =
   /// full-bleed, so a nonzero footprint would silently stretch over the
   /// whole assigned area instead of failing. The request fails at
   /// construction.
-  let checkLayer (container: string) (arg: string) (stamp: Stamp<'T>) : unit =
+  let checkChild (container: string) (arg: string) (stamp: Stamp<'T>) : unit =
     if stamp.W > 0 || stamp.H > 0 then
       invalidArg
         arg
         (container
          + " children are full-bleed, and a sized child would silently paint the whole area: use a canvas/at/docked/strip/stretch child, or a footprint-honoring container (row/column/grid)")
 
-  let checkLayerAll
+  let checkChildAll
     (container: string)
     (arg: string)
     (stamps: Stamp<'T> seq)
     : unit =
     for c in stamps do
-      checkLayer container arg c
+      checkChild container arg c
 
   /// A deterministic permutation of `0..n-1`: xorshift seeded from `seed`,
   /// Fisher-Yates over the identity. No BCL RNG, so the sequence cannot
@@ -658,8 +658,8 @@ module Stamp =
   let overlay (first: Stamp<'T>) (second: Stamp<'T>) : Stamp<'T> =
     FlowImpl.checkNoExpand "Stamp.overlay" "first" first
     FlowImpl.checkNoExpand "Stamp.overlay" "second" second
-    FlowImpl.checkLayer "Stamp.overlay" "first" first
-    FlowImpl.checkLayer "Stamp.overlay" "second" second
+    FlowImpl.checkChild "Stamp.overlay" "first" first
+    FlowImpl.checkChild "Stamp.overlay" "second" second
 
     {
       W = 0
@@ -1630,7 +1630,7 @@ module Flow =
   let overlay(children: Stamp<'T> seq) : Stamp<'T> =
     let arr = Array.ofSeq children
     FlowImpl.checkNoExpandAll "Flow.overlay" "children" arr
-    FlowImpl.checkLayerAll "Flow.overlay" "children" arr
+    FlowImpl.checkChildAll "Flow.overlay" "children" arr
 
     if arr.Length = 0 then
       Stamp.empty()
@@ -1701,7 +1701,7 @@ module Flow =
     let h = max 0 h
     let arr = Array.ofList children
     FlowImpl.checkNoExpandAll "Flow.group" "children" arr
-    FlowImpl.checkLayerAll "Flow.group" "children" arr
+    FlowImpl.checkChildAll "Flow.group" "children" arr
 
     {
       W = w
