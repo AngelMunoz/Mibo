@@ -199,7 +199,7 @@ let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer3D) =
 
 ### Window-culled rendering
 
-`renderFootprintWindowInstanced` only processes cells whose footprint
+`renderFootprintWindowInstanced` only processes instances whose footprint
 intersects a world-space window. The bounds (`left`/`top`/`right`/
 `bottom`) are **`int` world coordinates**, so cast your float camera
 position. Hex grids cull with an orientation-aware window. Use it for
@@ -210,6 +210,51 @@ buffer
   .renderFootprintWindowInstanced(instancedCtx, int cx - 50, int cz - 50, int cx + 50, int cz + 50, model.World)
   .drop()
 ```
+
+A cell-windowed walk drops an instance as soon as its own cell leaves the
+window. When a word covers more than its cell, draw through the layer's
+occupancy instead: the window becomes a cell range, and every instance
+whose rectangle meets it is drawn, even when its cell is outside.
+
+```fsharp
+buffer
+  .renderFootprintWindowInstanced(instancedCtx, left, top, right, bottom, layer.Grid, layer.Occupancy)
+  .drop()
+```
+
+Both forms take a `shaderForKey` overload. [The map
+contract](../level-design/3d/infra.html) builds the occupancy and the
+rectangle transform.
+
+## One instance over many cells
+
+An occupancy draw hands the transform the rectangle each instance covers,
+so one model can be scaled over the cells it stands for. Build the context
+with the rectangle factory — the transform then receives the target box
+instead of only the cell:
+
+```fsharp
+let instancedCtx =
+  InstancedRenderContext<BlockCell, string>.Rect(
+    getKey = (fun cell -> cell.Model.Name),
+    getMeshesAndMaterial = meshesOf,
+    getTransform =
+      fun (rect: CellRect) (basePos: Vector3) (cell: BlockCell) ->
+        // rect.W is cells across, rect.H is cells deep, and the anchor's
+        // world position is the rectangle's near corner
+        Matrix4x4.CreateScale(
+          float32 rect.W * cellSize / cell.Model.SizeX,
+          cell.Height * cellSize / cell.Model.SizeY,
+          float32 rect.H * cellSize / cell.Model.SizeZ)
+        * Matrix4x4.CreateTranslation(
+          basePos.X + float32 rect.W * cellSize * 0.5f,
+          basePos.Y + cell.Lift,
+          basePos.Z + float32 rect.H * cellSize * 0.5f)
+  )
+```
+
+The plain constructor keeps its `Vector3 -> 'T -> Matrix4x4` transform, and
+its rectangle is the cell itself.
 
 ## How it works internally
 

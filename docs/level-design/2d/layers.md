@@ -237,7 +237,10 @@ layer that painted it is the column that stands there. The LiveMap sample
 lifts instead — every layer above the ground rises by the height the
 layers below it reach at that cell, so a decoration stands on the terrain
 and the terrain stays whole underneath — and draws the flat map one grid
-per layer.
+per layer. `Stack.feet` derives that lift for the whole stack, and
+[instances larger than a cell](../3d/spans.html) is the 3D counterpart of
+this page: one instance stretched over several cells of a layer, with the
+occupancy that answers which instance owns each cell.
 
 Neither pattern is the framework's business. The framework stops at
 handing over the grids.

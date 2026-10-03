@@ -128,6 +128,27 @@ per game. Two container kinds exist beside the game's own elements:
 `plot` (a plain container) and `grid` (a container that carries the
 `cols`/`rows`/`areas` template).
 
+A surface may also state how many cells one instance covers, and how a
+statement writes a span:
+
+```fsharp
+let surface: Doc.Surface<Tile> = {
+  Words = words
+  Kernels = kernels
+  Elements = elements
+  Span = ValueSome(fun tile -> tile.Span)          // absent: a cell covers one cell
+  WithSpan = ValueSome(fun tile span -> { tile with Span = span })
+}
+```
+
+With those two fields, `set` sizes one instance — `set 3 9 slab spanX=16 spanZ=6`
+in KDL, `spanX="16" spanZ="6"` in XML — while `fill`, `fillRect`, `border`,
+and `rect` refuse a word that spans more than one cell. The build then reports
+each layer's occupancy beside its grid, so a query answers with the instance
+that owns a cell. [Instances larger than a cell](../3d/spans.html) states the
+vocabulary and the rules; [the map contract](../3d/infra.html) walks a game
+through consuming it.
+
 **Paint is data.** A body resolves to `Op` values — `Fill`, `FillRect`,
 `Set`, `Border`, `Rect`, `Generate` — interpreted at render time through
 the framework's `Layout` ops. The union is closed by design: statements

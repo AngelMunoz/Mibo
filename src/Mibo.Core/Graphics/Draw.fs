@@ -1520,6 +1520,19 @@ type Draw =
     ctx.RenderInstanced(buffer, grid)
     buffer
 
+  /// <summary>Like <c>renderFootprintInstanced</c> over the anchors of an
+  /// occupancy: one instance per anchor, and each anchor's rectangle reaches
+  /// the context's transform, so one model scales over the cells its instance
+  /// covers.</summary>
+  [<Extension>]
+  static member inline renderFootprintInstanced<'Ctx, 'Buf, 'T
+    when 'Ctx: (member RenderInstanced:
+      'Buf * CellGrid2D<'T> * Occupancy -> unit)>
+    (buffer: 'Buf, ctx: 'Ctx, grid: CellGrid2D<'T>, occupancy: Occupancy)
+    : 'Buf =
+    ctx.RenderInstanced(buffer, grid, occupancy)
+    buffer
+
   /// <summary>Like <c>renderFootprintInstanced</c>, wrapping each key's draws
   /// in an effect scope when <paramref name="shaderForKey"/> returns
   /// <c>ValueSome</c>; <c>ValueNone</c> keeps the default PBR instanced
@@ -1536,6 +1549,23 @@ type Draw =
       [<InlineIfLambda>] shaderForKey: 'Key -> 'S ValueOption
     ) : 'Buf =
     ctx.RenderInstanced(buffer, grid, shaderForKey)
+    buffer
+
+  /// <summary>Like the keyed <c>renderFootprintInstanced</c>, over the anchors
+  /// of an occupancy.</summary>
+  [<Extension>]
+  static member inline renderFootprintInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
+    when 'Ctx: (member RenderInstancedWithEffect:
+      'Buf * CellGrid2D<'T> * Occupancy * ('Key -> 'S ValueOption) -> unit)
+    and 'Key: equality>
+    (
+      buffer: 'Buf,
+      ctx: 'Ctx,
+      grid: CellGrid2D<'T>,
+      occupancy: Occupancy,
+      [<InlineIfLambda>] shaderForKey: 'Key -> 'S ValueOption
+    ) : 'Buf =
+    ctx.RenderInstancedWithEffect(buffer, grid, occupancy, shaderForKey)
     buffer
 
   /// <summary>Like <c>renderFootprintInstanced</c> but restricted to a
@@ -1585,6 +1615,66 @@ type Draw =
       right,
       bottom,
       grid,
+      shaderForKey
+    )
+
+    buffer
+
+  /// <summary>Like <c>renderFootprintWindowInstanced</c> over the anchors of an
+  /// occupancy: the window becomes a cell range, and every anchor whose
+  /// rectangle intersects it draws — so an instance that covers a window cell
+  /// from an anchor outside the window stays drawn.</summary>
+  [<Extension>]
+  static member inline renderFootprintWindowInstanced<'Ctx, 'Buf, 'T
+    when 'Ctx: (member RenderWindowInstanced:
+      'Buf * int * int * int * int * CellGrid2D<'T> * Occupancy -> unit)>
+    (
+      buffer: 'Buf,
+      ctx: 'Ctx,
+      left: int,
+      top: int,
+      right: int,
+      bottom: int,
+      grid: CellGrid2D<'T>,
+      occupancy: Occupancy
+    ) : 'Buf =
+    ctx.RenderWindowInstanced(buffer, left, top, right, bottom, grid, occupancy)
+    buffer
+
+  /// <summary>Like the occupancy <c>renderFootprintWindowInstanced</c>, with
+  /// per-key effect scoping through <paramref name="shaderForKey"/>.</summary>
+  [<Extension>]
+  static member inline renderFootprintWindowInstanced<'Ctx, 'Buf, 'T, 'Key, 'S
+    when 'Ctx: (member RenderWindowInstancedWithEffect:
+      'Buf *
+      int *
+      int *
+      int *
+      int *
+      CellGrid2D<'T> *
+      Occupancy *
+      ('Key -> 'S ValueOption) ->
+        unit)
+    and 'Key: equality>
+    (
+      buffer: 'Buf,
+      ctx: 'Ctx,
+      left: int,
+      top: int,
+      right: int,
+      bottom: int,
+      grid: CellGrid2D<'T>,
+      occupancy: Occupancy,
+      [<InlineIfLambda>] shaderForKey: 'Key -> 'S ValueOption
+    ) : 'Buf =
+    ctx.RenderWindowInstancedWithEffect(
+      buffer,
+      left,
+      top,
+      right,
+      bottom,
+      grid,
+      occupancy,
       shaderForKey
     )
 

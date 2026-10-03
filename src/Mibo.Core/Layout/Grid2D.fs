@@ -158,6 +158,59 @@ module CellGrid2D =
         action x y content
       | ValueNone -> ()
 
+  /// The inclusive cell range a world-space pixel rect touches. Square grids
+  /// map the rect through the origin and the cell size; hex grids stagger
+  /// every other row or column, so the range is padded by one cell on each
+  /// axis. The bounds are conservative: the range may include cells whose
+  /// hexagon does not touch the rect, but never misses one that does.
+  ///
+  /// The tuple is `struct (startX, endX, startY, endY)`, ready for the two
+  /// loops a window walk runs — `CellGrid2D.iterVisible` and
+  /// `Occupancy.iterInWindow` both read it.
+  let visibleRange
+    (left: int)
+    (top: int)
+    (right: int)
+    (bottom: int)
+    (grid: CellGrid2D<'T>)
+    : struct (int * int * int * int) =
+    match grid.Geometry with
+    | CellGeometry.Square ->
+      let sx = max 0 ((left - int grid.Origin.X) / int grid.CellSize.X)
+
+      let sy = max 0 ((top - int grid.Origin.Y) / int grid.CellSize.Y)
+
+      let ex =
+        min (grid.Width - 1) ((right - int grid.Origin.X) / int grid.CellSize.X)
+
+      let ey =
+        min
+          (grid.Height - 1)
+          ((bottom - int grid.Origin.Y) / int grid.CellSize.Y)
+
+      struct (sx, ex, sy, ey)
+    | CellGeometry.Hex orientation ->
+      let hexW = grid.CellSize.X
+      let hexH = grid.CellSize.Y
+      let l = float32 left - grid.Origin.X
+      let r = float32 right - grid.Origin.X
+      let t = float32 top - grid.Origin.Y
+      let b = float32 bottom - grid.Origin.Y
+
+      match orientation with
+      | PointyTop ->
+        let sx = max 0 (int(l / hexW) - 1)
+        let ex = min (grid.Width - 1) (int(r / hexW) + 1)
+        let sy = max 0 (int(t / (hexH * 0.75f)) - 1)
+        let ey = min (grid.Height - 1) (int(b / (hexH * 0.75f)) + 1)
+        struct (sx, ex, sy, ey)
+      | FlatTop ->
+        let sx = max 0 (int(l / (hexW * 0.75f)) - 1)
+        let ex = min (grid.Width - 1) (int(r / (hexW * 0.75f)) + 1)
+        let sy = max 0 (int(t / hexH) - 1)
+        let ey = min (grid.Height - 1) (int(b / hexH) + 1)
+        struct (sx, ex, sy, ey)
+
   /// Iterates the cells that intersect a pixel rect, with orientation-aware
   /// culling for hex grids (every other row or column staggers, so the
   /// window is padded by one cell on each axis). The bounds are
@@ -171,45 +224,8 @@ module CellGrid2D =
     ([<InlineIfLambda>] action: int -> int -> 'T -> unit)
     (grid: CellGrid2D<'T>)
     : unit =
-    let startX, endX, startY, endY =
-      match grid.Geometry with
-      | CellGeometry.Square ->
-        let sx = max 0 ((left - int grid.Origin.X) / int grid.CellSize.X)
-
-        let sy = max 0 ((top - int grid.Origin.Y) / int grid.CellSize.Y)
-
-        let ex =
-          min
-            (grid.Width - 1)
-            ((right - int grid.Origin.X) / int grid.CellSize.X)
-
-        let ey =
-          min
-            (grid.Height - 1)
-            ((bottom - int grid.Origin.Y) / int grid.CellSize.Y)
-
-        sx, ex, sy, ey
-      | CellGeometry.Hex orientation ->
-        let hexW = grid.CellSize.X
-        let hexH = grid.CellSize.Y
-        let l = float32 left - grid.Origin.X
-        let r = float32 right - grid.Origin.X
-        let t = float32 top - grid.Origin.Y
-        let b = float32 bottom - grid.Origin.Y
-
-        match orientation with
-        | PointyTop ->
-          let sx = max 0 (int(l / hexW) - 1)
-          let ex = min (grid.Width - 1) (int(r / hexW) + 1)
-          let sy = max 0 (int(t / (hexH * 0.75f)) - 1)
-          let ey = min (grid.Height - 1) (int(b / (hexH * 0.75f)) + 1)
-          sx, ex, sy, ey
-        | FlatTop ->
-          let sx = max 0 (int(l / (hexW * 0.75f)) - 1)
-          let ex = min (grid.Width - 1) (int(r / (hexW * 0.75f)) + 1)
-          let sy = max 0 (int(t / hexH) - 1)
-          let ey = min (grid.Height - 1) (int(b / hexH) + 1)
-          sx, ex, sy, ey
+    let struct (startX, endX, startY, endY) =
+      visibleRange left top right bottom grid
 
     let w = grid.Width
 

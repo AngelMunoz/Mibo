@@ -13,6 +13,7 @@
     <Compile Include="LayoutTests.fs" />
     <Compile Include="Grid2DTests.fs" />
     <Compile Include="FlowTests.fs" />
+    <Compile Include="OccupancyTests.fs" />
     <Compile Include="FrostfallTests.fs" />
     <Compile Include="HexGridTests.fs" />
     <Compile Include="HexLayoutTests.fs" />
