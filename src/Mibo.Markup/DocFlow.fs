@@ -2,15 +2,17 @@ namespace Mibo.Markup
 
 /// The Flow backend for the document surface: parses, resolves, and
 /// lays a document out through the Flow authoring API
-/// (`Mibo.Layout.Flow`), one `Flow.run` per map.
+/// (`Mibo.Layout.Flow`), one `Flow.run` per layer.
 ///
-///   Stack pack  -> `Flow.overlay` of layers: an `x= y=` child becomes
-///                  `Flow.at`, alignment becomes `Dock` flags
+///   Stack pack  -> `Flow.overlay` of stack children: an `x= y=` child
+///                  becomes `Flow.at`, alignment becomes `Dock` flags
 ///   Flow pack   -> `Flow.grid`: named areas pass through, `col=`/`row=`
 ///                  and flow children place as explicit slots, `auto`
 ///                  tracks size from the children's footprints
 ///   Scatter     -> `Flow.scatter`: the framework's seeded rule places
 ///                  the sized children
+///   Layers      -> `Flow.runLayers`: one stamp per layer, one grid per
+///                  layer, bottom first
 ///
 /// Build-time only, like every Flow consumer: the Item tree emits to
 /// stamps that compose at paint time, so measurement sees the assigned
@@ -242,7 +244,7 @@ module DocFlow =
 
   /// One flow-pack child as a grid place: a plain stamp when the
   /// alignment is the grid default (start, or a stretching axis),
-  /// otherwise a layer that docks the stamp by alignment inside the
+  /// otherwise a child that docks the stamp by alignment inside the
   /// assigned tracks.
   let private areaPlace
     (h: Align, v: Align, size: CellSize, stamp: Stamp<'T>)
@@ -267,13 +269,13 @@ module DocFlow =
   // so the walk is a fold over the item tree.
 
   /// Emits one item as a Flow stamp: its own body paints its box, then its
-  /// children paint by the container's pack (stack layers, a grid, or
+  /// children paint by the container's pack (stack children, a grid, or
   /// seeded scatter). The composite is built inside the stamp's paint, so
   /// an emitted document painted onto a second grid lays out again.
   let rec emit(item: Doc.Item<'T>) : Stamp<'T> =
-    // One stack child as a layer: an exact-At child mounts at its
-    // origin (a zero axis stretching to the inner far edge), a placed
-    // child mounts as a docked layer anchored by its alignment.
+    // One stack child: an exact-At child mounts at its origin (a zero
+    // axis stretching to the inner far edge), a placed child mounts as a
+    // docked child anchored by its alignment.
     let stackLayer(inner: CellRect, c: Doc.Item<'T>) : Stamp<'T> =
       let stamp = emit c
       let size = childSize c
@@ -395,9 +397,27 @@ module DocFlow =
       H = fp.H
       Expand = 0
       Name = ValueNone
-      Tags = []
+      // The element's name rides the TAG channel, never `Name`. A
+      // document may use one element name many times, and the named
+      // channel rejects a duplicate; tags are additive, so every use
+      // reports its own resolved rectangle and its own per-cell bit
+      // grid. The anonymous `plot` container reports under its own
+      // word for the same reason.
+      //
+      // Two nodes report nothing, because their rectangle is the whole
+      // grid and a caller already knows it: the `map` root, and a
+      // `layer` container — which is stretched over the map, so a
+      // region query would answer "the whole map" for every cell no
+      // element covers, and a hover would outline the map itself. The
+      // layer still reports under its name through `BuiltLayer.Name`,
+      // and its elements report as usual.
+      Tags =
+        if item.Name = "map" || item.Layer.IsSome then
+          []
+        else
+          [ item.Name ]
       Paint =
-        fun s _ ->
+        fun s registry ->
           // the body first, the children after, per node
           item.Element.Paint(sectionOf s.BackingGrid (rectOf s))
 
@@ -443,7 +463,7 @@ module DocFlow =
             let composite =
               match pack with
               | Doc.Stack ->
-                // build the layer array in a loop, not a map chain
+                // build the child array in a loop, not a map chain
                 let layers = Array.zeroCreate<Stamp<'T>> item.Children.Length
 
                 for i in 0 .. item.Children.Length - 1 do
@@ -453,10 +473,151 @@ module DocFlow =
               | Doc.Scatter -> scatterLayers(seed, inner, item.Children)
               | Doc.Flow -> flowGrid(gap, inner)
 
-            Flow.paint composite (sectionOf s.BackingGrid inner) |> ignore
+            // The composite paints with THIS call's registry. Painting
+            // through `Flow.paint` would drop it: that helper is the
+            // ad-hoc path and records no positions by design, so every
+            // landmark a child raises would vanish between the root's
+            // record and the child's paint.
+            composite.Paint (sectionOf s.BackingGrid inner) registry
     }
 
   // ── the map shell ────────────────────────────────────────────
+
+  /// The map's layers, bottom first: `main` — the map's own body and its
+  /// non-layer children — when it has any content, then each stated layer
+  /// in document order: `layer ground { ... }` in KDL,
+  /// `<layer name="ground">` in XML. A layer's stamp is `Flow.stretch`
+  /// over the layer's container, so it spans the whole grid whatever its
+  /// statements cover; a plain stack child would dock at the layer's
+  /// measured footprint instead. A document without layer nodes yields
+  /// exactly one entry, `("main", the emitted root)`, which is the single
+  /// grid `build` has always returned.
+  ///
+  /// `main` needs the map to paint something of its own: a bare statement
+  /// in the map body, or a non-layer child. A map that holds only layer
+  /// containers has no `main`.
+  let emitLayers(root: Doc.Item<'T>) : struct (string * Stamp<'T>)[] =
+    let stated = root.Children |> Array.filter(fun c -> c.Layer.IsSome)
+
+    if stated.Length = 0 then
+      [| struct ("main", emit root) |]
+    else
+      let plain = root.Children |> Array.filter(fun c -> c.Layer.IsNone)
+
+      let main =
+        if plain.Length > 0 || root.Element.Body.Length > 0 then
+          [| struct ("main", emit { root with Children = plain }) |]
+        else
+          [||]
+
+      let layers = Array.zeroCreate stated.Length
+
+      for i in 0 .. stated.Length - 1 do
+        // a layer always carries its name: the resolver stamps it
+        let name = stated[i].Layer |> ValueOption.defaultValue "layer"
+
+        // the stretch is load-bearing: a layer whose statements are all
+        // area-bound measures a partial extent, and a plain stack child
+        // would dock at its top-left corner instead of spanning the grid
+        layers[i] <- struct (name, Flow.stretch(emit stated[i]))
+
+      Array.append main layers
+
+  /// One built layer of a document: its name, its grid, and the
+  /// landmarks that grid reported.
+  type BuiltLayer<'T> = {
+    Name: string
+    Grid: CellGrid2D<'T>
+    Landmarks: Landmarks
+  }
+
+  /// The scratch grid a `buildLayers` call paints one layer into: cell
+  /// content at one pixel per cell. A caller that needs another cell size,
+  /// or the landmarks of its own grids, emits the layers itself.
+  let private gridOf(spec: CellSize) : CellGrid2D<'T> =
+    CellGrid2D.create spec.W spec.H (Vector2(1f, 1f)) Vector2.Zero
+
+  /// Parses, resolves, and locates the map's dimensions — the steps both
+  /// build entry points run before they paint anything. Every step already
+  /// returns a `Result` or a `ValueOption`, so the pipeline binds rather
+  /// than nests. Parse and resolution failures carry their document
+  /// positions when the front-end tracks them.
+  ///
+  /// Resolution runs first, so a document that holds no map node, or a bad
+  /// name beside one, reports what the resolver found. The two error arms
+  /// after it are unreachable, because `resolve` fails the build when the
+  /// document holds no map node or more than one root item; they are
+  /// tripwires against a resolver regression, not failure modes.
+  let private resolvedDoc
+    (parse: string -> Result<ImmutableArray<Node>, string>)
+    (surface: Doc.Surface<'T>)
+    (src: string)
+    : Result<struct (Doc.Item<'T> * CellSize), string> =
+    parse src
+    |> Result.bind(fun roots ->
+      Doc.resolve surface src roots
+      |> Result.bind(fun items ->
+        Doc.findMapNode roots
+        |> ValueOption.map(fun node ->
+          Doc.dimsOf(src, node) |> Result.map(fun dims -> items, dims))
+        |> ValueOption.defaultValue(
+          Error "unreachable: resolve guarantees a map node"
+        )))
+    |> Result.bind(fun (items, dims) ->
+      match items with
+      | [| root |] -> Ok struct (root, dims)
+      | many ->
+        Error
+          $"unreachable: resolve returns exactly one root item (got {many.Length})")
+
+  let private buildLayersFrom
+    (parse: string -> Result<ImmutableArray<Node>, string>)
+    (surface: Doc.Surface<'T>)
+    (src: string)
+    : Result<BuiltLayer<'T>[], string> =
+    try
+      resolvedDoc parse surface src
+      |> Result.map(fun struct (root, dims) ->
+        let emitted = emitLayers root
+
+        let stamps = emitted |> Array.map(fun struct (_, stamp) -> stamp)
+
+        // one grid per layer, every grid the size the document states:
+        // `runLayers` rejects a mismatch instead of silently clipping one
+        // layer to another's box
+        let grids = Array.init stamps.Length (fun _ -> gridOf<'T> dims)
+
+        let painted = Flow.runLayers stamps grids
+
+        Array.init painted.Length (fun i ->
+          let struct (name, _) = emitted[i]
+          let struct (grid, landmarks) = painted[i]
+
+          {
+            Name = name
+            Grid = grid
+            Landmarks = landmarks
+          }))
+    with e ->
+      Error e.Message
+
+  /// Parses, resolves, emits, and paints every layer of the document: one
+  /// grid per layer, in layer order, each built the way `build` builds
+  /// today (one cell per tile). A document without `layer` containers
+  /// returns one layer named `main`.
+  ///
+  /// The syntax selects the parser, so this is the KDL entry point;
+  /// `buildLayersXml` takes the same document in XML.
+  let buildLayers
+    (surface: Doc.Surface<'T>, src: string)
+    : Result<BuiltLayer<'T>[], string> =
+    buildLayersFrom Kdl.parse surface src
+
+  /// `buildLayers` with the XML front-end.
+  let buildLayersXml
+    (surface: Doc.Surface<'T>, src: string)
+    : Result<BuiltLayer<'T>[], string> =
+    buildLayersFrom Xml.parse surface src
 
   let private buildFrom
     (parse: string -> Result<ImmutableArray<Node>, string>)
@@ -464,37 +625,22 @@ module DocFlow =
     (src: string)
     : Result<CellGrid2D<'T>, string> =
     try
-      parse src
-      |> Result.bind(fun roots ->
-        // resolve already guarantees one map container and one root item
-        // (dimsOf runs inside it), so findMapNode here only locates the
-        // node whose dimensions the grid needs
-        Doc.resolve surface src roots
-        |> Result.bind(fun items ->
-          match items with
-          | [| root |] ->
-            (match Doc.findMapNode roots with
-             | ValueSome n ->
-               (match Doc.dimsOf(src, n) with
-                | Error e -> Error e
-                | Ok spec ->
-                  let grid =
-                    CellGrid2D.create
-                      spec.W
-                      spec.H
-                      (Vector2(1f, 1f))
-                      Vector2.Zero
+      resolvedDoc parse surface src
+      |> Result.bind(fun struct (root, dims) ->
+        match emitLayers root with
+        | [| struct (_, stamp) |] ->
+          let struct (built, _) = gridOf<'T> dims |> Flow.run stamp
+          Ok built
+        | layers ->
+          // a multi-layer document is one grid per layer, and a single
+          // grid would silently paint only the first: the caller picks
+          let names =
+            layers
+            |> Array.map(fun struct (name, _) -> $"'{name}'")
+            |> String.concat ", "
 
-                  let struct (built, _) = grid |> Flow.run(emit root)
-
-                  Ok built)
-             // resolve fails the build when no map node exists, so this
-             // arm cannot run; it is a tripwire, not a failure mode
-             | ValueNone ->
-               failwith "unreachable: resolve guarantees a map node")
-          | many ->
-            failwith
-              $"unreachable: resolve returns exactly one root item (got {many.Length})"))
+          Error
+            $"the document holds {layers.Length} layers ({names}); DocFlow.buildLayers builds every layer")
     with e ->
       Error e.Message
 
@@ -504,9 +650,22 @@ module DocFlow =
   /// document positions when the front-end tracks them; emitter-stage
   /// failures — a gap mismatch, a bad slot, an unknown area, a mixed
   /// pack channel — name the container, and the child when one is at
-  /// fault. Error builds nothing. The build returns the painted grid;
-  /// named and tagged landmarks stay a scope cut (derive gameplay
-  /// regions from the tiles, the way `Flow.build` does).
+  /// fault. Error builds nothing.
+  ///
+  /// The build returns the painted grid and drops the landmarks. A caller
+  /// that needs them — a hover that names the region under the cursor, a
+  /// walkability walk over a tagged area — runs the same four steps
+  /// itself and keeps what `Flow.run` hands back:
+  ///
+  ///   `parse src |> Result.bind (Doc.resolve surface src)
+  ///    |> Result.bind (fun items -> Doc.findMapNode roots ...)
+  ///    |> Result.map (fun dims -> grid |> Flow.run (emit root))`
+  ///
+  /// Every element of the document reports its resolved rectangle under
+  /// its own name through `Landmarks.Tagged`, plus a per-cell bit grid
+  /// for `Flow.isTag`. The registry allocates one bit grid per name, so
+  /// a very large document with very many elements pays for each one:
+  /// build-time memory, released with the build.
   let build
     (surface: Doc.Surface<'T>, src: string)
     : Result<CellGrid2D<'T>, string> =

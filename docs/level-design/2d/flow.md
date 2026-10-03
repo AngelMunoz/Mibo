@@ -227,6 +227,41 @@ Flow.isTag "flammable" { X = fx; Y = fy } marks
 Rectangles record the painted intersection with their container, so
 spawn math never reads outside the level.
 
+## Pattern: a layer stack
+
+A level often needs more than one grid: ground under decor, traffic over
+terrain, a trigger volume over both. `Flow.runLayers` is the plural of
+`Flow.run`. You create the grids; a layer is an array position, stamp i
+paints grid i, bottom first:
+
+```fsharp
+open Mibo.Layout
+
+let grids =
+    [| CellGrid2D.create 40 24 cellSize Vector2.Zero
+       CellGrid2D.create 40 24 cellSize Vector2.Zero |]
+
+let layers = grids |> Flow.runLayers [| ground; decor |]
+
+let struct (groundGrid, groundMarks) = layers[0]
+let struct (decorGrid, decorMarks) = layers[1]
+```
+
+Each layer gets its own landmarks registry, so an element name is unique
+per layer and may repeat across layers: `Stamp.named "gate"` in the
+ground layer and again in the decor layer report two rectangles, one per
+registry. `Flow.buildLayers` adds `Landmarks.scanTiles` per layer, so
+tags derived from tiles answer per layer as well.
+
+The run throws before it paints anything when the arrays differ in
+length, when the grids differ in width or height, or when a stamp asks
+for `Expand`. Hex grids run unchanged, and the upper grid keeps its
+unpainted cells empty, so it draws transparent over the lower one.
+
+Authoring a stack from a text document — `layer ground { ... }` — is
+[Layers in authored maps](layers.html), which also covers the spatial
+queries that span a stack.
+
 ## Pattern: organic detail from a seed
 
 A plain fill looks artificial. Break it with the scatter styles. Every

@@ -388,15 +388,16 @@ module internal FlowImpl =
     for c in stamps do
       checkNoExpand container arg c
 
-  /// Rejects a sized element in a layer container: layers are full-bleed,
-  /// so a nonzero footprint would silently stretch over the whole assigned
-  /// area instead of failing. The request fails at construction.
+  /// Rejects a sized element in a stacking container: its children are
+  /// full-bleed, so a nonzero footprint would silently stretch over the
+  /// whole assigned area instead of failing. The request fails at
+  /// construction.
   let checkLayer (container: string) (arg: string) (stamp: Stamp<'T>) : unit =
     if stamp.W > 0 || stamp.H > 0 then
       invalidArg
         arg
         (container
-         + " children are full-bleed layers, and a sized child would silently paint the whole area: use a canvas/at/docked/strip/stretch layer, or a footprint-honoring container (row/column/grid)")
+         + " children are full-bleed, and a sized child would silently paint the whole area: use a canvas/at/docked/strip/stretch child, or a footprint-honoring container (row/column/grid)")
 
   let checkLayerAll
     (container: string)
@@ -650,8 +651,8 @@ module Stamp =
     }
 
   /// Draws both elements over the full area of the container, `second` on
-  /// top. Both elements are full-bleed layers (`canvas`, `docked`, `at`,
-  /// `strip`, `stretch`), so a sized element throws at construction — it
+  /// top. Both elements are full-bleed stack children (`canvas`, `docked`,
+  /// `at`, `strip`, `stretch`), so a sized element throws at construction — it
   /// would silently paint the whole area. The footprint is zero: the
   /// composite is context-sized.
   let overlay (first: Stamp<'T>) (second: Stamp<'T>) : Stamp<'T> =
@@ -1196,7 +1197,7 @@ module Flow =
     Layout.map 0 0 section.Width section.Height mapping section |> ignore
 
   /// A context-sized box of styles: paints whatever area its container
-  /// assigns to it — a grid area, an overlay layer, a docked rectangle, an
+  /// assigns to it — a grid area, an overlay child, a docked rectangle, an
   /// expanded slot. It has no intrinsic footprint; a zero dimension always
   /// means "stretch on that axis".
   let canvas(styles: BoxStyle<'T> list) : Stamp<'T> = {
@@ -1554,7 +1555,7 @@ module Flow =
   /// Places `stamp` at an exact offset of its container: the top-left sits
   /// `x` cells from the left edge and `y` cells from the top edge. Exact
   /// placement occupies no flow space (zero footprint), so it mounts inside
-  /// `overlay` layers and grid areas like `docked` does; a zero dimension of
+  /// `overlay` children and grid areas like `docked` does; a zero dimension of
   /// the wrapped stamp stretches on its axis from that origin to the
   /// container's far edge. Negative offsets clamp at 0. Name the stamped
   /// element to report its rectangle.
@@ -1572,9 +1573,9 @@ module Flow =
       Stamp = stamp
     }
 
-  /// A layer that stretches its stamp over the whole assigned area of the
-  /// container — the sanctioned way to mount a sized layout as an
-  /// `overlay`/`group` layer. Zero footprint, so it joins any full-bleed
+  /// A full-bleed child that stretches its stamp over the whole assigned
+  /// area of the container — the sanctioned way to mount a sized layout as
+  /// an `overlay`/`group` child. Zero footprint, so it joins any full-bleed
   /// container; a zero dimension of the wrapped stamp means the same thing
   /// it always does. Name the wrapped element to report the stretched
   /// rectangle.
@@ -1619,12 +1620,12 @@ module Flow =
     }
 
   /// Stacks children over the full area of the container, later children
-  /// paint over earlier ones. Children are full-bleed layers — `canvas`,
+  /// paint over earlier ones. Children are full-bleed — `canvas`,
   /// `docked`, `at`, `strip`, `stretch` — so a sized child throws at
   /// construction: it would silently paint the whole assigned area. Place
   /// fixed-footprint children with `at`/`docked`, stretch a sized layout
   /// with `stretch`, or use a footprint-honoring container
-  /// (`grid`/`row`/`column`). Every legal layer is zero-footprint, so the
+  /// (`grid`/`row`/`column`). Every legal child is zero-footprint, so the
   /// composite is context-sized (zero footprint).
   let overlay(children: Stamp<'T> seq) : Stamp<'T> =
     let arr = Array.ofSeq children
@@ -1690,7 +1691,7 @@ module Flow =
 
   /// A fixed-size group that lays its children out over its own area with
   /// overlay rules: each child paints into the group's box and later children
-  /// paint on top. Children are full-bleed layers — `canvas`, `docked`,
+  /// paint on top. Children are full-bleed — `canvas`, `docked`,
   /// `at`, `strip`, `stretch` — so a sized child throws at construction:
   /// it would silently paint the whole box. The size is stated once,
   /// here; `canvas` children fill the box, `docked`/`at` children anchor
@@ -1787,6 +1788,65 @@ module Flow =
     let struct (grid, landmarks) = run stamp grid
     struct (grid, Landmarks.scanTiles extract grid landmarks)
 
+  /// Paints each stamp into its own grid, in order — the plural of `run`.
+  /// The caller creates and owns the grids; a layer is an array position,
+  /// stamp i paints grid i, bottom first. Each layer gets its own landmarks
+  /// registry, so element names are unique per layer and may repeat across
+  /// layers. Hex grids work unchanged: painting is cell-space.
+  ///
+  /// Throws ArgumentException when the arrays differ in length, when a
+  /// stamp carries `Expand` (as `run` does), or when the grids differ in
+  /// width or height. Every stamp and every grid is checked before any
+  /// grid is painted.
+  ///
+  /// `let layers = grids |> Flow.runLayers stamps`
+  let runLayers
+    (stamps: Stamp<'T>[])
+    (grids: CellGrid2D<'T>[])
+    : struct (CellGrid2D<'T> * Landmarks)[] =
+    if stamps.Length <> grids.Length then
+      invalidArg
+        "grids"
+        $"runLayers takes one grid for each stamp: {stamps.Length} stamps, {grids.Length} grids"
+
+    let width, height =
+      if grids.Length = 0 then
+        0, 0
+      else
+        grids[0].Width, grids[0].Height
+
+    for grid in grids do
+      if grid.Width <> width || grid.Height <> height then
+        invalidArg
+          "grids"
+          $"every layer spans the same map: the first grid is {width}x{height}, another is {grid.Width}x{grid.Height}"
+
+    for stamp in stamps do
+      FlowImpl.checkNoExpand "Flow.runLayers" "stamps" stamp
+
+    let built = Array.zeroCreate grids.Length
+
+    for i in 0 .. grids.Length - 1 do
+      built[i] <- run stamps[i] grids[i]
+
+    built
+
+  /// `runLayers` and `Landmarks.scanTiles` per layer — the plural of
+  /// `build`: every layer derives its per-cell tag bit grids from its own
+  /// painted tiles through `extract` (x, y, content -> tags).
+  let buildLayers
+    (extract: int -> int -> 'T -> string seq)
+    (stamps: Stamp<'T>[])
+    (grids: CellGrid2D<'T>[])
+    : struct (CellGrid2D<'T> * Landmarks)[] =
+    let built = runLayers stamps grids
+
+    for i in 0 .. built.Length - 1 do
+      let struct (grid, landmarks) = built[i]
+      built[i] <- struct (grid, Landmarks.scanTiles extract grid landmarks)
+
+    built
+
   /// Looks up the resolved rectangle of a named element.
   let inline tryPosition
     (name: string)
@@ -1828,6 +1888,6 @@ module Flow =
   /// rectangle. Equivalent to a tagless `Stamp.box`, so it lays out like any
   /// other child (fixed footprint in a grid area, `expand` in a row, ...).
   /// Place it through containers that honor footprints (grid areas,
-  /// row/column); inside `overlay`/`group` layers, dock it.
+  /// row/column); inside `overlay`/`group` children, dock it.
   let region (tags: string list) (w: int) (h: int) : Stamp<'T> =
     Stamp.tagged tags (Stamp.box w h [])
