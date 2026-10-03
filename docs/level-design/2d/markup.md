@@ -32,9 +32,10 @@ scalars as positional arguments (`map 36 20`), XML spells them as
 attributes (`map w="36" h="20"`), and the resolver reads every scalar by
 name so both resolve identically. A document holds exactly one map:
 a stray root node or a second map fails the build instead of being
-dropped. The map takes its two dimensions from either channel, or one of
-each — `map 36 20`, `map w="36" h="20"`, and `map 36 h="20"` all read
-36 across and 20 down:
+dropped. The map's contents can be split into layers, one grid each —
+see [Layers in authored maps](layers.html). The map takes its two
+dimensions from either channel, or one of each — `map 36 20`,
+`map w="36" h="20"`, and `map 36 h="20"` all read 36 across and 20 down:
 
 ```fsharp
 open Mibo.Markup
@@ -133,6 +134,8 @@ the framework's `Layout` ops. The union is closed by design: statements
 mean the same thing in every game; games extend through elements and
 words, not new cases.
 
+A `style` rule names itself with a word argument in KDL (`style thicket w=6 h=5`) and with the `name` property in XML (`<style name="thicket" w="6" h="5" />`). The name is the rule's key, not a style: it is read first and never applied as a property.
+
 **Styles carry layout only.** `w=`/`h=` size, `x=`/`y=` exact placement
 (stack pack only — a flow or scatter child with `x=`/`y=` fails the
 build instead of silently dropping the offsets, and negative values
@@ -161,16 +164,77 @@ match DocFlow.build (surface, src) with        // or DocFlow.buildXml
 | Error e -> printfn "%s" e
 ```
 
+A document that declares layers builds through
+`DocFlow.buildLayers`/`DocFlow.buildLayersXml`, which return one grid per
+layer. `build` and `buildXml` keep their signatures: a document that
+resolves to two or more layers fails naming them, instead of silently
+painting one. See [Layers in authored maps](layers.html).
+
 The golden tests hand-lay each layout channel with the raw `Layout` ops
 and compare cell for cell — the emitter is checked against the
 framework's own painting, not against itself — and the same document
 built in KDL and in XML produces the identical grid. Parse and
 resolution errors carry their document positions (KDL); emitter-stage
 failures name the container, the offending child, and the channel (a
-gap mismatch, a bad slot, an unknown area, a mixed pack). The build
-returns the painted grid only — named and tagged landmarks are a scope
-cut, so derive gameplay regions from the tiles (the `Flow.build` scan)
-rather than the document tree.
+gap mismatch, a bad slot, an unknown area, a mixed pack).
+
+## Landmarks: the document's structure
+
+Every element of the document reports its resolved rectangle through the
+tag channel, under its own name — `plaza` twice is two rectangles, one
+per use. The anonymous `plot` container reports under `plot`, so a
+document written without named elements still answers "what painted this
+cell". Nothing reports under `map`: its rectangle is the whole grid.
+
+`DocFlow.build` returns the grid alone. A caller that needs the
+structure — a hover that names the region under the cursor, a walkability
+walk over a tagged area, spawn points derived from the document — runs
+the same steps itself and keeps the landmarks. Each step already returns
+a `Result` or a `ValueOption`, so the pipeline binds instead of nesting:
+
+```fsharp
+// Parse, resolve, and paint a document, keeping both halves of what
+// `Flow.run` returns: the grid, and the landmarks it recorded beside it.
+let buildWithLandmarks (src: string) =
+    Kdl.parse src                                        // or Xml.parse
+    |> Result.bind (fun roots ->
+        Doc.resolve surface src roots
+        |> Result.bind (fun items ->
+            // the map node states the size; the resolved root is what the
+            // emitter lays out
+            Doc.findMapNode roots
+            |> ValueOption.map (fun node ->
+                Doc.dimsOf(src, node) |> Result.map (fun dims -> items, dims))
+            |> ValueOption.defaultValue (Error "the document holds no map node")))
+    |> Result.bind (fun (items, dims) ->
+        match items with
+        | [| root |] -> Ok struct (root, dims)
+        | many -> Error $"the document resolved to {many.Length} roots")
+    |> Result.map (fun struct (root, dims) ->
+        let grid =
+            CellGrid2D.create dims.W dims.H (Vector2(32f, 32f)) Vector2.Zero
+
+        grid |> Flow.run (DocFlow.emit root))
+```
+
+The landmarks are what the queries read:
+
+```fsharp
+match buildWithLandmarks src with
+| Ok struct (_, marks) ->
+    Flow.taggedRects "plaza" marks        // every plaza, newest first
+    Flow.isTag "plaza" { X = 3; Y = 4 } marks
+| Error e -> printfn "%s" e
+```
+
+Element names ride the tag channel rather than the named-stamp channel
+because one document may use the same element name many times, and the
+named channel requires unique names. Each name carries a per-cell bit
+grid, so a hover or a walk query is one dictionary lookup and one array
+read.
+The registry allocates one bit grid per name per build — build-time
+memory, released with the build — so a document with thousands of
+elements is a memory decision, not a correctness one.
 
 ## Live reload
 

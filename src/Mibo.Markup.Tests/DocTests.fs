@@ -431,6 +431,217 @@ let resolveTests =
   ]
 
 [<Tests>]
+let resolveLayerTests =
+  testList "Doc layers" [
+    testCase "a two-layer document resolves, and only the layers name one"
+    <| fun _ ->
+      match
+        resolveKdl
+          """map 8 6 {
+  layer ground {
+    generate plain
+  }
+  layer decor {
+    plot x=1 y=1 w=2 h=2 { fill stone }
+  }
+}"""
+      with
+      | Ok [| root |] ->
+        Expect.equal root.Layer ValueNone "the map is not a layer"
+        Expect.equal root.Name "map" "the root keeps its name"
+        Expect.equal root.Children.Length 2 "two children, one per layer"
+
+        let ground = root.Children[0]
+        let decor = root.Children[1]
+
+        Expect.equal
+          ground.Layer
+          (ValueSome "ground")
+          "the first layer carries its name"
+
+        Expect.equal ground.Name "ground" "and reports under it"
+        Expect.equal decor.Layer (ValueSome "decor") "the second layer"
+        Expect.equal decor.Name "decor" "and reports under its own name"
+
+        Expect.equal
+          decor.Children[0].Layer
+          ValueNone
+          "a plot inside a layer is not a layer"
+
+        Expect.equal
+          decor.Children[0].Name
+          "plot"
+          "the plot keeps the anonymous name"
+      | Error e -> failtest $"resolve failed: {e}"
+      | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "bare paint stays on the map, not in a layer"
+    <| fun _ ->
+      match
+        resolveKdl
+          """map 8 6 {
+  fill grass
+  plot x=1 y=1 w=2 h=2 { fill stone }
+  layer decor { fill dirt }
+}"""
+      with
+      | Ok [| root |] ->
+        Expect.equal root.Layer ValueNone "the map's own body is not a layer"
+
+        Expect.equal root.Element.Body.Length 1 "the map's body is its own"
+        Expect.equal root.Children.Length 2 "one plain child and one layer"
+        Expect.equal root.Children[0].Layer ValueNone "the plain plot"
+        Expect.equal root.Children[1].Layer (ValueSome "decor") "the layer"
+      | Error e -> failtest $"resolve failed: {e}"
+      | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "a duplicate layer name fails at the second node"
+    <| fun _ ->
+      match
+        resolveKdl
+          "map 8 6 {\n  layer ground { fill grass }\n  layer ground { fill dirt }\n}"
+      with
+      | Ok _ -> failtest "the duplicate layer must fail"
+      | Error e ->
+        Expect.stringContains
+          e
+          "layer 'ground' is declared twice"
+          "names the clash"
+
+        Expect.stringContains e "3:" "carries the second node's line"
+
+    testCase "a layer inside a plot fails"
+    <| fun _ ->
+      match
+        resolveKdl
+          "map 8 6 {\n  plot x=1 y=1 w=2 h=2 {\n    layer ground { fill grass }\n  }\n}"
+      with
+      | Ok _ -> failtest "a nested layer must fail"
+      | Error e ->
+        Expect.stringContains
+          e
+          "legal only directly under the map"
+          "names the rule"
+
+        Expect.stringContains e "3:" "carries the line"
+
+    testCase "a layer inside an element fails"
+    <| fun _ ->
+      match
+        resolveKdl
+          "map 8 6 {\n  element plaza {\n    layer ground { fill grass }\n  }\n  plaza x=1 y=1\n}"
+      with
+      | Ok _ -> failtest "a layer in an element must fail"
+      | Error e ->
+        Expect.stringContains
+          e
+          "legal only directly under the map"
+          "names the rule"
+
+        Expect.stringContains e "3:" "carries the line"
+
+    testCase "a layer inside a layer fails"
+    <| fun _ ->
+      match
+        resolveKdl
+          "map 8 6 {\n  layer ground {\n    layer decor { fill grass }\n  }\n}"
+      with
+      | Ok _ -> failtest "a layer in a layer must fail"
+      | Error e ->
+        Expect.stringContains
+          e
+          "legal only directly under the map"
+          "names the rule"
+
+        Expect.stringContains e "3:" "carries the line"
+
+    testCase "a layer takes one name and nothing else"
+    <| fun _ ->
+      let rejects (doc: string) (expected: string) =
+        match resolveKdl doc with
+        | Ok _ -> failtest $"the document must fail: {doc}"
+        | Error e -> Expect.stringContains e expected "names the rule"
+
+      rejects
+        "map 8 6 {\n  layer ground x=1 { fill grass }\n}"
+        "a layer takes one name and nothing else"
+
+      rejects
+        "map 8 6 {\n  layer ground decor { fill grass }\n}"
+        "a layer takes one name and nothing else"
+
+      rejects "map 8 6 {\n  layer { fill grass }\n}" "a layer needs a name"
+
+    testCase "an empty layer fails"
+    <| fun _ ->
+      let rejects doc =
+        match resolveKdl doc with
+        | Ok _ -> failtest $"the empty layer must fail: {doc}"
+        | Error e ->
+          Expect.stringContains
+            e
+            "holds no statements or children"
+            "names the slip"
+
+          Expect.stringContains e "2:" "carries the line"
+
+      // a declaration is a leaf: on its own it leaves the layer painting
+      // nothing, exactly as an empty layer does
+      rejects "map 8 6 {\n  layer ground { }\n}"
+      rejects "map 8 6 {\n  layer ground { element hedge { fill grass } }\n}"
+
+    testCase "a style rule named layer applies to every layer"
+    <| fun _ ->
+      match
+        resolveKdl
+          "map 8 6 {\n  style layer pad=1\n  layer ground { fill grass }\n  layer decor { fill stone }\n}"
+      with
+      | Ok [| root |] ->
+        Expect.equal
+          root.Children[0].Style.Pad
+          (ValueSome 1)
+          "the first layer takes the rule"
+
+        Expect.equal
+          root.Children[1].Style.Pad
+          (ValueSome 1)
+          "so does the second"
+      | Error e -> failtest $"resolve failed: {e}"
+      | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "XML reads the layer name from the name property"
+    <| fun _ ->
+      let xml =
+        """<map w="8" h="6">
+  <layer name="ground">
+    <generate kernel="plain" />
+  </layer>
+  <layer name="decor">
+    <fill cell="stone" />
+  </layer>
+</map>"""
+
+      match Xml.parse xml with
+      | Error e -> failtest $"parse failed: {e}"
+      | Ok roots ->
+        match Doc.resolve surface xml roots with
+        | Ok [| root |] ->
+          Expect.equal root.Children.Length 2 "two layers"
+
+          Expect.equal
+            (root.Children |> Array.map(fun c -> c.Layer))
+            [| ValueSome "ground"; ValueSome "decor" |]
+            "both names read from the property"
+
+          Expect.equal
+            root.Children[1].Element.Extent
+            ValueNone
+            "the name is a key, not a style: the layer still stretches"
+        | Error e -> failtest $"resolve failed: {e}"
+        | Ok _ -> failtest "expected exactly one root item"
+  ]
+
+[<Tests>]
 let measureTests =
   testList "Doc measure" [
     testCase "a greedy body measures the available size"

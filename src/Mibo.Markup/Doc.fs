@@ -58,7 +58,7 @@ module Doc =
     Elements: FrozenDictionary<string, ElementDecl<'T>>
   }
 
-  /// How a container places its children: stacked layers (default), flow
+  /// How a container places its children: stacked children (default), flow
   /// tracks, or seeded scatter.
   [<Struct>]
   type Pack =
@@ -93,6 +93,11 @@ module Doc =
   [<NoEquality; NoComparison>]
   type Element<'T> = {
     Extent: CellSize voption
+    /// The merged ops the resolver built: the declaration's statements
+    /// first, the use site's after. The paint closure interprets them, so
+    /// a consumer that needs the ops themselves — the emitter telling a
+    /// greedy body from an absent one — reads them here.
+    Body: Op<'T>[]
     Paint: GridSection2D<'T> -> unit
   }
 
@@ -103,6 +108,10 @@ module Doc =
   [<NoEquality; NoComparison>]
   type Item<'T> = {
     Name: string
+    /// The layer this item declares, when it is a `layer` container under
+    /// the map. `ValueNone` on every other item: `main` is the map's own
+    /// body plus its non-layer children, and it is not an item of its own.
+    Layer: string voption
     Element: Element<'T>
     Style: Style
     Cols: Track[]
@@ -764,6 +773,10 @@ module Doc =
     | "border" -> borderStatement()
     | "rect" -> rectStatement()
     | "generate" -> generateStatement()
+    // a layer body is not a statement: an `element` declaration that
+    // holds one would paint nothing, so it fails where it is written
+    | "layer" ->
+      Error $"`layer` is legal only directly under the map{at(src, n)}"
     | _ -> Error $"unknown statement '{n.Kind}'{at(src, n)}"
 
   // ── The interpreter ──────────────────────────────────────────
@@ -858,6 +871,7 @@ module Doc =
 
     {
       Extent = extent
+      Body = body
       Paint =
         fun box ->
           for op in body do
@@ -1046,6 +1060,10 @@ module Doc =
   /// or by the `name` property (XML). Later rules win per property; a
   /// bad property fails the build with its position. Like the template
   /// collector, a declaration is a leaf: rules do not nest.
+  ///
+  /// The `name` property names the rule; it is a key, not a style, so it
+  /// is dropped before the properties are applied. A KDL rule states its
+  /// name as a word argument and never carries the property.
   let collectStyles
     (src: string, roots: ImmutableArray<Node>)
     : Result<Dictionary<string, Style>, string> =
@@ -1058,7 +1076,14 @@ module Doc =
           (match wantWord(src, n, "name", 0) with
            | Error e -> failed <- ValueSome e
            | Ok name ->
-             (match styleOfProps(src, n, emptyStyle) with
+             let properties =
+               n.Props
+               |> Seq.filter(fun p -> p.Name <> "name")
+               |> ImmutableArray.CreateRange
+
+             let node = { n with Props = properties }
+
+             (match styleOfProps(src, node, emptyStyle) with
               | Ok patch ->
                 let merged =
                   if rules.ContainsKey name then
@@ -1079,13 +1104,99 @@ module Doc =
     | ValueSome e -> Error e
     | ValueNone -> Ok rules
 
+  // ── Layers ───────────────────────────────────────────────────
+
+  /// Reads a layer container's single name: a word argument in KDL
+  /// (`layer ground { ... }`), the `name` property in XML
+  /// (`<layer name="ground">`). A layer carries nothing else, so any
+  /// other argument or property fails with its position.
+  let layerNameOf(src: string, n: Node) : Result<string, string> =
+    let asWord(arg: Arg) : string =
+      match arg with
+      | Word w -> w
+      | Number v -> string v
+      | Decimal d -> string d
+
+    let mutable named = ValueNone
+
+    for p in n.Props do
+      if named.IsNone && p.Name = "name" then
+        named <- ValueSome p.Value
+
+    // the name claims one slot: the property when the node states it,
+    // the first argument otherwise. Everything past it is an error.
+    let fromProperty = named.IsSome
+    let extraArgs = if fromProperty then n.Args.Length else n.Args.Length - 1
+    let extraProps = n.Props.Length - (if fromProperty then 1 else 0)
+
+    if extraArgs > 0 then
+      Error
+        $"a layer takes one name and nothing else: {extraArgs} extra argument(s){at(src, n)}"
+    elif extraProps > 0 then
+      Error
+        $"a layer takes one name and nothing else: {extraProps} extra property(ies){at(src, n)}"
+    else
+      match named with
+      | ValueSome arg -> Ok(asWord arg)
+      | ValueNone when n.Args.Length = 1 -> Ok(asWord n.Args[0])
+      | ValueNone ->
+        Error
+          $"a layer needs a name: a word argument, or the 'name' property{at(src, n)}"
+
+  /// A layer must paint something. `element` and `style` declarations are
+  /// leaves the collectors already read, so on their own they leave the
+  /// layer empty — and an empty layer would silently paint nothing.
+  let private hasContent(n: Node) : bool =
+    n.Children |> Seq.exists(fun c -> c.Kind <> "element" && c.Kind <> "style")
+
+  /// Resolves one `layer` child into the entry the map's child list holds:
+  /// the node, and the name it reports under. `seen` is the map's
+  /// seen-names list — `ValueNone` for every other container, where a
+  /// layer is illegal.
+  ///
+  /// The three rules a layer must pass are one pipeline: the name reads
+  /// (or fails with its position), the name is new, the layer holds
+  /// content. The node loses its `name` property on the way out: that
+  /// property is the layer's key, not a style, so the cascade never sees
+  /// it.
+  let private layerChild
+    (src: string)
+    (seen: ResizeArray<string> voption)
+    (c: Node)
+    : Result<struct (Node * string voption), string> =
+    match seen with
+    | ValueNone ->
+      Error $"`layer` is legal only directly under the map{at(src, c)}"
+    | ValueSome names ->
+      layerNameOf(src, c)
+      |> Result.bind(fun name ->
+        if names.Contains name then
+          Error $"layer '{name}' is declared twice{at(src, c)}"
+        elif not(hasContent c) then
+          Error $"layer '{name}' holds no statements or children{at(src, c)}"
+        else
+          names.Add name
+
+          let stripped = {
+            c with
+                Props =
+                  c.Props
+                  |> Seq.filter(fun p -> p.Name <> "name")
+                  |> ImmutableArray.CreateRange
+          }
+
+          Ok struct (stripped, ValueSome name))
+
   // ── Container resolution ─────────────────────────────────────
 
   /// Resolves one container node into an `Item`: expands repeats,
   /// cascades the style (rule sheet, then inline props), splits the
   /// children into paint statements (this element's body), track and
   /// area directives, and child containers. Declarations (`element`,
-  /// `style`) are leaves here — their collectors ran first.
+  /// `style`) are leaves here — their collectors ran first. A `layer`
+  /// child is legal only under the map root; it resolves under the
+  /// literal name `layer` and the item is stamped with the layer's own
+  /// name.
   let rec resolveContainer
     (
       surface: Surface<'T>,
@@ -1106,11 +1217,19 @@ module Doc =
       | Error e -> Error e
       | Ok style ->
         let ops = ResizeArray<Op<'T>>()
-        let itemNodes = ResizeArray<Node>()
+        let itemNodes = ResizeArray<struct (Node * string voption)>()
         let mutable cols: Track[] = [||]
         let mutable rows: Track[] = [||]
         let mutable areas: string[][] = [||]
         let mutable failed = ValueNone
+
+        // layer names are unique in the document. Only the map root can
+        // hold layers, so only it allocates the seen-names list.
+        let seenLayers =
+          if name = "map" then
+            ValueSome(ResizeArray<string>())
+          else
+            ValueNone
 
         for c in children do
           if failed.IsNone then
@@ -1128,6 +1247,10 @@ module Doc =
                | Error e -> failed <- ValueSome e)
             elif c.Kind = "element" || c.Kind = "style" then
               () // declarations, already collected
+            elif c.Kind = "layer" then
+              (match layerChild src seenLayers c with
+               | Ok node -> itemNodes.Add node
+               | Error e -> failed <- ValueSome e)
             elif isOpKind c.Kind then
               (match resolveOp(surface, src, c) with
                | Ok op -> ops.Add op
@@ -1140,7 +1263,7 @@ module Doc =
                 || c.Kind = "grid"
 
               if known then
-                itemNodes.Add c
+                itemNodes.Add struct (c, ValueNone)
               else
                 failed <- ValueSome $"unknown element '{c.Kind}'{at(src, c)}"
 
@@ -1168,12 +1291,33 @@ module Doc =
           let body = Array.append declBody (ops.ToArray())
           let items = ResizeArray<Item<'T>>()
 
-          for c in itemNodes do
+          for struct (c, layerName) in itemNodes do
             if failed.IsNone then
+              // A layer resolves under the literal name `layer`, the way a
+              // plot resolves under `plot`: resolving it under its own name
+              // would inherit a same-named template's or surface element's
+              // body and extent.
+              let asName =
+                match layerName with
+                | ValueSome _ -> "layer"
+                | ValueNone -> c.Kind
+
               (match
-                resolveContainer(surface, src, templates, styles, c.Kind, c)
+                resolveContainer(surface, src, templates, styles, asName, c)
                with
-               | Ok item -> items.Add item
+               | Ok item ->
+                 let resolved =
+                   match layerName with
+                   | ValueSome layerName ->
+                       // the layer reports its rectangle under its own name
+                       {
+                         item with
+                             Name = layerName
+                             Layer = ValueSome layerName
+                       }
+                   | ValueNone -> item
+
+                 items.Add resolved
                | Error e -> failed <- ValueSome e)
 
           match failed with
@@ -1181,6 +1325,7 @@ module Doc =
           | ValueNone ->
             Ok {
               Name = name
+              Layer = ValueNone
               Element = paintOf(surface, declExtent, body)
               Style = style
               Cols = cols
@@ -1339,8 +1484,11 @@ module Doc =
   /// its children; `cols`, `rows` and `areas` child nodes declare a
   /// container's tracks and named areas. Declared `cols`/`rows` imply
   /// `pack=flow`. `plot` is the built-in anonymous container: empty
-  /// body, exact box. Every root is the map or a declaration: a stray
-  /// root node would be dropped without a word, so it fails the build.
+  /// body, exact box. `layer` is the map's layer container: one name and
+  /// nothing else, resolved under the literal name `layer` and reported
+  /// under its own (`Item.Layer`). Every root is the map or a
+  /// declaration: a stray root node would be dropped without a word, so
+  /// it fails the build.
   let resolve
     (surface: Surface<'T>)
     (src: string)

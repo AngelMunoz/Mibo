@@ -241,6 +241,12 @@ This approach is efficient because Mibo's `RenderBuffer` performs a single, opti
 
 Layers are created on-demand, so only layers you've painted into will consume memory.
 
+Storage stays with the game, but authoring has a layer construct of its
+own: a text document splits into layers ([Layers in authored maps](layers.html)),
+and `Flow.runLayers`/`Flow.buildLayers` paint one grid per layer from
+stamps you wrote in F#. What you keep afterwards is still your choice —
+an array of grids, the dictionary above, or one grid folded at load.
+
 ## Creating Your Own Stamps
 
 A **stamp** is a function `GridSection2D<'T> -> GridSection2D<'T>`: it takes a section and returns a modified one. You can create reusable stamps, the way UI frameworks let you define reusable components:

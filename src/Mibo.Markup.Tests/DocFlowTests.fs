@@ -398,6 +398,14 @@ let failureTests =
       | Ok _ -> failtest "malformed input must not build"
       | Error e -> Expect.isGreaterThan e.Length 0 "the error carries a message"
 
+    testCase "a document without a map reports what the resolver found"
+    <| fun _ ->
+      // the build resolves first and looks for the map node after, so a
+      // document the resolver rejects never reaches a tripwire arm
+      match build "element hedge { fill grass }\n" with
+      | Ok _ -> failtest "a document with no map must not build"
+      | Error e -> Expect.stringContains e "needs a map node" "names the gap"
+
     testCase "a zero slot span fails the build"
     <| fun _ ->
       match
@@ -604,4 +612,470 @@ let parityTests =
         Expect.equal diffs 0 "both syntaxes build the identical grid"
 
       | kdlRes, xmlRes -> failtest(sprintf "kdl=%A xml=%A" kdlRes xmlRes)
+
+    testCase "a style rule names itself in either channel"
+    <| fun _ ->
+      // KDL spells the rule's name as a word argument, XML as the `name`
+      // property; the property is the rule's key and must not be applied
+      // as a style of its own
+      let kdl =
+        """map 8 6 {
+    element hedge { border stone }
+    style hedge w=4 h=2
+    hedge x=2 y=2
+}
+"""
+
+      let xml =
+        """<map w="8" h="6">
+  <element name="hedge"><border cell="stone" /></element>
+  <style name="hedge" w="4" h="2" />
+  <hedge x="2" y="2" />
+</map>"""
+
+      match DocFlow.build(surface, kdl), DocFlow.buildXml(surface, xml) with
+      | Ok a, Ok b ->
+        let mutable diffs = 0
+
+        for y in 0 .. a.Height - 1 do
+          for x in 0 .. a.Width - 1 do
+            if CellGrid2D.get x y a <> CellGrid2D.get x y b then
+              diffs <- diffs + 1
+
+        Expect.equal diffs 0 "both channels read the rule's name"
+      | kdlRes, xmlRes -> failtest(sprintf "kdl=%A xml=%A" kdlRes xmlRes)
+  ]
+
+/// The step-by-step build a caller runs when it needs the landmarks:
+/// parse, resolve, locate the map node, then lay the emitted root over a
+/// grid and keep what `Flow.run` hands back. `DocFlow.build` returns the
+/// grid alone.
+///
+/// Every step already returns a `Result` or a `ValueOption`, so the
+/// pipeline binds rather than nests.
+let private buildWithLandmarks
+  (src: string)
+  : Result<struct (CellGrid2D<int> * Landmarks), string> =
+  Kdl.parse src
+  |> Result.bind(fun roots ->
+    Doc.resolve surface src roots
+    |> Result.bind(fun items ->
+      Doc.findMapNode roots
+      |> ValueOption.map(fun node ->
+        Doc.dimsOf(src, node) |> Result.map(fun dims -> items, dims))
+      |> ValueOption.defaultValue(Error "the document holds no map node")))
+  |> Result.bind(fun (items, dims) ->
+    match items with
+    | [| root |] -> Ok struct (root, dims)
+    | many -> Error $"the document resolved to {many.Length} roots")
+  |> Result.map(fun struct (root, dims) ->
+    let grid = CellGrid2D.create dims.W dims.H (Vector2(1f, 1f)) Vector2.Zero
+
+    Flow.run (DocFlow.emit root) grid)
+
+let private rectOf(x: int, y: int, w: int, h: int) : CellRect = {
+  X = x
+  Y = y
+  W = w
+  H = h
+}
+
+[<Tests>]
+let landmarkTests =
+  testList "DocFlow landmarks" [
+    testCase "every use of an element reports its own resolved rectangle"
+    <| fun _ ->
+      let doc =
+        """map 12 8 {
+    element plaza w=3 h=2 { rect edge=stone floor=grass }
+    plaza x=1 y=1
+    plaza x=7 y=5
+}
+"""
+
+      match buildWithLandmarks doc with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok struct (_, marks) ->
+        let rects = Flow.taggedRects "plaza" marks
+
+        Expect.equal rects.Length 2 "two uses, two rectangles"
+        Expect.contains rects (rectOf(1, 1, 3, 2)) "the first use's rectangle"
+        Expect.contains rects (rectOf(7, 5, 3, 2)) "the second use's rectangle"
+
+    testCase "the per-cell bit grid answers inside and outside a region"
+    <| fun _ ->
+      let doc =
+        """map 12 8 {
+    element plaza w=3 h=2 { rect edge=stone floor=grass }
+    plaza x=1 y=1
+}
+"""
+
+      match buildWithLandmarks doc with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok struct (_, marks) ->
+        Expect.isTrue
+          (Flow.isTag "plaza" { X = 1; Y = 1 } marks)
+          "the region's corner is tagged"
+
+        Expect.isTrue
+          (Flow.isTag "plaza" { X = 3; Y = 2 } marks)
+          "the region's far corner is tagged"
+
+        Expect.isFalse
+          (Flow.isTag "plaza" { X = 4; Y = 2 } marks)
+          "one cell past the region is not"
+
+        Expect.isFalse
+          (Flow.isTag "plaza" { X = 0; Y = 0 } marks)
+          "one cell before the region is not"
+
+    testCase "the anonymous plot reports under its own word"
+    <| fun _ ->
+      let doc =
+        """map 10 6 {
+    plot x=2 y=1 w=4 h=3 { fill sand }
+}
+"""
+
+      match buildWithLandmarks doc with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok struct (_, marks) ->
+        Expect.contains
+          (Flow.taggedRects "plot" marks)
+          (rectOf(2, 1, 4, 3))
+          "the plot's rectangle"
+
+        Expect.isTrue
+          (Flow.isTag "plot" { X = 5; Y = 3 } marks)
+          "a cell inside the plot"
+
+    testCase "a nested element reports inside its container"
+    <| fun _ ->
+      let doc =
+        """map 14 9 {
+    element yard w=8 h=5 { fill grass }
+    element shed w=3 h=2 { fill dirt }
+    yard x=2 y=2 { shed x=1 y=1 }
+}
+"""
+
+      match buildWithLandmarks doc with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok struct (_, marks) ->
+        let yard = Flow.taggedRects "yard" marks
+        let shed = Flow.taggedRects "shed" marks
+
+        Expect.equal yard.Length 1 "one yard"
+        Expect.equal shed.Length 1 "one shed"
+        Expect.contains yard (rectOf(2, 2, 8, 5)) "the yard's rectangle"
+
+        Expect.contains
+          shed
+          (rectOf(3, 3, 3, 2))
+          "the shed's rectangle, offset inside the yard"
+  ]
+
+/// The emitted layers of a KDL document, without painting them: parse,
+/// resolve, then `emitLayers`. Each step already returns a `Result`, so
+/// the pipeline binds rather than nests.
+let private emitOf(src: string) : struct (string * Stamp<int>)[] =
+  Kdl.parse src
+  |> Result.bind(fun roots -> Doc.resolve surface src roots)
+  |> function
+    | Error e -> failtest $"the document did not build: {e}"
+    | Ok [| root |] -> DocFlow.emitLayers root
+    | Ok many -> failtest $"expected exactly one root item, got {many.Length}"
+
+let private layerNames(built: DocFlow.BuiltLayer<int>[]) : string[] =
+  built |> Array.map(fun l -> l.Name)
+
+let private equalGrid (a: CellGrid2D<int>) (b: CellGrid2D<int>) (what: string) =
+  Expect.equal
+    struct (a.Width, a.Height)
+    struct (b.Width, b.Height)
+    $"{what}: the same size"
+
+  let mutable diffs = 0
+
+  for y in 0 .. a.Height - 1 do
+    for x in 0 .. a.Width - 1 do
+      if CellGrid2D.get x y a <> CellGrid2D.get x y b then
+        diffs <- diffs + 1
+
+  Expect.equal diffs 0 $"{what}: the same cells"
+
+/// Two layers: `ground` fills the map, `decor` paints a 2x2 block.
+let private twoLayerKdl =
+  """map 8 6 {
+    layer ground {
+        fill grass
+    }
+
+    layer decor {
+        fillRect 1 1 2 2 stone
+    }
+}
+"""
+
+/// The map's own paint, a non-layer child, and one stated layer: three
+/// sources of cells, `main` first.
+let private mainPlusLayerKdl =
+  """map 8 6 {
+    fill grass
+
+    plot x=4 y=4 w=3 h=2 { fill sand }
+
+    layer decor {
+        fillRect 1 1 2 2 stone
+    }
+}
+"""
+
+let private twoLayerXml =
+  """<map w="8" h="6">
+  <layer name="ground">
+    <fill cell="grass" />
+  </layer>
+  <layer name="decor">
+    <fillRect x="1" y="1" w="2" h="2" cell="stone" />
+  </layer>
+</map>"""
+
+[<Tests>]
+let layerBuildTests =
+  testList "DocFlow layers" [
+    testCase "each layer builds its own grid, in layer order"
+    <| fun _ ->
+      match DocFlow.buildLayers(surface, twoLayerKdl) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok built ->
+        Expect.equal (layerNames built) [| "ground"; "decor" |] "bottom first"
+
+        Expect.equal
+          struct (built[0].Grid.Width, built[0].Grid.Height)
+          struct (8, 6)
+          "a layer spans the map"
+
+        Expect.equal
+          struct (built[1].Grid.Width, built[1].Grid.Height)
+          struct (8, 6)
+          "the upper layer spans it too"
+
+        Expect.equal
+          (CellGrid2D.get 0 0 built[0].Grid)
+          (ValueSome 1)
+          "the ground layer paints the first cell"
+
+        Expect.equal
+          (CellGrid2D.get 7 5 built[0].Grid)
+          (ValueSome 1)
+          "and the last one"
+
+        Expect.equal
+          (CellGrid2D.get 1 1 built[1].Grid)
+          (ValueSome 3)
+          "the decor layer paints inside"
+
+        Expect.equal
+          (CellGrid2D.get 2 2 built[1].Grid)
+          (ValueSome 3)
+          "and to the end of its block"
+
+        Expect.equal
+          (CellGrid2D.get 0 0 built[1].Grid)
+          ValueNone
+          "the upper layer keeps its empty cells empty"
+
+        Expect.equal
+          (CellGrid2D.get 7 5 built[1].Grid)
+          ValueNone
+          "with no ground showing through"
+
+    testCase "a partial layer still paints at its own cells"
+    <| fun _ ->
+      // the stretch case: every statement is area-bound, so the layer
+      // measures a partial footprint. A plain stack child would dock it
+      // at the map's top-left corner instead of at its own rows.
+      let doc =
+        """map 8 6 {
+    layer road {
+        fillRect 0 2 8 1 way
+    }
+}
+"""
+
+      match DocFlow.buildLayers(surface, doc) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok built ->
+        Expect.equal (layerNames built) [| "road" |] "one layer"
+
+        Expect.equal
+          (CellGrid2D.get 0 2 built[0].Grid)
+          (ValueSome 6)
+          "the band paints on its own row"
+
+        Expect.equal
+          (CellGrid2D.get 7 2 built[0].Grid)
+          (ValueSome 6)
+          "and across the map"
+
+        Expect.equal
+          (CellGrid2D.get 0 0 built[0].Grid)
+          ValueNone
+          "nothing above it"
+
+        Expect.equal
+          (CellGrid2D.get 0 3 built[0].Grid)
+          ValueNone
+          "nothing below it"
+
+    testCase "the map's bare paint is main, below every layer"
+    <| fun _ ->
+      let doc = mainPlusLayerKdl
+
+      match DocFlow.buildLayers(surface, doc) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok built ->
+        Expect.equal
+          (layerNames built)
+          [| "main"; "decor" |]
+          "main comes first, the stated layer after it"
+
+        Expect.equal
+          (CellGrid2D.get 0 0 built[0].Grid)
+          (ValueSome 1)
+          "main paints the map body"
+
+        Expect.equal
+          (CellGrid2D.get 5 5 built[0].Grid)
+          (ValueSome 4)
+          "and its non-layer children"
+
+        Expect.equal
+          (CellGrid2D.get 1 1 built[1].Grid)
+          (ValueSome 3)
+          "the layer paints its own grid"
+
+        Expect.equal
+          (CellGrid2D.get 0 0 built[1].Grid)
+          ValueNone
+          "which is empty elsewhere"
+
+    testCase "a map with only layers has no main"
+    <| fun _ ->
+      let emitted = emitOf twoLayerKdl
+
+      Expect.equal
+        (emitted |> Array.map(fun struct (name, _) -> name))
+        [| "ground"; "decor" |]
+        "two entries, no main"
+
+    testCase "a layer reports no region of its own"
+    <| fun _ ->
+      // a layer's rectangle is the whole map, so tagging it would answer
+      // "the whole map" for every cell no element covers
+      match DocFlow.buildLayers(surface, twoLayerKdl) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok built ->
+        Expect.equal
+          (Flow.taggedRects "ground" built[0].Landmarks)
+          []
+          "the ground layer's own name is not a region"
+
+        Expect.equal
+          (Flow.taggedRects "decor" built[1].Landmarks)
+          []
+          "the decor layer's own name is not a region"
+
+    testCase "a document without layers emits one entry named main"
+    <| fun _ ->
+      let doc =
+        """map 8 6 {
+    fill grass
+    plot x=1 y=1 w=2 h=2 { fill stone }
+}
+"""
+
+      let emitted = emitOf doc
+      Expect.equal (emitted |> Array.length) 1 "one layer"
+
+      Expect.equal
+        (emitted |> Array.map(fun struct (name, _) -> name))
+        [| "main" |]
+        "named main"
+
+      match DocFlow.build(surface, doc) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok grid ->
+        Expect.equal (CellGrid2D.get 1 1 grid) (ValueSome 3) "and it paints"
+
+    testCase "KDL and XML build the same layers cell for cell"
+    <| fun _ ->
+      match
+        DocFlow.buildLayers(surface, twoLayerKdl),
+        DocFlow.buildLayersXml(surface, twoLayerXml)
+      with
+      | Ok kdl, Ok xml ->
+        Expect.equal
+          (layerNames kdl)
+          (layerNames xml)
+          "the same names, in order"
+
+        Expect.equal kdl.Length xml.Length "the same number of layers"
+
+        for i in 0 .. kdl.Length - 1 do
+          Expect.equal kdl[i].Name xml[i].Name $"layer {i}: the same name"
+
+          equalGrid kdl[i].Grid xml[i].Grid $"layer '{kdl[i].Name}'"
+      | kdlRes, xmlRes -> failtest $"kdl=%A{kdlRes} xml=%A{xmlRes}"
+
+    testCase "build names the layers of a multi-layer document"
+    <| fun _ ->
+      let reported(doc: string) =
+        match DocFlow.build(surface, doc) with
+        | Ok _ -> failtest "a two-layer document must not build as one grid"
+        | Error e -> e
+
+      let stated = reported twoLayerKdl
+
+      Expect.stringContains stated "the document holds 2 layers" "counts them"
+      Expect.stringContains stated "'ground', 'decor'" "names them"
+      Expect.stringContains stated "DocFlow.buildLayers" "points at the plural"
+
+      // the map's own body is layer 0, so the message names it first
+      let withMain = reported mainPlusLayerKdl
+
+      Expect.stringContains withMain "'main', 'decor'" "names main first"
+
+    testCase "build succeeds on a one-layer document"
+    <| fun _ ->
+      let doc =
+        """map 8 6 {
+    layer ground {
+        fill grass
+    }
+}
+"""
+
+      match DocFlow.build(surface, doc) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok grid ->
+        Expect.equal (CellGrid2D.get 0 0 grid) (ValueSome 1) "the layer's cells"
+        Expect.equal (CellGrid2D.get 7 5 grid) (ValueSome 1) "across the map"
+
+    testCase "build succeeds on an XML document with one layer"
+    <| fun _ ->
+      let xml =
+        """<map w="8" h="6">
+  <layer name="decor">
+    <fillRect x="1" y="1" w="2" h="2" cell="stone" />
+  </layer>
+</map>"""
+
+      match DocFlow.buildXml(surface, xml) with
+      | Error e -> failtest $"the build failed: {e}"
+      | Ok grid ->
+        Expect.equal (CellGrid2D.get 1 1 grid) (ValueSome 3) "the layer's cells"
+        Expect.equal (CellGrid2D.get 0 0 grid) ValueNone "and nothing else"
   ]
