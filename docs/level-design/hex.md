@@ -103,8 +103,8 @@ let worldPos = CellGrid2D.getWorldPos 5 3 grid  // Vector2
 ```fsharp
 // Process every populated cell
 grid |> CellGrid2D.iter (fun col row tile ->
-    let pos = CellGrid2D.getWorldPos col row grid
-    renderTile pos tile
+  let pos = CellGrid2D.getWorldPos col row grid
+  renderTile pos tile
 )
 ```
 
@@ -118,10 +118,10 @@ let screenBottom = cameraY + viewportHeight / 2f
 
 grid
 |> CellGrid2D.iterVisible (int screenLeft) (int screenTop) (int screenRight) (int screenBottom)
-    (fun col row tile ->
-        let pos = CellGrid2D.getWorldPos col row grid
-        renderTile pos tile
-    )
+  (fun col row tile ->
+    let pos = CellGrid2D.getWorldPos col row grid
+    renderTile pos tile
+  )
 ```
 
 ## Flow authoring
@@ -161,14 +161,14 @@ open Mibo.Layout
 
 // walkability reads the grid directly
 let isWalkable col row (grid: CellGrid2D<Tile>) =
-    match CellGrid2D.get col row grid with
-    | ValueSome tile -> tile.IsWalkable
-    | ValueNone -> false
+  match CellGrid2D.get col row grid with
+  | ValueSome tile -> tile.IsWalkable
+  | ValueNone -> false
 
 // the 6 neighbors of a cell, filtered to grid bounds
 let walkableNeighbors col row grid =
-    Hex2DSpatial.neighbors col row grid
-    |> Array.filter (fun (struct (c, r)) -> isWalkable c r grid)
+  Hex2DSpatial.neighbors col row grid
+  |> Array.filter (fun (struct (c, r)) -> isWalkable c r grid)
 ```
 
 `Hex2DSpatial.inRange` returns every cell within N steps. Filter by walkability for movement budgets:
@@ -176,8 +176,8 @@ let walkableNeighbors col row grid =
 ```fsharp
 // every walkable cell within 4 steps of the start
 let reachable col row steps grid =
-    Hex2DSpatial.inRange col row steps grid
-    |> Array.filter (fun (struct (c, r)) -> isWalkable c r grid)
+  Hex2DSpatial.inRange col row steps grid
+  |> Array.filter (fun (struct (c, r)) -> isWalkable c r grid)
 ```
 
 `floodFill` walks neighbors while a predicate holds. Use it for territory, auras, and alarm zones:
@@ -195,18 +195,19 @@ Walk the visible cells and submit one sprite per tile:
 ```fsharp
 grid
 |> CellGrid2D.iterVisible (int screenLeft) (int screenTop) (int screenRight) (int screenBottom)
-    (fun col row tile ->
-        let pos = CellGrid2D.getWorldPos col row grid
+  (fun col row tile ->
+    let pos = CellGrid2D.getWorldPos col row grid
 
-        buffer.sprite(
-            SpriteState.create(
-                textureFor tile,
-                Rectangle(pos.X, pos.Y, cellWidth, cellHeight),
-                sourceOf tile
-            ),
-            layer = tileLayer tile
-        )
-        |> ignore)
+    buffer
+      .sprite(
+        SpriteState.create(
+          textureFor tile,
+          Rectangle(pos.X, pos.Y, cellWidth, cellHeight),
+          sourceOf tile
+        ),
+        layer = tileLayer tile
+      )
+      .drop())
 ```
 
 `textureFor`, `sourceOf`, `tileLayer`, and `cellWidth`/`cellHeight` are game values.

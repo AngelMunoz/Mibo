@@ -77,18 +77,18 @@ Both documents build the same layers with the same cells.
 match DocFlow.buildLayers (surface, src) with
 | Error e -> printfn "%s" e
 | Ok layers ->
-    for layer in layers do
-        printfn "%s: %dx%d" layer.Name layer.Grid.Width layer.Grid.Height
+  for layer in layers do
+    printfn "%s: %dx%d" layer.Name layer.Grid.Width layer.Grid.Height
 ```
 
 Each entry is a `BuiltLayer<'T>`:
 
 ```fsharp
 type BuiltLayer<'T> = {
-    Name: string
-    Grid: CellGrid2D<'T>
-    Landmarks: Landmarks
-    Occupancy: Occupancy      // who owns each cell, and what each instance covers
+  Name: string
+  Grid: CellGrid2D<'T>
+  Landmarks: Landmarks
+  Occupancy: Occupancy      // who owns each cell, and what each instance covers
 }
 ```
 
@@ -106,8 +106,10 @@ In F#, build the same stack from stamps you wrote. You create the grids. `Flow.r
 open Mibo.Layout
 
 let grids =
-    [| CellGrid2D.create 40 24 cellSize Vector2.Zero
-       CellGrid2D.create 40 24 cellSize Vector2.Zero |]
+  [|
+    CellGrid2D.create 40 24 cellSize Vector2.Zero
+    CellGrid2D.create 40 24 cellSize Vector2.Zero
+  |]
 
 let layers = grids |> Flow.runLayers [| groundStamp; decorStamp |]
 
@@ -127,20 +129,20 @@ Every blocking decision in `Spatial2D` enters through a predicate. The grid argu
 
 ```fsharp
 let blocked (x: int) (y: int) =
-    layers
-    |> Array.exists (fun layer ->
-        match CellGrid2D.get x y layer.Grid with
-        | ValueSome tile -> tile.Blocks
-        | ValueNone -> false)
+  layers
+  |> Array.exists (fun layer ->
+    match CellGrid2D.get x y layer.Grid with
+    | ValueSome tile -> tile.Blocks
+    | ValueNone -> false)
 
 Spatial2D.findPath
-    startX
-    startY
-    goalX
-    goalY
-    (fun x y -> not (blocked x y))
-    (fun _ _ _ _ -> 1f)
-    layers[0].Grid
+  startX
+  startY
+  goalX
+  goalY
+  (fun x y -> not (blocked x y))
+  (fun _ _ _ _ -> 1f)
+  layers[0].Grid
 ```
 
 When the predicate is read per cell (A* and flood fill visit each cell many times), fold the stack into one array at load.
@@ -149,11 +151,11 @@ When the predicate is read per cell (A* and flood fill visit each cell many time
 let occupancy = Array.zeroCreate (width * height)
 
 for layer in layers do
-    for y in 0 .. height - 1 do
-        for x in 0 .. width - 1 do
-            match CellGrid2D.get x y layer.Grid with
-            | ValueSome tile when tile.Blocks -> occupancy[x + y * width] <- true
-            | _ -> ()
+  for y in 0 .. height - 1 do
+    for x in 0 .. width - 1 do
+      match CellGrid2D.get x y layer.Grid with
+      | ValueSome tile when tile.Blocks -> occupancy[x + y * width] <- true
+      | _ -> ()
 
 // one array read per cell, no layer walk
 let passable x y = not occupancy[x + y * width]

@@ -53,18 +53,18 @@ let worldPos = CellGrid2D.getWorldPos 5 3 grid  // System.Numerics.Vector2(160f,
 // Iterate all populated cells
 grid
 |> CellGrid2D.iter (fun x y tile ->
-    printfn "Tile at (%d, %d)" x y
+  printfn "Tile at (%d, %d)" x y
 )
 
 // Iterate only visible cells. Bounds are left/top/right/bottom int pixels.
 grid
 |> CellGrid2D.iterVisible
-    (int cameraX) (int cameraY)
-    (int (cameraX + viewportWidth)) (int (cameraY + viewportHeight))
-    (fun x y tile ->
-        // render tile at (x, y)
-        ()
-    )
+  (int cameraX) (int cameraY)
+  (int (cameraX + viewportWidth)) (int (cameraY + viewportHeight))
+  (fun x y tile ->
+    // render tile at (x, y)
+    ()
+  )
 ```
 
 ## Sections
@@ -75,24 +75,24 @@ A section is a zero-copy view. `(0, 0)` is the section's origin, not the grid's.
 open Mibo.Layout
 
 let myGrid =
-    CellGrid2D.create 20 15 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
-    |> Layout.run (fun section ->
-        section
-        |> Layout.fill 0 0 20 15 FloorTile      // Fill entire area
-        |> Layout.border 0 0 20 15 WallTile     // Add border
-        |> Layout.set 10 7 ChestTile            // Place item
-    )
+  CellGrid2D.create 20 15 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
+  |> Layout.run (fun section ->
+    section
+    |> Layout.fill 0 0 20 15 FloorTile      // Fill entire area
+    |> Layout.border 0 0 20 15 WallTile     // Add border
+    |> Layout.set 10 7 ChestTile            // Place item
+  )
 ```
 
 ```fsharp
 section
 |> Layout.section 5 3 (fun inner ->
-    // (0, 0) here maps to (5, 3) in the parent
-    inner
-    |> Layout.fill 0 0 4 4 FloorTile
+  // (0, 0) here maps to (5, 3) in the parent
+  inner
+  |> Layout.fill 0 0 4 4 FloorTile
 )
 |> Layout.section 12 3 (fun inner ->
-    inner |> Layout.fill 0 0 4 4 FloorTile
+  inner |> Layout.fill 0 0 4 4 FloorTile
 )
 ```
 
@@ -157,26 +157,26 @@ Keep a `Dictionary<int, CellGrid2D<'T>>` keyed by layer index. Create a layer on
 let layers = Dictionary<int, CellGrid2D<Tile>>()
 
 let layer index paint =
-    let grid =
-        match Dictionary.tryGetValue index layers with
-        | ValueSome grid -> grid
-        | ValueNone ->
-            let grid =
-                CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
+  let grid =
+    match Dictionary.tryGetValue index layers with
+    | ValueSome grid -> grid
+    | ValueNone ->
+      let grid =
+        CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
 
-            layers.[index] <- grid
-            grid
+      layers.[index] <- grid
+      grid
 
-    Layout.run paint grid
+  Layout.run paint grid
 
 layer 0 (fun section ->
-    // Layer 0: Ground/Collision
-    section |> Layout.fill 0 45 100 5 GroundTile
+  // Layer 0: Ground/Collision
+  section |> Layout.fill 0 45 100 5 GroundTile
 ) |> ignore
 
 layer 1 (fun section ->
-    // Layer 1: Foliage
-    section |> Layout.scatter 50 42 GrassDecoration
+  // Layer 1: Foliage
+  section |> Layout.scatter 50 42 GrassDecoration
 ) |> ignore
 ```
 
@@ -185,15 +185,15 @@ Render each layer into the buffer and tag it with its `RenderLayer`. The buffer 
 ```fsharp
 // Render each layer into the buffer
 for KeyValueV(layerIndex, layerGrid) in layers do
-    let drawTile x y tile =
-        let pos = CellGrid2D.getWorldPos x y layerGrid
-        // submit the draw command for tile at pos, tagged with layerIndex
-        // as its RenderLayer
-        ()
+  let drawTile x y tile =
+    let pos = CellGrid2D.getWorldPos x y layerGrid
+    // submit the draw command for tile at pos, tagged with layerIndex
+    // as its RenderLayer
+    ()
 
-    // iterate only the cells inside the viewport (left/top/right/bottom, in pixels)
-    layerGrid
-    |> CellGrid2D.iterVisible viewLeft viewTop viewRight viewBottom drawTile
+  // iterate only the cells inside the viewport (left/top/right/bottom, in pixels)
+  layerGrid
+  |> CellGrid2D.iterVisible viewLeft viewTop viewRight viewBottom drawTile
 ```
 
 Layers are created on demand, so only painted layers consume memory.
@@ -207,47 +207,47 @@ A stamp is a function `GridSection2D<'T> -> GridSection2D<'T>`. Build reusable p
 ```fsharp
 /// A treasure chest on a pedestal
 let treasureChest (section: GridSection2D<Tile>) =
-    section
-    |> Layout.fill 0 1 3 1 PedestalTile   // Base
-    |> Layout.set 1 0 ChestTile           // Chest on top
+  section
+  |> Layout.fill 0 1 3 1 PedestalTile   // Base
+  |> Layout.set 1 0 ChestTile           // Chest on top
 
 /// A configurable room with walls and floor
 let room width height floor wall (section: GridSection2D<Tile>) =
-    section
-    |> Layout.fill 0 0 width height floor
-    |> Layout.border 0 0 width height wall
+  section
+  |> Layout.fill 0 0 width height floor
+  |> Layout.border 0 0 width height wall
 
 let guardPost =
-    room 8 6 FloorTile WallTile
-    >> Layout.center 2 1 (treasureChest)
-    >> Layout.section 6 2 torchStand   // torchStand: your stamp placing a torch prop
+  room 8 6 FloorTile WallTile
+  >> Layout.center 2 1 (treasureChest)
+  >> Layout.section 6 2 torchStand   // torchStand: your stamp placing a torch prop
 ```
 
 Organize stamps into modules.
 
 ```fsharp
 module Dungeon =
-    let cell = room 5 5 StoneFloor StoneWall
+  let cell = room 5 5 StoneFloor StoneWall
 
-    let corridor length =
-        Layout.fill 0 0 length 3 StoneFloor
-        >> Layout.repeatX 0 0 length StoneWall
-        >> Layout.repeatX 0 2 length StoneWall
+  let corridor length =
+    Layout.fill 0 0 length 3 StoneFloor
+    >> Layout.repeatX 0 0 length StoneWall
+    >> Layout.repeatX 0 2 length StoneWall
 
-    let intersection =
-        cell >> Layout.clear 2 0 1 1  // North door
-            >> Layout.clear 2 4 1 1   // South door
-            >> Layout.clear 0 2 1 1   // West door
-            >> Layout.clear 4 2 1 1   // East door
+  let intersection =
+    cell >> Layout.clear 2 0 1 1  // North door
+      >> Layout.clear 2 4 1 1   // South door
+      >> Layout.clear 0 2 1 1   // West door
+      >> Layout.clear 4 2 1 1   // East door
 ```
 
 ```fsharp
 level
 |> Layout.run (fun section ->
-    section
-    |> Layout.section 0 0 Dungeon.cell
-    |> Layout.section 5 1 (Dungeon.corridor 10)
-    |> Layout.section 15 0 Dungeon.intersection
+  section
+  |> Layout.section 0 0 Dungeon.cell
+  |> Layout.section 5 1 (Dungeon.corridor 10)
+  |> Layout.section 15 0 Dungeon.intersection
 )
 ```
 

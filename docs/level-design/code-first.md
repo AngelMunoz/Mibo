@@ -129,10 +129,10 @@ let struct (grid, marks) = gridValue |> Flow.run harbour
 
 match Flow.tryPosition "shore" marks with
 | ValueSome rect ->
-    // spawn one crab per shore cell
-    for y = rect.Y to rect.Y + rect.H - 1 do
-        for x = rect.X to rect.X + rect.W - 1 do
-            spawnCrab x y
+  // spawn one crab per shore cell
+  for y = rect.Y to rect.Y + rect.H - 1 do
+    for x = rect.X to rect.X + rect.W - 1 do
+      spawnCrab x y
 | ValueNone -> failwith "the template promised a shore zone"
 ```
 
@@ -144,7 +144,7 @@ if Flow.isTag "no-build" { X = px; Y = py } marks then reject ()
 
 // AI: treat every "danger" rect as an alarm zone
 for rect in Flow.taggedRects "danger" marks do
-    if contains rect px py then soundAlarm ()
+  if contains rect px py then soundAlarm ()
 ```
 
 Mark extents without painting them. Use this for trigger volumes, music regions, and camera zones.
@@ -157,7 +157,7 @@ Derive tags from tiles when the region is irregular. `Landmarks.scanTiles` marks
 
 ```fsharp
 let tileTags _ _ (tile: Tile) =
-    if tile.Kind = Tree then seq { "flammable" } else Seq.empty
+  if tile.Kind = Tree then seq { "flammable" } else Seq.empty
 
 let struct (grid, marks) = gridValue |> Flow.build tileTags document
 
@@ -175,8 +175,10 @@ A level can use more than one grid: ground under decor, traffic over terrain, a 
 open Mibo.Layout
 
 let grids =
-    [| CellGrid2D.create 40 24 cellSize Vector2.Zero
-       CellGrid2D.create 40 24 cellSize Vector2.Zero |]
+  [|
+    CellGrid2D.create 40 24 cellSize Vector2.Zero
+    CellGrid2D.create 40 24 cellSize Vector2.Zero
+  |]
 
 let layers = grids |> Flow.runLayers [| ground; decor |]
 
@@ -260,21 +262,21 @@ Write one module of constructors that mean game concepts. Levels then read as ca
 ```fsharp
 /// the game's level vocabulary
 module Town =
-    // content pieces, like <p> and <figure>
-    let room w h = Stamp.box w h [ Flow.fill Floor; Flow.border Wall ]
-    let house = Stamp.tagged [ "home" ] (room 5 4)
-    let shop kind = Stamp.tagged [ "shop"; kind ] (room 6 4)
-    let park = Flow.canvas [ Flow.fill Grass; Flow.noise { Count = 6; Seed = 5 } Tree ]
+  // content pieces, like <p> and <figure>
+  let room w h = Stamp.box w h [ Flow.fill Floor; Flow.border Wall ]
+  let house = Stamp.tagged [ "home" ] (room 5 4)
+  let shop kind = Stamp.tagged [ "shop"; kind ] (room 6 4)
+  let park = Flow.canvas [ Flow.fill Grass; Flow.noise { Count = 6; Seed = 5 } Tree ]
 
-    // structural bands, like <header> and <footer>.
-    // zero width in a column stretches to full width
-    let road = Stamp.box 0 2 [ Flow.fill Road ]
-    let river = Stamp.box 0 3 [ Flow.fill Water ]
+  // structural bands, like <header> and <footer>.
+  // zero width in a column stretches to full width
+  let road = Stamp.box 0 2 [ Flow.fill Road ]
+  let river = Stamp.box 0 3 [ Flow.fill Water ]
 
-    // containers with meaning, like <section> and <article>
-    let district name children =
-        Flow.column { FlowOpts.Default with Gap = 1 } children
-        |> Stamp.named name
+  // containers with meaning, like <section> and <article>
+  let district name children =
+    Flow.column { FlowOpts.Default with Gap = 1 } children
+    |> Stamp.named name
 ```
 
 ```fsharp
@@ -368,24 +370,25 @@ Walk the visible cells and submit one sprite per tile. Tag each sprite with its 
 
 ```fsharp
 let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
-    buffer.beginCamera(model.Camera).drop()
+  buffer.beginCamera(model.Camera).drop()
 
-    model.Grid
-    |> CellGrid2D.iterVisible
-        viewLeft
-        viewTop
-        viewRight
-        viewBottom
-        (fun x y tile ->
-            let pos = CellGrid2D.getWorldPos x y model.Grid
+  model.Grid
+  |> CellGrid2D.iterVisible
+    viewLeft
+    viewTop
+    viewRight
+    viewBottom
+    (fun x y tile ->
+      let pos = CellGrid2D.getWorldPos x y model.Grid
 
-            buffer.sprite(
-                SpriteState.create(textureFor tile, destOf pos, sourceOf tile),
-                layer = tileLayer tile
-            )
-            |> ignore)
+      buffer
+        .sprite(
+          SpriteState.create(textureFor tile, destOf pos, sourceOf tile),
+          layer = tileLayer tile
+        )
+        .drop())
 
-    buffer.endCamera().drop()
+  buffer.endCamera().drop()
 ```
 
 `viewLeft`/`viewTop`/`viewRight`/`viewBottom` are the camera's world bounds as `int`s. `textureFor`, `destOf`, `sourceOf`, and `tileLayer` are game functions. The buffer sorts by layer, so one pass per layer draws back to front. See [Buffer & Commands](../graphics2d/buffer-and-commands.html) and the [Draw DSL](../draw-dsl.html).

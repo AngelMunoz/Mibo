@@ -69,9 +69,9 @@ Both front-ends resolve the same document to the same level. The tests build one
 match Kdl.parse src with
 | Error e -> printfn "%s" e                   // parse errors, positioned
 | Ok roots ->
-    match Doc.resolve surface src roots with
-    | Error e -> printfn "%s" e               // resolution errors, positioned
-    | Ok items -> ...                         // the Item tree, ready to emit
+  match Doc.resolve surface src roots with
+  | Error e -> printfn "%s" e               // resolution errors, positioned
+  | Ok items -> ...                         // the Item tree, ready to emit
 ```
 
 The surface holds the game's words, kernels, and elements. Build it once. A word names one cell value. A kernel is a per-cell rule, used by `generate`. An element is a named body of statements with an optional size, declared in F# or as an `element` template in the document. Two container kinds exist beside the game's elements: `plot` (a plain container) and `grid` (a container with the `cols`/`rows`/`areas` template).
@@ -166,32 +166,32 @@ Every element reports its rectangle through the tag channel, under its own name.
 // Parse, resolve, and paint a document, keeping both halves of what
 // `Flow.run` returns: the grid, and the landmarks it recorded beside it.
 let buildWithLandmarks (src: string) =
-    Kdl.parse src                                        // or Xml.parse
-    |> Result.bind (fun roots ->
-        Doc.resolve surface src roots
-        |> Result.bind (fun items ->
-            // the map node states the size; the resolved root is what the
-            // emitter lays out
-            Doc.findMapNode roots
-            |> ValueOption.map (fun node ->
-                Doc.dimsOf(src, node) |> Result.map (fun dims -> items, dims))
-            |> ValueOption.defaultValue (Error "the document holds no map node")))
-    |> Result.bind (fun (items, dims) ->
-        match items with
-        | [| root |] -> Ok struct (root, dims)
-        | many -> Error $"the document resolved to {many.Length} roots")
-    |> Result.map (fun struct (root, dims) ->
-        let grid =
-            CellGrid2D.create dims.W dims.H (Vector2(32f, 32f)) Vector2.Zero
+  Kdl.parse src                                        // or Xml.parse
+  |> Result.bind (fun roots ->
+    Doc.resolve surface src roots
+    |> Result.bind (fun items ->
+      // the map node states the size; the resolved root is what the
+      // emitter lays out
+      Doc.findMapNode roots
+      |> ValueOption.map (fun node ->
+        Doc.dimsOf(src, node) |> Result.map (fun dims -> items, dims))
+      |> ValueOption.defaultValue (Error "the document holds no map node")))
+  |> Result.bind (fun (items, dims) ->
+    match items with
+    | [| root |] -> Ok struct (root, dims)
+    | many -> Error $"the document resolved to {many.Length} roots")
+  |> Result.map (fun struct (root, dims) ->
+    let grid =
+      CellGrid2D.create dims.W dims.H (Vector2(32f, 32f)) Vector2.Zero
 
-        grid |> Flow.run (DocFlow.emit root))
+    grid |> Flow.run (DocFlow.emit root))
 ```
 
 ```fsharp
 match buildWithLandmarks src with
 | Ok struct (_, marks) ->
-    Flow.taggedRects "plaza" marks        // every plaza, newest first
-    Flow.isTag "plaza" { X = 3; Y = 4 } marks
+  Flow.taggedRects "plaza" marks        // every plaza, newest first
+  Flow.isTag "plaza" { X = 3; Y = 4 } marks
 | Error e -> printfn "%s" e
 ```
 
