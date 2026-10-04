@@ -56,7 +56,56 @@ module Doc =
     Words: FrozenDictionary<string, 'T>
     Kernels: FrozenDictionary<string, Kernel<'T>>
     Elements: FrozenDictionary<string, ElementDecl<'T>>
+    /// Reads how many cells one instance of a cell covers. Absent: every
+    /// cell covers one cell.
+    Span: ('T -> InstanceSpan) voption
+    /// Writes a span a statement states, so `set` can size one instance.
+    /// Absent: a statement cannot state a span, and a word keeps the one it
+    /// declares.
+    WithSpan: ('T -> InstanceSpan -> 'T) voption
   }
+
+  /// The span a cell's instance covers, or `ValueNone` when it covers one
+  /// cell. The identity forms read as `ValueNone`, so a word that declares
+  /// no span costs nothing to check.
+  let inline private spanningOf
+    (surface: Surface<'T>)
+    (cell: 'T)
+    : InstanceSpan voption =
+    surface.Span
+    |> ValueOption.bind(fun read ->
+      let span = read cell
+
+      if Occupancy.isIdentity span then
+        ValueNone
+      else
+        ValueSome span)
+
+  /// The extent a cell's instance measures: one cell for the identity, the
+  /// rectangle for a `Span`, the offset bounding box for a `Radius`. A span
+  /// that covers nothing still measures one cell, so a measurement never
+  /// shrinks below a cell; the scan reports the span itself.
+  let inline private spanSize (surface: Surface<'T>) (cell: 'T) : CellSize =
+    match spanningOf surface cell with
+    | ValueSome(Span(across, deep)) -> { W = max 1 across; H = max 1 deep }
+    | ValueSome(Radius r) -> {
+        W = max 1 (2 * r + 1)
+        H = max 1 (2 * r + 1)
+      }
+    | _ -> { W = 1; H = 1 }
+
+  /// Does this body place a spanning word? Only `set` can, so a body that
+  /// never sets reads `false` without consulting the projection once.
+  let inline private placesSpan (surface: Surface<'T>) (body: Op<'T>[]) : bool =
+    match surface.Span with
+    | ValueNone -> false
+    | ValueSome _ ->
+      body
+      |> Array.exists(fun op ->
+        match op with
+        | Op.Set(_, _, _, cell) ->
+          spanningOf surface cell |> ValueOption.isSome
+        | _ -> false)
 
   /// How a container places its children: stacked children (default), flow
   /// tracks, or seeded scatter.
@@ -577,15 +626,30 @@ module Doc =
           $"`{n.Kind}` wants a whole number for '{slot}', got '{w}'{at(src, n)}"
       | ValueNone -> missing slot
 
-    let takeCell slot =
+    let takeWordCell slot : Result<struct (string * 'T), string> =
       match take slot with
       | ValueSome(Word w) ->
         (match surface.Words.TryGetValue w with
-         | true, cell -> Ok cell
+         | true, cell -> Ok(struct (w, cell))
          | false, _ ->
            Error
              $"`{n.Kind}` wants a cell word for '{slot}', got '{w}'{at(src, n)}")
       | _ -> Error $"`{n.Kind}` wants a cell word for '{slot}'{at(src, n)}"
+
+    let takeCell slot =
+      takeWordCell slot |> Result.map(fun struct (_, cell) -> cell)
+
+    /// An area statement paints every cell of its box, so a word whose
+    /// instance covers several cells has no single place to stand: only `set`
+    /// states where one instance goes.
+    let takeAreaCell slot =
+      takeWordCell slot
+      |> Result.bind(fun struct (word, cell) ->
+        spanningOf surface cell
+        |> ValueOption.map(fun span ->
+          Error
+            $"the word '{word}' spans {Occupancy.describe span}, so only set may place it{at(src, n)}")
+        |> ValueOption.defaultValue(Ok cell))
 
     let takeKernel slot =
       match take slot with
@@ -667,11 +731,41 @@ module Doc =
     let fillStatement cell = checkedOp [| "cell" |] (Op.Fill cell)
 
     let fillRectStatement(struct (x, y, w, h)) =
-      takeCell "cell"
+      takeAreaCell "cell"
       |> Result.bind(fun cell ->
         checkedOp
           [| "x"; "y"; "w"; "h"; "cell" |]
           (Op.FillRect(rectOf(x, y, w, h), cell)))
+
+    /// The span a `set` states, written into the cell. A word carries the span
+    /// it declares; a statement may size it instead, which needs a surface
+    /// that can write one, and both sides of the box.
+    let statedSpan (word: string) (cell: 'T) : Result<'T, string> =
+      match named.ContainsKey "spanX", named.ContainsKey "spanZ" with
+      | false, false -> Ok cell
+      | true, false
+      | false, true ->
+        Error $"'set' states a span with both spanX and spanZ{at(src, n)}"
+      | true, true ->
+        match surface.WithSpan with
+        | ValueNone ->
+          Error
+            $"the surface cannot state a span, so '{word}' keeps its own{at(src, n)}"
+        | ValueSome withSpan ->
+          takeInt "spanX"
+          |> Result.bind(fun across ->
+            takeInt "spanZ"
+            |> Result.bind(fun deep ->
+              match across, deep with
+              | _ when across < 1 || deep < 1 ->
+                Error
+                  $"a span covers at least one cell: got spanX={across} spanZ={deep}{at(src, n)}"
+              | _ ->
+                match spanningOf surface cell with
+                | ValueSome(Radius _) ->
+                  Error
+                    $"the word '{word}' is a hex span, so spanX and spanZ cannot size it{at(src, n)}"
+                | _ -> Ok(withSpan cell (Span(across, deep)))))
 
     let setStatement() =
       // exact: `set x=1 y=2 cell` or `set 1 2 cell`; anchored:
@@ -703,11 +797,13 @@ module Doc =
         |> Result.bind(fun x ->
           takeInt "y"
           |> Result.bind(fun y ->
-            takeCell "cell"
-            |> Result.bind(fun cell ->
-              checkedOp
-                [| "x"; "y"; "cell" |]
-                (Op.Set(ValueSome { X = x; Y = y }, Start, Start, cell)))))
+            takeWordCell "cell"
+            |> Result.bind(fun struct (word, cell) ->
+              statedSpan word cell
+              |> Result.bind(fun cell ->
+                checkedOp
+                  [| "x"; "y"; "cell"; "spanX"; "spanZ" |]
+                  (Op.Set(ValueSome { X = x; Y = y }, Start, Start, cell))))))
       elif anchored then
         let hName = if named.ContainsKey "halign" then "halign" else "hplace"
 
@@ -735,20 +831,20 @@ module Doc =
       if usesRectArea then
         takeRect()
         |> Result.bind(fun struct (x, y, w, h) ->
-          takeCell "cell"
+          takeAreaCell "cell"
           |> Result.bind(fun cell ->
             checkedOp
               [| "x"; "y"; "w"; "h"; "cell" |]
               (Op.Border(ValueSome(rectOf(x, y, w, h)), cell))))
       else
-        takeCell "cell"
+        takeAreaCell "cell"
         |> Result.bind(fun cell ->
           checkedOp [| "cell" |] (Op.Border(ValueNone, cell)))
 
     let rectStatement() =
-      takeCell "edge"
+      takeAreaCell "edge"
       |> Result.bind(fun edge ->
-        takeCell "floor"
+        takeAreaCell "floor"
         |> Result.bind(fun floor ->
           checkedOp [| "edge"; "floor" |] (Op.Rect(edge, floor))))
 
@@ -767,7 +863,7 @@ module Doc =
           checkedOp [| "kernel" |] (Op.Generate(name, ValueNone)))
 
     match n.Kind with
-    | "fill" -> takeCell "cell" |> Result.bind fillStatement
+    | "fill" -> takeAreaCell "cell" |> Result.bind fillStatement
     | "fillRect" -> takeRect() |> Result.bind fillRectStatement
     | "set" -> setStatement()
     | "border" -> borderStatement()
@@ -822,11 +918,12 @@ module Doc =
   /// Derives an element's extent from its body's own geometry: each
   /// statement contributes its furthest cell, and any box-relative
   /// statement (a whole-box fill, border, or generate) marks the body
-  /// greedy — its size is whatever the container assigns. Pure
-  /// arithmetic over the `Op` data: no grid, no allocation. This is
-  /// the measurement the emitter path uses; a `ValueNone` result means
-  /// "greedy, stretch".
-  let measureOps(body: Op<'T>[]) : CellSize voption =
+  /// greedy — its size is whatever the container assigns. A `set` that
+  /// places a spanning word contributes the whole instance, so an element
+  /// reserves the cells its instance covers. Pure arithmetic over the `Op`
+  /// data: no grid, no allocation. This is the measurement the emitter
+  /// path uses; a `ValueNone` result means "greedy, stretch".
+  let measureOps (surface: Surface<'T>) (body: Op<'T>[]) : CellSize voption =
     let mutable maxX = -1
     let mutable maxY = -1
     let mutable greedy = false
@@ -847,9 +944,10 @@ module Doc =
       | Op.Generate(_, ValueSome r) ->
         maxX <- max maxX (r.X + r.W - 1)
         maxY <- max maxY (r.Y + r.H - 1)
-      | Op.Set(ValueSome p, _, _, _) ->
-        maxX <- max maxX p.X
-        maxY <- max maxY p.Y
+      | Op.Set(ValueSome p, _, _, cell) ->
+        let size = spanSize surface cell
+        maxX <- max maxX (p.X + size.W - 1)
+        maxY <- max maxY (p.Y + size.H - 1)
 
     if greedy || maxX < 0 then
       ValueNone
@@ -867,7 +965,7 @@ module Doc =
     let extent =
       match extent with
       | ValueSome _ -> extent
-      | ValueNone -> measureOps body
+      | ValueNone -> measureOps surface body
 
     {
       Extent = extent
@@ -877,6 +975,41 @@ module Doc =
           for op in body do
             interpret(surface, box, op)
     }
+
+  /// A stated size must agree with the extent a spanning body implies: the
+  /// layout would reserve the stated box while the instance claims its own.
+  /// Only a body that places a spanning word is checked, so every other
+  /// element stretches as it always did, and only stated axes are compared —
+  /// a zero axis means "stretch this axis" in the property channel.
+  let private checkSpanSize
+    (surface: Surface<'T>)
+    (src: string)
+    (n: Node)
+    (name: string)
+    (style: Style)
+    (declExtent: CellSize voption)
+    (body: Op<'T>[])
+    : Result<unit, string> =
+    if not(placesSpan surface body) then
+      Ok()
+    else
+      match measureOps surface body with
+      | ValueNone -> Ok()
+      | ValueSome extent ->
+        let axis (verb: string) (stated: int) (actual: int) (side: string) =
+          if stated > 0 && stated <> actual then
+            Error
+              $"the element '{name}' {verb} {stated}, but the span in its body covers {actual} cells {side}{at(src, n)}"
+          else
+            Ok()
+
+        axis "states w=" (wOf style.Size) extent.W "across"
+        |> Result.bind(fun () ->
+          axis "states h=" (hOf style.Size) extent.H "deep")
+        |> Result.bind(fun () ->
+          axis "declares w=" (wOf declExtent) extent.W "across")
+        |> Result.bind(fun () ->
+          axis "declares h=" (hOf declExtent) extent.H "deep")
 
   // ── Measurement ──────────────────────────────────────────────
 
@@ -1323,7 +1456,8 @@ module Doc =
           match failed with
           | ValueSome e -> Error e
           | ValueNone ->
-            Ok {
+            checkSpanSize surface src n name style declExtent body
+            |> Result.map(fun () -> {
               Name = name
               Layer = ValueNone
               Element = paintOf(surface, declExtent, body)
@@ -1332,7 +1466,7 @@ module Doc =
               Rows = rows
               Areas = areas
               Children = items.ToArray()
-            }
+            })
 
   // ── Entry ────────────────────────────────────────────────────
 
@@ -1451,9 +1585,15 @@ module Doc =
                 Error $"map dimensions must be positive{at(src, n)}"))
 
   /// Game-declared element bodies never pass through statement
-  /// resolution, so their kernel references get checked here: a typo in
-  /// an F# element body must fail the build, not vanish at render.
+  /// resolution, so their kernel references and their area words get
+  /// checked here: a typo, or a spanning word that an area statement
+  /// cannot place, must fail the build rather than vanish at render.
   let validateSurface(surface: Surface<'T>) : Result<unit, string> =
+    let areaSpan (decl: ElementDecl<'T>) (cell: 'T) : string voption =
+      spanningOf surface cell
+      |> ValueOption.map(fun span ->
+        $"the element '{decl.Name}' paints an area with a word that spans {Occupancy.describe span}; only set may place a spanning word")
+
     let bad =
       surface.Elements.Values
       |> Seq.collect(fun decl ->
@@ -1465,6 +1605,13 @@ module Doc =
             ->
             Some
               $"the element '{decl.Name}' references the unknown kernel '{kernelName}'"
+          | Op.Fill cell
+          | Op.FillRect(_, cell)
+          | Op.Border(_, cell) -> areaSpan decl cell |> ValueOption.toOption
+          | Op.Rect(edge, floor) ->
+            areaSpan decl edge
+            |> ValueOption.orElse(areaSpan decl floor)
+            |> ValueOption.toOption
           | _ -> None))
       |> Seq.tryHead
 

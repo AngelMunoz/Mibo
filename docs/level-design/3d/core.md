@@ -361,8 +361,12 @@ For large grids (1000+ cells), prefer `Layout3D.generate` over setting cells ind
 
 ### Multi-Cell Models
 
-1. Use anchor-cell only and handle size at render time
-2. Create stamps that fill all occupied cells for blocking/collision
+Author the level as a 2D grid and let one instance cover several cells: a
+word states the span it covers, `set` may size one, and the build reports
+the occupancy that answers which instance owns each cell. The transform
+receives the rectangle it covers, so the model scales over it instead of
+standing one cell wide. See [instances larger than a cell](spans.html) for
+the vocabulary and [the map contract](infra.html) for the code.
 
 ### Rotation and Orientation
 
