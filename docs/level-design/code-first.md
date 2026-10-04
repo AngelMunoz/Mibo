@@ -1,5 +1,5 @@
 ---
-title: Flow - Level Authoring
+title: Code-First Maps
 category: Level Design
 categoryindex: 8
 index: 2
@@ -24,7 +24,9 @@ One document paints the tiles and describes what the level means.
 Gameplay code reads the description, not the paint.
 
 For member-by-member signatures, see the API reference. This page
-teaches the patterns.
+teaches the patterns. This is the code-first path: [Authored maps](authored.html)
+build the same levels from KDL or XML, and [3D from 2D](three-d.html) adds
+Height and spans.
 
 ## The contract: build once, query per frame
 
@@ -356,7 +358,7 @@ concepts, and levels read like documents.
 
 This replaces the retired `Platformer` and `TopDown` stamp libraries:
 the same idea, written with Flow and owned by your game (see
-[Migrating to Mibo v6](../../migration-to-v6.html)).
+[Migrating to Mibo v6](../migration-to-v6.html)).
 
 ```fsharp
 /// the game's level vocabulary
@@ -481,13 +483,42 @@ Geometry affects two things only: world positions
 (`Hex2DSpatial` replaces `Grid2DSpatial`). Reported rectangles are
 offset-space bounding boxes.
 
-## 3D levels author as 2D plus column height
+## Draw the grid
 
-Author the footprint as a Flow document and give each tile a height:
-the heightmap approach. Walls become tall columns, ramps become stepped
-heights, and the vertical axis stays out of the authoring model. The 3D
-grid modules (`CellGrid3D`, `Layout3D`, and friends) are obsolete. See
-[Migrating to Mibo v6](../../migration-to-v6.html).
+Flow stops at cells. Draw them with the 2D render buffer: walk only the
+visible cells and submit one sprite per tile, tagged with its `RenderLayer`.
+
+```fsharp
+let view (ctx: GameContext) (model: Model) (buffer: RenderBuffer2D) =
+    buffer.beginCamera(model.Camera).drop()
+
+    model.Grid
+    |> CellGrid2D.iterVisible
+        viewLeft
+        viewTop
+        viewRight
+        viewBottom
+        (fun x y tile ->
+            let pos = CellGrid2D.getWorldPos x y model.Grid
+
+            buffer.sprite(
+                SpriteState.create(textureFor tile, destOf pos, sourceOf tile),
+                layer = tileLayer tile
+            )
+            |> ignore)
+
+    buffer.endCamera().drop()
+```
+
+`viewLeft`/`viewTop`/`viewRight`/`viewBottom` are the camera's world bounds
+as `int`s; `textureFor`, `destOf`, `sourceOf`, and `tileLayer` are your
+game's functions. The buffer sorts by layer, so one pass per layer draws
+back to front without manual ordering. See
+[Buffer & Commands](../graphics2d/buffer-and-commands.html) and the
+[Draw DSL](../draw-dsl.html).
+
+For 3D maps, draw the grid through `InstancedRenderContext`; see
+[3D from 2D](three-d.html) and [GPU Instancing](../graphics3d/instancing.html).
 
 ## When you need pixel-perfect control
 
@@ -560,5 +591,14 @@ address the element's own box, not the level. `Stamp.create` does the
 same for paints that return `unit` instead of a section.
 
 For the full section-pipeline vocabulary (`section`, `center`,
-`repeatX`, the scatter ops), see the [2D Layout
-Engine](core.html). Use raw `Layout` if you really need "pixel perfect" control of the backing grid. For the majority of use cases Flow should be enough.
+`repeatX`, the scatter ops), see [The Layout Escape Hatch](layout.html).
+Use raw `Layout` if you really need "pixel perfect" control of the
+backing grid. For the majority of use cases Flow should be enough.
+
+## Next: authored maps, then 3D
+
+This page covers the whole 2D authoring model. Two pages continue from here:
+
+- [Authored maps](authored.html) — write the same levels in KDL or XML.
+- [3D from 2D](three-d.html) — carry a `Height` per cell and a `Span` per
+  instance, and draw with instancing.

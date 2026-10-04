@@ -1,11 +1,11 @@
 ---
-title: Instances Larger Than a Cell
+title: Instances and Occupancy
 category: Level Design
 categoryindex: 8
-index: 13
+index: 6
 ---
 
-# Instances larger than a cell
+# Instances and occupancy
 
 A cell holds one value, and one value usually draws one instance. A 3D map
 often wants the opposite trade: author a model once, then stretch it over the
@@ -70,8 +70,9 @@ let surface: Doc.Surface<BlockCell> = {
 }
 ```
 
-Both fields are optional. A surface that states neither builds exactly as it
-did before: every cell covers one cell.
+`Span` and `WithSpan` are required by the `Surface` record. `ValueNone` on
+both keeps the map exactly as it was before spans existed: every cell covers
+one cell.
 
 ## A statement states a span
 
@@ -160,38 +161,18 @@ the hex range walk clips to the grid.
 
 ## Drawing one instance over many cells
 
-Rendering reads the occupancy too, and hands the transform the rectangle:
-
-```fsharp
-let context =
-  InstancedRenderContext<BlockCell, string>.Rect(
-    getKey = (fun cell -> cell.Model.Name),
-    getMeshesAndMaterial = meshesOf,
-    getTransform =
-      fun (rect: CellRect) (basePos: Vector3) (cell: BlockCell) ->
-        let boxW = float32 rect.W * cellSize
-        let boxD = float32 rect.H * cellSize   // rect.H is depth
-        let boxH = cell.Height * cellSize
-
-        Matrix4x4.CreateScale(
-          boxW / cell.Model.SizeX,
-          boxH / cell.Model.SizeY,
-          boxD / cell.Model.SizeZ)
-        * Matrix4x4.CreateTranslation(
-          basePos.X + boxW * 0.5f,
-          basePos.Y + cell.Lift,
-          basePos.Z + boxD * 0.5f)
-  )
-```
-
-The whole-map and windowed members take the occupancy beside the grid, and the
-windowed one enumerates anchors by rectangle, so an instance stays drawn while
-any cell of its rectangle is in view:
+Rendering reads the occupancy too and hands the transform the rectangle each
+instance covers. [3D from 2D](three-d.html) builds the context and the
+transform; the draw calls are:
 
 ```fsharp
 context.RenderInstanced(buffer, grid, occupancy)
 context.RenderWindowInstanced(buffer, left, top, right, bottom, grid, occupancy)
 ```
 
-The next page, [the map contract](infra.html), walks a whole map from an empty
-project to a drawn, queryable stack.
+The whole-map form draws one instance per anchor. The windowed form converts
+the world-space window to a cell range and enumerates anchors by rectangle,
+so an instance stays drawn while any cell of its rectangle is in view.
+
+[3D from 2D](three-d.html) walks a whole map from an empty project to a
+drawn, queryable stack.

@@ -1,15 +1,18 @@
 ---
 title: Hex Grid Layout (3D)
-category: Level Design
-categoryindex: 8
 index: 10
 ---
+
+> **⚠ Archived V5-and-below docs.** These pages cover the retired APIs and
+> the earlier releases. They are frozen. The current docs live at the
+> [site root](../../index.html); the V6 map guides start at
+> [Level Design Overview](../../level-design/overview.html).
 
 # Hex Grid Layout (3D)
 
 3D hex grids extend hexagonal positioning with a vertical axis, creating hex columns instead of flat hexagons. This is the grid for **strategy games with elevation**: Civilization-style maps, wargames with height advantage, or any game where hex adjacency meets terrain height.
 
-> **Obsolete family.** `HexGrid3D` and `HexLayout3D` are obsolete. Author hex strategy maps with the [Flow DSL on hex storage](../2d/flow.html) (`CellGrid2D.createHex`) and carry elevation as tile content, not a third axis. This page remains as a reference for the retired API.
+> **Obsolete family.** `HexGrid3D` and `HexLayout3D` are obsolete. Author hex strategy maps with the [Flow DSL on hex storage](../../level-design/code-first.html) (`CellGrid2D.createHex`) and carry elevation as tile content, not a third axis. This page remains as a reference for the retired API.
 
 ## When to Use 3D Hex vs Rect
 
@@ -667,4 +670,4 @@ let civMap =
 
 ## API Reference
 
-For the `HexLayout3D`/`HexGrid3D` signatures, see the [3D Layout Engine](core.html) (layout primitives) and the API reference.
+For the `HexLayout3D`/`HexGrid3D` signatures, see the [3D Layout Engine](3d-core.html) (layout primitives) and the API reference.

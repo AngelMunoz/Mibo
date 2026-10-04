@@ -1,9 +1,12 @@
 ---
 title: Migrating to Mibo v2
-category: Migrating
-categoryindex: 7
 index: 1
 ---
+
+> **⚠ Archived V5-and-below docs.** These pages cover the retired APIs and
+> the earlier releases. They are frozen. The current docs live at the
+> [site root](../../index.html); the V6 map guides start at
+> [Level Design Overview](../../level-design/overview.html).
 
 # Migrating to Mibo v2
 
@@ -32,7 +35,7 @@ Mibo.Raylib is the authoritative source: the Core types are the raylib types
 generalized, and the MonoGame backend is written from scratch against Core.
 
 > **Coming from the original Mibo (MonoGame)?** See
-> [migration-from-monogame](mvu/migration-from-monogame.html) for a guide
+> [migration-from-monogame](../../mvu/migration-from-monogame.html) for a guide
 > covering every breaking change, API mapping, and a full before/after
 > example.
 
@@ -720,7 +723,7 @@ The depth texture is produced differently per backend (raylib samples the
 forward pass's depth attachment directly; MonoGame re-renders opaque geometry
 into a dedicated R32F target), but the contract: single-channel NDC z, `0` =
 near, `1` = far, skybox/uncovered = `1.0`: is identical on both. See the
-[3D Rendering Overview](graphics3d/overview.html) for the linearization formula.
+[3D Rendering Overview](../../graphics3d/overview.html) for the linearization formula.
 
 ### 2D post-process context enrichment
 

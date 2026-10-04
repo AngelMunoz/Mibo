@@ -1,15 +1,18 @@
 ---
 title: Building Outdoor Terrain
-category: Level Design
-categoryindex: 8
 index: 8
 ---
+
+> **⚠ Archived V5-and-below docs.** These pages cover the retired APIs and
+> the earlier releases. They are frozen. The current docs live at the
+> [site root](../../index.html); the V6 map guides start at
+> [Level Design Overview](../../level-design/overview.html).
 
 # Building Outdoor Terrain
 
 Outdoor terrain (landscapes, wilderness, open worlds) is defined by natural elevation, paths, and landmarks. The `Terrain` module provides stamps for designing these efficiently.
 
-> **Obsolete module.** `Mibo.Layout3D.Terrain` is obsolete. Author terrain as a [2D Flow document](../2d/flow.html) with per-column height — a plateau is a height-2 region, a ramp is stepped heights. The page remains as a pattern reference.
+> **Obsolete module.** `Mibo.Layout3D.Terrain` is obsolete. Author terrain as a [2D Flow document](../../level-design/code-first.html) with per-column height — a plateau is a height-2 region, a ramp is stepped heights. The page remains as a pattern reference.
 
 ## Importing
 
@@ -465,4 +468,4 @@ let island =
 - **Complex functions:** Expensive math in height functions can slow generation.
 - **Culling:** Use `iterVolume` when rendering to only process visible cells.
 
-> **See also:** [3D Layout Engine](core.html) for the layout primitives this module builds on.
+> **See also:** [3D Layout Engine](3d-core.html) for the layout primitives this module builds on.

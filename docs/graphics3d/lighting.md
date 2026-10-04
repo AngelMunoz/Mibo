@@ -1,7 +1,7 @@
 ---
 title: 3D Lighting
 category: 3D Rendering
-categoryindex: 11
+categoryindex: 7
 index: 3
 ---
 

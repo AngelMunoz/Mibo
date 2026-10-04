@@ -1,15 +1,18 @@
 ---
 title: Building Platformer Levels
-category: Level Design
-categoryindex: 8
 index: 4
 ---
+
+> **⚠ Archived V5-and-below docs.** These pages cover the retired APIs and
+> the earlier releases. They are frozen. The current docs live at the
+> [site root](../../index.html); the V6 map guides start at
+> [Level Design Overview](../../level-design/overview.html).
 
 # Building Platformer Levels
 
 Platformer games revolve around spatial challenges: jumps, gaps, vertical traversal, and hazards. The `Platformer` module provides stamps that make designing these challenges quick and composable.
 
-> **Obsolete module.** `Mibo.Layout.Platformer` is obsolete — its vocabulary (boxes, platforms, ledges, stairs) is subsumed by [Flow styles](flow.html). The page remains as a pattern reference.
+> **Obsolete module.** `Mibo.Layout.Platformer` is obsolete — its vocabulary (boxes, platforms, ledges, stairs) is subsumed by [Flow styles](../../level-design/code-first.html). The page remains as a pattern reference.
 
 ## Importing
 
@@ -393,4 +396,4 @@ Always playtest your sections:
 - Are hazard pits fair or frustrating?
 - Is the level flow obvious to players?
 
-> **See also:** [2D Layout Engine](core.html) for the layout primitives this module builds on.
+> **See also:** [2D Layout Engine](../../level-design/layout.html) for the layout primitives this module builds on.

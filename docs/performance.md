@@ -1,7 +1,7 @@
 ---
 title: F# For Perf
-category: Documentation
-categoryindex: 6
+category: Guides
+categoryindex: 11
 index: 2
 ---
 

@@ -56,6 +56,10 @@ Both backends ship the same rendering surface: a 2D batch renderer and a 3D **Fo
 
 ## Getting Started
 
+New to Mibo? [Where to start](start/overview.html) routes by goal: first
+project, runtime and backend choice, and the map of the guides. The
+sections below cover the packages and the minimal program.
+
 To get started, you need the [dotnet SDK](https://get.dot.net) installed. The `Mibo.Templates` package includes MVU starters (`mibo-2d`/`mibo-3d` for raylib, `mibo-mg-2d`/`mibo-mg-3d` for MonoGame) and adaptive starters with an `-adaptive` suffix (`mibo-2d-adaptive`, `mibo-mg-3d-adaptive`, …). The MonoGame templates each ship a shared library plus thin clients for DesktopGL/OpenGL, DesktopVK/Vulkan, and WindowsDX12/DirectX 12:
 
 ```bash
@@ -103,7 +107,9 @@ You can then start building your game using any of the following:
 The samples developed for the initial Raylib version and the new MonoGame Samples are stored in their own repository.
 [Mibo.Samples](https://github.com/AngelMunoz/Mibo.Samples) is the place to visit.
 
-> **NOTE:** the [v1 (raylib-only) docs](v1/index.html) are archived; reachable from this link, not from the sidebar.
+> **NOTE:** the [v1 (raylib-only) docs](v1/index.html) and the
+> [v5-and-below docs](v5/index.html) are archived; reachable from these
+> links, not from the sidebar.
 
 You'll find examples of
 

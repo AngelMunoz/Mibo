@@ -1,7 +1,7 @@
 ---
 title: Diagnostics
 category: Amenities
-categoryindex: 12
+categoryindex: 9
 index: 5
 ---
 

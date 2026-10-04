@@ -1,8 +1,8 @@
 ---
-title: Markup - Authored Level Documents
+title: Authored Maps
 category: Level Design
 categoryindex: 8
-index: 11
+index: 4
 ---
 
 # Markup: authored level documents
@@ -109,8 +109,6 @@ through the style cascade — solver defaults, then document `style name`
 rules in order, then inline properties:
 
 ```fsharp
-let surface: Doc.Surface<Tile> = ...          // words, kernels, elements
-
 match Kdl.parse src with
 | Error e -> printfn "%s" e                   // parse errors, positioned
 | Ok roots ->
@@ -128,26 +126,73 @@ per game. Two container kinds exist beside the game's own elements:
 `plot` (a plain container) and `grid` (a container that carries the
 `cols`/`rows`/`areas` template).
 
-A surface may also state how many cells one instance covers, and how a
-statement writes a span:
+The surface is a record, and every field is required. The complete
+declaration for a game whose cells carry a span:
 
 ```fsharp
+open System.Collections.Frozen
+open System.Collections.Generic
+open Mibo.Layout
+open Mibo.Markup
+
+// The game's cell type. The span and the height are game data.
+type Tile = {
+  Kind: TileKind
+  Span: InstanceSpan
+  Height: float32
+}
+
+let frozen (pairs: (string * 'T)[]) =
+  let table = Dictionary<string, 'T>()
+
+  for name, value in pairs do
+    table[name] <- value
+
+  table.ToFrozenDictionary()
+
+// The game's vocabulary. A word names one cell value.
+let tile kind = { Kind = kind; Span = One; Height = 1f }
+
 let surface: Doc.Surface<Tile> = {
-  Words = words
-  Kernels = kernels
-  Elements = elements
-  Span = ValueSome(fun tile -> tile.Span)          // absent: a cell covers one cell
-  WithSpan = ValueSome(fun tile span -> { tile with Span = span })
+  Words =
+    frozen [|
+      "grass", tile Grass
+      "wall", { tile Wall with Height = 2f }
+      "slab", { tile Slab with Height = 0.2f; Span = Span(4, 2) }
+    |]
+  Kernels =
+    frozen [|
+      "field", Doc.Gen2(fun x y -> if (x + y) % 7 = 0 then tile Tree else tile Grass)
+    |]
+  Elements =
+    frozen [|
+      "hut", {
+        Name = "hut"
+        Extent = ValueSome { W = 3; H = 3 }
+        Body = [|
+          Doc.Op.Fill(tile Grass)
+          Doc.Op.Border(ValueSome { X = 0; Y = 0; W = 3; H = 3 }, tile Wall)
+          Doc.Op.Set(ValueSome { X = 1; Y = 1 }, Start, Start, tile Chest)
+        |]
+      }
+    |]
+  // Required fields. ValueNone means "every cell covers one cell" and
+  // "a statement cannot size one".
+  Span = ValueSome(fun cell -> cell.Span)
+  WithSpan = ValueSome(fun cell span -> { cell with Span = span })
 }
 ```
+
+`Span` and `WithSpan` are required by the record. `ValueNone` on both keeps
+the map exactly as it was before spans existed.
 
 With those two fields, `set` sizes one instance — `set 3 9 slab spanX=16 spanZ=6`
 in KDL, `spanX="16" spanZ="6"` in XML — while `fill`, `fillRect`, `border`,
 and `rect` refuse a word that spans more than one cell. The build then reports
 each layer's occupancy beside its grid, so a query answers with the instance
-that owns a cell. [Instances larger than a cell](../3d/spans.html) states the
-vocabulary and the rules; [the map contract](../3d/infra.html) walks a game
-through consuming it.
+that owns a cell. [Instances and Occupancy](instances.html) states the
+vocabulary and the rules; [3D from 2D](three-d.html) walks a game through
+consuming it.
 
 **Paint is data.** A body resolves to `Op` values — `Fill`, `FillRect`,
 `Set`, `Border`, `Rect`, `Generate` — interpreted at render time through

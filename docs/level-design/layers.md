@@ -1,8 +1,8 @@
 ---
-title: Layers in Authored Maps
+title: Layers
 category: Level Design
 categoryindex: 8
-index: 12
+index: 5
 ---
 
 # Layers in authored maps
@@ -117,11 +117,14 @@ type BuiltLayer<'T> = {
     Name: string
     Grid: CellGrid2D<'T>
     Landmarks: Landmarks
+    Occupancy: Occupancy      // who owns each cell, and what each instance covers
 }
 ```
 
 A document without layers returns one entry named `main`, so one code
-path handles both shapes.
+path handles both shapes. `buildLayers` scans every painted layer into its
+`Occupancy`; a layer that breaks a span rule fails the whole build with the
+layer's name. See [Instances and Occupancy](instances.html).
 
 `DocFlow.emitLayers` stops before the paint and hands back the layer
 stamps, for a caller that owns its own grids — a viewer that keeps the
@@ -238,9 +241,9 @@ lifts instead — every layer above the ground rises by the height the
 layers below it reach at that cell, so a decoration stands on the terrain
 and the terrain stays whole underneath — and draws the flat map one grid
 per layer. `Stack.feet` derives that lift for the whole stack, and
-[instances larger than a cell](../3d/spans.html) is the 3D counterpart of
-this page: one instance stretched over several cells of a layer, with the
-occupancy that answers which instance owns each cell.
+[Instances and Occupancy](instances.html) covers one instance stretched
+over several cells of a layer, with the occupancy that answers which
+instance owns each cell.
 
 Neither pattern is the framework's business. The framework stops at
 handing over the grids.

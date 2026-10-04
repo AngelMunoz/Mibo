@@ -1,7 +1,7 @@
 ---
 title: GPU Instancing
 category: 3D Rendering
-categoryindex: 11
+categoryindex: 7
 index: 5
 ---
 
@@ -223,38 +223,17 @@ buffer
 ```
 
 Both forms take a `shaderForKey` overload. [The map
-contract](../level-design/3d/infra.html) builds the occupancy and the
+contract](../level-design/three-d.html) builds the occupancy and the
 rectangle transform.
 
 ## One instance over many cells
 
 An occupancy draw hands the transform the rectangle each instance covers,
-so one model can be scaled over the cells it stands for. Build the context
-with the rectangle factory — the transform then receives the target box
-instead of only the cell:
-
-```fsharp
-let instancedCtx =
-  InstancedRenderContext<BlockCell, string>.Rect(
-    getKey = (fun cell -> cell.Model.Name),
-    getMeshesAndMaterial = meshesOf,
-    getTransform =
-      fun (rect: CellRect) (basePos: Vector3) (cell: BlockCell) ->
-        // rect.W is cells across, rect.H is cells deep, and the anchor's
-        // world position is the rectangle's near corner
-        Matrix4x4.CreateScale(
-          float32 rect.W * cellSize / cell.Model.SizeX,
-          cell.Height * cellSize / cell.Model.SizeY,
-          float32 rect.H * cellSize / cell.Model.SizeZ)
-        * Matrix4x4.CreateTranslation(
-          basePos.X + float32 rect.W * cellSize * 0.5f,
-          basePos.Y + cell.Lift,
-          basePos.Z + float32 rect.H * cellSize * 0.5f)
-  )
-```
-
-The plain constructor keeps its `Vector3 -> 'T -> Matrix4x4` transform, and
-its rectangle is the cell itself.
+so one model scales over the cells it stands for. Build the context with the
+rectangle factory, `InstancedRenderContext.Rect`. [3D from 2D](../level-design/three-d.html)
+shows the transform that turns `Height` into the Y scale and the rectangle
+into the XZ scale. The plain constructor keeps its
+`Vector3 -> 'T -> Matrix4x4` transform, and its rectangle is the cell itself.
 
 ## How it works internally
 
@@ -408,6 +387,7 @@ per voxel.
 ## See also
 
 - [Overview](overview.html): Architecture and pipeline setup
+- [3D from 2D](../level-design/three-d.html): The map transform, the stack, and the occupancy draw
 - [Draw DSL](../draw-dsl.html): The fluent draw surface
 - [Materials](materials.html): PBR material system
 - [Animation 3D: Skinned + Instanced Draws](../animation3d.html#Skinned-Instanced-Draws): instancing animated characters (`animatedModelInstanced`)

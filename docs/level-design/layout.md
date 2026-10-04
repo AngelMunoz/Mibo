@@ -1,22 +1,22 @@
 ---
-title: 2D Layout Engine
+title: The Layout Escape Hatch
 category: Level Design
 categoryindex: 8
 index: 3
 ---
 
-# 2D Layout Engine
+# The Layout escape hatch
 
 The Layout engine provides a tile-based level design system for 2D games. It lives in `Mibo.Layout`.
 
-> **Author with [Flow](flow.html) first.** Flow wraps this engine with the CSS-style authoring DSL — grid template areas, flexbox rows and columns, docks, and landmark queries. The `Layout` pipelines documented here remain fully supported as the pixel-perfect escape hatch: every Flow style is a `Layout` pipeline underneath, and `Stamp.sized` wraps any of these pipelines as a Flow element. Reach for raw `Layout` when you want exact index math and manual section surgery. The `LayeredGrid2D` helper is obsolete — a layered grid is a dictionary of grids, and game code can own the dictionary.
+> **Author with [Flow](code-first.html) first.** Flow wraps this engine with the CSS-style authoring DSL — grid template areas, flexbox rows and columns, docks, and landmark queries. The `Layout` pipelines documented here remain fully supported as the pixel-perfect escape hatch: every Flow style is a `Layout` pipeline underneath, and `Stamp.sized` wraps any of these pipelines as a Flow element. Reach for raw `Layout` when you want exact index math and manual section surgery. The `LayeredGrid2D` helper is obsolete — a layered grid is a dictionary of grids, and game code can own the dictionary. The retired helper is kept in the [archive](../v5/legacy-grids/layered-2d.html).
 
 > **`Vector2` namespace (MonoGame).** The Core layout API (`CellGrid2D`, square or hex) always takes `System.Numerics.Vector2`. MonoGame projects `open Microsoft.Xna.Framework`, so a bare `Vector2(...)` resolves to XNA's vector type and the Core layout calls fail to compile (`FS0193`). Qualify those calls explicitly:
 > ```fsharp
 > let grid =
 >     CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
 > ```
-> Backend-specific APIs (each backend's `Camera2D.create`/`Camera3D`, `SpriteState`, `TextState`) use that backend's native vector type: raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework`, so bare `Vector2(...)` is fine there as long as the matching namespace is open. See [MonoGame type quirks](../../monogame-types.html) for the full backend-type reference.
+> Backend-specific APIs (each backend's `Camera2D.create`/`Camera3D`, `SpriteState`, `TextState`) use that backend's native vector type: raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework`, so bare `Vector2(...)` is fine there as long as the matching namespace is open. See [MonoGame type quirks](../monogame-types.html) for the full backend-type reference.
 
 ## Core Concepts
 
@@ -325,9 +325,9 @@ The key insight: **stamps are functions**. You can store them, pass them around,
 > **Obsolete in v6.** The pre-built stamp libraries are retired. Flow
 > styles replace their vocabulary (`Stamp.box` + `Flow.fill` /
 > `Flow.border` and friends). The linked pages remain as pattern
-> references. See [Migrating to Mibo v6](../../migration-to-v6.html).
+> references. See [Migrating to Mibo v6](../migration-to-v6.html).
 
-Mibo includes pre-built stamps for common game types:
+The retired stamp libraries live in the archive:
 
-- **[Platformer](platformer.html)** - Boxes, platforms, ledges, walls, pillars, stairs, slopes, pits
-- **[TopDown](topdown.html)** - Rooms, corridors, wall segments, doorways
+- **[Platformer](../v5/legacy-stamps/platformer.html)** - Boxes, platforms, ledges, walls, pillars, stairs, slopes, pits
+- **[TopDown](../v5/legacy-stamps/topdown.html)** - Rooms, corridors, wall segments, doorways
