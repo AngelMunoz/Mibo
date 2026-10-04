@@ -42,6 +42,7 @@
     <Compile Include="Layout/LayeredHex.fs" />
     <Compile Include="Layout/Layout.fs" />
     <Compile Include="Layout/Flow.fs" />
+    <Compile Include="Layout/Occupancy.fs" />
     <Compile Include="Layout/Platformer.fs" />
     <Compile Include="Layout/TopDown.fs" />
     <Compile Include="Layout/Layered.fs" />

@@ -2122,3 +2122,178 @@ let cellOpTests =
       expectCell g 0 0 (ValueSome 30) "mapped"
       expectCell g 1 1 (ValueSome 30) "mapped"
   ]
+
+let private hexGrid w h : CellGrid2D<int> =
+  CellGrid2D.createHex {
+    Orientation = HexOrientation.PointyTop
+    Width = w
+    Height = h
+    Radius = 32f
+    Origin = Vector2.Zero
+  }
+
+/// One stack layer holding a named, partial stamp: the layer does not
+/// paint the cells the stamp misses.
+let private gateAt (x: int) (y: int) (v: int) : Stamp<int> =
+  Flow.overlay [
+    Flow.at x y (Stamp.named "gate" (Stamp.box 2 1 [ Flow.fill v ]))
+  ]
+
+[<Tests>]
+let layerTests =
+  testList "Flow layer stacks" [
+    testCase "each stamp paints its own grid, bottom first"
+    <| fun _ ->
+      let stamps = [|
+        Flow.at 0 0 (Stamp.box 4 1 [ Flow.fill 1 ])
+        Flow.at 1 1 (Stamp.box 2 1 [ Flow.fill 2 ])
+      |]
+
+      let grids = [| mkGrid 4 3; mkGrid 4 3 |]
+      let built = Flow.runLayers stamps grids
+
+      Expect.hasLength built 2 "one result for each layer"
+
+      let struct (lowest, _) = built[0]
+      let struct (decor, _) = built[1]
+
+      expectCell lowest 0 0 (ValueSome 1) "the bottom layer's first cell"
+      expectCell lowest 3 0 (ValueSome 1) "the bottom layer's last cell"
+      expectCell lowest 0 1 ValueNone "the bottom layer paints nothing below"
+
+      expectCell decor 1 1 (ValueSome 2) "the top layer's first cell"
+      expectCell decor 2 1 (ValueSome 2) "the top layer's last cell"
+      expectCell decor 0 0 ValueNone "the top layer keeps its empty cells empty"
+      expectCell decor 3 2 ValueNone "so does the rest of the top layer"
+
+    testCase "one grid for each stamp"
+    <| fun _ ->
+      Expect.throwsT<System.ArgumentException>
+        (fun () ->
+          Flow.runLayers [| fillTile 1; fillTile 2 |] [|
+            mkGrid 4 3
+            mkGrid 4 3
+            mkGrid 4 3
+          |]
+          |> ignore)
+        "three grids for two stamps"
+
+    testCase "every layer spans the same map"
+    <| fun _ ->
+      Expect.throwsT<System.ArgumentException>
+        (fun () ->
+          Flow.runLayers [| fillTile 1; fillTile 2 |] [|
+            mkGrid 40 24
+            mkGrid 32 20
+          |]
+          |> ignore)
+        "a 40x24 layer with a 32x20 layer"
+
+    testCase "an expand stamp fails the whole call"
+    <| fun _ ->
+      Expect.throwsT<System.ArgumentException>
+        (fun () ->
+          Flow.runLayers [| fillTile 1; Stamp.expand(fillTile 2) |] [|
+            mkGrid 4 3
+            mkGrid 4 3
+          |]
+          |> ignore)
+        "runLayers ignores Expand"
+
+    testCase "an element name may repeat across layers"
+    <| fun _ ->
+      let built =
+        Flow.runLayers [| gateAt 1 1 1; gateAt 3 2 2 |] [|
+          mkGrid 6 4
+          mkGrid 6 4
+        |]
+
+      let struct (_, bottom) = built[0]
+      let struct (_, top) = built[1]
+
+      Expect.equal
+        (Flow.tryPosition "gate" bottom)
+        (ValueSome { X = 1; Y = 1; W = 2; H = 1 })
+        "the bottom layer reports its own rectangle"
+
+      Expect.equal
+        (Flow.tryPosition "gate" top)
+        (ValueSome { X = 3; Y = 2; W = 2; H = 1 })
+        "the top layer reports its own rectangle"
+
+    testCase "buildLayers derives each layer's tag grids"
+    <| fun _ ->
+      let extract (_: int) (_: int) (v: int) : string seq =
+        match v with
+        | 1 -> [ "ground" ]
+        | 2 -> [ "decor" ]
+        | _ -> []
+
+      let built =
+        Flow.buildLayers extract [|
+          Flow.canvas [ Flow.fill 1 ]
+          Flow.at 1 1 (Stamp.box 2 1 [ Flow.fill 2 ])
+        |] [| mkGrid 6 4; mkGrid 6 4 |]
+
+      let struct (_, bottom) = built[0]
+      let struct (_, top) = built[1]
+
+      Expect.isTrue
+        (Flow.isTag "ground" { X = 5; Y = 3 } bottom)
+        "the bottom layer's tiles are ground"
+
+      Expect.isFalse
+        (Flow.isTag "decor" { X = 1; Y = 1 } bottom)
+        "the bottom layer carries no decor"
+
+      Expect.isTrue
+        (Flow.isTag "decor" { X = 1; Y = 1 } top)
+        "the top layer's tiles are decor"
+
+      Expect.isFalse
+        (Flow.isTag "decor" { X = 0; Y = 0 } top)
+        "the top layer's empty cells stay untagged"
+
+      Expect.isFalse
+        (Flow.isTag "ground" { X = 0; Y = 0 } top)
+        "the top layer carries no ground, even where it is empty"
+
+    testCase "runLayers paints hex storage and reports hex landmarks"
+    <| fun _ ->
+      let built =
+        Flow.runLayers [| Flow.canvas [ Flow.fill 1 ]; gateAt 1 1 2 |] [|
+          hexGrid 6 4
+          hexGrid 6 4
+        |]
+
+      let struct (ground, bottom) = built[0]
+      let struct (decor, top) = built[1]
+
+      expectCell ground 0 0 (ValueSome 1) "the bottom hex layer paints"
+
+      expectCell
+        ground
+        5
+        3
+        (ValueSome 1)
+        "the bottom hex layer reaches the far corner"
+
+      expectCell decor 1 1 (ValueSome 2) "the top hex layer paints inside"
+
+      expectCell
+        decor
+        0
+        0
+        ValueNone
+        "the top hex layer keeps its empty cells empty"
+
+      Expect.equal
+        struct (bottom.Width, bottom.Height)
+        struct (6, 4)
+        "the bottom layer's landmark dims are the hex grid's"
+
+      Expect.equal
+        (Flow.tryPosition "gate" top)
+        (ValueSome { X = 1; Y = 1; W = 2; H = 1 })
+        "offset-space rect over hex storage"
+  ]

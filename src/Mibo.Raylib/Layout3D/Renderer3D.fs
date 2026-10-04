@@ -32,11 +32,24 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
     : ('T -> struct (Raylib_cs.Mesh * Material3D * Raylib_cs.Shader voption)[]) voption =
     ValueNone
 
+  // Rectangle transform. ValueNone on the primary ctor; the `Rect` factory
+  // installs a ValueSome. Every emit path then hands the anchor's rectangle to
+  // it, so a game scales one model over the cells its instance covers instead
+  // of re-deriving the size from the cell.
+  let mutable rectTransform: (CellRect -> Vector3 -> 'T -> Matrix4x4) voption =
+    ValueNone
+
   member internal _.Storage = storage
   member internal _.SnapshotPool = snapshotPool
   member _.GetKey = getKey
   member _.GetMeshesAndMaterial = getMeshesAndMaterial
   member _.GetTransform = getTransform
+
+  /// <summary>Installs the rectangle transform. Internal — set by the
+  /// <c>Rect</c> factory.</summary>
+  member internal _.SetRectTransform f = rectTransform <- ValueSome f
+
+  member internal _.RectTransform = rectTransform
 
   /// <summary>Installs the per-sub-mesh shader resolver. Internal — set by the
   /// overload constructor that returns (mesh, material, shader) triples.</summary>
@@ -69,6 +82,33 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
     then this.SetPerMeshShaderResolver getMeshesMaterialAndShader
 
   /// <summary>
+  /// Builds a context whose transform receives the rectangle each instance
+  /// covers — the anchor's own cell on the cell-walk members, the anchor's
+  /// rectangle on the occupancy members — so one model scales to the cells it
+  /// stands for:
+  /// <c>InstancedRenderContext&lt;Cell, string&gt;.Rect(getKey, getMeshesAndMaterial, getTransform)</c>.
+  /// </summary>
+  static member Rect
+    (
+      getKey: 'T -> 'K,
+      getMeshesAndMaterial: 'T -> struct (Raylib_cs.Mesh * Material3D)[],
+      getTransform: CellRect -> Vector3 -> 'T -> Matrix4x4
+    ) : InstancedRenderContext<'T, 'K> =
+    // the primary transform is a tripwire: this factory installs the rectangle
+    // transform before it hands the context out, so no emit path reads it
+    let context =
+      InstancedRenderContext(
+        getKey,
+        getMeshesAndMaterial,
+        (fun _ _ ->
+          invalidOp
+            "InstancedRenderContext.Rect installs the rectangle transform before it returns")
+      )
+
+    context.SetRectTransform getTransform
+    context
+
+  /// <summary>
   /// Returns pooled snapshot arrays to <see cref="T:System.Buffers.ArrayPool`1"/>
   /// and clears internal tracking state. Call once per frame <b>before</b>
   /// invoking <c>renderInstanced</c> or <c>renderVolumeInstanced</c>.
@@ -89,16 +129,19 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
       transforms.Clear()
 
   /// <summary>
-  /// Adds one cell of a 2D footprint grid as an instance: the transform
-  /// function receives the column's base world position — the footprint
-  /// position lifted to <c>y = 0</c> — so games scale the unit block by
-  /// the column's height there.
+  /// Adds one anchor as an instance: the transform function receives the
+  /// rectangle the instance covers and the anchor's base world position — the
+  /// cell lifted to <c>y = 0</c>.
   /// </summary>
-  member private _.AddCell (grid: CellGrid2D<'T>) x y content =
+  member private _.AddCell (grid: CellGrid2D<'T>) (rect: CellRect) x y content =
     let footprint = CellGrid2D.getWorldPos x y grid
     let basePos = Vector3(footprint.X, 0f, footprint.Y)
     let key = getKey content
-    let transform = getTransform basePos content
+
+    let transform =
+      match rectTransform with
+      | ValueSome withRect -> withRect rect basePos content
+      | ValueNone -> getTransform basePos content
 
     match Dictionary.tryGetValue key storage with
     | ValueSome struct (transforms, _) -> transforms.Add transform
@@ -110,20 +153,46 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
   /// <summary>
   /// Fills the context from every populated cell of a 2D footprint grid —
   /// square or hex — and emits the instanced draws, one per key. This is
-  /// the heightmap replacement for the retired whole-volume renderers.
+  /// the heightmap replacement for the retired whole-volume renderers. Each
+  /// cell is its own instance, so a cell that covers several cells draws at
+  /// one cell; use the occupancy member for those.
   /// </summary>
   member this.RenderInstanced(buffer: RenderBuffer3D, grid: CellGrid2D<'T>) =
     this.ClearGroups()
 
-    CellGrid2D.iter (fun x y content -> this.AddCell grid x y content) grid
+    CellGrid2D.iter
+      (fun x y content ->
+        this.AddCell grid { X = x; Y = y; W = 1; H = 1 } x y content)
+      grid
+
+    this.EmitInstanced(buffer)
+
+  /// <summary>
+  /// <c>RenderInstanced</c> over the anchors of an occupancy: one instance per
+  /// anchor, and each anchor's rectangle reaches the transform. A covered cell
+  /// draws nothing of its own, so a plate stays one instance.
+  /// </summary>
+  member this.RenderInstanced
+    (buffer: RenderBuffer3D, grid: CellGrid2D<'T>, occupancy: Occupancy)
+    =
+    this.ClearGroups()
+
+    for i in 0 .. occupancy.Cells.Length - 1 do
+      let at = occupancy.Cells.[i]
+
+      match CellGrid2D.get at.X at.Y grid with
+      | ValueSome content ->
+        this.AddCell grid occupancy.Rects.[i] at.X at.Y content
+      | ValueNone -> ()
 
     this.EmitInstanced(buffer)
 
   /// <summary>
   /// Like <c>RenderInstanced</c> but restricted to a world-space window
   /// (left/top/right/bottom in <c>int</c> world coordinates). Hex grids
-  /// cull with an orientation-aware window. This is the heightmap
-  /// replacement for the retired volume-culled renderers.
+  /// cull with an orientation-aware window. A cell-windowed walk drops a
+  /// large instance once its anchor leaves the window: use the occupancy
+  /// member for a map with spans.
   /// </summary>
   member this.RenderWindowInstanced
     (
@@ -141,8 +210,43 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
       top
       right
       bottom
-      (fun x y content -> this.AddCell grid x y content)
+      (fun x y content ->
+        this.AddCell grid { X = x; Y = y; W = 1; H = 1 } x y content)
       grid
+
+    this.EmitInstanced(buffer)
+
+  /// <summary>
+  /// <c>RenderWindowInstanced</c> over the anchors of an occupancy: the
+  /// world-space window becomes a cell range, and every anchor whose rectangle
+  /// intersects it is drawn — so an instance that covers a window cell from an
+  /// anchor outside the window stays drawn.
+  /// </summary>
+  member this.RenderWindowInstanced
+    (
+      buffer: RenderBuffer3D,
+      left: int,
+      top: int,
+      right: int,
+      bottom: int,
+      grid: CellGrid2D<'T>,
+      occupancy: Occupancy
+    ) =
+    this.ClearGroups()
+
+    let struct (startX, endX, startY, endY) =
+      CellGrid2D.visibleRange left top right bottom grid
+
+    Occupancy.iterInWindow
+      startX
+      startY
+      endX
+      endY
+      (fun at rect ->
+        match CellGrid2D.get at.X at.Y grid with
+        | ValueSome content -> this.AddCell grid rect at.X at.Y content
+        | ValueNone -> ())
+      occupancy
 
     this.EmitInstanced(buffer)
 
@@ -159,7 +263,33 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
     ) =
     this.ClearGroups()
 
-    CellGrid2D.iter (fun x y content -> this.AddCell grid x y content) grid
+    CellGrid2D.iter
+      (fun x y content ->
+        this.AddCell grid { X = x; Y = y; W = 1; H = 1 } x y content)
+      grid
+
+    this.EmitInstancedWithEffect(buffer, shaderForKey)
+
+  /// <summary>
+  /// <c>RenderInstanced</c> with an occupancy and per-key effect scoping, like
+  /// <c>RenderInstancedWithEffect</c>.
+  /// </summary>
+  member this.RenderInstancedWithEffect
+    (
+      buffer: RenderBuffer3D,
+      grid: CellGrid2D<'T>,
+      occupancy: Occupancy,
+      shaderForKey: 'K -> Raylib_cs.Shader voption
+    ) =
+    this.ClearGroups()
+
+    for i in 0 .. occupancy.Cells.Length - 1 do
+      let at = occupancy.Cells.[i]
+
+      match CellGrid2D.get at.X at.Y grid with
+      | ValueSome content ->
+        this.AddCell grid occupancy.Rects.[i] at.X at.Y content
+      | ValueNone -> ()
 
     this.EmitInstancedWithEffect(buffer, shaderForKey)
 
@@ -184,8 +314,42 @@ type InstancedRenderContext<'T, 'K when 'K: equality>
       top
       right
       bottom
-      (fun x y content -> this.AddCell grid x y content)
+      (fun x y content ->
+        this.AddCell grid { X = x; Y = y; W = 1; H = 1 } x y content)
       grid
+
+    this.EmitInstancedWithEffect(buffer, shaderForKey)
+
+  /// <summary>
+  /// <c>RenderWindowInstanced</c> with an occupancy and per-key effect
+  /// scoping.
+  /// </summary>
+  member this.RenderWindowInstancedWithEffect
+    (
+      buffer: RenderBuffer3D,
+      left: int,
+      top: int,
+      right: int,
+      bottom: int,
+      grid: CellGrid2D<'T>,
+      occupancy: Occupancy,
+      shaderForKey: 'K -> Raylib_cs.Shader voption
+    ) =
+    this.ClearGroups()
+
+    let struct (startX, endX, startY, endY) =
+      CellGrid2D.visibleRange left top right bottom grid
+
+    Occupancy.iterInWindow
+      startX
+      startY
+      endX
+      endY
+      (fun at rect ->
+        match CellGrid2D.get at.X at.Y grid with
+        | ValueSome content -> this.AddCell grid rect at.X at.Y content
+        | ValueNone -> ())
+      occupancy
 
     this.EmitInstancedWithEffect(buffer, shaderForKey)
 

@@ -5,6 +5,7 @@ module Mibo.MonoGame.Tests.Layout3D
 open Expecto
 open System
 open Microsoft.Xna.Framework
+open Mibo.Layout
 open Mibo.Layout3D
 open Mibo.Elmish.Graphics3D
 open Mibo.Elmish.Graphics
@@ -85,6 +86,28 @@ let private ctxFromParts(parts: ModelPart[]) =
     getParts = (fun _ -> parts),
     getTransform = fun _ _ -> Matrix.CreateTranslation(1f, 0f, 0f)
   )
+
+/// A grid whose cells state their own span: 0 is the identity, any other number
+/// spans that many cells across two rows.
+let private spanProjection(value: int) : InstanceSpan =
+  if value = 0 then One else Span(value, 2)
+
+let private spanGrid() =
+  let grid =
+    CellGrid2D.create
+      8
+      2
+      (System.Numerics.Vector2(16f, 16f))
+      System.Numerics.Vector2.Zero
+
+  CellGrid2D.set 0 0 3 grid
+  CellGrid2D.set 7 1 0 grid
+  grid
+
+let private scanSpans(grid: CellGrid2D<int>) : Occupancy =
+  match Occupancy.scan spanProjection grid with
+  | Ok occupancy -> occupancy
+  | Error reason -> failtest reason
 
 [<Tests>]
 let tests =
@@ -341,4 +364,99 @@ let tests =
 
       buf.Clear()
       Expect.equal buf.CameraBlockCount 0 "Clear should reset CameraBlockCount"
+
+    testCase "an occupancy sizes an instance over its rectangle"
+    <| fun _ ->
+      use buf = new RenderBuffer3D()
+      let seen = ResizeArray<CellRect>()
+
+      let ctx =
+        InstancedRenderContext<int, int>
+          .Rect(
+            getKey = id,
+            getMeshesAndMaterial = (fun _ -> pairsFor 1),
+            getTransform =
+              (fun rect _ _ ->
+                seen.Add rect
+                Matrix.Identity)
+          )
+
+      let grid = spanGrid()
+      let occupancy = scanSpans grid
+
+      ctx.RenderInstanced(buf, grid, occupancy)
+
+      Expect.equal buf.Count 2 "one draw per key: the span and the plain cell"
+
+      Expect.equal
+        (List.ofSeq seen)
+        [ { X = 0; Y = 0; W = 3; H = 2 }; { X = 7; Y = 1; W = 1; H = 1 } ]
+        "each anchor's rectangle reaches the transform"
+
+    testCase "a windowed occupancy draw keeps an anchor whose cell is outside"
+    <| fun _ ->
+      let ctx = ctxFromPairs 1
+      let grid = spanGrid()
+      let occupancy = scanSpans grid
+
+      let drawn(left, top, right, bottom) =
+        use buf = new RenderBuffer3D()
+
+        ctx.RenderWindowInstanced(
+          buf,
+          left,
+          top,
+          right,
+          bottom,
+          grid,
+          occupancy
+        )
+
+        buf.Count
+
+      // cell (2,1) is covered by the span anchored at (0,0)
+      Expect.equal (drawn(32, 16, 47, 31)) 1 "the covered cell draws its anchor"
+
+      // cell (5,0) is covered by nothing
+      Expect.equal
+        (drawn(80, 0, 95, 15))
+        0
+        "a window that touches no anchor draws nothing"
+
+      // cell (7,1) is a plain instance of its own
+      Expect.equal (drawn(112, 16, 127, 31)) 1 "a plain anchor draws itself"
+
+    testCase "the occupancy form renders an effect scope per key"
+    <| fun _ ->
+      use buf = new RenderBuffer3D()
+      let ctx = ctxFromPairs 1
+      let grid = spanGrid()
+      let occupancy = scanSpans grid
+
+      ctx.RenderWindowInstancedWithEffect(
+        buf,
+        0,
+        0,
+        400,
+        400,
+        grid,
+        occupancy,
+        (fun _ -> ValueSome(dummyEffect()))
+      )
+
+      Expect.equal
+        (cmdSequence buf)
+        [| "begin"; "draw"; "end"; "begin"; "draw"; "end" |]
+        "each key's draw is wrapped"
+
+    testCase "the whole-map occupancy form draws one instance per anchor"
+    <| fun _ ->
+      use buf = new RenderBuffer3D()
+      let ctx = ctxFromPairs 2
+      let grid = spanGrid()
+      let occupancy = scanSpans grid
+
+      ctx.RenderInstanced(buf, grid, occupancy)
+
+      Expect.equal buf.Count 4 "two keys, two sub-meshes each"
   ]
