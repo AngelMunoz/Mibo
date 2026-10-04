@@ -338,6 +338,9 @@ module DocFlow =
   // The one emit walk; `reportTags` gates the tag channel. `build` keeps
   // no landmarks, so it emits with the gate off and allocates no tag
   // lists; every other caller reports under the element's name.
+  /// Emits one resolved item as a Flow `Stamp`, recording element names
+  /// and tags when `reportTags` is true. This is the recursive walk behind
+  /// `emit` and `emitLayers`; call those instead.
   let rec emitTags (reportTags: bool) (item: Doc.Item<'T>) : Stamp<'T> =
     // One stack child: an exact-At child mounts at its origin (a zero
     // axis stretching to the inner far edge), a placed child mounts as a
@@ -589,7 +592,7 @@ module DocFlow =
 
   // The gate lives here too: `build` calls this with the tag channel
   // off, and the public entry below always reports.
-  let emitLayersTags
+  let private emitLayersTags
     (reportTags: bool)
     (root: Doc.Item<'T>)
     : struct (string * Stamp<'T>)[] =
