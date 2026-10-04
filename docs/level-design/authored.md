@@ -67,14 +67,11 @@ Every front-end produces the same `Node` tree: a kind, positional args, named pr
 | `map` | `map 36 20 { ... }`, `map w=36 h=20` | The document root. One per document. Holds layers, declarations, statements, and child containers. Statements outside a layer form the `main` layer. |
 | `layer` | `layer ground { ... }` | One grid. Legal only under `map`. See [Layers](layers.html). |
 | `plot` | `plot x=1 y=1 w=5 h=5 { ... }` | An inline container. `w`/`h` size it. `x`/`y` place it in stack pack. Omit `w`/`h` to stretch. |
-| `grid` | `grid { cols fixed 4 auto; rows fixed 3 }` | The same inline container under a name that reads well with tracks. `plot` and `grid` resolve the same. |
+| `grid` | `grid cols="fixed 4 auto" rows="fixed 3"` | The same inline container under a name that reads well with tracks. `plot` and `grid` resolve the same. |
 | element usage | `hut x=5 y=2`, `hut { fill grass }` | A surface element or a declared template. Use-site properties and use-site statements merge with the declaration. |
 | `element` | `element hut w=3 h=2 { ... }` | A template declaration. `w=` and `h=` state the intrinsic size and are legal together only. |
 | `style` | `style hut w=4 h=3 pack=flow` | A style rule keyed by node name. Later rules win per property. |
 | `repeat` | `repeat 2 { hut }`, `<repeat count="2">` | Duplicates its children. Nested repeats multiply. The expansion caps at 100000 nodes. |
-| `cols` | `cols fixed 1 auto 2` | Track sizes for a container. A bare number is a weight, `fixed n` is a fixed size, `auto` sizes to the children. |
-| `rows` | `rows fixed 3 auto` | The same tokens for rows. |
-| `areas` | `areas { r road woods; r road lake }` | Named areas for a container. Each row node carries the names in order. |
 
 ## Statements
 
@@ -108,13 +105,18 @@ Properties merge through the style cascade: solver defaults, then document `styl
 | `pad` | number | Padding inside the node's box. Negative values clamp to zero. |
 | `gapx`, `gapy` | number | Gap between tracks. The Flow grid takes one gap, so the two must match. |
 | `seed` | number | Seed for scatter placement. |
+| `cols` | track list | Column tracks: `cols="fixed 1 auto 2"`. A bare number is a weight, `fixed n` is a fixed size, `auto` sizes to the children. |
+| `rows` | track list | The same tokens for rows. |
+| `areas` | template | Named areas: `areas="road woods; road lake"`. `;` ends a row, and `.` is an empty cell. |
 
 Rules:
 
 - `w=`/`h=` and `x=`/`y=` together size and place a box: `plot x=1 y=1 w=5 h=5`.
 - A flow or scatter child cannot use `x=`/`y=`. The build fails instead of dropping the offsets.
 - An area child fills its whole area. `colspan=`/`rowspan=` need `col=` or `row=`.
-- Declared `cols`/`rows` imply flow packing at emit time.
+- Declared `cols`/`rows` imply flow packing at emit time. They place children, so a container with no child elements ignores them.
+- `cols`, `rows` and `areas` belong to the container that states them. They do not cascade: a `style` rule cannot state one, and one node states each at most once.
+- An area row may not hold more names than the container declares columns.
 
 ## XML and KDL
 
@@ -126,9 +128,7 @@ Rules:
   <plot x="1" y="1" w="5" h="5" pack="scatter" seed="13">
     <boulder /><boulder /><boulder />
   </plot>
-  <grid>
-    <cols v="fixed 4 auto" />
-    <rows v="fixed 3" />
+  <grid cols="fixed 4 auto" rows="fixed 3">
     <plot x="0" y="0" w="4" h="3">
       <fill cell="grass" />
       <border cell="wall" />
@@ -143,9 +143,7 @@ Rules:
 map 36 20 {
     plot x=1 y=1 w=5 h=5 pack=scatter seed=13 { boulder; boulder; boulder }
 
-    grid {
-        cols fixed 4 auto
-        rows fixed 3
+    grid cols="fixed 4 auto" rows="fixed 3" {
         plot x=0 y=0 w=4 h=3 { fill grass; border wall }
     }
 }
@@ -174,9 +172,9 @@ frame w=8 h=4 x=3 y=3 {
 }
 ```
 
-`element` also takes an intrinsic size: `element thicket w=2 h=2 { fill dirt }`. The declared `w=`/`h=` must agree with the span the body places. A style size that disagrees fails with the element name and both sizes.
+`element` also takes an intrinsic size: `element thicket w=2 h=2 { fill dirt }`, or the same two numbers positionally: `element thicket 2 2 { fill dirt }`. A third value fails. The declared extent must agree with the span the body places. A style size that disagrees fails with the element name and both sizes.
 
-A template name may not collide with a surface element.
+A template name may not collide with a surface element, and may not be a name the vocabulary owns: `map`, `layer`, `element`, `style`, `repeat`, `cols`, `rows`, `areas`, or one of the six statement kinds.
 
 `style` declares a reusable rule by node name:
 
