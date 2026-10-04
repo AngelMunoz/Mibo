@@ -5,18 +5,15 @@ categoryindex: 8
 index: 5
 ---
 
-# Layers in authored maps
+# Layers
 
-A document can declare layers. A layer is one grid: you author the ground,
-the decor, and the traffic in one text file, and the build hands back one
-`CellGrid2D<'T>` per layer, bottom first.
+A layer is one grid. Author the ground, the decor, and the traffic in one document, or build a stamp array in F#. The build returns one `CellGrid2D<'T>` per layer, bottom first.
 
-What a layer means at draw time — collision, offset, opacity, parallax —
-is game data. The framework hands over grids in order.
+What a layer means at draw time (collision, offset, opacity, parallax) is game data. The framework returns grids in order.
 
-## The syntax
+## Syntax
 
-KDL spells a layer as a node whose first argument is its name:
+KDL: a layer is a node whose first argument is its name.
 
 ```kdl
 map 40 24 {
@@ -33,8 +30,7 @@ map 40 24 {
 }
 ```
 
-XML names the layer with the `name` property and carries the scalars as
-attributes:
+XML names the layer with the `name` property and carries the scalars as attributes.
 
 ```xml
 <map w="40" h="24">
@@ -58,49 +54,24 @@ attributes:
 
 Both documents build the same layers with the same cells.
 
-## The rules
+## Rules
 
-1. `layer` is legal only as a direct child of `map`. Inside a plot, an
-   element, or another layer it fails with its position.
-2. A layer node carries exactly one name: a word argument in KDL, the
-   `name` property in XML. Any other argument or property fails.
-3. Layer names are words and unique in the document. A duplicate fails at
-   the position of the second node.
-4. A layer with no statements and no children fails. `element` and
-   `style` declarations do not count as content — they are leaves the
-   collectors read first, so on their own they leave the layer painting
-   nothing.
-5. Paint written outside a layer — the map's bare statements and its
-   non-layer children — forms an implicit bottom layer named `main`,
-   wherever in the file that paint sits.
-6. Stated layers follow `main` in document order of first appearance.
-   Order is draw order.
-7. Every layer spans the full map. A layer is not a sub-rectangle: its
-   stamp is stretched over the whole grid, so a layer whose statements
-   cover one band still paints that band at its own cells.
-8. One surface per document: every layer shares the cell type, the words,
-   the kernels, and the element library.
-9. Inside one layer, paint order resolves conflicts as it does today: the
-   body first, children after, later children over earlier ones. Between
-   layers nothing overwrites, because each layer paints its own grid.
-10. Every element of a layer reports its rectangle under its own name
-    through the tag channel, as it does in a document without layers.
-    Each layer owns its landmarks registry, so an element name is unique
-    per layer and may repeat across layers. The layer container itself
-    reports nothing: its rectangle is the whole map, so a region query
-    would answer "the whole map" for every cell no element covers. The
-    layer reaches the caller through `BuiltLayer.Name` instead.
-11. A document without `layer` nodes resolves to exactly one layer,
-    `main`, and builds exactly as it did before.
-12. A document that resolves to one layer — a single `layer` node with no
-    bare paint, or no layer node at all — builds through `DocFlow.build`
-    and `DocFlow.buildXml`. Two or more layers fail the build there, and
-    name the layers and the plural entry point.
+1. `layer` is legal only as a direct child of `map`. Elsewhere it fails with its position.
+2. A layer carries exactly one name: a word argument in KDL, the `name` property in XML. Any other argument or property fails.
+3. Layer names are unique. A duplicate fails at the second node.
+4. An empty layer fails. `element` and `style` declarations do not count as content.
+5. Paint outside a layer — the map body and its non-layer children — forms an implicit bottom layer named `main`.
+6. Stated layers follow `main` in document order of first appearance. Order is draw order.
+7. Every layer spans the full map. A layer's stamp stretches over the whole grid, so a layer whose statements cover one band still paints that band at its own cells.
+8. One surface per document: every layer shares the cell type, the words, the kernels, and the elements.
+9. Inside one layer, paint order resolves conflicts: the body first, children after, later children over earlier ones. Between layers nothing overwrites; each layer paints its own grid.
+10. Every element reports its rectangle through the tag channel. Each layer owns its landmarks registry, so an element name is unique per layer and may repeat across layers. The layer container reports nothing; read `BuiltLayer.Name` instead.
+11. A document without layer nodes resolves to one layer named `main`, and builds as before.
+12. A one-layer document builds through `DocFlow.build` and `DocFlow.buildXml`. Two or more layers fail there and name the plural entry point.
 
-## Building a layer stack
+## Building a stack
 
-`DocFlow.buildLayers` (KDL) and `DocFlow.buildLayersXml` (XML) parse,
-resolve, emit, and paint every layer, in order:
+`DocFlow.buildLayers` (KDL) and `DocFlow.buildLayersXml` (XML) parse, resolve, emit, and paint every layer.
 
 ```fsharp
 match DocFlow.buildLayers (surface, src) with
@@ -121,21 +92,15 @@ type BuiltLayer<'T> = {
 }
 ```
 
-A document without layers returns one entry named `main`, so one code
-path handles both shapes. `buildLayers` scans every painted layer into its
-`Occupancy`; a layer that breaks a span rule fails the whole build with the
-layer's name. See [Instances and Occupancy](instances.html).
+A document without layers returns one entry named `main`, so one code path handles both shapes. `buildLayers` scans every painted layer into its `Occupancy`. A layer that breaks a span rule fails the build with the layer's name. See [Instances and Occupancy](instances.html).
 
-`DocFlow.emitLayers` stops before the paint and hands back the layer
-stamps, for a caller that owns its own grids — a viewer that keeps the
-grids it already allocated, or a probe that compares two syntaxes:
+`DocFlow.emitLayers` stops before the paint and returns the layer stamps, for a caller that owns its grids:
 
 ```fsharp
 val emitLayers : Doc.Item<'T> -> struct (string * Stamp<'T>)[]
 ```
 
-In F#, the same stack builds from stamps you wrote yourself. You create
-the grids; `Flow.runLayers` paints stamp i into grid i, bottom first:
+In F#, build the same stack from stamps you wrote. You create the grids. `Flow.runLayers` paints stamp i into grid i, bottom first.
 
 ```fsharp
 open Mibo.Layout
@@ -150,23 +115,15 @@ let struct (groundGrid, groundMarks) = layers[0]
 let struct (decorGrid, decorMarks) = layers[1]
 ```
 
-`Flow.runLayers` throws before it paints anything when the two arrays
-differ in length, when the grids differ in width or height, or when a
-stamp asks for `Expand`. Each layer gets its own landmarks registry, so
-an element name may repeat across layers.
+`Flow.runLayers` throws before it paints when the two arrays differ in length, when the grids differ in width or height, or when a stamp asks for `Expand`. Each layer gets its own landmarks registry.
 
-`Flow.buildLayers` is `Flow.runLayers` plus `Landmarks.scanTiles` per
-layer: every layer derives its own per-cell tag bit grids.
+`Flow.buildLayers` is `Flow.runLayers` plus `Landmarks.scanTiles` per layer.
 
-Hex grids work unchanged: create them with `CellGrid2D.createHex` and run
-the same stamps. Painting is cell-space, so only world positions and
-spatial queries see the geometry.
+Hex grids work unchanged: create them with `CellGrid2D.createHex` and run the same stamps. Painting is cell-space; only world positions and spatial queries see the geometry.
 
 ## Spatial queries across layers
 
-Every blocking decision in `Spatial2D` enters through a predicate you
-pass, and the grid argument is read for its bounds only. Layers compose
-in the predicate:
+Every blocking decision in `Spatial2D` enters through a predicate. The grid argument is read for its bounds only. Compose the layers in the predicate.
 
 ```fsharp
 let blocked (x: int) (y: int) =
@@ -186,9 +143,7 @@ Spatial2D.findPath
     layers[0].Grid
 ```
 
-When the predicate is read per cell rather than per query — A* and flood
-fill visit each cell many times — fold the stack into one occupancy array
-at load:
+When the predicate is read per cell (A* and flood fill visit each cell many times), fold the stack into one array at load.
 
 ```fsharp
 let occupancy = Array.zeroCreate (width * height)
@@ -204,59 +159,26 @@ for layer in layers do
 let passable x y = not occupancy[x + y * width]
 ```
 
-The fold runs once, at load. A walkability rule that only some layers
-state — "decor never blocks", "the top layer is a trigger volume" — is
-the predicate, not the storage.
+The fold runs once, at load. A rule that only some layers state ("decor never blocks", "the top layer is a trigger volume") belongs in the predicate.
 
-Landmarks compose the same way: `Flow.isTag` and `Flow.tryTagGrid` read
-one layer's registry, so a rule expressed as a tag answers per layer, and
-`Array.exists` over the layers answers across them.
+Landmarks compose the same way: `Flow.isTag` and `Flow.tryTagGrid` read one layer's registry. `Array.exists` over the layers answers across them.
 
-## Consumption patterns
+## Draw one grid per layer
 
-**Draw one grid per layer.** Keep the `BuiltLayer[]` and issue one
-`CellGrid2D.iterVisible` per layer, each at its own `RenderLayer`; the
-render buffer's deferred sort puts them in order, and an empty cell in an
-upper grid draws nothing, so the layer under it shows through. The Defli
-sample is the per-layer drawer: `Defli/Raylib/MapView.fs` walks the
-terrain grid, then the road grid, then the decorations, one pass each.
+Keep the `BuiltLayer[]` and issue one `CellGrid2D.iterVisible` per layer, each at its own `RenderLayer`. The buffer sorts the layers. An empty cell in an upper grid draws nothing, so the layer under it shows through.
 
-The Platformer sample is the other shape: its view draws the terrain
-layer plus the entity rects (`Platformer/Raylib/View.fs`), not every
-layer, because its layers differ in kind rather than in depth. Both
-shapes consume the same array.
+- The Defli sample draws one pass per layer: `Defli/Raylib/MapView.fs` walks the terrain grid, then the road grid, then the decorations.
+- The Platformer sample draws the terrain layer plus the entity rects (`Platformer/Raylib/View.fs`), because its layers differ in kind rather than in depth.
 
-**Fold the stack into one composite cell at load.** When the simulation
-wants one value per cell — a platformer's physics tile, a tower-defense
-buildability flag — project what the document authored into a single
-structure once, and let the game read that. The Defli sample's
-`splitLayers` (`Defli/Shared/State/Systems/Map.fs`) projects the authored
-grid into its `LayeredMap` at load. The Platformer sample keeps one
-`Tile` per cell and states which layer a tile belongs to as a plain
-function, `tileLayer` (`Platformer/Shared/Types.fs`).
+Both shapes consume the same array.
 
-A block map needs one more step: a cell holds one column, so the topmost
-layer that painted it is the column that stands there. The LiveMap sample
-lifts instead — every layer above the ground rises by the height the
-layers below it reach at that cell, so a decoration stands on the terrain
-and the terrain stays whole underneath — and draws the flat map one grid
-per layer. `Stack.feet` derives that lift for the whole stack, and
-[Instances and Occupancy](instances.html) covers one instance stretched
-over several cells of a layer, with the occupancy that answers which
-instance owns each cell.
+When the simulation wants one value per cell (a physics tile, a buildability flag), project the authored grids into one structure at load. The Defli sample's `splitLayers` (`Defli/Shared/State/Systems/Map.fs`) projects into its `LayeredMap`. The Platformer sample keeps one `Tile` per cell and states the layer with `tileLayer` (`Platformer/Shared/Types.fs`).
 
-Neither pattern is the framework's business. The framework stops at
-handing over the grids.
+A block map needs one more step: a cell holds one column, so the topmost layer that painted it is the column that stands there. The LiveMap sample lifts instead: every layer above the ground rises by the height the layers below reach at that cell. `Stack.feet` derives that lift for the whole stack. [Instances and Occupancy](instances.html) covers one instance stretched over several cells of a layer.
 
-## What layers are not
+## Limits
 
-- **Not a cross-layer read.** An upper layer cannot ask what the lower
-  one painted. `Flow.runLayers` owns the paint order, so an upper layer
-  can close over painted lower grids later, if a real level needs it.
-- **Not one element painting several layers.** One placement paints one
-  layer today.
-- **Not per-layer surfaces or cell types.** Every layer of a document
-  shares the cell type. Two cell types are two documents, composed in
-  game code.
-- **Not a role, an opacity, or a parallax factor.** Those are draw-time
-  game data. A layer is an array position.
+- An upper layer cannot read what a lower one painted. `Flow.runLayers` owns the paint order, so an upper layer can close over painted lower grids later.
+- One placement paints one layer.
+- Every layer shares the cell type. Two cell types are two documents, composed in game code.
+- A layer is an array position. Roles, opacity, and parallax are draw-time game data.

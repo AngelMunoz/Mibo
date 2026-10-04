@@ -5,37 +5,20 @@ categoryindex: 8
 index: 4
 ---
 
-# Markup: authored level documents
+# Authored Maps
 
-Flow authors levels as F# values. **Mibo.Markup** adds a text front-end
-to the same model: level documents you can edit while the game runs,
-keep in version control, and hand to a level designer who does not read
-F#. Build-time only — a document parses and lays out once, through the
-same `Flow.run` your code uses, and the game never sees the text again.
+Mibo.Markup adds a text front-end to Flow: level documents you can edit while the game runs, keep in version control, and hand to a level designer who does not read F#. A document parses and lays out once. The game never sees the text.
 
-Two rules keep the format honest:
+Two rules:
 
-1. **Content and layout are two concerns.** A node's body paints its own
-   box in local coordinates; layout lives in node properties (`x=`, `y=`,
-   `w=`, `h=`, `pack=`, ...). Layout edits touch properties only.
-2. **The engine owns statements; the game owns vocabulary.** Every
-   statement (`fill`, `set`, `generate`, ...) means the same thing in
-   every game. Cell words, kernels, and element libraries are the
-   game's say — a document stays portable at the statement level.
+1. **Content and layout are separate.** A node's body paints its own box in local coordinates. Layout lives in node properties (`x=`, `y=`, `w=`, `h=`, `pack=`, ...). Layout edits touch properties only.
+2. **The engine owns statements; the game owns vocabulary.** Every statement (`fill`, `set`, `generate`, ...) means the same in every game. Cell words, kernels, and elements are the game's.
 
-## The node tree is the contract
+## The node tree
 
-Every front-end produces the same `Node` tree: a kind, positional args,
-named properties, and children. The resolver (`Doc.resolve`) never sees
-the text format. The two front-ends differ in one channel: KDL spells
-scalars as positional arguments (`map 36 20`), XML spells them as
-attributes (`map w="36" h="20"`), and the resolver reads every scalar by
-name so both resolve identically. A document holds exactly one map:
-a stray root node or a second map fails the build instead of being
-dropped. The map's contents can be split into layers, one grid each —
-see [Layers in authored maps](layers.html). The map takes its two
-dimensions from either channel, or one of each — `map 36 20`,
-`map w="36" h="20"`, and `map 36 h="20"` all read 36 across and 20 down:
+Every front-end produces the same `Node` tree: a kind, positional args, named properties, and children. `Doc.resolve` reads the tree, not the text. KDL spells scalars as positional arguments; XML spells them as attributes.
+
+A document holds exactly one map. A stray root node or a second map fails the build. Layers split the map; see [Layers](layers.html). The map takes its dimensions from either channel, or one of each.
 
 ```fsharp
 open Mibo.Markup
@@ -45,19 +28,11 @@ match Kdl.parse src with
 | Ok roots -> ...
 ```
 
-KDL documents carry node positions, so resolution errors point at the
-authoring line. XML does not track node positions (the BCL line-info
-surface is not reachable from F# without fragile reference tricks), so
-XML resolution errors name the element; XML parse errors carry the
-parser's own line and position.
+KDL documents carry node positions, so errors point at the authoring line. XML does not track positions; XML resolution errors name the element, and XML parse errors carry the parser's line and position.
 
-## The XML front-end
+## XML
 
-XML the way XML means it: elements are nodes and children, attributes
-are the scalar channel. Comments and whitespace are free, and the BCL
-parser does all the parsing. Text is not markup: a non-whitespace text
-node inside an element fails the parse — CDATA counts as text and fails
-the same way — so a forgotten statement never disappears silently:
+Elements are nodes and children. Attributes are the scalar channel. Comments and whitespace are free.
 
 ```xml
 <map w="36" h="20">
@@ -69,22 +44,11 @@ the same way — so a forgotten statement never disappears silently:
 </map>
 ```
 
-An attribute value types as int, then finite float, then word (`x="1"`
-is a number, `cell="grass"` is a word, `f="NaN"` stays a word — the
-resolver never computes with non-finite floats). An `element`
-definition names itself with the `name` attribute.
+An attribute value types as int, then finite float, then word. `x="1"` is a number, `cell="grass"` is a word, `f="NaN"` stays a word. An `element` definition names itself with the `name` attribute. A non-whitespace text node fails the parse, so a forgotten statement never disappears.
 
-## The KDL front-end
+## KDL
 
-`Kdl.parse` reads KDL 2.0 (via KdlSharp — the package's only external
-dependency, confined to this one file). Bare values are positional
-args, `name=value` pairs are properties, `/-` comments out a whole
-node. Two restrictions the parser enforces: `#null`, `#inf` and `#nan`
-values fail the parse, and `/-` works before whole nodes only. Node
-positions come from the reader's own line and column — no text
-scanning — so resolution errors point at the authoring line even when
-a property spells a later node's kind or a comment spells a kind. An
-integer past the int32 range becomes a decimal in both front-ends:
+`Kdl.parse` reads KDL 2.0. Bare values are positional args. `name=value` pairs are properties. `/-` comments out a whole node.
 
 ```kdl
 map 36 20 {
@@ -93,20 +57,13 @@ map 36 20 {
 }
 ```
 
-Both front-ends resolve the same document to the same level — the
-resolver reads every scalar by name, so KDL's positional args and XML's
-attributes land identically, and the emitter's tests build the same
-document in both syntaxes and compare the grids cell for cell. KDL's
-typed literals (hex, underscores, quoted numbers) have no XML
-equivalent; XML attributes type by content. Pick the syntax your team
-prefers; a document can migrate between them without touching the game.
+`#null`, `#inf`, and `#nan` fail the parse. `/-` works before whole nodes only. An integer past the int32 range becomes a decimal in both front-ends. KDL typed literals (hex, underscores, quoted numbers) have no XML equivalent.
+
+Both front-ends resolve the same document to the same level. The tests build one document in both syntaxes and compare the grids cell for cell.
 
 ## The resolver
 
-`Doc.resolve` turns a `Node` tree into an `Item` tree: templates expand,
-words resolve against the game's surface, and layout properties merge
-through the style cascade — solver defaults, then document `style name`
-rules in order, then inline properties:
+`Doc.resolve` turns a `Node` tree into an `Item` tree. Templates expand. Words resolve against the game's surface. Layout properties merge through the style cascade: solver defaults, then document `style name` rules in order, then inline properties.
 
 ```fsharp
 match Kdl.parse src with
@@ -117,17 +74,9 @@ match Kdl.parse src with
     | Ok items -> ...                         // the Item tree, ready to emit
 ```
 
-**The surface is the game's whole say.** Cell *words* (`fill grass`),
-per-cell *kernels* (`generate forest`), and the game's *element library*
-(`grove`, declared once in F# or as an `element` template in the
-document) — three frozen tables, built once at startup, read per build.
-A document stays portable at the statement level; only the words differ
-per game. Two container kinds exist beside the game's own elements:
-`plot` (a plain container) and `grid` (a container that carries the
-`cols`/`rows`/`areas` template).
+The surface holds the game's words, kernels, and elements. Build it once. A word names one cell value. A kernel is a per-cell rule, used by `generate`. An element is a named body of statements with an optional size, declared in F# or as an `element` template in the document. Two container kinds exist beside the game's elements: `plot` (a plain container) and `grid` (a container with the `cols`/`rows`/`areas` template).
 
-The surface is a record, and every field is required. The complete
-declaration for a game whose cells carry a span:
+The surface is a record, and every field is required. A complete declaration for a game whose cells carry a span:
 
 ```fsharp
 open System.Collections.Frozen
@@ -183,46 +132,19 @@ let surface: Doc.Surface<Tile> = {
 }
 ```
 
-`Span` and `WithSpan` are required by the record. `ValueNone` on both keeps
-the map exactly as it was before spans existed.
+`Span` and `WithSpan` are required by the record. `ValueNone` on both keeps the map as it was before spans existed.
 
-With those two fields, `set` sizes one instance — `set 3 9 slab spanX=16 spanZ=6`
-in KDL, `spanX="16" spanZ="6"` in XML — while `fill`, `fillRect`, `border`,
-and `rect` refuse a word that spans more than one cell. The build then reports
-each layer's occupancy beside its grid, so a query answers with the instance
-that owns a cell. [Instances and Occupancy](instances.html) states the
-vocabulary and the rules; [3D from 2D](three-d.html) walks a game through
-consuming it.
+With both fields, `set` sizes one instance: `set 3 9 slab spanX=16 spanZ=6` in KDL, `spanX="16" spanZ="6"` in XML. `fill`, `fillRect`, `border`, and `rect` refuse a spanning word. The build reports each layer's occupancy, so a query answers with the instance that owns a cell. See [Instances and Occupancy](instances.html) and [3D from 2D](three-d.html).
 
-**Paint is data.** A body resolves to `Op` values — `Fill`, `FillRect`,
-`Set`, `Border`, `Rect`, `Generate` — interpreted at render time through
-the framework's `Layout` ops. The union is closed by design: statements
-mean the same thing in every game; games extend through elements and
-words, not new cases.
+Paint is data. A body resolves to `Op` values: `Fill`, `FillRect`, `Set`, `Border`, `Rect`, `Generate`. The interpreter runs them at render time through the `Layout` ops. The union is closed. Games extend through elements and words, not new cases.
 
-A `style` rule names itself with a word argument in KDL (`style thicket w=6 h=5`) and with the `name` property in XML (`<style name="thicket" w="6" h="5" />`). The name is the rule's key, not a style: it is read first and never applied as a property.
+A `style` rule names itself with a word argument in KDL (`style thicket w=6 h=5`) and with the `name` property in XML (`<style name="thicket" w="6" h="5" />`). The name is the rule's key, not a style.
 
-**Styles carry layout only.** `w=`/`h=` size, `x=`/`y=` exact placement
-(stack pack only — a flow or scatter child with `x=`/`y=` fails the
-build instead of silently dropping the offsets, and negative values
-clamp to zero, the framework's own `Flow.at` rule), `hplace=`/`vplace=`/
-`place=` alignment, `pack=` (stack, flow, scatter), `pad=` (negative
-values clamp to zero), `gapx=`/`gapy=` (the Flow grid takes one gap
-today, so the two must match), `seed=`, and flow placement (`area=`,
-`col=`, `row=`, `colspan=`, `rowspan=` — col, row, and spans below one
-fail the build). Declared `cols`/`rows` (ratios, `fixed n`, `auto`)
-imply flow packing at emit time — the emitter derives the pack from the
-declared tracks.
+Styles carry layout only. `w=`/`h=` size. `x=`/`y=` place (stack pack only; a flow or scatter child with `x=`/`y=` fails the build, and negative values clamp to zero). `hplace=`/`vplace=`/`place=` align. `pack=` is stack, flow, or scatter. `pad=` clamps at zero. `gapx=`/`gapy=` must match; the Flow grid takes one gap. `seed=` sets a seed. Flow placement takes `area=`, `col=`, `row=`, `colspan=`, and `rowspan=`; col, row, and spans below one fail. Declared `cols`/`rows` (ratios, `fixed n`, `auto`) imply flow packing.
 
 ## The emitter
 
-`DocFlow.build` (KDL) and `DocFlow.buildXml` (XML) are the whole
-pipeline in one call: parse, resolve, emit to Flow stamps, one
-`Flow.run`. Every layout channel rides the framework's own primitives —
-exact placement is `Flow.at`, stack alignment is `Dock` flags, flow
-packing is `Flow.grid` with named areas and explicit slots, `auto`
-tracks size from the children's footprints inside the grid, and scatter
-is `Flow.scatter`'s seeded rule:
+`DocFlow.build` (KDL) and `DocFlow.buildXml` (XML) run the whole pipeline: parse, resolve, emit to Flow stamps, one `Flow.run`. Every layout channel uses the framework's primitives: exact placement is `Flow.at`, stack alignment is `Dock` flags, flow packing is `Flow.grid` with areas and slots, `auto` tracks size from the children's footprints, and scatter is `Flow.scatter`.
 
 ```fsharp
 match DocFlow.build (surface, src) with        // or DocFlow.buildXml
@@ -230,33 +152,15 @@ match DocFlow.build (surface, src) with        // or DocFlow.buildXml
 | Error e -> printfn "%s" e
 ```
 
-A document that declares layers builds through
-`DocFlow.buildLayers`/`DocFlow.buildLayersXml`, which return one grid per
-layer. `build` and `buildXml` keep their signatures: a document that
-resolves to two or more layers fails naming them, instead of silently
-painting one. See [Layers in authored maps](layers.html).
+A document that declares layers builds through `DocFlow.buildLayers`/`DocFlow.buildLayersXml`, which return one grid per layer. `build` and `buildXml` keep their signatures: a document that resolves to two or more layers fails and names them. See [Layers](layers.html).
 
-The golden tests hand-lay each layout channel with the raw `Layout` ops
-and compare cell for cell — the emitter is checked against the
-framework's own painting, not against itself — and the same document
-built in KDL and in XML produces the identical grid. Parse and
-resolution errors carry their document positions (KDL); emitter-stage
-failures name the container, the offending child, and the channel (a
-gap mismatch, a bad slot, an unknown area, a mixed pack).
+Parse and resolution errors carry document positions (KDL). Emitter failures name the container, the child, and the channel (a gap mismatch, a bad slot, an unknown area, a mixed pack).
 
-## Landmarks: the document's structure
+## Landmarks
 
-Every element of the document reports its resolved rectangle through the
-tag channel, under its own name — `plaza` twice is two rectangles, one
-per use. The anonymous `plot` container reports under `plot`, so a
-document written without named elements still answers "what painted this
-cell". Nothing reports under `map`: its rectangle is the whole grid.
+Every element reports its rectangle through the tag channel, under its own name. `plaza` twice is two rectangles. The anonymous `plot` container reports under `plot`, so a document without named elements still answers what painted a cell. Nothing reports under `map`; its rectangle is the whole grid.
 
-`DocFlow.build` returns the grid alone. A caller that needs the
-structure — a hover that names the region under the cursor, a walkability
-walk over a tagged area, spawn points derived from the document — runs
-the same steps itself and keeps the landmarks. Each step already returns
-a `Result` or a `ValueOption`, so the pipeline binds instead of nesting:
+`DocFlow.build` returns the grid alone. To keep the landmarks, run the steps yourself.
 
 ```fsharp
 // Parse, resolve, and paint a document, keeping both halves of what
@@ -283,8 +187,6 @@ let buildWithLandmarks (src: string) =
         grid |> Flow.run (DocFlow.emit root))
 ```
 
-The landmarks are what the queries read:
-
 ```fsharp
 match buildWithLandmarks src with
 | Ok struct (_, marks) ->
@@ -293,21 +195,8 @@ match buildWithLandmarks src with
 | Error e -> printfn "%s" e
 ```
 
-Element names ride the tag channel rather than the named-stamp channel
-because one document may use the same element name many times, and the
-named channel requires unique names. Each name carries a per-cell bit
-grid, so a hover or a walk query is one dictionary lookup and one array
-read.
-The registry allocates one bit grid per name per build — build-time
-memory, released with the build — so a document with thousands of
-elements is a memory decision, not a correctness one.
+Element names ride the tag channel because a document may use one name many times. The registry allocates one bit grid per name per build. A document with thousands of elements is a memory decision, not a correctness one.
 
 ## Live reload
 
-The point of authored text is editing while the game runs. The loop is
-yours to own (watching APIs differ per platform), and it is small: watch
-the document, debounce ~250 ms so the editor's several save events and
-mid-write locks settle, re-run `DocFlow.build`, and swap the level on
-success — on failure, show the error and keep the last good
-level. Error builds nothing, so a broken document never half-paints a
-running game.
+Watch the document, debounce about 250 ms, re-run `DocFlow.build`, and swap the level on success. On failure, show the error and keep the last good level. Error builds nothing, so a broken document never half-paints a running game.

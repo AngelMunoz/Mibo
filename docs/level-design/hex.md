@@ -7,35 +7,26 @@ index: 8
 
 # Hex Grids
 
-Hex grids trade the simplicity of rectangles for **equal-distance neighbors**
-and more natural-looking terrain. If your game needs 6-directional movement,
-strategy-map aesthetics, or organic-looking levels, hexes are the right tool.
+Hex grids give six equal-distance neighbors per cell. Hexes are a storage configuration: `CellGrid2D.createHex` builds a `CellGrid2D` with hex geometry, the same grid type as squares.
 
-**Hex is a storage configuration, not a separate API.** Hexes live in
-`CellGrid2D` with hex geometry (`CellGrid2D.createHex`), the same grid type
-as squares. Author hex maps with [Code-first maps](code-first.html) — zones,
-docks, and landmarks work identically; geometry affects world positions and
-spatial queries only. The `HexGrid` and `HexLayout` modules are retired; the
-[archive](../v5/legacy-stamps/hex-layout-2d.html) keeps their reference.
+Author hex maps with the [Flow DSL](code-first.html). Zones, docks, and landmarks work unchanged. Geometry affects world positions and spatial queries. The `HexGrid` and `HexLayout` modules are retired; the [archive](../v5/legacy-stamps/hex-layout-2d.html) keeps their reference.
 
-## When to use hex vs rect
+## When to use hex
 
-| Use Case | Rect Grid | Hex Grid |
+| Use case | Rect grid | Hex grid |
 |----------|-----------|----------|
-| Platformers, top-down RPGs | ✅ Natural fit | ❌ Awkward edges |
-| Strategy / tactics games | ❌ Diagonal advantage | ✅ Equal neighbors |
-| Wargames, board game ports | ❌ Looks wrong | ✅ Authentic |
-| Procedural terrain | ❌ Grid lines show | ✅ Organic feel |
-| 4/8-directional movement | ✅ Built-in | ❌ Needs adaptation |
-| 6-directional movement | ❌ Impossible | ✅ Natural |
+| Platformers, top-down RPGs | Natural fit | Awkward edges |
+| Strategy / tactics games | Diagonal advantage | Equal neighbors |
+| Wargames, board game ports | Looks wrong | Authentic |
+| Procedural terrain | Grid lines show | Organic feel |
+| 4/8-directional movement | Built-in | Needs adaptation |
+| 6-directional movement | Impossible | Natural |
 
-Hex grids are harder to align with screen edges and rectangular sprites.
-If your game is tile-based with axis-aligned art, stay with rect. If
-adjacency or aesthetics matter more, hex wins.
+Hex grids are harder to align with screen edges and rectangular sprites. Stay with rect for axis-aligned tile art. Use hex when adjacency matters.
 
-## Orientation: pointy vs flat top
+## Orientation
 
-Hexes come in two rotations. The choice affects both visuals and coordinate math:
+Hexes come in two rotations. The choice affects visuals and coordinate math:
 
 ```
     Pointy Top              Flat Top
@@ -47,8 +38,8 @@ Hexes come in two rotations. The choice affects both visuals and coordinate math
       \/                    ------
 ```
 
-- **Pointy top**: Strategy maps, tactical RPGs. Rows align horizontally.
-- **Flat top**: Isometric-style games, board game adaptations. Columns align vertically.
+- **Pointy top**: strategy maps, tactical RPGs. Rows align horizontally.
+- **Flat top**: isometric-style games, board game ports. Columns align vertically.
 
 ```fsharp
 open Mibo.Layout
@@ -72,18 +63,13 @@ let board = CellGrid2D.createHex {
 }
 ```
 
-`Radius` is the hex radius (center to corner). `CellSize` stores the hex's
-bounding box. `CellGrid2D.hexOrientation` and `CellGrid2D.hexRadius` read the
-hex parameters back.
+`Radius` is the hex radius (center to corner). `CellSize` stores the hex's bounding box. `CellGrid2D.hexOrientation` and `CellGrid2D.hexRadius` read the parameters back.
 
-## Coordinate system
+## Coordinates
 
-Hex grids use **offset coordinates**, a standard column/row pair, with a
-visual offset to make hexes tessellate. Odd rows (pointy top) or odd columns
-(flat top) shift by half a hex width. `getWorldPos` applies the offset, so
-you address cells as `(col, row)` and never think about the stagger.
+Hex grids use offset coordinates: a column/row pair with a stagger. Odd rows (pointy top) or odd columns (flat top) shift by half a hex width. `getWorldPos` applies the offset. Address cells as `(col, row)`.
 
-## Basic operations
+## Cells
 
 ```fsharp
 open Mibo.Layout
@@ -122,9 +108,7 @@ grid |> CellGrid2D.iter (fun col row tile ->
 )
 ```
 
-For large maps, process only the cells on screen. `CellGrid2D.iterVisible`
-culls hex grids too. The window is orientation-aware and padded one cell on
-each axis. Bounds are int world coordinates:
+`CellGrid2D.iterVisible` culls hex grids. The window is orientation-aware and padded one cell per axis. Bounds are `int` world coordinates:
 
 ```fsharp
 let screenLeft = cameraX - viewportWidth / 2f
@@ -140,10 +124,7 @@ grid
     )
 ```
 
-## Authoring with Flow
-
-Author hex levels with the [Flow DSL](code-first.html) — the same document
-vocabulary as square grids:
+## Flow authoring
 
 ```fsharp
 let kingdom =
@@ -169,14 +150,11 @@ let struct (grid, marks) =
   |> Flow.run kingdom
 ```
 
-Authored documents (KDL/XML) also build hex maps: the surface, layers, and
-statements are geometry-neutral. Create the grid with `createHex` and run the
-same `DocFlow.build` result through `Flow.run`.
+Authored KDL/XML documents also build hex maps. The surface, layers, and statements are geometry-neutral. Create the grid with `createHex` and run the `DocFlow.build` result through `Flow.run`.
 
 ## Adjacency and pathfinding
 
-Each hex has exactly 6 neighbors. `Hex2DSpatial` owns the hex math and takes
-the unified grid:
+Each hex has six neighbors. `Hex2DSpatial` owns the hex math and takes the unified grid:
 
 ```fsharp
 open Mibo.Layout
@@ -193,8 +171,7 @@ let walkableNeighbors col row grid =
     |> Array.filter (fun (struct (c, r)) -> isWalkable c r grid)
 ```
 
-`Hex2DSpatial.inRange` returns every cell within N steps. Filter it by
-walkability for movement budgets:
+`Hex2DSpatial.inRange` returns every cell within N steps. Filter by walkability for movement budgets:
 
 ```fsharp
 // every walkable cell within 4 steps of the start
@@ -203,20 +180,17 @@ let reachable col row steps grid =
     |> Array.filter (fun (struct (c, r)) -> isWalkable c r grid)
 ```
 
-For rule-driven regions (territory, auras, alarm zones), `floodFill` walks
-neighbors while your predicate holds:
+`floodFill` walks neighbors while a predicate holds. Use it for territory, auras, and alarm zones:
 
 ```fsharp
 let territory = Hex2DSpatial.floodFill col row (fun x y -> isOwned x y) grid
 ```
 
-`findPath`, `spiral`, `ring`, `distance`, and `worldToCell` cover the rest of
-the hex queries; see the API reference.
+`findPath`, `spiral`, `ring`, `distance`, and `worldToCell` cover the rest. See the API reference.
 
 ## Rendering
 
-Render with the same pattern as square grids — one sprite per populated cell,
-culled to the viewport:
+Walk the visible cells and submit one sprite per tile:
 
 ```fsharp
 grid
@@ -235,19 +209,13 @@ grid
         |> ignore)
 ```
 
-`textureFor`, `sourceOf`, `tileLayer`, and `cellWidth`/`cellHeight` are
-your game's values.
+`textureFor`, `sourceOf`, `tileLayer`, and `cellWidth`/`cellHeight` are game values.
 
-For 3D hex maps, draw the grid with `InstancedRenderContext`; the piece
-geometry, the height, and the span rules are unchanged. See
-[3D from 2D](three-d.html).
+For 3D hex maps, draw with `InstancedRenderContext`. The piece geometry, the height, and the span rules are unchanged. See [3D from 2D](three-d.html).
 
 ## Performance
 
-- **Flat array storage**: O(1) cell access, cache-friendly iteration.
-- **Struct voption**: no heap allocation per cell.
-- **Use `iterVisible`**: always cull for gameplay rendering.
-- **Use `generate`**: for procedural content, it is faster than individual `set` calls.
-
-The retired `HexLayout`/`HexGrid` reference lives in the
-[archive](../v5/legacy-stamps/hex-layout-2d.html).
+- Flat array storage: O(1) cell access.
+- Struct voption: no heap allocation per cell.
+- Use `iterVisible` for gameplay rendering.
+- Use `generate` for procedural content.

@@ -7,28 +7,26 @@ index: 3
 
 # The Layout escape hatch
 
-The Layout engine provides a tile-based level design system for 2D games. It lives in `Mibo.Layout`.
+`Layout` is the low-level grid API. Use it for exact index math and manual section surgery. [Code-First Maps](code-first.html) cover the common path; every Flow style is a `Layout` pipeline underneath, and `Stamp.sized` wraps a `Layout` pipeline as a Flow element.
 
-> **Author with [Flow](code-first.html) first.** Flow wraps this engine with the CSS-style authoring DSL — grid template areas, flexbox rows and columns, docks, and landmark queries. The `Layout` pipelines documented here remain fully supported as the pixel-perfect escape hatch: every Flow style is a `Layout` pipeline underneath, and `Stamp.sized` wraps any of these pipelines as a Flow element. Reach for raw `Layout` when you want exact index math and manual section surgery. The `LayeredGrid2D` helper is obsolete — a layered grid is a dictionary of grids, and game code can own the dictionary. The retired helper is kept in the [archive](../v5/legacy-grids/layered-2d.html).
+The `LayeredGrid2D` helper is obsolete: a layered grid is a dictionary of grids you own. The retired helper is in the [archive](../v5/legacy-grids/layered-2d.html).
 
-> **`Vector2` namespace (MonoGame).** The Core layout API (`CellGrid2D`, square or hex) always takes `System.Numerics.Vector2`. MonoGame projects `open Microsoft.Xna.Framework`, so a bare `Vector2(...)` resolves to XNA's vector type and the Core layout calls fail to compile (`FS0193`). Qualify those calls explicitly:
+> **`Vector2` and MonoGame.** The Core layout API always takes `System.Numerics.Vector2`. MonoGame projects that `open Microsoft.Xna.Framework` must qualify those calls:
 > ```fsharp
 > let grid =
 >     CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
 > ```
-> Backend-specific APIs (each backend's `Camera2D.create`/`Camera3D`, `SpriteState`, `TextState`) use that backend's native vector type: raylib uses `System.Numerics`, MonoGame uses `Microsoft.Xna.Framework`, so bare `Vector2(...)` is fine there as long as the matching namespace is open. See [MonoGame type quirks](../monogame-types.html) for the full backend-type reference.
+> See [MonoGame type quirks](../monogame-types.html).
 
-## Core Concepts
+## Concepts
 
-The system is built on three primitives:
+- `CellGrid2D<'T>` stores the cells.
+- `GridSection2D<'T>` is a zero-copy view into the grid. Coordinates are local to the section.
+- A stamp is a function `GridSection2D<'T> -> GridSection2D<'T>`.
 
-- `CellGrid2D<'T>` - Storage for tile data
-- `GridSection2D<'T>` - A cursor/view into the grid for relative positioning
-- Stamps - Functions that transform sections (`GridSection2D<'T> -> GridSection2D<'T>`)
+## The grid
 
-## CellGrid2D - The Storage
-
-A dense 2D array that stores your tile content:
+A dense 2D array. Each cell holds `'T voption`: `ValueSome content` or `ValueNone`.
 
 ```fsharp
 open Mibo.Layout
@@ -37,10 +35,6 @@ open System.Numerics
 // Create a 100x50 grid with 32x32 pixel cells
 let grid = CellGrid2D.create 100 50 (System.Numerics.Vector2(32f, 32f)) System.Numerics.Vector2.Zero
 ```
-
-Each cell holds `'T voption` - either `ValueSome content` or `ValueNone` (empty). This struct-based option type has zero heap allocation per cell.
-
-### Basic Operations
 
 ```fsharp
 // Set a cell
@@ -55,8 +49,6 @@ match CellGrid2D.get 5 3 grid with
 let worldPos = CellGrid2D.getWorldPos 5 3 grid  // System.Numerics.Vector2(160f, 96f)
 ```
 
-### Iteration
-
 ```fsharp
 // Iterate all populated cells
 grid
@@ -64,9 +56,7 @@ grid
     printfn "Tile at (%d, %d)" x y
 )
 
-// Iterate only visible cells (culled to viewport). Pass the viewport bounds as
-// left/top/right/bottom int pixel coordinates. This is critical for performance in
-// large levels, as it avoids processing tiles that aren't on screen.
+// Iterate only visible cells. Bounds are left/top/right/bottom int pixels.
 grid
 |> CellGrid2D.iterVisible
     (int cameraX) (int cameraY)
@@ -77,21 +67,9 @@ grid
     )
 ```
 
-## GridSection2D - The Cursor
+## Sections
 
-A section is a lightweight view into a grid. It provides:
-
-- **Relative coordinates** - (0, 0) is the section's top-left, not the grid's
-- **Bounds clipping** - Drawing outside the section is safely ignored
-- **Zero-copy nesting** - Sub-sections reference the same backing grid
-
-You rarely create sections directly - the `Layout.run` function creates the root section for you.
-
-## Layout DSL - Composing Content
-
-The `Layout` module provides a fluent DSL for placing content. All functions return the section, enabling pipeline composition.
-
-### Basic Usage
+A section is a zero-copy view. `(0, 0)` is the section's origin, not the grid's. Drawing outside the section is ignored. `Layout.run` creates the root section.
 
 ```fsharp
 open Mibo.Layout
@@ -106,10 +84,6 @@ let myGrid =
     )
 ```
 
-### Scoping with Sections
-
-Create sub-sections for relative positioning:
-
 ```fsharp
 section
 |> Layout.section 5 3 (fun inner ->
@@ -117,80 +91,67 @@ section
     inner
     |> Layout.fill 0 0 4 4 FloorTile
 )
-// Returns to parent section, can continue chaining
 |> Layout.section 12 3 (fun inner ->
     inner |> Layout.fill 0 0 4 4 FloorTile
 )
 ```
 
-### Structural Helpers
+## Operations
 
 ```fsharp
-// Padding - shrink section by N cells on all sides
+// Shrink the section by N on all sides
 section |> Layout.padding 2 (fun inner -> ...)
 
-// PaddingEx - explicit padding for each side: left, top, right, bottom
+// Explicit padding per side: left, top, right, bottom
 section |> Layout.paddingEx 1 2 1 2 (fun inner -> ...)
 
-// Center - position a fixed-size block in the center
+// Center a fixed-size block
 section |> Layout.center 4 4 (fun inner -> ...)
 
-// Flow - place stamps horizontally or vertically with spacing
+// Place stamps in a row or column with spacing
 section |> Layout.flowX 5 stamps
 section |> Layout.flowY 5 stamps
+
+// Place, fill, and outline
+Layout.set x y content section
+Layout.fill x y w h content section
+Layout.border x y w h content section
+Layout.rect x y w h borderContent fillContent section
+Layout.corners x y w h content section
+Layout.repeatX x y count content section
+Layout.repeatY x y count content section
+Layout.clear x y w h section
 ```
 
-### Primitives
-
-```fsharp
-Layout.set x y content section         // Single cell
-Layout.fill x y w h content section    // Rectangle
-Layout.border x y w h content section  // Hollow rectangle
-Layout.rect x y w h bContent fContent section // Filled rectangle with border
-Layout.corners x y w h content section // Only the four corners
-Layout.repeatX x y count content section // Horizontal line
-Layout.repeatY x y count content section // Vertical line
-Layout.clear x y w h section           // Clear cells to empty
-```
-
-### Geometry
+## Shapes and patterns
 
 ```fsharp
 Layout.line x1 y1 x2 y2 content section        // Bresenham line
 Layout.circle cx cy radius filled content      // Midpoint circle
 Layout.polygon points filled content           // Arbitrary polygon
-```
 
-### Patterns
-
-```fsharp
 Layout.checker oddContent evenContent section  // checkerboard pattern
-Layout.checkerBorder x y w h odd even section  // Only on perimeter
-Layout.scatter count seed content section      // Random placement
-Layout.scatterBorder x y w h count seed content section // On perimeter
-Layout.scatterLine x1 y1 x2 y2 count seed content section // Along line
-Layout.generate x y w h (fun x y -> ...) section  // Procedural
+Layout.checkerBorder x y w h odd even section  // perimeter checker
+Layout.scatter count seed content section      // random placement
+Layout.scatterBorder x y w h count seed content section // random perimeter
+Layout.scatterLine x1 y1 x2 y2 count seed content section // random line
+Layout.generate x y w h (fun x y -> ...) section  // procedural
 ```
 
-### Iteration / Transformation
-
-In-place operations for modifying existing content:
+## Rewrite existing paint
 
 ```fsharp
-Layout.iter x y w h action section    // Read access to volume
-Layout.map x y w h mapping section    // Transform existing content
-Layout.replace oldContent newContent section  // Find and replace
-Layout.replaceScatter old new prob seed section // Probabilistic replace
-Layout.scatterStamp count seed stamp section  // Place complex components
-Layout.setIfEmpty x y content section  // Conditional set
+Layout.iter x y w h action section    // read access
+Layout.map x y w h mapping section    // transform existing content
+Layout.replace oldContent newContent section  // find and replace
+Layout.replaceScatter old new prob seed section // probabilistic replace
+Layout.scatterStamp count seed stamp section  // place complex components
+Layout.setIfEmpty x y content section  // set only when empty
 ```
 
-## Layered Composition
+## Layers
 
-`LayeredGrid2D` is obsolete — a layered grid is a dictionary of grids, and
-game code can own the dictionary. For multi-layer content (background,
-foreground, decorations), keep a `Dictionary<int, CellGrid2D<'T>>` keyed by
-a layer index (usually representing depth):
+Keep a `Dictionary<int, CellGrid2D<'T>>` keyed by layer index. Create a layer on demand.
 
 ```fsharp
 let layers = Dictionary<int, CellGrid2D<Tile>>()
@@ -219,9 +180,7 @@ layer 1 (fun section ->
 ) |> ignore
 ```
 
-### Rendering Layers
-
-When rendering a layered grid, you don't need to manually sort the layers. Instead, you can map the grid's layer index to Mibo's `RenderLayer` measure. The engine's deferred rendering system will handle the sorting for you:
+Render each layer into the buffer and tag it with its `RenderLayer`. The buffer sorts all commands, so layers draw back to front and interleave with entities and particles.
 
 ```fsharp
 // Render each layer into the buffer
@@ -237,21 +196,13 @@ for KeyValueV(layerIndex, layerGrid) in layers do
     |> CellGrid2D.iterVisible viewLeft viewTop viewRight viewBottom drawTile
 ```
 
-This approach is efficient because Mibo's `RenderBuffer` performs a single, optimized CPU-side sort of all collected draw commands before sending them to the GPU. This ensures your layout layers are drawn in the correct back-to-front order and allows them to interact correctly with other game entities (like players or particles) that are also tagged with `RenderLayer` values.
+Layers are created on demand, so only painted layers consume memory.
 
-Layers are created on-demand, so only layers you've painted into will consume memory.
+Text documents split into layers too ([Layers](layers.html)), and `Flow.runLayers` builds one grid per layer from F# stamps. What you keep afterwards is your choice: an array of grids, the dictionary above, or one grid folded at load.
 
-Storage stays with the game, but authoring has a layer construct of its
-own: a text document splits into layers ([Layers in authored maps](layers.html)),
-and `Flow.runLayers`/`Flow.buildLayers` paint one grid per layer from
-stamps you wrote in F#. What you keep afterwards is still your choice —
-an array of grids, the dictionary above, or one grid folded at load.
+## Stamps
 
-## Creating Your Own Stamps
-
-A **stamp** is a function `GridSection2D<'T> -> GridSection2D<'T>`: it takes a section and returns a modified one. You can create reusable stamps, the way UI frameworks let you define reusable components:
-
-### Simple Stamp
+A stamp is a function `GridSection2D<'T> -> GridSection2D<'T>`. Build reusable pieces with `Layout` calls.
 
 ```fsharp
 /// A treasure chest on a pedestal
@@ -259,32 +210,20 @@ let treasureChest (section: GridSection2D<Tile>) =
     section
     |> Layout.fill 0 1 3 1 PedestalTile   // Base
     |> Layout.set 1 0 ChestTile           // Chest on top
-```
 
-### Parameterized Stamp
-
-```fsharp
 /// A configurable room with walls and floor
 let room width height floor wall (section: GridSection2D<Tile>) =
     section
     |> Layout.fill 0 0 width height floor
     |> Layout.border 0 0 width height wall
-```
 
-### Composing Stamps
-
-Stamps compose with `>>` (function composition):
-
-```fsharp
 let guardPost =
     room 8 6 FloorTile WallTile
     >> Layout.center 2 1 (treasureChest)
     >> Layout.section 6 2 torchStand   // torchStand: your stamp placing a torch prop
 ```
 
-### Building a Component Library
-
-Organize stamps into domain modules:
+Organize stamps into modules.
 
 ```fsharp
 module Dungeon =
@@ -302,8 +241,6 @@ module Dungeon =
             >> Layout.clear 4 2 1 1   // East door
 ```
 
-Use them:
-
 ```fsharp
 level
 |> Layout.run (fun section ->
@@ -314,20 +251,11 @@ level
 )
 ```
 
-### The Stamp Pattern
+Stamps compose with `>>`. Store them, pass them, and build bigger pieces from smaller ones.
 
-Think about stamps like Lego pieces, you can use a few blocks to build a bigger thing.
+## Retired stamps
 
-The key insight: **stamps are functions**. You can store them, pass them around, compose them, and build complex structures from simple pieces.
+The pre-built stamp libraries are retired. Flow styles replace their vocabulary (`Stamp.box` plus `Flow.fill`, `Flow.border`, and friends). The retired pages remain in the archive:
 
-## Domain Modules
-
-> **Obsolete in v6.** The pre-built stamp libraries are retired. Flow
-> styles replace their vocabulary (`Stamp.box` + `Flow.fill` /
-> `Flow.border` and friends). The linked pages remain as pattern
-> references. See [Migrating to Mibo v6](../migration-to-v6.html).
-
-The retired stamp libraries live in the archive:
-
-- **[Platformer](../v5/legacy-stamps/platformer.html)** - Boxes, platforms, ledges, walls, pillars, stairs, slopes, pits
-- **[TopDown](../v5/legacy-stamps/topdown.html)** - Rooms, corridors, wall segments, doorways
+- [Platformer](../v5/legacy-stamps/platformer.html)
+- [TopDown](../v5/legacy-stamps/topdown.html)

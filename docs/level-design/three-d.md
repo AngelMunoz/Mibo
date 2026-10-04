@@ -7,23 +7,17 @@ index: 7
 
 # 3D from 2D
 
-A Mibo 3D map is a 2D footprint plus a height per cell. The footprint is a
-`CellGrid2D`, exactly like a 2D map; the vertical axis stays out of the
-authoring model. This page walks the whole infrastructure: the cell type, the
-surface, the build, the occupancy, the stack, and the instanced draw.
+A 3D map is a 2D footprint plus a height per cell. The footprint is a `CellGrid2D`. The vertical axis stays out of the authoring model. This page covers the cell type, the surface, the build, the occupancy, the stack, and the draw.
 
-An **instance span** stretches one model over several footprint cells, so one
-plate replaces 640 columns and one deck covers 4×4 cells. The rules live in
-[Instances and Occupancy](instances.html).
+An **instance span** stretches one model over several cells. The rules are in [Instances and Occupancy](instances.html).
 
-## The cell type
+## Cell type
 
-The framework reads your cell through projections. Everything else is yours.
-A 3D cell carries these fields:
+The framework reads the cell through projections. A 3D cell carries these fields:
 
 | Field | Purpose | Read by |
 |---|---|---|
-| A model identity, or a `ModelInfo` that carries the authored size | Keys the draw and gives the transform its divisor | `getKey`, `getMeshesAndMaterial`, `getTransform` |
+| A model identity, or a `ModelInfo` with the authored size | Keys the draw and gives the transform its divisor | `getKey`, `getMeshesAndMaterial`, `getTransform` |
 | `Height: float32` | Vertical stretch, in cells | `Stack.feet`, the transform |
 | `Span: InstanceSpan` | Grid-plane occupancy | `Occupancy.scan` |
 | `Lift: float32` | Where the column stands | The transform |
@@ -46,23 +40,17 @@ type BlockCell = {
 }
 ```
 
-The three projections a 3D map needs are one line each:
-
 ```fsharp
 let spanOf (cell: BlockCell) = cell.Span
 let heightOf (cell: BlockCell) = cell.Height
 let withSpan (cell: BlockCell) (span: InstanceSpan) = { cell with Span = span }
 ```
 
-A 2D flat map needs no `Span` and no `Lift`: a sprite covers its cell.
+A 2D flat map needs no `Span` and no `Lift`.
 
-## The surface
+## Surface
 
-A document resolves cell words, kernels, and elements through a
-`Doc.Surface<'T>`. The surface is built once and read per build. The `Span`
-and `WithSpan` fields are required by the record; `ValueNone` means "every
-cell covers one cell" and "a statement cannot size one". See
-[Authored Maps](authored.html) for the complete surface example.
+A document resolves words, kernels, and elements through a `Doc.Surface<'T>`. Build the surface once. `Span` and `WithSpan` are required fields; `ValueNone` means "every cell covers one cell" and "a statement cannot size one". The complete declaration is in [Authored Maps](authored.html).
 
 ```fsharp
 let surface: Doc.Surface<BlockCell> = {
@@ -76,8 +64,7 @@ let surface: Doc.Surface<BlockCell> = {
 
 ## Build
 
-A code-first map builds with `Flow.run`; scan the painted grid into an
-`Occupancy` beside it:
+Code-first: `Flow.run` builds the grid. Scan it into an `Occupancy`.
 
 ```fsharp
 let struct (grid, marks) = Flow.run map myGrid
@@ -87,8 +74,7 @@ let occupancy =
   |> Result.defaultWith failwith
 ```
 
-An authored map builds whole layers in one call. Each `BuiltLayer` carries
-its grid, its landmarks, and its occupancy:
+Authored: build every layer in one call. Each `BuiltLayer` carries its grid, landmarks, and occupancy.
 
 ```fsharp
 match DocFlow.buildLayersXml(surface, source) with
@@ -96,15 +82,11 @@ match DocFlow.buildLayersXml(surface, source) with
 | Error reason -> failwith reason
 ```
 
-`DocFlow.build` and `buildXml` return one grid and no occupancy, so they
-refuse a document that places a spanning word. A document without layers
-builds as one layer named `main`.
+`DocFlow.build` and `buildXml` return one grid and no occupancy. They refuse a document that places a spanning word. A document without layers builds as one layer named `main`.
 
 ## Stack
 
-A layer that draws above another needs the height the layers below reach at
-each cell, or its columns replace them. `Stack.feet` derives that lift for
-the whole stack:
+A layer above another needs the height the layers below reach at each cell. `Stack.feet` derives that lift.
 
 ```fsharp
 let feet = Stack.feet occupancies grids heightOf
@@ -118,14 +100,11 @@ for i in 0 .. grids.Length - 1 do
     grids[i]
 ```
 
-`feet[i]` is the height under layer `i`, flat at `x + y * Width`. Layer 0
-stands on the plane, heights add, and a spanning anchor lifts its whole
-rectangle — so a decoration over a plate lands on the plate.
+`feet[i]` is the height under layer `i`, at `x + y * Width`. Layer 0 stands on the plane. Heights add. A spanning anchor lifts its whole rectangle, so a decoration over a plate lands on the plate.
 
 ## Query
 
-One query serves a hover, a collision test, and a spawn: which instance owns
-this cell.
+One query serves a hover, a collision test, and a spawn: which instance owns a cell.
 
 ```fsharp
 let ownerAt (layer: BuiltLayer<BlockCell>) (x: int) (y: int) =
@@ -135,15 +114,11 @@ let ownerAt (layer: BuiltLayer<BlockCell>) (x: int) (y: int) =
     |> ValueOption.map(fun cell -> struct (at, cell)))
 ```
 
-A covered cell answers with the instance that covers it, not with empty
-ground. `Occupancy.rectOf` gives that instance's rectangle, for an outline.
-`Landmarks` still answers which element of the document painted the cell.
+A covered cell answers with the instance that covers it. `Occupancy.rectOf` gives the instance rectangle. `Landmarks` answers which document element painted the cell.
 
 ## Draw
 
-Persist one context per map and give it a rectangle transform. The transform
-receives the rectangle each instance covers and the anchor's base world
-position, so the model scales over the cells it stands for:
+Create one context per map with a rectangle transform. The transform receives the rectangle and the anchor position. It scales the model over the cells it covers.
 
 ```fsharp
 let context =
@@ -167,13 +142,9 @@ let context =
   )
 ```
 
-`Height` scales the model on Y. `rect.W` and `rect.H` scale it on X and Z, so
-a spanning instance fills its rectangle. `Lift` moves it up. On MonoGame, the
-types are `Microsoft.Xna.Framework.Vector3` and `Matrix`; the shape is the
-same. The plain constructor still takes `Vector3 -> 'T -> Matrix4x4`, and its
-rectangle is the cell itself.
+`Height` scales the model on Y. `rect.W` and `rect.H` scale it on X and Z. `Lift` moves it up. On MonoGame, the types are `Microsoft.Xna.Framework.Vector3` and `Matrix`. The plain constructor takes `Vector3 -> 'T -> Matrix4x4`; its rectangle is the cell.
 
-Draw each layer through its own occupancy:
+Draw each layer through its occupancy:
 
 ```fsharp
 context.ResetFrameBuffers()
@@ -182,9 +153,7 @@ for layer in layers do
   context.RenderInstanced(buffer, layer.Grid, layer.Occupancy)
 ```
 
-For a large world, window it. The window is a world-space box in `int`
-coordinates; the member converts it with `CellGrid2D.visibleRange` and
-enumerates the anchors whose rectangle it meets:
+For a large world, window the draw. The window is a world-space box in `int` coordinates. The member converts it with `CellGrid2D.visibleRange` and visits the anchors whose rectangle it meets.
 
 ```fsharp
 context.RenderWindowInstanced(
@@ -198,29 +167,23 @@ context.RenderWindowInstanced(
 )
 ```
 
-The `Draw` DSL routes to the same members:
-`buffer.renderFootprintInstanced(ctx, grid, occupancy)` and
-`buffer.renderFootprintWindowInstanced(ctx, left, top, right, bottom, grid, occupancy)`,
-each with a `shaderForKey` overload. The per-key grouping, the effect scopes,
-and the pooled buffers live in [GPU Instancing](../graphics3d/instancing.html).
+The `Draw` DSL routes to the same members: `buffer.renderFootprintInstanced(ctx, grid, occupancy)` and `buffer.renderFootprintWindowInstanced(ctx, left, top, right, bottom, grid, occupancy)`. Each has a `shaderForKey` overload. Per-key grouping, effect scopes, and pooled buffers are in [GPU Instancing](../graphics3d/instancing.html).
 
-## Frame order
+## Order
 
 1. Read the source, or build the stamp in code.
 2. Parse, resolve, emit, and paint: one grid per layer.
 3. Scan each layer into an `Occupancy`.
 4. Derive `Stack.feet` when more than one layer draws.
-5. Cache the map. Nothing above runs per frame.
-6. Per frame: reset the context buffers, work out the world window from the
-   camera, and draw each layer through the occupancy form.
-7. Queries run on demand, against the cached occupancy and grid.
+5. Cache the map. Steps 1 to 5 run once.
+6. Per frame: reset the context buffers, compute the world window, draw each layer.
+7. Query on demand against the cached occupancy and grid.
 
-## Where to go next
+## Next
 
-- [Instances and Occupancy](instances.html) — the span vocabulary, the rules,
-  and what fails.
-- [Code-First Maps](code-first.html) — the code-first authoring DSL.
-- [Authored Maps](authored.html) — documents, the surface, and the emitter.
-- [Layers](layers.html) — the document construct the stack builds on.
-- [Hex Grids](hex.html) — the same path on hex geometry.
-- [GPU Instancing](../graphics3d/instancing.html) — the draw path in full.
+- [Instances and Occupancy](instances.html): the span vocabulary and rules.
+- [Code-First Maps](code-first.html): the F# authoring DSL.
+- [Authored Maps](authored.html): documents, the surface, the emitter.
+- [Layers](layers.html): the document stack.
+- [Hex Grids](hex.html): the same path on hex geometry.
+- [GPU Instancing](../graphics3d/instancing.html): the draw path in full.
