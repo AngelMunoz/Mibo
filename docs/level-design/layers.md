@@ -2,7 +2,7 @@
 title: Layers
 category: Level Design
 categoryindex: 8
-index: 5
+index: 6
 ---
 
 # Layers

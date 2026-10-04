@@ -2,7 +2,7 @@
 title: 3D from 2D
 category: Level Design
 categoryindex: 8
-index: 7
+index: 8
 ---
 
 # 3D from 2D

@@ -2,7 +2,7 @@
 title: Code-First Maps
 category: Level Design
 categoryindex: 8
-index: 2
+index: 3
 ---
 
 # Code-First Maps

@@ -2,7 +2,7 @@
 title: Hex Grids
 category: Level Design
 categoryindex: 8
-index: 8
+index: 9
 ---
 
 # Hex Grids

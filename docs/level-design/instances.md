@@ -2,7 +2,7 @@
 title: Instances and Occupancy
 category: Level Design
 categoryindex: 8
-index: 6
+index: 7
 ---
 
 # Instances and Occupancy

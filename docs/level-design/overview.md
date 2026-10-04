@@ -31,6 +31,7 @@ The **domain** is the map data: words, kernels, elements, layers, spans. The **i
 
 | Goal | Page |
 |---|---|
+| Build a map step by step | [Build a Map End to End](end-to-end.html) |
 | Author in F# | [Code-First Maps](code-first.html) |
 | Author in KDL or XML | [Authored Maps](authored.html) |
 | Use raw grid operations | [The Layout Escape Hatch](layout.html) |
@@ -72,6 +73,7 @@ Hex geometry fits strategy and tactics games, wargames, and games with six-direc
 
 ## Guides
 
+- [Build a Map End to End](end-to-end.html): the whole path in order, from the cell type to the draw.
 - [Code-First Maps](code-first.html): the Flow DSL.
 - [Authored Maps](authored.html): KDL and XML documents.
 - [3D from 2D](three-d.html): height, spans, the stack, the instance draw.

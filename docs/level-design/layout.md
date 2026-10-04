@@ -2,7 +2,7 @@
 title: The Layout Escape Hatch
 category: Level Design
 categoryindex: 8
-index: 3
+index: 4
 ---
 
 # The Layout escape hatch

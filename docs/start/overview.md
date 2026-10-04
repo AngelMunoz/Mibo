@@ -37,6 +37,7 @@ holds the signatures.
 
 | Goal | Start at |
 |---|---|
+| Build a map step by step | [Build a Map End to End](../level-design/end-to-end.html) |
 | Author a level in F# | [Code-First Maps](../level-design/code-first.html) |
 | Author a level in KDL or XML | [Authored Maps](../level-design/authored.html) |
 | Build a 2D map | [Code-First Maps](../level-design/code-first.html) |
