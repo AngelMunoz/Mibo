@@ -1,9 +1,12 @@
 ---
 title: Migrating to Mibo v5
-category: Migrating
-categoryindex: 7
 index: 3
 ---
+
+> **⚠ Archived V5-and-below docs.** These pages cover the retired APIs and
+> the earlier releases. They are frozen. The current docs live at the
+> [site root](../../index.html); the V6 map guides start at
+> [Level Design Overview](../../level-design/overview.html).
 
 # Migrating to Mibo v5
 

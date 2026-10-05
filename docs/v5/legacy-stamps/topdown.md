@@ -1,15 +1,18 @@
 ---
 title: Building Top-Down Levels
-category: Level Design
-categoryindex: 8
 index: 5
 ---
+
+> **⚠ Archived V5-and-below docs.** These pages cover the retired APIs and
+> the earlier releases. They are frozen. The current docs live at the
+> [site root](../../index.html); the V6 map guides start at
+> [Level Design Overview](../../level-design/overview.html).
 
 # Building Top-Down Levels
 
 Top-down games (RPGs, roguelikes, dungeon crawlers) are defined by connected spaces: rooms, corridors, and the flow between them. The `TopDown` module provides stamps for designing these efficiently.
 
-> **Obsolete module.** `Mibo.Layout.TopDown` is obsolete — rooms and corridors author as [Flow grid template areas](flow.html). The page remains as a pattern reference.
+> **Obsolete module.** `Mibo.Layout.TopDown` is obsolete — rooms and corridors author as [Flow grid template areas](../../level-design/code-first.html). The page remains as a pattern reference.
 
 ## Importing
 
@@ -427,4 +430,4 @@ Test your spawns:
 - Can players reach all loot safely?
 - Are there unfair choke points?
 
-> **See also:** [2D Layout Engine](core.html) for the layout primitives this module builds on.
+> **See also:** [2D Layout Engine](../../level-design/layout.html) for the layout primitives this module builds on.

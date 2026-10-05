@@ -1,15 +1,18 @@
 ---
 title: Building Interior Spaces
-category: Level Design
-categoryindex: 8
 index: 9
 ---
+
+> **⚠ Archived V5-and-below docs.** These pages cover the retired APIs and
+> the earlier releases. They are frozen. The current docs live at the
+> [site root](../../index.html); the V6 map guides start at
+> [Level Design Overview](../../level-design/overview.html).
 
 # Building Interior Spaces
 
 Interior spaces (dungeons, buildings, FPS levels) are defined by enclosed areas connected by passages. The `Interior` module provides stamps for designing these efficiently.
 
-> **Obsolete module.** `Mibo.Layout3D.Interior` is obsolete. Author interiors as a [2D Flow document](../2d/flow.html) with per-column height — walls are height-2 columns, rooms are grid template areas. The page remains as a pattern reference.
+> **Obsolete module.** `Mibo.Layout3D.Interior` is obsolete. Author interiors as a [2D Flow document](../../level-design/code-first.html) with per-column height — walls are height-2 columns, rooms are grid template areas. The page remains as a pattern reference.
 
 ## Importing
 
@@ -418,4 +421,4 @@ let multiFloor =
 - **Line of sight:** Check that corners provide actual cover.
 - **Door usability:** Do doors block movement awkwardly? Are they wide enough?
 
-> **See also:** [3D Layout Engine](core.html) for the layout primitives this module builds on.
+> **See also:** [3D Layout Engine](3d-core.html) for the layout primitives this module builds on.

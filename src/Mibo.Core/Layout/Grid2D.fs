@@ -99,11 +99,15 @@ module CellGrid2D =
     | CellGeometry.Square ->
       invalidArg "grid" "a square grid carries no hex size"
 
+  /// Writes `content` into one cell. Out-of-range coordinates are
+  /// ignored, so a section walk needs no bounds check.
   let inline set x y (content: 'T) (grid: CellGrid2D<'T>) : unit =
     if x >= 0 && x < grid.Width && y >= 0 && y < grid.Height then
       let idx = toIndex x y grid.Width
       grid.Cells.[idx] <- ValueSome content
 
+  /// Reads one cell. Answers `ValueNone` for an empty cell and for
+  /// out-of-range coordinates.
   let inline get x y (grid: CellGrid2D<'T>) : 'T voption =
     if x >= 0 && x < grid.Width && y >= 0 && y < grid.Height then
       let idx = toIndex x y grid.Width
@@ -111,6 +115,7 @@ module CellGrid2D =
     else
       ValueNone
 
+  /// Empties one cell. Out-of-range coordinates are ignored.
   let inline clear x y (grid: CellGrid2D<'T>) : unit =
     if x >= 0 && x < grid.Width && y >= 0 && y < grid.Height then
       let idx = toIndex x y grid.Width
@@ -144,6 +149,8 @@ module CellGrid2D =
 
       Vector2(px + hexW / 2f, py + hexH / 2f)
 
+  /// Calls `action` once per populated cell, in row-major order, with
+  /// the cell's coordinates and content. Empty cells are skipped.
   let inline iter
     ([<InlineIfLambda>] action: int -> int -> 'T -> unit)
     (grid: CellGrid2D<'T>)

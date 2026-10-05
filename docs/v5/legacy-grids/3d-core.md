@@ -1,15 +1,18 @@
 ---
 title: 3D Layout Engine
-category: Level Design
-categoryindex: 8
 index: 7
 ---
+
+> **⚠ Archived V5-and-below docs.** These pages cover the retired APIs and
+> the earlier releases. They are frozen. The current docs live at the
+> [site root](../../index.html); the V6 map guides start at
+> [Level Design Overview](../../level-design/overview.html).
 
 # 3D Layout Engine
 
 The Layout3D engine provides a voxel-based level design system for 3D games. It lives in `Mibo.Layout3D`.
 
-> **Obsolete family.** The 3D grids (`CellGrid3D`, `Layout3D`, their hex and layered siblings, and the grid renderers) are obsolete. Author 3D levels as a [2D Flow document](../2d/flow.html) with per-column height — the heightmap approach. This page remains as a reference for the retired API.
+> **Obsolete family.** The 3D grids (`CellGrid3D`, `Layout3D`, their hex and layered siblings, and the grid renderers) are obsolete. Author 3D levels as a [2D Flow document](../../level-design/code-first.html) with per-column height — the heightmap approach. This page remains as a reference for the retired API.
 
 ## Core Concepts
 
@@ -365,8 +368,8 @@ Author the level as a 2D grid and let one instance cover several cells: a
 word states the span it covers, `set` may size one, and the build reports
 the occupancy that answers which instance owns each cell. The transform
 receives the rectangle it covers, so the model scales over it instead of
-standing one cell wide. See [instances larger than a cell](spans.html) for
-the vocabulary and [the map contract](infra.html) for the code.
+standing one cell wide. See [instances larger than a cell](../../level-design/instances.html) for
+the vocabulary and [the map contract](../../level-design/three-d.html) for the code.
 
 ### Rotation and Orientation
 

@@ -1,7 +1,7 @@
 ---
 title: Audio
 category: Amenities
-categoryindex: 12
+categoryindex: 9
 index: 6
 ---
 

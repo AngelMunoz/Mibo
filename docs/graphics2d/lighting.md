@@ -1,7 +1,7 @@
 ---
 title: 2D Lighting & Shadows
 category: 2D Rendering
-categoryindex: 10
+categoryindex: 6
 index: 5
 ---
 

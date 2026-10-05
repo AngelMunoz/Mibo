@@ -1,8 +1,8 @@
 ---
 title: Migrating to Mibo v6
 category: Migrating
-categoryindex: 7
-index: 4
+categoryindex: 12
+index: 1
 ---
 
 # Migrating to Mibo v6
@@ -13,7 +13,7 @@ v6 puts every grid behind one storage type and one authoring DSL:
 
 - **One grid type.** `CellGrid2D<'T>` stores squares and hexes. Hex is a
   geometry setting (`CellGrid2D.createHex`), not a separate API.
-- **One authoring model.** The [Flow DSL](level-design/2d/flow.html)
+- **One authoring model.** The [Flow DSL](level-design/code-first.html)
   authors both geometries: grid template areas, flexbox rows and
   columns, docks, and landmark queries (named rectangles and tags).
 - **3D becomes a heightmap.** The vertical axis moves into the tile
@@ -88,7 +88,7 @@ HexGrid.iterVisible l t r b action grid         CellGrid2D.iterVisible
 
 `HexLayout` pipelines map one-to-one onto the square `Layout` ops. Hex
 storage runs them unchanged. You can also author with
-[Flow](level-design/2d/flow.html):
+[Flow](level-design/code-first.html):
 
 ```fsharp
 // before: HexLayout
@@ -180,7 +180,7 @@ What each old concept becomes:
 | `Layout3D.sphere` / `cylinder` | No direct equivalent. Author the footprint (`Flow.circle`, `Flow.polygon`) and compute `Height` per column. |
 | `Layout3D.checker3D` / planar checkers | `Flow.checker` on the footprint |
 | `CellGrid3D.iterVolume` | `CellGrid2D.iterVisible` (world-space window, hex-aware) |
-| `renderCellGridVolumeInstanced` / `renderHexGridVolumeInstanced` | The [volume-culled instancing pattern](#volume-culled-instanced-rendering) below |
+| `renderCellGridVolumeInstanced` / `renderHexGridVolumeInstanced` | The [volume-culled instancing pattern](#Volume-culled-instanced-rendering) below |
 | `Grid3DSpatial.findPath` (3D) | `Grid2DSpatial.findPath` on the footprint |
 
 ### A worked level
@@ -386,8 +386,8 @@ let path = Grid2DSpatial.findPath x1 y1 x2 y2 canEnter (fun _ _ _ _ -> 1f) grid
 Ramps and stairs become footprint tiles with intermediate `Height`
 values. A ramp of `rise 5` is a run of columns with heights `0..5`.
 Your predicate accepts a step when the height difference is 1. The
-retired [Terrain](level-design/3d/terrain.html) and
-[Interior](level-design/3d/interior.html) stamp pages remain as
+retired [Terrain](v5/legacy-grids/terrain.html) and
+[Interior](v5/legacy-grids/interior.html) stamp pages remain as
 references for those shapes.
 
 ## 4. Replace layered grids with your own dictionary
@@ -471,7 +471,7 @@ cells one instance covers, and a build derives an `Occupancy` from the
 painted grid, so a query reads the instance that owns a cell instead of
 the empty neighbours next to it.
 
-Two fields on `Doc.Surface` carry it, and both are optional:
+Two fields on `Doc.Surface` carry it, and the record requires both:
 
 ```fsharp
 let spanOf (cell: BlockCell) = cell.Span
@@ -507,23 +507,9 @@ for layer in layers do
   context.RenderInstanced(buffer, layer.Grid, layer.Occupancy)
 ```
 
-Render with the occupancy form, and give the context a rectangle
-transform so one model scales over the cells it covers:
-
-```fsharp
-let context =
-  InstancedRenderContext<BlockCell, string>.Rect(
-    getKey = (fun cell -> cell.Model.Name),
-    getMeshesAndMaterial = meshesOf,
-    getTransform =
-      fun rect basePos cell ->
-        Matrix4x4.CreateScale(
-          float32 rect.W * cellSize / cell.Model.SizeX,
-          cell.Height * cellSize / cell.Model.SizeY,
-          float32 rect.H * cellSize / cell.Model.SizeZ)
-        * Matrix4x4.CreateTranslation(basePos.X, cell.Lift, basePos.Z)
-  )
-```
+Render with the occupancy form. Give the context a rectangle transform so
+one model scales over the cells it covers; [3D from 2D](level-design/three-d.html)
+shows the full transform.
 
 `Occupancy.owner` answers which instance owns a cell, `rectOf` gives its
 rectangle, and `iterInWindow` enumerates the anchors a window touches.
@@ -543,14 +529,14 @@ decoration stands on a plate instead of replacing it.
 5. Replace renderer calls with your own `iter` + `drawInstanced` loop
    (scaled unit blocks per column). For the volume-culled instanced
    renderers, follow [volume-culled instanced
-   rendering](#volume-culled-instanced-rendering).
+   rendering](#Volume-culled-instanced-rendering).
 6. Replace 3D pathfinding with footprint pathfinding over
    `Grid2DSpatial` / `Hex2DSpatial`.
 7. Replace layered grids with a dictionary you own, or fold the layers
    into the tile as fields.
-8. Read [Flow - Level Authoring](level-design/2d/flow.html). Hex and
+8. Read [Code-First Maps](level-design/code-first.html). Hex and
    3D-as-heightmap levels now author with the same DSL.
 9. Add `Span` and `WithSpan` to every `Doc.Surface` you construct — both
    `ValueNone` keeps the map as it is — and read each layer's `Occupancy`
    when a cell can cover more than one cell. See [state a span and read
-   the occupancy](#6-state-a-span-and-read-the-occupancy).
+   the occupancy](#6-State-a-span-and-read-the-occupancy).

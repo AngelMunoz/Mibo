@@ -175,13 +175,7 @@ let goldenTests =
         """map 20 8 {
     generate grass
 
-    plot w=20 h=8 {
-        cols fixed 6 1 1
-        rows fixed 3 1
-        areas {
-            row road woods
-            row road lake
-        }
+    plot w=20 h=8 cols="fixed 6 1 1" rows="fixed 3 1" areas="road woods; road lake" {
         plot area=road { fill path }
         plot area=woods { fill block }
         plot area=lake { fill sand }
@@ -208,9 +202,7 @@ let goldenTests =
         """map 16 8 {
     generate grass
 
-    plot w=16 h=8 {
-        cols fixed 4 1
-        rows fixed 3 1
+    plot w=16 h=8 cols="fixed 4 1" rows="fixed 3 1" {
         plot col=0 row=0 colspan=2 rowspan=1 { fill path }
         plot col=1 row=1 { fill block }
         plot { fill sand }
@@ -262,8 +254,7 @@ let goldenTests =
       buildGolden(
         """map 10 12 {
     generate grass
-    plot w=10 h=12 {
-        cols 1 1
+    plot w=10 h=12 cols="1 1" {
         plot col=0 row=0 rowspan=4 { fill path }
         plot col=1 row=0 rowspan=4 { fill block }
         plot { fill sand }
@@ -289,8 +280,7 @@ let goldenTests =
       buildGolden(
         """map 6 4 {
     generate grass
-    plot w=6 h=4 {
-        cols 1 1
+    plot w=6 h=4 cols="1 1" {
         plot { fill path }
         plot { fill block }
         plot { fill sand }
@@ -339,8 +329,7 @@ let goldenTests =
       buildGolden(
         """map 4 2 {
     generate grass
-    plot w=4 h=2 {
-        cols fixed 1 fixed 1 fixed 1 fixed 1
+    plot w=4 h=2 cols="fixed 1 fixed 1 fixed 1 fixed 1" {
         wideA
         wideB
     }
@@ -364,8 +353,7 @@ let goldenTests =
       buildGolden(
         """map 4 4 {
     generate grass
-    plot w=4 h=4 {
-        cols fixed 1 fixed 1 fixed 1 fixed 1
+    plot w=4 h=4 cols="fixed 1 fixed 1 fixed 1 fixed 1" {
         wideA
         wideB
         wideA
@@ -388,8 +376,7 @@ let goldenTests =
     <| fun _ ->
       let doc =
         """map 2 2 {
-    plot w=2 h=2 {
-        cols fixed 1 fixed 1
+    plot w=2 h=2 cols="fixed 1 fixed 1" {
         wide4
     }
 }
@@ -485,8 +472,7 @@ let failureTests =
       match
         build
           """map 8 6 {
-    plot w=8 h=6 {
-        cols 1 1
+    plot w=8 h=6 cols="1 1" {
         plot col=0 row=0 colspan=0 rowspan=1 { fill sand }
     }
 }
@@ -501,8 +487,7 @@ let failureTests =
       match
         build
           """map 8 6 {
-    plot w=8 h=6 {
-        cols 1 1
+    plot w=8 h=6 cols="1 1" {
         plot col=-1 row=0 { fill sand }
     }
 }
@@ -516,8 +501,7 @@ let failureTests =
       match
         build
           """map 8 6 {
-    plot w=8 h=6 {
-        cols 1 1
+    plot w=8 h=6 cols="1 1" {
         plot x=1 y=1 { fill sand }
     }
 }
@@ -532,8 +516,7 @@ let failureTests =
       match
         build
           """map 8 6 {
-    plot w=8 h=6 gapx=1 gapy=2 {
-        cols 1 1
+    plot w=8 h=6 gapx=1 gapy=2 cols="1 1" {
         plot { fill sand }
     }
 }
@@ -547,10 +530,7 @@ let failureTests =
       match
         build
           """map 8 6 {
-    plot w=8 h=6 {
-        areas {
-            row names="road woods"
-        }
+    plot w=8 h=6 cols="1 1" areas="road woods" {
         plot area=lake { fill sand }
     }
 }
@@ -567,8 +547,7 @@ let failureTests =
       match
         build
           """map 8 6 {
-    plot w=8 h=6 {
-        cols 1 1
+    plot w=8 h=6 cols="1 1" {
         plot col=5 row=0 { fill sand }
     }
 }
@@ -589,8 +568,7 @@ let failureTests =
       match
         build
           """map 8 6 {
-    plot w=8 h=6 {
-        cols 1 1
+    plot w=8 h=6 cols="1 1" {
         plot col=1 colspan=2 row=0 { fill sand }
     }
 }
@@ -611,11 +589,7 @@ let failureTests =
       match
         build
           """map 8 6 {
-    plot w=8 h=6 {
-        cols 1 1
-        areas {
-            row names="road woods"
-        }
+    plot w=8 h=6 cols="1 1" areas="road woods" {
         plot area=road colspan=2 { fill sand }
     }
 }
@@ -635,8 +609,7 @@ let failureTests =
       match
         build
           """map 8 6 {
-    plot w=8 h=6 {
-        cols 1 1
+    plot w=8 h=6 cols="1 1" {
         plot colspan=2 { fill sand }
     }
 }
@@ -717,6 +690,43 @@ let parityTests =
               diffs <- diffs + 1
 
         Expect.equal diffs 0 "both channels read the rule's name"
+      | kdlRes, xmlRes -> failtest(sprintf "kdl=%A xml=%A" kdlRes xmlRes)
+
+    testCase "tracks and areas read the same in either syntax"
+    <| fun _ ->
+      // `rows="1"` arrives as a number in XML and a word in KDL, and  ";" separates the
+      // template rows in both
+      let kdl =
+        """map 12 4 {
+    generate grass
+    plot w=12 h=4 cols="fixed 6 1 1" rows="1" areas="road woods; road lake" {
+        plot area=road { fill path }
+        plot area=woods { fill block }
+        plot area=lake { fill sand }
+    }
+}
+"""
+
+      let xml =
+        """<map w="12" h="4">
+  <generate kernel="grass" />
+  <plot w="12" h="4" cols="fixed 6 1 1" rows="1" areas="road woods; road lake">
+    <plot area="road"><fill cell="path" /></plot>
+    <plot area="woods"><fill cell="block" /></plot>
+    <plot area="lake"><fill cell="sand" /></plot>
+  </plot>
+</map>"""
+
+      match DocFlow.build(surface, kdl), DocFlow.buildXml(surface, xml) with
+      | Ok a, Ok b ->
+        let mutable diffs = 0
+
+        for y in 0 .. a.Height - 1 do
+          for x in 0 .. a.Width - 1 do
+            if CellGrid2D.get x y a <> CellGrid2D.get x y b then
+              diffs <- diffs + 1
+
+        Expect.equal diffs 0 "both syntaxes place the same tracks and areas"
       | kdlRes, xmlRes -> failtest(sprintf "kdl=%A xml=%A" kdlRes xmlRes)
   ]
 

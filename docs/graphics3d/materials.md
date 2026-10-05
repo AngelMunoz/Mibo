@@ -1,7 +1,7 @@
 ---
 title: 3D Materials
 category: 3D Rendering
-categoryindex: 11
+categoryindex: 7
 index: 4
 ---
 

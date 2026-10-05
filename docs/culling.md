@@ -1,7 +1,7 @@
 ---
 title: Culling
 category: Rendering
-categoryindex: 9
+categoryindex: 5
 index: 4
 ---
 

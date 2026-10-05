@@ -1,9 +1,12 @@
 ---
 title: Migrating to Mibo v4
-category: Migrating
-categoryindex: 7
 index: 2
 ---
+
+> **⚠ Archived V5-and-below docs.** These pages cover the retired APIs and
+> the earlier releases. They are frozen. The current docs live at the
+> [site root](../../index.html); the V6 map guides start at
+> [Level Design Overview](../../level-design/overview.html).
 
 # Migrating to Mibo v4
 
@@ -20,7 +23,7 @@ sections that match your code: most games are affected by none of them.
 
 The headline features of v4: bone pose queries and attachment draws, skinned +
 instanced draws, and one shared `BonePose` evaluation per frame: are additive
-and need no migration. See [Animation 3D](animation3d.html).
+and need no migration. See [Animation 3D](../../animation3d.html).
 
 ## 1. Recompile against the new assemblies (binary break)
 
@@ -135,7 +138,7 @@ buffer.model(model, transform).drop()
 ```
 
 The full mapping, including lighting, particles, and grid rendering, is in
-[Draw DSL → Migrating from the piped DSL](draw-dsl.html#Migrating-from-the-piped-DSL).
+[Draw DSL → Migrating from the piped DSL](../../draw-dsl.html#Migrating-from-the-piped-DSL).
 To silence the warnings until you migrate, add FS0044 to your project's
 `NoWarn`. But prefer migrating: the modules will be removed in a future
 release.
@@ -164,8 +167,8 @@ returned exactly as before.
 
 ## See also
 
-- [Draw DSL](draw-dsl.html): the fluent draw surface for 2D and 3D
-- [Animation 3D](animation3d.html): bone poses, queries, attachments, skinned instancing
-- [The Adaptive Architecture](adaptive/overview.html): the other program runtime, if your game is simulation-shaped
+- [Draw DSL](../../draw-dsl.html): the fluent draw surface for 2D and 3D
+- [Animation 3D](../../animation3d.html): bone poses, queries, attachments, skinned instancing
+- [The Adaptive Architecture](../../adaptive/overview.html): the other program runtime, if your game is simulation-shaped
 - [Migrating to Mibo v2](migration-to-v2.html): if you are coming from 1.x
 - [Changelog](https://github.com/AngelMunoz/Mibo/blob/main/CHANGELOG.md): full release notes

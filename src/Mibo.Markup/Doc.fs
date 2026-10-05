@@ -176,6 +176,45 @@ module Doc =
   /// element only.
   let at(src: string, n: Node) : string = Markup.at src n.Position
 
+  /// The value one node states for one property name, or `ValueNone`.
+  /// A name stated twice fails here: KDL accepts a repeated name, and
+  /// the readers disagreed on which one won.
+  let private propOf
+    (src: string, n: Node, name: string)
+    : Result<Arg voption, string> =
+    let mutable slot = ValueNone
+    let mutable twice = false
+
+    for p in n.Props do
+      if p.Name = name then
+        if slot.IsNone then
+          slot <- ValueSome p.Value
+        else
+          twice <- true
+
+    if twice then
+      Error
+        $"`{n.Kind}` states the property '{name}' more than once{at(src, n)}"
+    else
+      Ok slot
+
+  /// Fails when a node states any property name more than once. The
+  /// cascade kept the last value and the scalar readers kept the first,
+  /// so a repeat says nothing about which one the author meant.
+  let noRepeatedProps(src: string, n: Node) : Result<unit, string> =
+    let seen = HashSet<string>(StringComparer.Ordinal)
+    let mutable twice = ValueNone
+
+    for p in n.Props do
+      if twice.IsNone && not(seen.Add p.Name) then
+        twice <- ValueSome p.Name
+
+    match twice with
+    | ValueSome name ->
+      Error
+        $"`{n.Kind}` states the property '{name}' more than once{at(src, n)}"
+    | ValueNone -> Ok()
+
   /// Reads one whole-number scalar by name first (the XML channel),
   /// then by positional index (the KDL channel).
   let wantInt
@@ -184,14 +223,9 @@ module Doc =
     let bad why =
       Error $"`{n.Kind}` wants a whole number for '{name}', {why}{at(src, n)}"
 
-    let mutable slot = ValueNone
-
-    for p in n.Props do
-      if slot.IsNone && p.Name = name then
-        slot <- ValueSome p.Value
-
-    match slot with
-    | ValueNone ->
+    match propOf(src, n, name) with
+    | Error e -> Error e
+    | Ok ValueNone ->
       if i >= 0 && i < n.Args.Length then
         match n.Args[i] with
         | Number v -> Ok v
@@ -199,9 +233,9 @@ module Doc =
         | Word w -> bad $"got '{w}'"
       else
         Error $"'{n.Kind}' wants '{name}'{at(src, n)}"
-    | ValueSome(Number v) -> Ok v
-    | ValueSome(Decimal _) -> bad "not a decimal"
-    | ValueSome(Word w) -> bad $"got '{w}'"
+    | Ok(ValueSome(Number v)) -> Ok v
+    | Ok(ValueSome(Decimal _)) -> bad "not a decimal"
+    | Ok(ValueSome(Word w)) -> bad $"got '{w}'"
 
   /// Reads one word scalar by name first, then by positional index.
   let wantWord
@@ -213,21 +247,16 @@ module Doc =
       | Number v -> ValueSome(string v)
       | Decimal d -> ValueSome(string d)
 
-    let mutable slot = ValueNone
-
-    for p in n.Props do
-      if slot.IsNone && p.Name = name then
-        slot <- ValueSome p.Value
-
-    match slot with
-    | ValueNone ->
+    match propOf(src, n, name) with
+    | Error e -> Error e
+    | Ok ValueNone ->
       if i >= 0 && i < n.Args.Length then
         match read n.Args[i] with
         | ValueSome w -> Ok w
         | ValueNone -> Error $"'{n.Kind}' wants '{name}'{at(src, n)}"
       else
         Error $"'{n.Kind}' wants '{name}'{at(src, n)}"
-    | ValueSome arg ->
+    | Ok(ValueSome arg) ->
       match read arg with
       | ValueSome w -> Ok w
       | ValueNone -> Error $"'{n.Kind}' wants '{name}'{at(src, n)}"
@@ -442,137 +471,147 @@ module Doc =
       })
     | "pad" -> num() |> Result.map(fun v -> { s with Pad = ValueSome v })
     | "seed" -> num() |> Result.map(fun v -> { s with Seed = ValueSome v })
+    // the three lists describe the children a container places, so they
+    // are the container's own: a rule that states one would do nothing
+    | "cols"
+    | "rows"
+    | "areas" ->
+      Error
+        $"a style rule cannot state '{p.Name}': cols, rows and areas belong to the container{at(src, n)}"
     | _ -> Error $"unknown property '{p.Name}'{at(src, n)}"
 
   /// Merges a node's inline properties over a base style, in document
-  /// order; the first bad property fails with its position.
+  /// order; the first bad property fails with its position. A name
+  /// stated twice fails before any of them applies.
   let styleOfProps
     (src: string, n: Node, baseStyle: Style)
     : Result<Style, string> =
-    n.Props
-    |> Seq.fold
-      (fun acc p -> acc |> Result.bind(fun s -> applyProp(src, n, s, p)))
-      (Ok baseStyle)
+    noRepeatedProps(src, n)
+    |> Result.bind(fun () ->
+      n.Props
+      |> Seq.fold
+        (fun acc p -> acc |> Result.bind(fun s -> applyProp(src, n, s, p)))
+        (Ok baseStyle))
 
   // ── Track and area directives ────────────────────────────────
 
-  /// One track token: a positive ratio, `auto`, or `fixed n`. Track
-  /// tokens come from positional args (KDL: `cols 1 fixed 3 auto`) or
-  /// from the space-split `v` property (XML: `<cols v="1 fixed 3 auto" />`).
-  let private trackTokens(src: string, n: Node) : Result<Arg[], string> =
-    if n.Args.Length > 0 then
-      Ok(Seq.toArray n.Args)
-    else
-      let mutable slot = ValueNone
+  /// The three list properties a container states for its own children.
+  /// They are the container's own channel: they never cascade, and a
+  /// `style` rule that states one fails.
+  let isListProp(name: string) : bool =
+    match name with
+    | "cols"
+    | "rows"
+    | "areas" -> true
+    | _ -> false
 
-      for p in n.Props do
-        if slot.IsNone && (p.Name = "v" || p.Name = "tracks") then
-          slot <- ValueSome p.Value
-
-      match slot with
-      | ValueSome(Word w) ->
-        w.Split([| ' '; '\t' |], StringSplitOptions.RemoveEmptyEntries)
-        |> Array.map(fun t ->
-          match
-            Int32.TryParse(
-              t,
-              Globalization.NumberStyles.Integer,
-              Globalization.CultureInfo.InvariantCulture
-            )
-          with
-          | true, v -> Number v
-          | _ -> Word t)
-        |> Ok
-      | ValueSome _ -> Error $"a track list wants words{at(src, n)}"
-      | ValueNone -> Ok [||]
-
-  /// Resolves a container's declared tracks.
-  let tracksOf(src: string, n: Node) : Result<Track[], string> =
-    match trackTokens(src, n) with
+  /// The value of one list property, or `ValueNone`. The XML front-end
+  /// types an attribute by its content, so a one-token list arrives as a
+  /// number there and as a word in KDL; both spell one list.
+  let private listPropOf
+    (src: string, n: Node, name: string)
+    : Result<string voption, string> =
+    match propOf(src, n, name) with
     | Error e -> Error e
-    | Ok tokens ->
+    | Ok ValueNone -> Ok ValueNone
+    | Ok(ValueSome(Word w)) ->
+      if String.IsNullOrWhiteSpace w then
+        Error $"`{n.Kind}` states an empty '{name}'{at(src, n)}"
+      else
+        Ok(ValueSome w)
+    | Ok(ValueSome(Number v)) -> Ok(ValueSome(string v))
+    | Ok(ValueSome(Decimal d)) ->
+      Ok(ValueSome(d.ToString(Globalization.CultureInfo.InvariantCulture)))
+
+  /// One list value as its tokens, on spaces and tabs.
+  let private tokensOf(value: string) : string[] =
+    value.Split([| ' '; '\t' |], StringSplitOptions.RemoveEmptyEntries)
+
+  /// Resolves one track list — `cols="1 fixed 3 auto"` — into tracks. A
+  /// bare number is a weight, `fixed n` is a fixed size, `auto` sizes to
+  /// the children. `Track.Percent` has no token: it carries a fraction
+  /// of the container, and no document needs one yet.
+  let tracksOf
+    (src: string, n: Node, name: string)
+    : Result<Track[] voption, string> =
+    match listPropOf(src, n, name) with
+    | Error e -> Error e
+    | Ok ValueNone -> Ok ValueNone
+    | Ok(ValueSome value) ->
+      let tokens = tokensOf value
       let tracks = ResizeArray<Track>()
       let mutable i = 0
       let mutable failed = ValueNone
 
       while i < tokens.Length && failed.IsNone do
-        match tokens[i] with
-        | Number v when v > 0 ->
+        let token = tokens[i]
+
+        match
+          Int32.TryParse(
+            token,
+            Globalization.NumberStyles.Integer,
+            Globalization.CultureInfo.InvariantCulture
+          )
+        with
+        | true, v when v > 0 ->
           tracks.Add(Weight(float32 v))
           i <- i + 1
-        | Number _ ->
+        | true, _ ->
           failed <- ValueSome $"track ratios must be positive{at(src, n)}"
-        | Word "auto" ->
-          tracks.Add Auto
-          i <- i + 1
-        | Word "fixed" when i + 1 < tokens.Length ->
-          (match tokens[i + 1] with
-           | Number v when v > 0 ->
-             tracks.Add(Fixed v)
-             i <- i + 2
-           | _ ->
-             failed <-
-               ValueSome $"a fixed track wants a positive number{at(src, n)}")
-        | Word w ->
-          failed <-
-            ValueSome
-              $"a track wants a ratio, 'fixed n' or 'auto', got '{w}'{at(src, n)}"
-        | _ -> failed <- ValueSome $"bad track{at(src, n)}"
+        | _ ->
+          match token with
+          | "auto" ->
+            tracks.Add Auto
+            i <- i + 1
+          | "fixed" when i + 1 < tokens.Length ->
+            (match
+              Int32.TryParse(
+                tokens[i + 1],
+                Globalization.NumberStyles.Integer,
+                Globalization.CultureInfo.InvariantCulture
+              )
+             with
+             | true, v when v > 0 ->
+               tracks.Add(Fixed v)
+               i <- i + 2
+             | _ ->
+               failed <-
+                 ValueSome $"a fixed track wants a positive number{at(src, n)}")
+          | w ->
+            failed <-
+              ValueSome
+                $"a track wants a ratio, 'fixed n' or 'auto', got '{w}'{at(src, n)}"
 
       match failed with
       | ValueSome e -> Error e
-      | ValueNone -> Ok(tracks.ToArray())
+      | ValueNone -> Ok(ValueSome(tracks.ToArray()))
 
-  /// Resolves an area template's rows. Row names come from a child
-  /// node's positional args (KDL: `areas { r west main } { ... }`) or
-  /// from each row's space-split `names` property (XML:
-  /// `<areas><row names="west main" /><row names="..." /></areas>`).
-  let areasOf(src: string, n: Node) : Result<string[][], string> =
-    let rows = ResizeArray<string[]>()
-    let mutable failed = ValueNone
+  /// Resolves one area template — `areas="road woods; road lake"` — into
+  /// its rows of names. Rows split on `;`, names on spaces and tabs. A
+  /// row with no name is an authoring slip, not an empty row: it would
+  /// shift every row below it in the template.
+  let areasOf(src: string, n: Node) : Result<string[][] voption, string> =
+    match listPropOf(src, n, "areas") with
+    | Error e -> Error e
+    | Ok ValueNone -> Ok ValueNone
+    | Ok(ValueSome value) ->
+      let rows = ResizeArray<string[]>()
+      let mutable failed = ValueNone
 
-    for row in n.Children do
-      if failed.IsNone then
-        let names = ResizeArray<string>()
+      for row in value.Split([| ';' |], StringSplitOptions.None) do
+        if failed.IsNone then
+          let names = tokensOf row
 
-        if row.Args.Length > 0 then
-          for a in row.Args do
-            if failed.IsNone then
-              (match a with
-               | Word w -> names.Add w
-               | _ ->
-                 failed <- ValueSome $"an area row wants names{at(src, row)}")
-        else
-          let mutable slot = ValueNone
-
-          for p in row.Props do
-            if slot.IsNone && p.Name = "names" then
-              slot <- ValueSome p.Value
-
-          match slot with
-          | ValueSome(Word w) ->
-            for part in
-              w.Split([| ' '; '\t' |], StringSplitOptions.RemoveEmptyEntries) do
-              names.Add part
-          | ValueSome _ ->
-            failed <- ValueSome $"an area row's names want words{at(src, row)}"
-          | ValueNone ->
-            // a names-less row is an authoring slip, not an empty row:
-            // it would shift every row below it in the template
+          if names.Length = 0 then
             failed <-
               ValueSome
-                $"an area row needs positional names or a names= property{at(src, row)}"
-
-        if failed.IsNone then
-          if names.Count = 0 then
-            failed <-
-              ValueSome $"an area row needs at least one name{at(src, row)}"
+                $"in '{n.Kind}': an area row needs at least one name{at(src, n)}"
           else
-            rows.Add(names.ToArray())
+            rows.Add names
 
-    match failed with
-    | ValueSome e -> Error e
-    | ValueNone -> Ok(rows.ToArray())
+      match failed with
+      | ValueSome e -> Error e
+      | ValueNone -> Ok(ValueSome(rows.ToArray()))
 
   // ── Operation resolution ─────────────────────────────────────
 
@@ -588,6 +627,30 @@ module Doc =
     | "rect"
     | "generate" -> true
     | _ -> false
+
+  /// Node kinds the vocabulary owns. A template or a surface element
+  /// under one of these names would be unreachable, or would take over a
+  /// container the resolver builds itself. `plot` and `grid` are not
+  /// here: a template or a surface element of that name gives the
+  /// built-in container its own body. Frozen: public but unmodifiable.
+  let reservedNames: FrozenSet<string> =
+    [|
+      "map"
+      "layer"
+      "element"
+      "style"
+      "repeat"
+      "cols"
+      "rows"
+      "areas"
+      "fill"
+      "fillRect"
+      "set"
+      "border"
+      "rect"
+      "generate"
+    |]
+      .ToFrozenSet()
 
   /// A statement reads its arguments by name: a property is a named slot
   /// (`rect edge=stone`), a positional argument fills the next slot in
@@ -875,6 +938,12 @@ module Doc =
       Error $"`layer` is legal only directly under the map{at(src, n)}"
     | _ -> Error $"unknown statement '{n.Kind}'{at(src, n)}"
 
+  /// `resolveOp` behind the one-property-per-node rule.
+  let private opOf
+    (surface: Surface<'T>, src: string, n: Node)
+    : Result<Op<'T>, string> =
+    noRepeatedProps(src, n) |> Result.bind(fun () -> resolveOp(surface, src, n))
+
   // ── The interpreter ──────────────────────────────────────────
 
   /// Runs one statement's paint into `box`.
@@ -1114,31 +1183,66 @@ module Doc =
     let mutable failed = ValueNone
 
     let extentOf(n: Node) : CellSize voption =
-      let mutable w = ValueNone
-      let mutable h = ValueNone
+      let mutable next = 0
 
-      for p in n.Props do
-        if failed.IsNone then
-          (match p.Name, p.Value with
-           | "w", Number v -> w <- ValueSome v
-           | "h", Number v -> h <- ValueSome v
-           | ("w" | "h"), _ ->
-             failed <-
-               ValueSome
-                 $"an element definition's w= and h= want numbers{at(src, n)}"
-           | _ ->
-             failed <-
-               ValueSome
-                 $"an element definition takes w= and h= only{at(src, n)}")
+      // a named slot claims its value and a positional value fills the
+      // next free slot, so `element hut 3 3`, `element hut w=3 h=3`,
+      // and one of each read the same; the declaration's own name is
+      // already off the argument list
+      let take(name: string) : Arg voption =
+        match propOf(src, n, name) with
+        | Error e ->
+          failed <- ValueSome e
+          ValueNone
+        | Ok(ValueSome v) -> ValueSome v
+        | Ok ValueNone ->
+          if next < n.Args.Length then
+            let v = n.Args[next]
+            next <- next + 1
+            ValueSome v
+          else
+            ValueNone
 
-      match w, h with
-      | ValueSome w', ValueSome h' -> ValueSome { W = w'; H = h' }
-      | ValueNone, ValueNone -> ValueNone
-      | _ ->
+      let wArg = take "w"
+      let hArg = take "h"
+
+      if failed.IsNone then
+        for p in n.Props do
+          if failed.IsNone && p.Name <> "w" && p.Name <> "h" then
+            failed <-
+              ValueSome
+                $"an element definition takes w= and h= only, got '{p.Name}'{at(src, n)}"
+
+      if failed.IsNone && n.Args.Length > next then
         failed <-
           ValueSome
-            $"an element definition needs w= and h= together{at(src, n)}"
+            $"'element' has {n.Args.Length - next} extra argument(s){at(src, n)}"
 
+      if failed.IsNone then
+        let asInt (name: string) (v: Arg voption) =
+          match v with
+          | ValueSome(Number v) -> Ok v
+          | ValueSome(Decimal _) ->
+            Error
+              $"an element definition's {name}= wants a whole number{at(src, n)}"
+          | ValueSome(Word w) ->
+            Error
+              $"an element definition's {name}= wants a whole number, got '{w}'{at(src, n)}"
+          | ValueNone ->
+            Error $"an element definition needs w= and h= together{at(src, n)}"
+
+        match wArg, hArg with
+        | ValueNone, ValueNone -> ValueNone
+        | _ ->
+          match asInt "w" wArg, asInt "h" hArg with
+          | Ok w', Ok h' -> ValueSome { W = w'; H = h' }
+          | Error e, _ ->
+            failed <- ValueSome e
+            ValueNone
+          | _, Error e ->
+            failed <- ValueSome e
+            ValueNone
+      else
         ValueNone
 
     let rec go(n: Node) : unit =
@@ -1146,7 +1250,15 @@ module Doc =
         if n.Kind = "element" then
           (match n.Label with
            | ValueSome name ->
-             let extent = extentOf n
+             let extent =
+               if reservedNames.Contains name then
+                 failed <-
+                   ValueSome
+                     $"'{name}' is a name the markup vocabulary owns, so an element cannot take it{at(src, n)}"
+
+                 ValueNone
+               else
+                 extentOf n
 
              if failed.IsNone then
                (match expandNodes(src, n.Children) with
@@ -1156,7 +1268,7 @@ module Doc =
 
                   for c in expanded do
                     if failed.IsNone then
-                      (match resolveOp(surface, src, c) with
+                      (match opOf(surface, src, c) with
                        | Ok op -> body.Add op
                        | Error e -> failed <- ValueSome e)
 
@@ -1257,10 +1369,15 @@ module Doc =
         named <- ValueSome p.Value
 
     // the name claims one slot: the property when the node states it,
-    // the first argument otherwise. Everything past it is an error.
+    // the first argument otherwise. A list property belongs to the
+    // container, so it is not extra; everything else is an error.
     let fromProperty = named.IsSome
     let extraArgs = if fromProperty then n.Args.Length else n.Args.Length - 1
-    let extraProps = n.Props.Length - (if fromProperty then 1 else 0)
+
+    let extraProps =
+      n.Props
+      |> Seq.filter(fun p -> p.Name <> "name" && not(isListProp p.Name))
+      |> Seq.length
 
     if extraArgs > 0 then
       Error
@@ -1342,19 +1459,62 @@ module Doc =
     match expandNodes(src, n.Children) with
     | Error e -> Error e
     | Ok children ->
+      // the list channel: cols, rows and areas are the container's own
+      // properties. They are read here, and the node the cascade sees
+      // below carries none of them.
+      let mutable cols: Track[] = [||]
+      let mutable rows: Track[] = [||]
+      let mutable areas: string[][] = [||]
+
+      let mutable failed =
+        match noRepeatedProps(src, n) with
+        | Ok() -> ValueNone
+        | Error e -> ValueSome e
+
+      if failed.IsNone then
+        (match tracksOf(src, n, "cols") with
+         | Ok v -> cols <- ValueOption.defaultValue [||] v
+         | Error e -> failed <- ValueSome e)
+
+      if failed.IsNone then
+        (match tracksOf(src, n, "rows") with
+         | Ok v -> rows <- ValueOption.defaultValue [||] v
+         | Error e -> failed <- ValueSome e)
+
+      if failed.IsNone then
+        (match areasOf(src, n) with
+         | Ok v -> areas <- ValueOption.defaultValue [||] v
+         | Error e -> failed <- ValueSome e)
+
+      // the template and the columns are both in hand here, so a row
+      // wider than the declared columns fails where it is written
+      if failed.IsNone then
+        let colCount = if cols.Length = 0 then 1 else cols.Length
+
+        for row in areas do
+          if failed.IsNone && row.Length > colCount then
+            failed <-
+              ValueSome
+                $"in the '{name}' container: an area row has {row.Length} names but {colCount} column(s){at(src, n)}"
+
+      let styleNode = {
+        n with
+            Props =
+              n.Props
+              |> Seq.filter(fun p -> not(isListProp p.Name))
+              |> ImmutableArray.CreateRange
+      }
+
       // cascade: solver defaults, document style rules, inline props
       let ruleStyle =
         if styles.ContainsKey name then styles[name] else emptyStyle
 
-      match styleOfProps(src, n, ruleStyle) with
-      | Error e -> Error e
-      | Ok style ->
+      match failed, styleOfProps(src, styleNode, ruleStyle) with
+      | ValueSome e, _ -> Error e
+      | ValueNone, Error e -> Error e
+      | ValueNone, Ok style ->
         let ops = ResizeArray<Op<'T>>()
         let itemNodes = ResizeArray<struct (Node * string voption)>()
-        let mutable cols: Track[] = [||]
-        let mutable rows: Track[] = [||]
-        let mutable areas: string[][] = [||]
-        let mutable failed = ValueNone
 
         // layer names are unique in the document. Only the map root can
         // hold layers, so only it allocates the seen-names list.
@@ -1366,18 +1526,17 @@ module Doc =
 
         for c in children do
           if failed.IsNone then
-            if c.Kind = "cols" then
-              (match tracksOf(src, c) with
-               | Ok t -> cols <- t
-               | Error e -> failed <- ValueSome e)
-            elif c.Kind = "rows" then
-              (match tracksOf(src, c) with
-               | Ok t -> rows <- t
-               | Error e -> failed <- ValueSome e)
-            elif c.Kind = "areas" then
-              (match areasOf(src, c) with
-               | Ok a -> areas <- a
-               | Error e -> failed <- ValueSome e)
+            if isListProp c.Kind then
+              // tracks and templates are the container's own properties
+              let example =
+                if c.Kind = "areas" then
+                  "areas=\"road woods; road lake\""
+                else
+                  $"{c.Kind}=\"auto fixed 3\""
+
+              failed <-
+                ValueSome
+                  $"'{c.Kind}' is a property of the container: state it as {example}{at(src, c)}"
             elif c.Kind = "element" || c.Kind = "style" then
               () // declarations, already collected
             elif c.Kind = "layer" then
@@ -1385,7 +1544,7 @@ module Doc =
                | Ok node -> itemNodes.Add node
                | Error e -> failed <- ValueSome e)
             elif isOpKind c.Kind then
-              (match resolveOp(surface, src, c) with
+              (match opOf(surface, src, c) with
                | Ok op -> ops.Add op
                | Error e -> failed <- ValueSome e)
             else
@@ -1615,7 +1774,15 @@ module Doc =
           | _ -> None))
       |> Seq.tryHead
 
-    match bad with
+    // a surface element under a reserved kind would shadow the node the
+    // resolver means to build
+    let reserved =
+      surface.Elements.Keys
+      |> Seq.tryFind(reservedNames.Contains)
+      |> Option.map(fun name ->
+        $"the surface element '{name}' uses a name the markup vocabulary owns")
+
+    match reserved |> Option.orElse bad with
     | Some e -> Error e
     | None -> Ok()
 
@@ -1628,9 +1795,10 @@ module Doc =
   /// then inline properties. `map` is the root container (its `w=`/`h=`
   /// dimensions are validated here); `element` nodes define templates
   /// (name as first argument or `name` property); `repeat n` duplicates
-  /// its children; `cols`, `rows` and `areas` child nodes declare a
-  /// container's tracks and named areas. Declared `cols`/`rows` imply
-  /// `pack=flow`. `plot` is the built-in anonymous container: empty
+  /// its children; the `cols`, `rows` and `areas` properties of a
+  /// container declare its tracks and named areas, and a `style` rule
+  /// cannot state one. Declared `cols`/`rows` imply `pack=flow`. `plot`
+  /// is the built-in anonymous container: empty
   /// body, exact box. `layer` is the map's layer container: one name and
   /// nothing else, resolved under the literal name `layer` and reported
   /// under its own (`Item.Layer`). Every root is the map or a
