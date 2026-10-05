@@ -168,13 +168,7 @@ let resolveTests =
       match
         resolveKdl
           """map 10 6 {
-  grid {
-    cols 1 fixed 3 auto
-    rows 2
-    areas {
-      r west main
-      r side main
-    }
+  grid cols="1 fixed 3 auto" rows="2" areas="west main; side main" {
     plot area=main { fill grass }
     grove col=0 row=0
   }
@@ -285,7 +279,7 @@ let resolveTests =
       // a names-less row would shift every row below it in the template
       match
         resolveKdl
-          "map 8 6 {\n  grid {\n    cols 1 1\n    areas {\n      row\n      row names=\"road woods\"\n    }\n    plot area=road { fill grass }\n  }\n}"
+          "map 8 6 {\n  grid cols=\"1 1\" areas=\"road woods;\" {\n    plot area=road { fill grass }\n  }\n}"
       with
       | Ok _ -> failtest "the names-less area row must fail"
       | Error e -> Expect.stringContains e "an area row needs" "names the slip"
@@ -427,11 +421,11 @@ let resolveTests =
       | Ok _ -> failtest "the surface collision must fail"
       | Error e -> Expect.stringContains e "collides" "names the clash"
 
-    testCase "tracks and areas read from the v and names properties"
+    testCase "tracks and areas are the container's own properties"
     <| fun _ ->
-      // the XML channel: no positional args anywhere
+      // one list value per property: no child node, no positional args
       let doc =
-        "map 10 6 {\n  plot w=10 h=6 {\n    cols v=\"fixed 6 1 1\"\n    areas {\n      row names=\"road woods\"\n      row names=\"road lake\"\n    }\n    plot area=road { fill grass }\n  }\n}\n"
+        "map 10 6 {\n  plot w=10 h=6 cols=\"fixed 6 1 1\" areas=\"road woods; road lake\" {\n    plot area=road { fill grass }\n  }\n}\n"
 
       match Kdl.parse doc with
       | Error e -> failtest $"parse failed: {e}"
@@ -443,12 +437,12 @@ let resolveTests =
           Expect.equal
             grid.Cols
             [| Fixed 6; Weight 1f; Weight 1f |]
-            "tracks from v="
+            "tracks from cols="
 
           Expect.equal
             grid.Areas
             [| [| "road"; "woods" |]; [| "road"; "lake" |] |]
-            "area rows from names="
+            "area rows from areas="
 
           Expect.equal
             grid.Children[0].Style.Area
@@ -457,6 +451,218 @@ let resolveTests =
 
         | Error e -> failtest $"resolve failed: {e}"
         | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "a track node fails and points at the property"
+    <| fun _ ->
+      // tracks and templates are the container's own properties, so the
+      // node form must not read as a container
+      match resolveKdl "map 4 2 {\n  plot { cols 1 1; fill grass }\n}" with
+      | Ok _ -> failtest "a track child must fail"
+      | Error e ->
+        Expect.stringContains e "'cols' is a property" "points at the property"
+        Expect.stringContains e "state it as cols=" "shows the track form"
+        Expect.stringContains e "2:" "carries the line"
+
+      match
+        resolveKdl "map 4 2 {\n  plot { areas { r a b }; fill grass }\n}"
+      with
+      | Ok _ -> failtest "an area child must fail"
+      | Error e ->
+        Expect.stringContains e "state it as areas=" "shows the template form"
+
+    testCase "a doubled list property fails the build"
+    <| fun _ ->
+      match
+        resolveKdl
+          "map 4 2 {\n  plot cols=\"1 1\" cols=\"1 1 1\" { fill grass }\n}"
+      with
+      | Ok _ -> failtest "a repeated list property must fail"
+      | Error e -> Expect.stringContains e "more than once" "names the repeat"
+
+    testCase "an empty list property fails the build"
+    <| fun _ ->
+      match resolveKdl "map 4 2 {\n  plot cols=\"\" { fill grass }\n}" with
+      | Ok _ -> failtest "an empty track list must fail"
+      | Error e ->
+        Expect.stringContains e "states an empty 'cols'" "names the empty list"
+
+    testCase "a one-number list is one track"
+    <| fun _ ->
+      // the XML front-end types `rows="1"` as a number; KDL spells the
+      // same list as a word
+      match resolveKdl "map 4 2 {\n  plot cols=3 { fill grass }\n}" with
+      | Ok [| root |] ->
+        Expect.equal root.Children[0].Cols [| Weight 3f |] "one weight track"
+      | Error e -> failtest e
+      | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "a fractional track fails"
+    <| fun _ ->
+      match resolveKdl "map 4 2 {\n  plot cols=\"2.5\" { fill grass }\n}" with
+      | Ok _ -> failtest "a fraction must fail"
+      | Error e ->
+        Expect.stringContains e "a track wants a ratio" "names the token"
+
+    testCase "a style rule cannot state tracks"
+    <| fun _ ->
+      match
+        resolveKdl
+          "map 4 2 {\n  style plot cols=\"1 1\"\n  plot { fill grass }\n}"
+      with
+      | Ok _ -> failtest "a rule must not state tracks"
+      | Error e ->
+        Expect.stringContains
+          e
+          "a style rule cannot state 'cols'"
+          "names the rule"
+
+    testCase "an area row wider than the columns fails the build"
+    <| fun _ ->
+      match
+        resolveKdl
+          "map 6 2 {\n  plot w=6 h=2 cols=\"1 1\" areas=\"a b c; a b c\" { fill grass }\n}"
+      with
+      | Ok _ -> failtest "an over-wide row must fail"
+      | Error e ->
+        Expect.stringContains e "an area row has 3 names" "names the row"
+        Expect.stringContains e "'plot'" "names the container"
+
+    testCase "an element definition reads its extent from either channel"
+    <| fun _ ->
+      match
+        resolveKdl
+          "map 8 6 {\n  element hut 3 2 { fill grass }\n  hut x=0 y=0\n}"
+      with
+      | Ok [| root |] ->
+        Expect.equal
+          root.Children[0].Element.Extent
+          (ValueSome { W = 3; H = 2 })
+          "the positional extent reads"
+      | Error e -> failtest e
+      | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "an element definition past its two extents fails"
+    <| fun _ ->
+      match
+        resolveKdl "map 8 6 {\n  element hut 3 3 3 { fill grass }\n  hut\n}"
+      with
+      | Ok _ -> failtest "a third number must fail"
+      | Error e -> Expect.stringContains e "extra argument" "names the leftover"
+
+    testCase "an element cannot take a name the vocabulary owns"
+    <| fun _ ->
+      match
+        resolveKdl "map 8 6 {\n  element fill { fill grass }\n  fill\n}"
+      with
+      | Ok _ -> failtest "a reserved name must fail"
+      | Error e ->
+        Expect.stringContains e "the markup vocabulary owns" "names the clash"
+
+    testCase "a repeated property fails the build"
+    <| fun _ ->
+      match resolveKdl "map 4 2 {\n  plot w=1 w=3 { fill grass }\n}" with
+      | Ok _ -> failtest "a repeated property must fail"
+      | Error e -> Expect.stringContains e "more than once" "names the repeat"
+
+    testCase "a layer holding only a track node fails"
+    <| fun _ ->
+      match resolveKdl "map 8 6 {\n  layer g {\n    cols 1 1\n  }\n}" with
+      | Ok _ -> failtest "a layer with no content must fail"
+      | Error e ->
+        Expect.stringContains e "'cols' is a property" "points at the property"
+
+    testCase "a layer states its own tracks"
+    <| fun _ ->
+      // a layer is a container, so its children flow in its tracks
+      match
+        resolveKdl
+          "map 8 6 {\n  layer g cols=\"1 1\" {\n    plot { fill grass }\n  }\n}"
+      with
+      | Ok [| root |] ->
+        Expect.equal
+          root.Children[0].Cols
+          [| Weight 1f; Weight 1f |]
+          "the layer carries its tracks"
+      | Error e -> failtest e
+      | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "a surface element under a reserved name fails the build"
+    <| fun _ ->
+      // a surface element named 'layer' would shadow the node the
+      // resolver builds itself
+      let bad: Doc.Surface<int> = {
+        surface with
+            Elements =
+              frozen [
+                "layer",
+                {
+                  Doc.Name = "layer"
+                  Doc.Extent = ValueNone
+                  Doc.Body = [| Doc.Op.Fill 1 |]
+                }
+              ]
+      }
+
+      match Kdl.parse "map 4 4 {\n  generate plain\n}" with
+      | Error e -> failtest $"parse failed: {e}"
+      | Ok roots ->
+        match Doc.resolve bad "map 4 4 {\n  generate plain\n}" roots with
+        | Ok _ -> failtest "a reserved surface name must fail"
+        | Error e ->
+          Expect.stringContains e "the markup vocabulary owns" "names the clash"
+
+    testCase "XML reads the three lists from the container's properties"
+    <| fun _ ->
+      let xml =
+        """<map w="8" h="6">
+  <plot w="8" h="6" cols="fixed 4 1" rows="1" areas="road woods; road lake">
+    <plot area="road"><fill cell="grass" /></plot>
+    <plot area="lake"><fill cell="stone" /></plot>
+  </plot>
+</map>"""
+
+      match Xml.parse xml with
+      | Error e -> failtest $"parse failed: {e}"
+      | Ok roots ->
+        match Doc.resolve surface xml roots with
+        | Ok [| root |] ->
+          let grid = root.Children[0]
+
+          Expect.equal
+            grid.Cols
+            [| Fixed 4; Weight 1f |]
+            "cols from the property"
+
+          Expect.equal grid.Rows [| Weight 1f |] "rows from the property"
+
+          Expect.equal
+            grid.Areas
+            [| [| "road"; "woods" |]; [| "road"; "lake" |] |]
+            "areas from the property"
+
+          Expect.equal
+            grid.Children[0].Style.Area
+            (ValueSome "road")
+            "the area placement resolves"
+
+        | Error e -> failtest $"resolve failed: {e}"
+        | Ok _ -> failtest "expected exactly one root item"
+
+    testCase "an XML track node fails and points at the property"
+    <| fun _ ->
+      let xml =
+        """<map w="4" h="2"><plot><cols v="1 1" /><fill cell="grass" /></plot></map>"""
+
+      match Xml.parse xml with
+      | Error e -> failtest $"parse failed: {e}"
+      | Ok roots ->
+        match Doc.resolve surface xml roots with
+        | Ok _ -> failtest "a track child must fail"
+        | Error e ->
+          Expect.stringContains
+            e
+            "'cols' is a property"
+            "points at the property"
   ]
 
 [<Tests>]
