@@ -632,23 +632,25 @@ module Doc =
   /// under one of these names would be unreachable, or would take over a
   /// container the resolver builds itself. `plot` and `grid` are not
   /// here: a template or a surface element of that name gives the
-  /// built-in container its own body.
-  let reservedNames = [|
-    "map"
-    "layer"
-    "element"
-    "style"
-    "repeat"
-    "cols"
-    "rows"
-    "areas"
-    "fill"
-    "fillRect"
-    "set"
-    "border"
-    "rect"
-    "generate"
-  |]
+  /// built-in container its own body. Frozen: public but unmodifiable.
+  let reservedNames: FrozenSet<string> =
+    [|
+      "map"
+      "layer"
+      "element"
+      "style"
+      "repeat"
+      "cols"
+      "rows"
+      "areas"
+      "fill"
+      "fillRect"
+      "set"
+      "border"
+      "rect"
+      "generate"
+    |]
+      .ToFrozenSet()
 
   /// A statement reads its arguments by name: a property is a named slot
   /// (`rect edge=stone`), a positional argument fills the next slot in
@@ -1249,7 +1251,7 @@ module Doc =
           (match n.Label with
            | ValueSome name ->
              let extent =
-               if Array.contains name reservedNames then
+               if reservedNames.Contains name then
                  failed <-
                    ValueSome
                      $"'{name}' is a name the markup vocabulary owns, so an element cannot take it{at(src, n)}"
@@ -1776,7 +1778,7 @@ module Doc =
     // resolver means to build
     let reserved =
       surface.Elements.Keys
-      |> Seq.tryFind(fun name -> Array.contains name reservedNames)
+      |> Seq.tryFind(reservedNames.Contains)
       |> Option.map(fun name ->
         $"the surface element '{name}' uses a name the markup vocabulary owns")
 
