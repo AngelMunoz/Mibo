@@ -755,6 +755,27 @@ module AdaptiveProgram =
     }
 
   /// <summary>
+  /// Turns off the Windows accessibility shortcuts (Sticky Keys, Filter Keys,
+  /// Toggle Keys) while the game window has focus.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Pressing Shift five times, holding right Shift for eight seconds or
+  /// holding Num Lock opens a Windows dialog that takes the focus from the
+  /// game. Use this when the game uses Shift or Num Lock as a game key.
+  /// </para>
+  /// <para>
+  /// A feature that the player has turned on stays as it is. The saved
+  /// settings come back when the window goes to the background and when the
+  /// game ends; they are never written to the user profile. The function adds
+  /// <see cref="M:Mibo.Windowing.AccessibilityShortcuts.renderer``1"/>, a
+  /// renderer that draws nothing. On other operating systems it does nothing.
+  /// </para>
+  /// </remarks>
+  let withAccessibilityShortcutsSuppressed(program: AdaptiveProgram<'Frame>) =
+    withRenderer Mibo.Windowing.AccessibilityShortcuts.renderer program
+
+  /// <summary>
   /// Supplies the frame profiler the host registers and measures with.
   /// </summary>
   /// <remarks>
