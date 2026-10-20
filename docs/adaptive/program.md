@@ -152,6 +152,16 @@ let runner = AdaptiveHeadless(program)
 | `AdaptiveMonoGameGame<'Frame>` | MonoGame |
 | `AdaptiveHeadless<'Frame>` | none ([Headless Mode](headless.html)) |
 
+### Windows accessibility shortcuts
+
+On Windows, pressing Shift five times opens the Sticky Keys dialog. Holding right Shift opens Filter Keys, and holding Num Lock opens Toggle Keys. The dialog takes the focus from the game. Add this builder when the game uses Shift or Num Lock as a game key:
+
+```fsharp
+|> AdaptiveProgram.withAccessibilityShortcutsSuppressed
+```
+
+While the game window has focus, the shortcuts are off. When the window goes to the background, and when the game ends, the settings come back. A feature that the player has turned on stays as it is, and the change is never written to the user profile. The builder adds a renderer that draws nothing, so it works with both window hosts. On other operating systems, and in `AdaptiveHeadless`, it does nothing.
+
 ## Where to go next
 
 - Work queued during update (the `ctx.Intents.post` in the game above), including next-frame and background variants: [Intents](intents.html).

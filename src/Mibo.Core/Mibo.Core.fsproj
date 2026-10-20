@@ -29,6 +29,7 @@
     <Compile Include="Rendering.fs" />
     <Compile Include="Diagnostics.fs" />
     <Compile Include="Window.fs" />
+    <Compile Include="AccessibilityShortcuts.fs" />
     <Compile Include="GameConfig.fs" />
     <Compile Include="Assets.fs" />
     <Compile Include="Audio.fs" />

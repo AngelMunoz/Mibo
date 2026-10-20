@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Core/Mvu/Adaptive:** `Program.withAccessibilityShortcutsSuppressed` and `AdaptiveProgram.withAccessibilityShortcutsSuppressed` stop the Windows Sticky Keys, Filter Keys and Toggle Keys dialogs from taking the focus mid-game (for example, when a player presses Shift five times). The shortcuts are off only while the game window has focus, and they come back when the player switches away or the game exits. Features the player has turned on stay on, and the user's saved settings are never changed. Opt-in; other operating systems are not affected.
+
 ### Changed
 
 - **MonoGame — Breaking:** `Mibo.MonoGame` builds against MonoGame 3.8.6 (`MonoGame.Framework.Native` 3.8.6, up from 3.8.5). Consumers must update their MonoGame host and runtime packages to 3.8.6 to match; mixing 3.8.5 host packages with this version fails to load the backend types at runtime.
