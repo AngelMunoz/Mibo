@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-10-20
+
 ### Added
 
 - **Core/Mvu/Adaptive:** `Program.withAccessibilityShortcutsSuppressed` and `AdaptiveProgram.withAccessibilityShortcutsSuppressed` stop the Windows Sticky Keys, Filter Keys and Toggle Keys dialogs from taking the focus mid-game (for example, when a player presses Shift five times). The shortcuts are off only while the game window has focus, and they come back when the player switches away or the game exits. Features the player has turned on stay on, and the user's saved settings are never changed. Opt-in; other operating systems are not affected.
