@@ -121,6 +121,17 @@ let createRenderer () = Renderer2D.create view
 |> Program.withRenderer createRenderer
 ```
 
+### `withAccessibilityShortcutsSuppressed`
+On Windows, pressing Shift five times opens the Sticky Keys dialog. Holding right Shift opens Filter Keys, and holding Num Lock opens Toggle Keys. The dialog takes the focus from the game. Add this builder when the game uses Shift or Num Lock as a game key:
+
+```fsharp
+|> Program.withAccessibilityShortcutsSuppressed
+```
+
+While the game window has focus, the shortcuts are off. When the window goes to the background, and when the game ends, the settings come back. A feature that the player has turned on stays as it is. The change is never written to the user profile, so a killed process leaves it only until the next sign-in.
+
+The builder adds `AccessibilityShortcuts.renderer`, a renderer that draws nothing, so it works with every host. On other operating systems it does nothing.
+
 ### Backend wiring
 
 The `Program` builder is in `Mibo.Mvu`, but a few pieces are backend-specific:

@@ -24,6 +24,7 @@
     <Compile Include="Spatial2DTests.fs" />
     <Compile Include="Spatial3DTests.fs" />
     <Compile Include="DiagnosticsTests.fs" />
+    <Compile Include="AccessibilityShortcutsTests.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
 
