@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **MonoGame — Breaking:** `Mibo.MonoGame` builds against MonoGame 3.8.6 (`MonoGame.Framework.Native` 3.8.6, up from 3.8.5). Consumers must update their MonoGame host and runtime packages to 3.8.6 to match; mixing 3.8.5 host packages with this version fails to load the backend types at runtime.
+- **Raylib:** `Mibo.Raylib` builds against raylib-cs 8.1.0 (up from 8.0.0). Both versions bind the native raylib 6.0 library, so the native binaries a game ships are unchanged.
+- **Templates:** the MonoGame templates (`mibo-mg-2d`, `mibo-mg-2d-adaptive`, `mibo-mg-3d`, `mibo-mg-3d-adaptive`) move to MonoGame 3.8.6, and the mgcb tools they pin move to 3.8.6 to match.
+
 ## [6.0.0] - 2026-10-06
 
 ### Added

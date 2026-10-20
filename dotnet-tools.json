@@ -13,7 +13,7 @@
       "rollForward": false
     },
     "dotnet-mgfxc": {
-      "version": "3.8.5",
+      "version": "3.8.6",
       "commands": ["mgfxc"],
       "rollForward": false
     }

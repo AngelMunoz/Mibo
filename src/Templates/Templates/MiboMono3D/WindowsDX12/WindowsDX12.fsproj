@@ -19,9 +19,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\src\MiboMono3D.fsproj" />
-    <PackageReference Include="MonoGame.Framework.Native" Version="3.8.5" />
-    <PackageReference Include="MonoGame.Runtime.Windows.DX12" Version="3.8.5" />
-    <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.5" />
+    <PackageReference Include="MonoGame.Framework.Native" Version="3.8.6" />
+    <PackageReference Include="MonoGame.Runtime.Windows.DX12" Version="3.8.6" />
+    <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.6" />
   </ItemGroup>
 
   <ItemGroup>
